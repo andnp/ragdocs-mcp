@@ -1,0 +1,38 @@
+# Obsidian Vault Configuration
+# Optimized for note-taking with heavy wikilink usage
+
+[server]
+host = "127.0.0.1"
+port = 8000
+
+[indexing]
+# Path to Obsidian vault
+documents_path = "~/Documents/ObsidianVault"
+
+# Cache indices globally (shared across projects)
+index_path = "~/.cache/ragdocs-obsidian"
+
+# Search all subdirectories recursively
+recursive = true
+
+[parsers]
+# Support both .md and .markdown files
+"**/*.md" = "MarkdownParser"
+"**/*.markdown" = "MarkdownParser"
+
+[search]
+# Favor semantic connections (concept similarity)
+# over exact keyword matches
+semantic_weight = 1.3
+keyword_weight = 0.8
+
+# Strong recency bias - recent notes often most relevant
+recency_bias = 0.7
+
+# Standard RRF constant
+rrf_k_constant = 60
+
+[llm]
+# Use local embeddings
+embedding_model = "local"
+# llm_provider = null  # No external LLM provider

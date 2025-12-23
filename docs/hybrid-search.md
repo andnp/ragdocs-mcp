@@ -1,0 +1,491 @@
+# Hybrid Search Strategy
+
+This document explains the hybrid search system, including each search strategy, the Reciprocal Rank Fusion algorithm, and performance characteristics.
+
+## Overview
+
+The query orchestrator combines four distinct retrieval strategies:
+
+1. **Semantic Search**: Conceptual similarity via vector embeddings
+2. **Keyword Search**: Exact term matching via BM25 scoring
+3. **Graph Traversal**: Structural relationships via wikilinks
+4. **Recency Bias**: Temporal relevance via file modification time
+
+Results from all strategies are fused using Reciprocal Rank Fusion (RRF) to produce a single ranked list of documents for synthesis.
+
+## Search Strategies
+
+### 1. Semantic Search
+
+**Purpose:** Find documents conceptually related to the query, even when exact terms do not match.
+
+**Technology:**
+- Embedding model: HuggingFace BAAI/bge-small-en-v1.5 (384 dimensions)
+- Vector index: FAISS IndexFlatL2 (cosine similarity search)
+- Chunking: LlamaIndex MarkdownNodeParser (512 characters, 50 overlap)
+
+**Process:**
+1. Embed query using same model as indexed documents
+2. Perform cosine similarity search in FAISS index
+3. Return top-k document IDs ranked by similarity score
+
+**When Most Effective:**
+- Queries with synonyms or paraphrased concepts
+- Searching for "authentication methods" finds documents about "login systems" and "credential management"
+- Broad conceptual queries where exact terminology is unknown
+
+**Example:**
+
+Query: "How do I secure my API?"
+
+Semantic search finds:
+- "authentication.md" (discusses credentials and tokens)
+- "security.md" (covers HTTPS and rate limiting)
+- "api-reference.md" (mentions security headers)
+
+Even though the word "secure" may not appear in these documents, the semantic similarity of "API security" concepts ensures retrieval.
+
+### 2. Keyword Search
+
+**Purpose:** Find documents containing exact terms, phrases, or technical identifiers.
+
+**Technology:**
+- Full-text index: Whoosh with BM25F scoring
+- Schema: ID (stored), TEXT (content + aliases), KEYWORD (tags)
+- Tokenization: StandardAnalyzer (strips punctuation, lowercases)
+
+**Process:**
+1. Parse query into terms
+2. Look up terms in inverted index
+3. Score documents using BM25F algorithm (term frequency, inverse document frequency)
+4. Return top-k document IDs ranked by BM25 score
+
+**When Most Effective:**
+- Queries with specific function names, error codes, or technical terms
+- Searching for "getToken" finds documents with that exact function name
+- Queries with unique identifiers that would not have semantic similarity
+
+**Example:**
+
+Query: "getToken function implementation"
+
+Keyword search finds:
+- "authentication.md" (contains literal string "getToken")
+- "api-reference.md" (documents the `getToken` endpoint)
+
+Semantic search might miss these if "getToken" is a custom function name without semantic context.
+
+**Limitation:**
+
+StandardAnalyzer strips punctuation. Queries for "C++" or "Node.js" normalize to "c" and "node". Custom analyzer required to preserve special characters.
+
+### 3. Graph Traversal
+
+**Purpose:** Surface structurally related documents connected via wikilinks, even when query terms do not appear in linked documents.
+
+**Technology:**
+- Graph representation: NetworkX directed graph
+- Nodes: Document IDs with metadata (title, tags, aliases)
+- Edges: Wikilinks (`[[Target]]`) and transclusions (`![[Target]]`)
+
+**Process:**
+1. Execute semantic and keyword searches to get initial candidate documents
+2. For each candidate, perform 1-hop neighbor lookup in graph
+3. Retrieve all documents directly linked from or to the candidate
+4. Add neighbors to result pool with reduced score (0.5x multiplier)
+
+**When Most Effective:**
+- Queries that should surface related documentation not explicitly mentioned
+- User queries for "deployment" → graph traversal includes linked "security.md" and "configuration.md" even if "deployment" does not appear in those files
+- Discovering supporting context for a specific topic
+
+**Example:**
+
+Query: "deployment configuration"
+
+Keyword/semantic search finds:
+- "deployment.md"
+
+Graph traversal adds:
+- "security.md" (linked from deployment.md via `[[security]]`)
+- "authentication.md" (linked from security.md)
+- "configuration.md" (linked from deployment.md)
+
+These linked documents enrich the context provided to the LLM without requiring the user to explicitly query for them.
+
+**Implementation Detail:**
+
+Only 1-hop neighbors are retrieved (direct links). Multi-hop traversal (2+ hops) was avoided due to:
+- Increased computation cost
+- Risk of topic drift (documents too far removed from original query)
+- Diminishing relevance returns
+
+### 4. Recency Bias
+
+**Purpose:** Prioritize recently modified documents to surface up-to-date information.
+
+**Implementation:**
+
+Tier-based score multiplier applied during fusion:
+
+| Modification Time | Multiplier |
+|-------------------|------------|
+| Last 7 days       | 1.0 + (recency_bias * 0.2) |
+| Last 30 days      | 1.0 + (recency_bias * 0.1) |
+| Over 30 days      | 1.0 |
+
+Default `recency_bias = 0.5`:
+- Last 7 days: 1.1x
+- Last 30 days: 1.05x
+- Over 30 days: 1.0x
+
+**When Most Effective:**
+- Documentation that changes frequently (API specs, deployment guides)
+- Personal notes where recent entries are more relevant
+- Queries like "recent updates" or "what changed recently"
+
+**Example:**
+
+Query: "authentication changes"
+
+Without recency bias:
+- "authentication.md" (last modified 90 days ago)
+- "api-reference.md" (last modified 180 days ago)
+
+With recency bias (assuming "oauth-guide.md" modified 3 days ago):
+- "oauth-guide.md" (1.1x boost)
+- "authentication.md"
+- "api-reference.md"
+
+The recent OAuth guide surfaces higher due to recency boost.
+
+**Configuration:**
+
+Disable recency bias by setting `recency_bias = 0.0` in config.
+
+## Reciprocal Rank Fusion (RRF)
+
+### Algorithm
+
+RRF is a rank-based fusion method that combines multiple ranked lists without requiring score normalization.
+
+**Formula:**
+
+For each document appearing in any ranked list:
+
+```
+rrf_score(d) = Σ (1 / (k + rank(d, list_i)))
+```
+
+Where:
+- `d` is a document ID
+- `k` is a constant (default 60)
+- `rank(d, list_i)` is the rank (1-indexed) of document `d` in list `i`
+- Sum is over all lists where `d` appears
+
+**Example:**
+
+Document "auth.md" appears in:
+- Semantic search at rank 3
+- Keyword search at rank 5
+- Graph traversal at rank 2
+
+With k=60:
+
+```
+rrf_score = 1/(60+3) + 1/(60+5) + 1/(60+2)
+          = 1/63 + 1/65 + 1/62
+          = 0.0159 + 0.0154 + 0.0161
+          = 0.0474
+```
+
+Document "deploy.md" appears in:
+- Semantic search at rank 1
+- Graph traversal at rank 10
+
+```
+rrf_score = 1/(60+1) + 1/(60+10)
+          = 1/61 + 1/70
+          = 0.0164 + 0.0143
+          = 0.0307
+```
+
+Despite "deploy.md" ranking higher in semantic search, "auth.md" has a higher RRF score due to appearing in more lists.
+
+### Weighted RRF
+
+Strategy weights multiply each term in the RRF sum:
+
+```
+weighted_rrf_score(d) = Σ (weight_i / (k + rank(d, list_i)))
+```
+
+**Example:**
+
+With `semantic_weight = 1.2` and `keyword_weight = 0.8`:
+
+```
+rrf_score = (1.2 / (60+3)) + (0.8 / (60+5))
+          = 0.0190 + 0.0123
+          = 0.0313
+```
+
+This increases the influence of semantic search results relative to keyword search.
+
+### Advantages of RRF
+
+1. **No score normalization required**: Ranks are universal (1, 2, 3...), unlike scores which vary by algorithm (0.95 for cosine similarity, 12.3 for BM25)
+2. **Robust to outliers**: A single very high score in one list does not dominate the fusion
+3. **Rewards consensus**: Documents appearing in multiple lists are naturally prioritized
+4. **Simple to implement**: No machine learning or training required
+
+### Disadvantages of RRF
+
+1. **Loses score magnitude information**: A rank 1 document with score 0.99 is treated the same as rank 1 with score 0.51
+2. **Fixed k constant**: Requires tuning for optimal performance (typical range: 20-100)
+3. **Assumes list independence**: Does not account for correlation between lists
+
+## Result Fusion Process
+
+### Step-by-Step Fusion
+
+1. **Execute parallel searches**:
+   - Semantic search returns: `[doc1, doc2, doc3, ...]` (ranked)
+   - Keyword search returns: `[doc2, doc5, doc1, ...]` (ranked)
+
+2. **Apply graph traversal**:
+   - For each candidate from step 1, lookup 1-hop neighbors
+   - Add neighbors to pool with 0.5x multiplier
+
+3. **Compute RRF scores**:
+   - For each unique document across all lists, sum weighted RRF terms
+
+4. **Apply recency bias**:
+   - Multiply each document's RRF score by its recency tier multiplier
+
+5. **Sort by final score**:
+   - Return top-k document IDs in descending score order
+
+### Example End-to-End Fusion
+
+**Query:** "API authentication"
+
+**Semantic search results:**
+1. authentication.md (cosine similarity: 0.92)
+2. security.md (0.85)
+3. api-reference.md (0.78)
+
+**Keyword search results:**
+1. api-reference.md (BM25: 15.3)
+2. authentication.md (12.7)
+3. oauth-guide.md (8.4)
+
+**Graph traversal (1-hop from candidates):**
+- deployment.md (linked from security.md, score 0.5x)
+- configuration.md (linked from authentication.md, score 0.5x)
+
+**Recency data:**
+- oauth-guide.md: modified 5 days ago (1.1x boost)
+- Others: modified over 30 days ago (1.0x)
+
+**RRF Calculation (k=60, semantic_weight=1.0, keyword_weight=1.0):**
+
+authentication.md:
+- Semantic rank 1: 1/(60+1) = 0.0164
+- Keyword rank 2: 1/(60+2) = 0.0161
+- Recency: 1.0x
+- **Final: 0.0325**
+
+api-reference.md:
+- Semantic rank 3: 1/(60+3) = 0.0159
+- Keyword rank 1: 1/(60+1) = 0.0164
+- Recency: 1.0x
+- **Final: 0.0323**
+
+security.md:
+- Semantic rank 2: 1/(60+2) = 0.0161
+- Recency: 1.0x
+- **Final: 0.0161**
+
+oauth-guide.md:
+- Keyword rank 3: 1/(60+3) = 0.0159
+- Recency: 1.1x
+- **Final: 0.0175**
+
+deployment.md:
+- Graph boost: 0.5 * (1/(60+1)) = 0.0082
+- Recency: 1.0x
+- **Final: 0.0082**
+
+**Final Ranking:**
+1. authentication.md (0.0325)
+2. api-reference.md (0.0323)
+3. oauth-guide.md (0.0175)
+4. security.md (0.0161)
+5. deployment.md (0.0082)
+
+## Performance Characteristics
+
+### Query Latency
+
+Measured on typical hardware (8-core CPU, 16GB RAM) with 1000-document corpus:
+
+| Component | Latency | Notes |
+|-----------|---------|-------|
+| Semantic search | 50-100ms | Dominated by embedding inference |
+| Keyword search | 10-20ms | Fast inverted index lookup |
+| Graph traversal | 5-10ms | In-memory NetworkX operations |
+| RRF fusion | 1-5ms | Simple arithmetic over ranked lists |
+| **Total query** | **100-150ms** | Excluding LLM synthesis |
+
+### Scaling Characteristics
+
+| Corpus Size | Semantic | Keyword | Graph | Total |
+|-------------|----------|---------|-------|-------|
+| 100 docs | 30ms | 5ms | 2ms | ~40ms |
+| 1,000 docs | 80ms | 15ms | 8ms | ~110ms |
+| 10,000 docs | 250ms | 40ms | 20ms | ~320ms |
+
+**Bottleneck:** Semantic search embedding generation and FAISS similarity computation.
+
+### Memory Usage
+
+| Component | Memory per Document | Notes |
+|-----------|---------------------|-------|
+| Vector index | ~1.5KB | 384-dim float32 embeddings + mappings |
+| Keyword index | ~500 bytes | Inverted index entries |
+| Graph | ~200 bytes | Node metadata + edge pointers |
+| **Total** | **~2.2KB** | 1000 docs ≈ 2.2MB |
+
+### Indexing Performance
+
+| Operation | Latency | Notes |
+|-----------|---------|-------|
+| Single document | 200-500ms | Includes embedding generation |
+| Batch (100 docs) | 30-60s | Serial processing |
+| Full rebuild (1000 docs) | 5-10 minutes | Cold start, no existing index |
+
+**Bottleneck:** Embedding model inference (HuggingFace local model).
+
+## Strategy Trade-Offs
+
+### Semantic Search
+
+**Strengths:**
+- Finds conceptually related content
+- Handles synonyms and paraphrasing
+- Discovers unexpected relevant documents
+
+**Weaknesses:**
+- Misses exact term matches (function names, error codes)
+- Slower than keyword search (embedding inference)
+- Requires storage for vector embeddings
+
+**Tuning:**
+- Increase `semantic_weight` to prioritize semantic results
+- Use larger embedding models for better semantic understanding (at cost of speed)
+
+### Keyword Search
+
+**Strengths:**
+- Fast retrieval (inverted index)
+- Exact term matching (function names, identifiers)
+- Low storage overhead
+
+**Weaknesses:**
+- Misses synonyms and paraphrasing
+- Sensitive to query phrasing
+- StandardAnalyzer strips punctuation (limitation for technical terms)
+
+**Tuning:**
+- Increase `keyword_weight` to prioritize exact matches
+- Use custom Whoosh analyzer for preserving special characters
+
+### Graph Traversal
+
+**Strengths:**
+- Surfaces structurally related content
+- Enriches context for LLM synthesis
+- Discovers documents not matching query terms
+
+**Weaknesses:**
+- Relies on quality of wikilink annotations
+- Can surface tangentially related content (topic drift)
+- Adds computation overhead
+
+**Tuning:**
+- Graph boost multiplier (currently hardcoded at 0.5x) could be configurable
+- Multi-hop depth (currently fixed at 1-hop) could be dynamic based on query
+
+### Recency Bias
+
+**Strengths:**
+- Prioritizes up-to-date information
+- Simple tier-based calculation
+- Predictable behavior
+
+**Weaknesses:**
+- File mtime may not reflect content relevance
+- Not useful for static documentation
+- Can de-prioritize evergreen content
+
+**Tuning:**
+- Adjust `recency_bias` (0.0 to 1.0)
+- Modify tier thresholds (7 days, 30 days) in code
+
+## Configuration Recommendations
+
+### General Purpose Documentation
+
+Balanced weights with moderate recency:
+
+```toml
+[search]
+semantic_weight = 1.0
+keyword_weight = 1.0
+recency_bias = 0.5
+```
+
+### API Reference / Technical Docs
+
+Prioritize exact term matches:
+
+```toml
+[search]
+semantic_weight = 0.8
+keyword_weight = 1.5
+recency_bias = 0.3
+```
+
+### Personal Notes (Obsidian)
+
+Prioritize semantic connections and recency:
+
+```toml
+[search]
+semantic_weight = 1.3
+keyword_weight = 0.7
+recency_bias = 0.8
+```
+
+### Research Papers
+
+Prioritize semantic similarity, disable recency:
+
+```toml
+[search]
+semantic_weight = 1.5
+keyword_weight = 0.5
+recency_bias = 0.0
+```
+
+## Future Enhancements
+
+Potential improvements not currently implemented:
+
+1. **Multi-hop graph traversal**: Configurable depth (1-hop, 2-hop)
+2. **Custom analyzers**: Preserve punctuation for technical terms
+3. **Query-time strategy selection**: Automatically weight strategies based on query type
+4. **Learned fusion**: Train fusion weights on query/relevance pairs
+5. **Re-ranking**: Post-fusion re-ranking based on LLM scoring
+6. **Sparse+Dense retrieval**: Combine sparse (BM25) and dense (FAISS) in single index

@@ -1,0 +1,39 @@
+# Technical Documentation Configuration
+# Optimized for project docs where exact terms matter
+
+[server]
+host = "127.0.0.1"
+port = 8000
+
+[indexing]
+# Path to project documentation
+documents_path = "~/Projects/myapp/docs"
+
+# Store index in project directory
+index_path = ".ragdocs-index/"
+
+# Index all subdirectories
+recursive = true
+
+[parsers]
+# Support multiple documentation formats
+"**/*.md" = "MarkdownParser"
+"**/*.markdown" = "MarkdownParser"
+
+[search]
+# Favor exact keyword matches
+# (API names, function names, error codes matter)
+semantic_weight = 0.9
+keyword_weight = 1.3
+
+# Low recency bias - documentation changes less frequently
+# and older docs remain relevant
+recency_bias = 0.3
+
+# Standard RRF constant
+rrf_k_constant = 60
+
+[llm]
+# Use local embeddings
+embedding_model = "local"
+# llm_provider = null  # No external LLM provider

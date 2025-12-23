@@ -1,0 +1,13 @@
+# Minimal Configuration
+# Uses defaults for everything except documents path
+
+[indexing]
+# Path to your documents directory
+documents_path = "./docs"
+
+# All other settings use defaults:
+# - Server: 127.0.0.1:8000
+# - Index path: .index_data/
+# - Search weights: balanced (1.0 semantic, 1.0 keyword)
+# - Recency bias: moderate (0.5)
+# - Recursive indexing: enabled

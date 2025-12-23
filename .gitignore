@@ -1,0 +1,15 @@
+.venv/
+**/*.pyc
+**/__pycache__/
+**/.serena
+**/.codanna
+**/.vscode/
+.codannaignore
+.fastembed_cache
+**/*.egg-info
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage/
+**/.cache/
+**/.mcp-markdown-ragdocs/

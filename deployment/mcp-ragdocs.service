@@ -1,0 +1,43 @@
+[Unit]
+Description=MCP Markdown RAGDocs Server
+Documentation=https://github.com/yourusername/mcp-markdown-ragdocs
+After=network.target
+
+[Service]
+Type=simple
+User=ragdocs
+Group=ragdocs
+WorkingDirectory=/opt/mcp-markdown-ragdocs
+
+# Start server with uv
+ExecStart=/usr/local/bin/uv run mcp-markdown-ragdocs run --host 127.0.0.1 --port 8000
+
+# Environment variables
+Environment="PYTHONUNBUFFERED=1"
+Environment="CONFIG_PATH=/etc/mcp-markdown-ragdocs/config.toml"
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Hardening options
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mcp-markdown-ragdocs/indices
+ReadWritePaths=/var/log/mcp-markdown-ragdocs
+
+# Resource limits
+MemoryMax=2G
+TasksMax=256
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mcp-ragdocs
+
+[Install]
+WantedBy=multi-user.target

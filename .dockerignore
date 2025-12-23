@@ -1,0 +1,60 @@
+# Git
+.git
+.gitignore
+.gitattributes
+.github
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist
+build
+.eggs
+
+# Virtual environments
+.venv
+venv
+ENV
+env
+
+# Testing
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov
+.tox
+
+# Index data (will be created in container)
+.index_data
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation
+docs
+*.md
+!README.md
+
+# CI/CD
+.github
+.pre-commit-config.yaml
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Misc
+*.log
+.env
+.env.local
+config.toml

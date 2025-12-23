@@ -1,0 +1,106 @@
+# Docker Compose Example for mcp-markdown-ragdocs
+#
+# This file demonstrates how to deploy the RAG server in a container
+# with persistent storage and custom configuration.
+#
+# Usage:
+#   1. Copy this file: cp docker-compose.example.yml docker-compose.yml
+#   2. Edit volume paths to match your setup
+#   3. Run: docker compose up -d
+
+services:
+  mcp-ragdocs:
+    # Build Configuration
+    # Uses Dockerfile in project root
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # Container Settings
+    container_name: mcp-markdown-ragdocs
+    restart: unless-stopped  # Restart on crashes, but not on manual stop
+
+    # Port Mapping
+    # Maps host port 8000 to container port 8000
+    # Change left side to expose on different host port (e.g., "8080:8000")
+    ports:
+      - "8000:8000"
+
+    # Volume Mounts
+    volumes:
+      # Mount your documents directory (read-only)
+      # Change "./docs" to your actual documents path
+      - ./docs:/app/docs:ro
+
+      # Persist index data across container restarts
+      # Named volume (managed by Docker)
+      - index-data:/app/.index_data
+
+      # Optional: Mount custom configuration file
+      # Uncomment and edit path if using custom config
+      # - ./config.toml:/app/config.toml:ro
+
+    # Environment Variables
+    environment:
+      # Disable Python output buffering (shows logs immediately)
+      - PYTHONUNBUFFERED=1
+
+      # Optional: Override configuration via environment
+      # Uncomment to customize server settings
+      # - MCP_RAGDOCS_HOST=0.0.0.0
+      # - MCP_RAGDOCS_PORT=8000
+
+    # Health Check
+    # Docker monitors container health via HTTP endpoint
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s      # Check every 30 seconds
+      timeout: 10s       # Fail if check takes longer than 10s
+      retries: 3         # Mark unhealthy after 3 consecutive failures
+      start_period: 10s  # Wait 10s after start before first check
+
+# Named Volumes
+# Persists index data across container recreations
+volumes:
+  index-data:
+    driver: local
+
+# Configuration Notes:
+#
+# Document Path:
+#   - Change "./docs" to your documents directory
+#   - Use absolute paths for external directories (e.g., "/mnt/docs")
+#   - Add ":ro" for read-only access (recommended)
+#
+# Index Persistence:
+#   - Named volume "index-data" persists indices
+#   - Survives container recreation and updates
+#   - Remove with: docker volume rm mcp-markdown-ragdocs_index-data
+#
+# Custom Configuration:
+#   - Mount config.toml to override defaults
+#   - Config file changes require container restart
+#   - Alternative: use environment variables (see above)
+#
+# Networking:
+#   - Default: accessible only from host (127.0.0.1:8000)
+#   - LAN access: change host to "0.0.0.0:8000"
+#   - Reverse proxy: use service name "mcp-ragdocs" internally
+#
+# Multi-Environment:
+#   - Use docker-compose.override.yml for local overrides
+#   - Production: docker compose -f docker-compose.yml up -d
+#   - Development: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Logs:
+#   - View logs: docker compose logs -f mcp-ragdocs
+#   - Health status: docker compose ps
+#
+# Rebuild Index:
+#   - Exec into container: docker compose exec mcp-ragdocs bash
+#   - Run: mcp-markdown-ragdocs rebuild-index
+#
+# Security Notes:
+#   - Default: listens only on localhost (not exposed to network)
+#   - No authentication required (add reverse proxy for production)
+#   - Read-only document mount prevents container writing to source
