@@ -1,15 +1,37 @@
+import json
+import logging
+import re
 from pathlib import Path
 from typing import Protocol, cast
 
-from llama_index.core import (
-    Document as LlamaDocument,
-)
-from llama_index.core import Settings, StorageContext, VectorStoreIndex, load_index_from_storage
-from llama_index.core.node_parser import MarkdownNodeParser
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.vector_stores.faiss import FaissVectorStore
+import numpy as np
+from numpy.typing import NDArray
 
-from src.models import Document
+from src.models import Chunk, Document
+
+logger = logging.getLogger(__name__)
+
+
+STOPWORDS = frozenset({
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
+    "be", "have", "has", "had", "do", "does", "did", "will", "would",
+    "could", "should", "may", "might", "must", "shall", "can", "need",
+    "this", "that", "these", "those", "it", "its", "they", "them", "their",
+    "he", "she", "him", "her", "his", "hers", "we", "us", "our", "you",
+    "your", "i", "me", "my", "who", "what", "which", "where", "when",
+    "how", "why", "all", "each", "every", "both", "few", "more", "most",
+    "other", "some", "such", "no", "not", "only", "same", "so", "than",
+    "too", "very", "just", "also", "now", "here", "there", "then",
+})
+
+
+def _cosine_similarity(a: NDArray[np.floating], b: NDArray[np.floating]) -> float:
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
 
 
 class EmbeddingModel(Protocol):
@@ -17,18 +39,31 @@ class EmbeddingModel(Protocol):
 
 
 class VectorIndex:
-    def __init__(self, embedding_model_name: str = "BAAI/bge-small-en-v1.5"):
-        self._embedding_model = HuggingFaceEmbedding(model_name=embedding_model_name)
-        Settings.embed_model = self._embedding_model
-        Settings.chunk_size = 512
-        Settings.chunk_overlap = 50
+    def __init__(self, embedding_model_name: str = "BAAI/bge-small-en-v1.5", embedding_model = None):
+        from llama_index.core import Settings
 
-        self._node_parser = MarkdownNodeParser()
+        if embedding_model is not None:
+            self._embedding_model = embedding_model
+        else:
+            from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+            self._embedding_model = HuggingFaceEmbedding(model_name=embedding_model_name)
+
+        Settings.embed_model = self._embedding_model
+
         self._doc_id_to_node_ids: dict[str, list[str]] = {}
-        self._vector_store: FaissVectorStore | None = None
-        self._index: VectorStoreIndex | None = None
+        self._chunk_id_to_node_id: dict[str, str] = {}
+        self._vector_store = None
+        self._index = None
+        self._concept_vocabulary: dict[str, list[float]] = {}
 
     def add(self, document: Document) -> None:
+        from llama_index.core import Document as LlamaDocument
+
+        if document.chunks:
+            for chunk in document.chunks:
+                self.add_chunk(chunk)
+            return
+
         if self._index is None:
             self._initialize_index()
 
@@ -45,15 +80,43 @@ class VectorIndex:
             id_=document.id,
         )
 
-        nodes = self._node_parser.get_nodes_from_documents([llama_doc])
+        node_id = llama_doc.id_
+        self._doc_id_to_node_ids[document.id] = [node_id]
 
-        for node in nodes:
-            node.metadata["doc_id"] = document.id
+        self._index.insert_nodes([llama_doc])
 
-        node_ids = [node.node_id for node in nodes]
-        self._doc_id_to_node_ids[document.id] = node_ids
+    def add_chunk(self, chunk: Chunk) -> None:
+        from llama_index.core import Document as LlamaDocument
 
-        self._index.insert_nodes(nodes)
+        if self._index is None:
+            self._initialize_index()
+
+        assert self._index is not None
+
+        embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
+
+        llama_doc = LlamaDocument(
+            text=embedding_text,
+            metadata={
+                "chunk_id": chunk.chunk_id,
+                "doc_id": chunk.doc_id,
+                "chunk_index": chunk.chunk_index,
+                "header_path": chunk.header_path,
+                "file_path": chunk.file_path,
+                "tags": chunk.metadata.get("tags", []),
+                "links": chunk.metadata.get("links", []),
+            },
+            id_=chunk.chunk_id,
+        )
+
+        node_id = llama_doc.id_
+        self._chunk_id_to_node_id[chunk.chunk_id] = node_id
+
+        if chunk.doc_id not in self._doc_id_to_node_ids:
+            self._doc_id_to_node_ids[chunk.doc_id] = []
+        self._doc_id_to_node_ids[chunk.doc_id].append(node_id)
+
+        self._index.insert_nodes([llama_doc])
 
     def remove(self, document_id: str) -> None:
         if self._index is None or document_id not in self._doc_id_to_node_ids:
@@ -61,22 +124,168 @@ class VectorIndex:
 
         del self._doc_id_to_node_ids[document_id]
 
-    def search(self, query: str, top_k: int = 10) -> list[str]:
+    def search(self, query: str, top_k: int = 10) -> list[dict]:
         if self._index is None or not query.strip():
             return []
 
         retriever = self._index.as_retriever(similarity_top_k=top_k)
         nodes = retriever.retrieve(query)
 
-        seen = set()
         results = []
         for node in nodes:
-            doc_id = node.metadata.get("doc_id")
-            if doc_id and doc_id not in seen:
-                seen.add(doc_id)
-                results.append(doc_id)
+            chunk_id = node.metadata.get("chunk_id")
+
+            node_text = node.node.get_content() if hasattr(node.node, "get_content") else getattr(node.node, "text", "")
+
+            if chunk_id:
+                results.append({
+                    "chunk_id": chunk_id,
+                    "doc_id": node.metadata.get("doc_id"),
+                    "score": node.score if hasattr(node, "score") else 1.0,
+                    "header_path": node.metadata.get("header_path", ""),
+                    "file_path": node.metadata.get("file_path", ""),
+                    "content": node_text,
+                    "metadata": node.metadata,
+                })
+            else:
+                doc_id = node.metadata.get("doc_id")
+                if doc_id:
+                    results.append({
+                        "chunk_id": doc_id,
+                        "doc_id": doc_id,
+                        "score": node.score if hasattr(node, "score") else 1.0,
+                        "header_path": "",
+                        "file_path": node.metadata.get("file_path", ""),
+                        "content": node_text,
+                        "metadata": node.metadata,
+                    })
 
         return results
+
+    def get_chunk_by_id(self, chunk_id: str):
+        if self._index is None:
+            logger.warning(f"get_chunk_by_id({chunk_id}): index is None")
+            return None
+
+        logger.info(f"get_chunk_by_id({chunk_id}): attempting direct docstore lookup")
+
+        # Try direct lookup in docstore first
+        try:
+            docstore = self._index.docstore
+            node = docstore.get_document(chunk_id)
+
+            if node:
+                logger.info(f"get_chunk_by_id({chunk_id}): found in docstore")
+                node_text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
+
+                return {
+                    "chunk_id": chunk_id,
+                    "doc_id": node.metadata.get("doc_id"),
+                    "score": 1.0,
+                    "header_path": node.metadata.get("header_path", ""),
+                    "file_path": node.metadata.get("file_path", ""),
+                    "content": node_text,
+                    "metadata": node.metadata,
+                }
+            else:
+                logger.warning(f"get_chunk_by_id({chunk_id}): not found in docstore")
+        except Exception as e:
+            logger.warning(f"get_chunk_by_id({chunk_id}): docstore lookup failed: {e}")
+
+        logger.info(f"get_chunk_by_id({chunk_id}): falling back to retriever search")
+        # Fallback to retriever search
+        retriever = self._index.as_retriever(similarity_top_k=100)
+        nodes = retriever.retrieve(chunk_id)
+
+        for node in nodes:
+            if node.metadata.get("chunk_id") == chunk_id:
+                node_text = node.node.get_content() if hasattr(node.node, "get_content") else getattr(node.node, "text", "")
+
+                return {
+                    "chunk_id": chunk_id,
+                    "doc_id": node.metadata.get("doc_id"),
+                    "score": 1.0,
+                    "header_path": node.metadata.get("header_path", ""),
+                    "file_path": node.metadata.get("file_path", ""),
+                    "content": node_text,
+                    "metadata": node.metadata,
+                }
+
+        return None
+
+    def get_chunk_ids_for_document(self, doc_id: str) -> list[str]:
+        """Get all chunk IDs for a given document ID."""
+        return self._doc_id_to_node_ids.get(doc_id, [])
+
+    def build_concept_vocabulary(
+        self,
+        min_term_length: int = 3,
+        max_terms: int = 10000,
+    ) -> None:
+        if self._index is None:
+            return
+
+        term_counts: dict[str, int] = {}
+        docstore = self._index.docstore
+
+        for chunk_id in self._chunk_id_to_node_id:
+            try:
+                node = docstore.get_document(chunk_id)
+                if node is None:
+                    continue
+                text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
+                tokens = re.findall(r'\b[a-zA-Z][a-zA-Z0-9_-]*\b', text.lower())
+                for token in tokens:
+                    if len(token) >= min_term_length and token not in STOPWORDS:
+                        term_counts[token] = term_counts.get(token, 0) + 1
+            except Exception:
+                continue
+
+        sorted_terms = sorted(term_counts.items(), key=lambda x: x[1], reverse=True)
+        top_terms = [term for term, _ in sorted_terms[:max_terms]]
+
+        self._concept_vocabulary = {}
+        for term in top_terms:
+            try:
+                embedding = self._embedding_model.get_text_embedding(term)
+                self._concept_vocabulary[term] = embedding
+            except Exception:
+                continue
+
+        logger.info(f"Built concept vocabulary with {len(self._concept_vocabulary)} terms")
+
+    def expand_query(
+        self,
+        query: str,
+        top_k: int = 3,
+        similarity_threshold: float = 0.5,
+    ) -> str:
+        if not self._concept_vocabulary:
+            return query
+
+        query_embedding = np.array(
+            self._embedding_model.get_text_embedding(query),
+            dtype=np.float64,
+        )
+
+        similarities: list[tuple[str, float]] = []
+        for term, term_emb in self._concept_vocabulary.items():
+            term_vec = np.array(term_emb, dtype=np.float64)
+            sim = _cosine_similarity(query_embedding, term_vec)
+            if sim >= similarity_threshold:
+                similarities.append((term, sim))
+
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        expansion_terms = [term for term, _ in similarities[:top_k]]
+
+        query_tokens = set(query.lower().split())
+        new_terms = [t for t in expansion_terms if t not in query_tokens]
+
+        if new_terms:
+            expanded = f"{query} {' '.join(new_terms)}"
+            logger.debug(f"Query expanded: '{query}' -> '{expanded}'")
+            return expanded
+        return query
 
     def persist(self, path: Path) -> None:
         if self._index is None:
@@ -92,12 +301,22 @@ class VectorIndex:
             faiss_path = path / "faiss_index.bin"
             faiss.write_index(self._vector_store._faiss_index, str(faiss_path))
 
-        import json
         mapping_file = path / "doc_id_mapping.json"
         with open(mapping_file, "w") as f:
             json.dump(self._doc_id_to_node_ids, f)
 
+        chunk_mapping_file = path / "chunk_id_mapping.json"
+        with open(chunk_mapping_file, "w") as f:
+            json.dump(self._chunk_id_to_node_id, f)
+
+        vocab_file = path / "concept_vocabulary.json"
+        with open(vocab_file, "w") as f:
+            json.dump(self._concept_vocabulary, f)
+
     def load(self, path: Path) -> None:
+        from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage
+        from llama_index.vector_stores.faiss import FaissVectorStore
+
         if not path.exists():
             self._initialize_index()
             return
@@ -120,7 +339,6 @@ class VectorIndex:
 
         self._index = cast(VectorStoreIndex, load_index_from_storage(storage_context))
 
-        import json
         mapping_file = path / "doc_id_mapping.json"
         if mapping_file.exists():
             with open(mapping_file, "r") as f:
@@ -128,7 +346,24 @@ class VectorIndex:
         else:
             self._doc_id_to_node_ids = {}
 
+        chunk_mapping_file = path / "chunk_id_mapping.json"
+        if chunk_mapping_file.exists():
+            with open(chunk_mapping_file, "r") as f:
+                self._chunk_id_to_node_id = json.load(f)
+        else:
+            self._chunk_id_to_node_id = {}
+
+        vocab_file = path / "concept_vocabulary.json"
+        if vocab_file.exists():
+            with open(vocab_file, "r") as f:
+                self._concept_vocabulary = json.load(f)
+        else:
+            self._concept_vocabulary = {}
+
     def _initialize_index(self) -> None:
+        from llama_index.core import StorageContext, VectorStoreIndex
+        from llama_index.vector_stores.faiss import FaissVectorStore
+
         import faiss
 
         dimension = 384

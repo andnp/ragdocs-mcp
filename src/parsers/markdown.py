@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from datetime import datetime
@@ -10,6 +11,14 @@ from tree_sitter_markdown import language
 from src.models import Document
 from src.parsers.base import DocumentParser
 
+logger = logging.getLogger(__name__)
+
+
+INDEXED_FRONTMATTER_FIELDS = [
+    "title", "description", "summary", "keywords",
+    "author", "category", "type", "related"
+]
+
 
 class MarkdownParser(DocumentParser):
     def __init__(self):
@@ -19,8 +28,25 @@ class MarkdownParser(DocumentParser):
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        # Try UTF-8 first, fall back to other encodings if needed
+        content = None
+        last_error = None
+        for encoding in ["utf-8", "latin-1", "cp1252", "iso-8859-1"]:
+            try:
+                with open(file_path, "r", encoding=encoding, errors="strict") as f:
+                    content = f.read()
+                if encoding != "utf-8":
+                    logger.warning(f"File {file_path} decoded with {encoding} encoding")
+                break
+            except (UnicodeDecodeError, LookupError) as e:
+                last_error = e
+                continue
+        
+        if content is None:
+            raise UnicodeDecodeError(
+                "utf-8", b"", 0, 1,
+                f"Could not decode {file_path} with any supported encoding. Last error: {last_error}"
+            )
 
         content_bytes = bytes(content, "utf8")
         tree = self.parser.parse(content_bytes)
@@ -56,6 +82,21 @@ class MarkdownParser(DocumentParser):
             del metadata["tags"]
         if transclusions:
             metadata["transclusions"] = transclusions
+
+        for field in INDEXED_FRONTMATTER_FIELDS:
+            if field in frontmatter_metadata:
+                value = frontmatter_metadata[field]
+                if isinstance(value, list):
+                    metadata[field] = value
+                else:
+                    metadata[field] = str(value)
+
+        related = frontmatter_metadata.get("related", [])
+        if isinstance(related, str):
+            related = [related]
+        elif not isinstance(related, list):
+            related = []
+        wikilinks = list(set(wikilinks) | set(related))
 
         return Document(
             id=doc_id,

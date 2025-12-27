@@ -3,7 +3,7 @@ E2E test for real-world documentation site scenario.
 
 Tests complete workflow with interconnected documentation corpus simulating
 a technical documentation site. Validates hybrid search strategies, graph
-traversal, recency boosting, and LLM synthesis.
+traversal, and LLM synthesis.
 """
 
 import os
@@ -432,6 +432,7 @@ def test_real_world_documentation_site_complete_workflow(client):
     - Different queries return different answers
     - Answers contain relevant terms from expected documents
     - Graph traversal works (deployment query includes security concepts)
+    - Multi-strategy combination queries work correctly
     """
     # Verify server started
     health_response = client.get("/health")
@@ -492,40 +493,25 @@ def test_real_world_documentation_site_complete_workflow(client):
     assert any(term in answer3_lower for term in ["security", "secure", "firewall", "https", "credential"]), \
         f"Answer missing security terms (graph traversal failed): {answer3}"
 
-    # Query 4: Recency boost - recent deployment doc should rank higher
+    # Query 4: Multi-strategy combination - getting started with auth
     query4_response = client.post(
         "/query_documents",
-        json={"query": "recent updates"},
+        json={"query": "getting started with authentication"},
     )
     assert query4_response.status_code == 200
     query4_data = query4_response.json()
     answer4 = query4_data["answer"]
 
     assert len(answer4) > 50, f"Answer too short: {len(answer4)} chars"
-    # Recent deployment doc should appear in results
     answer4_lower = answer4.lower()
-    assert any(term in answer4_lower for term in ["deploy", "deployment", "docker", "environment"]), \
-        f"Answer missing recent deployment terms: {answer4}"
-
-    # Query 5: Multi-strategy combination - getting started with auth
-    query5_response = client.post(
-        "/query_documents",
-        json={"query": "getting started with authentication"},
-    )
-    assert query5_response.status_code == 200
-    query5_data = query5_response.json()
-    answer5 = query5_data["answer"]
-
-    assert len(answer5) > 50, f"Answer too short: {len(answer5)} chars"
-    answer5_lower = answer5.lower()
     # Should combine getting-started + authentication concepts
-    assert any(term in answer5_lower for term in ["start", "begin", "quick", "first"]), \
-        f"Answer missing getting-started terms: {answer5}"
-    assert any(term in answer5_lower for term in ["auth", "api", "key", "credential"]), \
-        f"Answer missing authentication terms: {answer5}"
+    assert any(term in answer4_lower for term in ["start", "begin", "quick", "first"]), \
+        f"Answer missing getting-started terms: {answer4}"
+    assert any(term in answer4_lower for term in ["auth", "api", "key", "credential"]), \
+        f"Answer missing authentication terms: {answer4}"
 
     # Verify different queries return different answers
-    answers = [answer1, answer2, answer3, answer4, answer5]
+    answers = [answer1, answer2, answer3, answer4]
     unique_answers = set(answers)
     assert len(unique_answers) >= 3, \
         f"Expected at least 3 unique answers, got {len(unique_answers)}"

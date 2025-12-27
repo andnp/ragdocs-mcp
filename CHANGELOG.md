@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Query expansion via embeddings: `build_concept_vocabulary()` extracts terms during indexing, `expand_query()` finds top-3 nearest terms to query embedding for improved recall
+- Cross-encoder re-ranking with lazy model loading (loaded on first `rerank()` call)
+  - Default model: `cross-encoder/ms-marco-MiniLM-L-6-v2` (22MB, ~50ms/10 docs)
+  - New config options: `rerank_enabled`, `rerank_model`, `rerank_top_n`
+- Concept vocabulary persisted as `concept_vocabulary.json` with index
+- Heading-weighted embeddings: chunks prepend `header_path` to content before embedding for improved semantic context
+- Extended frontmatter extraction: title, description, summary, keywords, author, category, type, related fields
+- BM25F field boosting in keyword index:
+  - title (3.0x), headers (2.5x), keywords (2.5x), description (2.0x), tags (2.0x), aliases (1.5x), author (1.0x), category
+  - MultifieldParser searches all TEXT fields
+- Result filtering pipeline with `CompressionStats` tracking:
+  - `min_confidence`: score threshold filtering (default: 0.0 = disabled)
+  - `max_chunks_per_doc`: per-document chunk limit (default: 0 = disabled)
+  - `dedup_enabled` / `dedup_similarity_threshold`: semantic deduplication via cosine similarity clustering
+
+### Changed
+- `QueryOrchestrator.query()` returns `tuple[list[ChunkResult], CompressionStats]`
+- Processing pipeline order: normalize → threshold → doc limit → dedup → re-rank → top_n
+- Graph index enhanced with `related` frontmatter field edges
+- Vocabulary built during `persist()` after indexing completes
+
+### Migration
+- **Reindexing required** to build concept vocabulary. Run: `uv run mcp-markdown-ragdocs rebuild-index`
+
+### Migration
+- **Reindexing required** for schema changes. Run: `uv run mcp-markdown-ragdocs rebuild-index`
+
 ## [0.1.0] - 2025-12-22
 
 ### Added

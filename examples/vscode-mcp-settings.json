@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "markdown-docs": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/mcp-markdown-ragdocs",
+        "run",
+        "mcp-markdown-ragdocs",
+        "mcp"
+      ],
+      "type": "stdio"
+    }
+  }
+}

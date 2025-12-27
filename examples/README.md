@@ -4,7 +4,55 @@ This directory contains example configurations for common use cases.
 
 ## Available Examples
 
-### [config-minimal.toml](config-minimal.toml)
+### MCP Client Integration
+
+#### [vscode-mcp-settings.json](vscode-mcp-settings.json)
+
+VS Code MCP server configuration using stdio transport.
+
+**Use when:**
+- Integrating with VS Code MCP extension
+- Using GitHub Copilot Chat with documentation search
+- Need automatic server lifecycle management
+
+**Installation:**
+
+Option 1: User-level configuration (all projects):
+```zsh
+cp examples/vscode-mcp-settings.json ~/.config/Code/User/mcp.json
+# Edit to set correct path
+```
+
+Option 2: Workspace-level configuration (single project):
+```zsh
+mkdir -p .vscode
+cp examples/vscode-mcp-settings.json .vscode/settings.json
+# Edit to set correct path
+```
+
+#### [claude-desktop-config.json](claude-desktop-config.json)
+
+Claude Desktop configuration for stdio MCP server.
+
+**Use when:**
+- Using Claude Desktop app
+- Want AI assistant to search project documentation
+
+**Installation:**
+
+```zsh
+# macOS
+cp examples/claude-desktop-config.json ~/Library/Application\ Support/Claude/claude_desktop_config.json
+
+# Linux
+cp examples/claude-desktop-config.json ~/.config/Claude/claude_desktop_config.json
+
+# Edit to set correct path
+```
+
+### TOML Configuration Files
+
+#### [config-minimal.toml](config-minimal.toml)
 
 Bare minimum configuration to get started. Uses defaults for everything except documents path.
 
@@ -13,7 +61,7 @@ Bare minimum configuration to get started. Uses defaults for everything except d
 - Testing the server
 - Default behavior is sufficient
 
-### [config-obsidian.toml](config-obsidian.toml)
+#### [config-obsidian.toml](config-obsidian.toml)
 
 Configuration optimized for Obsidian vaults with heavy wikilink usage.
 
@@ -23,7 +71,7 @@ Configuration optimized for Obsidian vaults with heavy wikilink usage.
 - Prefer semantic connections over exact matches
 - Recent notes more important
 
-### [config-documentation.toml](config-documentation.toml)
+#### [config-documentation.toml](config-documentation.toml)
 
 Configuration for technical documentation sites with multiple file types.
 
@@ -33,7 +81,7 @@ Configuration for technical documentation sites with multiple file types.
 - Documentation changes less frequently (lower recency bias)
 - Need predictable exact-match behavior
 
-### [config-development.toml](config-development.toml)
+#### [config-development.toml](config-development.toml)
 
 Configuration for development and testing with debug-friendly settings.
 
@@ -43,7 +91,26 @@ Configuration for development and testing with debug-friendly settings.
 - Need fast indexing and rebuilds
 - Debugging search behavior
 
-### [docker-compose.example.yml](docker-compose.example.yml)
+#### [config-multi-project.toml](config-multi-project.toml)
+
+Global configuration with multiple registered projects.
+
+**Use when:**
+- Managing documentation for multiple projects
+- Want isolated indices per project
+- Automatic project detection based on working directory
+
+**Installation:**
+
+```zsh
+mkdir -p ~/.config/mcp-markdown-ragdocs
+cp examples/config-multi-project.toml ~/.config/mcp-markdown-ragdocs/config.toml
+# Edit project paths
+```
+
+### Docker
+
+#### [docker-compose.example.yml](docker-compose.example.yml)
 
 Docker Compose configuration with detailed comments.
 
@@ -55,10 +122,11 @@ Docker Compose configuration with detailed comments.
 
 ## Using an Example
 
-Copy the example you want to use:
+Copy the example you want to use to a namespaced directory:
 
 ```zsh
-cp examples/config-minimal.toml config.toml
+mkdir -p .mcp-markdown-ragdocs
+cp examples/config-minimal.toml .mcp-markdown-ragdocs/config.toml
 ```
 
 Edit paths to match your setup:
@@ -76,10 +144,13 @@ uv run mcp-markdown-ragdocs run
 
 ## Configuration Discovery
 
-The server searches for `config.toml` in:
+The server searches for `config.toml` in the following order:
 
-1. Current directory (`./config.toml`)
-2. User config directory (`~/.config/mcp-markdown-ragdocs/config.toml`)
+1. `.mcp-markdown-ragdocs/config.toml` in current directory
+2. `.mcp-markdown-ragdocs/config.toml` in parent directories (walks up to root)
+3. `~/.config/mcp-markdown-ragdocs/config.toml` (user-global configuration)
+
+This supports **monorepo workflows** where a shared configuration can be placed in the repository root and discovered from any subdirectory.
 
 If no config file is found, all options use defaults (documents in current directory).
 

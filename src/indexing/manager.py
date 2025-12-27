@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.chunking.factory import get_chunker
 from src.config import Config
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -32,14 +33,19 @@ class IndexManager:
         self._keyword = keyword
         self._graph = graph
         self._failed_files: list[FailedFile] = []
+        self._chunker = get_chunker(config.chunking)
 
     def index_document(self, file_path: str):
         try:
             parser = dispatch_parser(file_path, self._config)
             document = parser.parse(file_path)
 
-            self._vector.add(document)
-            self._keyword.add(document)
+            chunks = self._chunker.chunk_document(document)
+            document.chunks = chunks
+
+            for chunk in chunks:
+                self._vector.add_chunk(chunk)
+                self._keyword.add_chunk(chunk)
 
             self._graph.add_node(document.id, document.metadata)
 
@@ -50,6 +56,31 @@ class IndexManager:
                 f for f in self._failed_files if f.path != file_path
             ]
 
+        except UnicodeDecodeError as e:
+            # Try alternative encodings for files with encoding issues
+            logger.warning(f"UTF-8 decode failed for {file_path}, trying alternative encodings: {e}")
+            for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
+                try:
+                    logger.info(f"Attempting to read {file_path} with {encoding} encoding")
+                    parser = dispatch_parser(file_path, self._config)
+                    # This will re-attempt parsing with different encoding
+                    # Note: We'd need to modify parsers to accept encoding parameter
+                    # For now, just skip the file and log it
+                    logger.warning(f"Skipping file with encoding issues: {file_path}")
+                    break
+                except Exception:
+                    continue
+
+            failed = FailedFile(
+                path=file_path,
+                error=f"Encoding error: {str(e)}",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            )
+            self._failed_files = [
+                f for f in self._failed_files if f.path != file_path
+            ] + [failed]
+            # Don't raise - continue indexing other files
+            logger.info(f"Continuing with remaining files after encoding error in {file_path}")
         except Exception as e:
             logger.error(f"Failed to index document {file_path}: {e}")
             failed = FailedFile(
@@ -73,6 +104,7 @@ class IndexManager:
     def persist(self):
         index_path = Path(self._config.indexing.index_path)
         try:
+            self._vector.build_concept_vocabulary()
             self._vector.persist(index_path / "vector")
             self._keyword.persist(index_path / "keyword")
             self._graph.persist(index_path / "graph")

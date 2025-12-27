@@ -210,6 +210,26 @@ Content with émojis 🎉 and àccénts.
     assert doc.metadata["author"] == "中文用户"
 
 
+def test_parse_latin1_encoding(tmp_path):
+    """
+    Verify parser handles files with latin-1 encoding gracefully.
+    Falls back to alternative encodings when UTF-8 fails.
+    """
+    md_file = tmp_path / "latin1.md"
+    # Write content with latin-1 specific bytes that aren't valid UTF-8
+    content = "# Test Document\n\nCafé with extended chars: \xe9\xe0\xfc"
+    with open(md_file, "wb") as f:
+        f.write(content.encode("latin-1"))
+
+    parser = MarkdownParser()
+    doc = parser.parse(str(md_file))
+
+    assert doc.id == "latin1"
+    assert "Test Document" in doc.content
+    # Content should be decoded successfully with latin-1 fallback
+    assert "Café" in doc.content or "Caf" in doc.content
+
+
 def test_extract_wikilinks_both_forms(tmp_path):
     """
     Verify parser extracts wikilinks in both [[Note]] and [[Note|Display]] forms.

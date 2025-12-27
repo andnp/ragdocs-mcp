@@ -1,15 +1,336 @@
 # Configuration Reference
 
-This document provides an exhaustive reference for all configuration options in mcp-markdown-ragdocs.
+This document provides an exhaustive reference for all configuration options and CLI commands in mcp-markdown-ragdocs.
+
+## CLI Commands
+
+### mcp
+
+Start stdio-based MCP server for VS Code and compatible MCP clients.
+
+```zsh
+uv run mcp-markdown-ragdocs mcp [OPTIONS]
+```
+
+**Options:**
+- `--project TEXT`: Override project detection by specifying project name or absolute path
+
+**Usage:**
+
+Starts a persistent MCP server using stdio transport. VS Code or Claude Desktop manages the server lifecycle. The server remains running until terminated by the client or user.
+
+**Examples:**
+
+```zsh
+# Start with automatic project detection
+uv run mcp-markdown-ragdocs mcp
+
+# Start with specific project
+uv run mcp-markdown-ragdocs mcp --project monorepo
+
+# Start with project path
+uv run mcp-markdown-ragdocs mcp --project /home/user/myproject
+```
+
+**When to Use:**
+- Integrating with VS Code MCP extension
+- Integrating with Claude Desktop
+- Any MCP client supporting stdio transport
+
+**Behavior:**
+- Indexes documents on startup (or loads existing index)
+- Starts file watcher for automatic updates
+- Exposes `query_documents` tool via stdio
+- Runs persistently until stopped
+
+### run
+
+Start HTTP API server for development and testing.
+
+```zsh
+uv run mcp-markdown-ragdocs run [OPTIONS]
+```
+
+**Options:**
+- `--host TEXT`: IP address to bind (default: 127.0.0.1)
+- `--port INTEGER`: TCP port to bind (default: 8000)
+- `--project TEXT`: Override project detection
+
+**Usage:**
+
+Starts an HTTP server exposing REST API endpoints. Suitable for development, testing, or custom HTTP-based integrations.
+
+**Examples:**
+
+```zsh
+# Start on default host/port
+uv run mcp-markdown-ragdocs run
+
+# Listen on all interfaces
+uv run mcp-markdown-ragdocs run --host 0.0.0.0
+
+# Custom port
+uv run mcp-markdown-ragdocs run --port 8080
+
+# With project override
+uv run mcp-markdown-ragdocs run --project my-docs
+```
+
+**When to Use:**
+- Development and testing
+- Direct HTTP API access
+- Custom integrations not using MCP
+- Debugging query behavior
+
+**Behavior:**
+- Same indexing and file watching as `mcp` command
+- Exposes HTTP endpoints: `/health`, `/status`, `/query_documents`
+- Runs persistently until stopped (Ctrl+C)
+
+### query
+
+Query documents directly from command line.
+
+```zsh
+uv run mcp-markdown-ragdocs query QUERY_TEXT [OPTIONS]
+```
+
+**Arguments:**
+- `QUERY_TEXT`: Natural language query or question (required)
+
+**Options:**
+- `--json`: Output results as JSON instead of formatted text
+- `--top-n INTEGER`: Maximum number of results (default: 5, max: 100)
+- `--project TEXT`: Override project detection
+
+**Usage:**
+
+Executes a one-time query against the indexed documents and outputs results to stdout. Suitable for scripting, testing, or quick searches.
+
+**Examples:**
+
+```zsh
+# Basic query with formatted output
+uv run mcp-markdown-ragdocs query "How do I configure authentication?"
+
+# JSON output for scripting
+uv run mcp-markdown-ragdocs query "authentication" --json
+
+# Limit results
+uv run mcp-markdown-ragdocs query "deployment" --top-n 3
+
+# Query specific project
+uv run mcp-markdown-ragdocs query "API reference" --project monorepo
+```
+
+**Output Formats:**
+
+**Formatted (default):**
+
+```
+Query: How do I configure authentication?
+
+Found 3 results:
+
+╭─ #1 Score: 0.8542 ──────────────────────────────╮
+│ Document: authentication                         │
+│ Section: Configuration > OAuth                   │
+│ File: docs/auth.md                              │
+│                                                  │
+│ To configure authentication, set the auth        │
+│ section in config.toml...                       │
+╰──────────────────────────────────────────────────╯
+```
+
+**JSON:**
+
+```json
+{
+  "query": "How do I configure authentication?",
+  "results": [
+    {
+      "doc_id": "authentication",
+      "content": "To configure authentication...",
+      "file_path": "docs/auth.md",
+      "header_path": "Configuration > OAuth",
+      "score": 0.8542
+    }
+  ]
+}
+```
+
+**When to Use:**
+- Quick documentation searches from terminal
+- Shell scripts processing query results
+- Testing search behavior
+- Verifying indexed content
+
+**Behavior:**
+- Loads existing index (does not rebuild)
+- Fails if no index exists (run `rebuild-index` first)
+- Suppresses logging for clean output
+- Exits after displaying results
+
+### check-config
+
+Validate configuration and display resolved settings.
+
+```zsh
+uv run mcp-markdown-ragdocs check-config [OPTIONS]
+```
+
+**Options:**
+- `--project TEXT`: Override project detection
+
+**Usage:**
+
+Loads configuration, validates all settings, and displays effective values including project detection results.
+
+**Examples:**
+
+```zsh
+# Check configuration
+uv run mcp-markdown-ragdocs check-config
+
+# Check with project override
+uv run mcp-markdown-ragdocs check-config --project monorepo
+```
+
+**Output:**
+
+```
+╭─ Configuration ─────────────────────────────────╮
+│ Setting              │ Value                    │
+├──────────────────────┼──────────────────────────┤
+│ Server Host          │ 127.0.0.1               │
+│ Server Port          │ 8000                     │
+│ Documents Path       │ /home/user/docs         │
+│ Index Path           │ .index_data/            │
+│ Recursive            │ True                     │
+│                      │                          │
+│ Registered Projects  │ 3 project(s)            │
+│   • monorepo         │ /home/user/work/mono    │
+│   • notes            │ /home/user/notes        │
+│                      │                          │
+│ Active Project       │ ✅ monorepo             │
+│                      │                          │
+│ Semantic Weight      │ 1.0                      │
+│ Keyword Weight       │ 1.0                      │
+│ Recency Bias         │ 0.5                      │
+╰──────────────────────────────────────────────────╯
+
+✅ Configuration is valid
+
+📊 Index exists at: /home/user/.local/share/mcp-markdown-ragdocs/monorepo
+```
+
+**When to Use:**
+- Debugging configuration issues
+- Verifying project detection
+- Checking resolved paths before indexing
+- Confirming multi-project setup
+
+**Behavior:**
+- Loads and validates configuration
+- Does not modify any files
+- Does not build or load indices
+- Exits after displaying information
+
+### rebuild-index
+
+Force a full index rebuild.
+
+```zsh
+uv run mcp-markdown-ragdocs rebuild-index [OPTIONS]
+```
+
+**Options:**
+- `--project TEXT`: Override project detection
+
+**Usage:**
+
+Forces a complete reindex of all documents. Deletes existing indices and rebuilds from scratch.
+
+**Examples:**
+
+```zsh
+# Rebuild index for current directory/project
+uv run mcp-markdown-ragdocs rebuild-index
+
+# Rebuild specific project
+uv run mcp-markdown-ragdocs rebuild-index --project monorepo
+```
+
+**Output:**
+
+```
+Indexing documents... ████████████████████ 147/147 00:00:45
+
+✅ Successfully rebuilt index: 147 documents indexed
+```
+
+**When to Use:**
+- Configuration changes (embedding model, parsers, chunking)
+- Corrupted or missing index
+- After bulk document changes
+- Testing indexing behavior
+
+**Behavior:**
+- Discovers all matching files based on `include`/`exclude` patterns
+- Displays progress bar during indexing
+- Persists new index and manifest
+- Overwrites existing index files
 
 ## Configuration File Discovery
 
 The server searches for `config.toml` in the following order. The first file found is used:
 
-1. `./config.toml` (current working directory)
-2. `$HOME/.config/mcp-markdown-ragdocs/config.toml` (user-global configuration)
+1. `.mcp-markdown-ragdocs/config.toml` in current directory
+2. `.mcp-markdown-ragdocs/config.toml` in parent directories (walks up to filesystem root)
+3. `$HOME/.config/mcp-markdown-ragdocs/config.toml` (user-global configuration)
+
+This discovery order supports **monorepo workflows** where a single configuration can be placed in a parent directory and shared across multiple projects. The server walks up the directory tree until it finds a `.mcp-markdown-ragdocs/config.toml` file or reaches the filesystem root.
 
 If no configuration file is found, all options use their default values.
+
+## Multi-Project Support
+
+The global configuration file (`~/.config/mcp-markdown-ragdocs/config.toml`) supports registering multiple projects. The server automatically detects which project you're working in based on your current directory and uses isolated indices for each project.
+
+See [Multi-Project Setup Guide](guides/multi-project-setup.md) for complete details.
+
+### [[projects]]
+
+Define multiple projects with automatic detection and isolated storage.
+
+```toml
+[[projects]]
+name = "monorepo"
+path = "/home/user/work/monorepo"
+
+[[projects]]
+name = "personal-notes"
+path = "/home/user/Documents/notes"
+```
+
+#### `name`
+
+- **Type:** string
+- **Required:** yes
+- **Constraints:** Alphanumeric, hyphens, and underscores only
+- **Description:** Unique identifier for the project. Used as directory name in data storage.
+
+#### `path`
+
+- **Type:** string
+- **Required:** yes
+- **Constraints:** Must be absolute path
+- **Description:** Project root directory. The server detects the project when your current directory is under this path.
+
+**Project Detection:**
+- If CWD matches or is a subdirectory of a registered project path, that project is active
+- For nested projects, the deepest match wins
+- Indices stored in `~/.local/share/mcp-markdown-ragdocs/{project-name}/`
 
 ## Configuration Sections
 
@@ -85,6 +406,65 @@ Controls document discovery and index management.
   recursive = false  # Only index top-level directory
   ```
 
+#### `include`
+
+- **Type:** list[string]
+- **Default:** `["**/*"]`
+- **Description:** Glob patterns for files to include in indexing. Only files matching at least one include pattern will be indexed. Uses glob syntax similar to `.gitignore`.
+- **Example:**
+  ```toml
+  [indexing]
+  include = ["**/*.md", "**/*.txt"]  # Only markdown and text files
+  ```
+
+#### `exclude`
+
+- **Type:** list[string]
+- **Default:** `["**/.venv/**", "**/venv/**", "**/build/**", "**/dist/**", "**/.git/**", "**/node_modules/**", "**/__pycache__/**", "**/.pytest_cache/**"]`
+- **Description:** Glob patterns for files/directories to exclude from indexing. Exclude patterns take precedence over include patterns.
+- **Common patterns:**
+  - Virtual environments: `**/.venv/**`, `**/venv/**`
+  - Build artifacts: `**/build/**`, `**/dist/**`, `**/target/**`
+  - Version control: `**/.git/**`, `**/.svn/**`
+  - Dependencies: `**/node_modules/**`, `**/vendor/**`
+  - Python cache: `**/__pycache__/**`, `**/.pytest_cache/**`
+- **Example:**
+  ```toml
+  [indexing]
+  exclude = ["**/drafts/**", "**/archive/**", "**/templates/**"]
+  ```
+
+#### `exclude_hidden_dirs`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** Automatically exclude files in hidden directories (directories starting with `.`). When enabled, any file path containing a directory component that starts with a dot will be excluded, regardless of include/exclude patterns. This is useful for avoiding indexing of directories like `.stversions`, `.cache`, `.config`, etc.
+- **Behavior:** Hidden directory exclusion is checked before include/exclude pattern matching. Set to `false` to disable this feature and rely only on explicit exclude patterns.
+- **Example:**
+  ```toml
+  [indexing]
+  exclude_hidden_dirs = false  # Disable automatic hidden directory exclusion
+  ```
+- **Note:** This setting works independently of the exclude patterns. Even if `.git` is in your exclude list, setting `exclude_hidden_dirs = true` will also exclude `.stversions`, `.cache`, and any other hidden directories without needing to list them explicitly.
+
+#### `reconciliation_interval_seconds`
+
+- **Type:** integer
+- **Default:** `3600` (1 hour)
+- **Description:** Interval in seconds between automatic reconciliation checks. Reconciliation compares the filesystem with indexed files and automatically removes stale entries (deleted files or newly excluded files) and indexes new files. Set to `0` to disable periodic reconciliation.
+- **Behavior:**
+  - Reconciliation always runs once on server startup
+  - If enabled, runs periodically in the background at the specified interval
+  - Catches edge cases like files deleted while server was offline, or config changes
+- **Range:** 0 (disabled) to any positive integer (recommended: 1800-7200 seconds)
+- **Example:**
+  ```toml
+  [indexing]
+  reconciliation_interval_seconds = 1800  # Every 30 minutes
+  # reconciliation_interval_seconds = 0  # Disable periodic reconciliation
+  ```
+- **Performance Impact:** Reconciliation is lightweight (just filesystem scan + comparison), typically adds <1s overhead per run.
+
 ### [parsers]
 
 Maps file glob patterns to parser class names. Enables extending the server to new file types.
@@ -105,6 +485,80 @@ Maps file glob patterns to parser class names. Enables extending the server to n
   "**/*.txt" = "PlainTextParser"  # Future extension
   "docs/api/*.md" = "APIDocParser"  # Specific parser for API docs
   ```
+
+### [chunking]
+
+Controls document chunking strategy for vector indexing.
+
+#### `strategy`
+
+- **Type:** string
+- **Default:** `"header_based"`
+- **Description:** Chunking strategy to use. Currently only `"header_based"` is supported, which splits documents at Markdown headers.
+- **Note:** Changing this value triggers a full index rebuild on next startup.
+- **Example:**
+  ```toml
+  [chunking]
+  strategy = "header_based"
+  ```
+
+#### `min_chunk_chars`
+
+- **Type:** integer
+- **Default:** `200`
+- **Description:** Minimum chunk size in characters. Chunks smaller than this will be merged with adjacent chunks.
+- **Range:** 50 to 10000 (typical: 100 to 500)
+- **Effect:** Smaller values create more granular chunks; larger values create broader context chunks.
+- **Example:**
+  ```toml
+  [chunking]
+  min_chunk_chars = 200
+  ```
+
+#### `max_chunk_chars`
+
+- **Type:** integer
+- **Default:** `1500`
+- **Description:** Maximum chunk size in characters. Chunks larger than this will be split at sentence boundaries.
+- **Range:** 500 to 20000 (typical: 1000 to 4000)
+- **Effect:** Smaller values create more focused chunks; larger values preserve more context.
+- **Example:**
+  ```toml
+  [chunking]
+  max_chunk_chars = 1500
+  ```
+
+#### `overlap_chars`
+
+- **Type:** integer
+- **Default:** `100`
+- **Description:** Number of overlapping characters between adjacent chunks. Preserves context across chunk boundaries.
+- **Range:** 0 to 500 (typical: 50 to 200)
+- **Effect:** Larger overlap increases context preservation but storage overhead.
+- **Example:**
+  ```toml
+  [chunking]
+  overlap_chars = 100
+  ```
+
+#### `include_parent_headers`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** Whether to include parent section headers in chunk metadata. Enables semantic "breadcrumbs" in search results.
+- **Example:**
+  ```toml
+  [chunking]
+  include_parent_headers = true
+  ```
+
+**Chunking Trade-offs:**
+
+| Setting | Small Values | Large Values |
+|---------|-------------|--------------|
+| `min_chunk_chars` | More granular results, may lose context | Better context, fewer results |
+| `max_chunk_chars` | Focused results, less context | Broader context, may dilute relevance |
+| `overlap_chars` | Less storage, less context | Better boundary matching, more storage |
 
 ### [search]
 
@@ -163,6 +617,102 @@ Controls hybrid search behavior and result fusion.
   rrf_k_constant = 30  # Increase influence of top-ranked results
   ```
 
+#### `min_confidence`
+
+- **Type:** float
+- **Default:** `0.0`
+- **Description:** Minimum normalized score threshold for results. Results below this threshold are filtered out. Set to `0.0` to disable filtering (backward compatible default).
+- **Range:** 0.0 to 1.0 (recommended: 0.3 for filtering low-relevance results)
+- **Effect:** Higher values return fewer but more relevant results. When no results meet the threshold, an empty list is returned.
+- **Example:**
+  ```toml
+  [search]
+  min_confidence = 0.3  # Filter results below 30% confidence
+  ```
+
+#### `max_chunks_per_doc`
+
+- **Type:** integer
+- **Default:** `0`
+- **Description:** Maximum number of chunks from a single document in results. Prevents result lists dominated by one document with many matching sections. Set to `0` to disable.
+- **Range:** 0 (disabled) to any positive integer (recommended: 2-3)
+- **Effect:** Lower values increase result diversity across documents.
+- **Example:**
+  ```toml
+  [search]
+  max_chunks_per_doc = 2  # Max 2 chunks per document
+  ```
+
+#### `dedup_enabled`
+
+- **Type:** boolean
+- **Default:** `false`
+- **Description:** Enable semantic deduplication of results. When enabled, chunks with high cosine similarity are clustered, and only one representative per cluster is returned. Reduces redundancy in results.
+- **Example:**
+  ```toml
+  [search]
+  dedup_enabled = true
+  ```
+
+#### `dedup_similarity_threshold`
+
+- **Type:** float
+- **Default:** `0.85`
+- **Description:** Cosine similarity threshold for clustering chunks during deduplication. Chunks with similarity above this threshold are considered duplicates.
+- **Range:** 0.0 to 1.0 (recommended: 0.80 to 0.90)
+- **Effect:** Lower values cluster more aggressively (fewer results). Higher values preserve more distinct chunks.
+- **Requires:** `dedup_enabled = true`
+- **Example:**
+  ```toml
+  [search]
+  dedup_enabled = true
+  dedup_similarity_threshold = 0.85
+  ```
+
+#### `rerank_enabled`
+
+- **Type:** boolean
+- **Default:** `false`
+- **Description:** Enable cross-encoder re-ranking. When enabled, a cross-encoder model re-scores the top candidates after fusion and filtering, computing query-document relevance jointly for higher precision.
+- **Performance:** Adds ~50ms latency for 10 candidates on CPU.
+- **Example:**
+  ```toml
+  [search]
+  rerank_enabled = true
+  ```
+
+#### `rerank_model`
+
+- **Type:** string
+- **Default:** `"cross-encoder/ms-marco-MiniLM-L-6-v2"`
+- **Description:** HuggingFace model identifier for the cross-encoder. The model is downloaded on first use and cached locally.
+- **Requires:** `rerank_enabled = true`
+- **Options:**
+  - `cross-encoder/ms-marco-MiniLM-L-6-v2` (22MB, ~50ms/10 docs, recommended)
+  - `cross-encoder/ms-marco-TinyBERT-L-2-v2` (17MB, ~30ms/10 docs, faster)
+  - `BAAI/bge-reranker-base` (110MB, ~150ms/10 docs, higher quality)
+- **Example:**
+  ```toml
+  [search]
+  rerank_enabled = true
+  rerank_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  ```
+
+#### `rerank_top_n`
+
+- **Type:** integer
+- **Default:** `10`
+- **Description:** Maximum number of candidates to pass to the cross-encoder for re-ranking. The re-ranker processes this many top results from the fusion pipeline.
+- **Range:** 1 to 100 (recommended: 5 to 20)
+- **Effect:** Higher values may improve recall at the cost of latency (~5ms per additional candidate).
+- **Requires:** `rerank_enabled = true`
+- **Example:**
+  ```toml
+  [search]
+  rerank_enabled = true
+  rerank_top_n = 10
+  ```
+
 ### [llm]
 
 Controls embedding model and LLM provider configuration.
@@ -193,7 +743,7 @@ Controls embedding model and LLM provider configuration.
 ## Complete Example Configuration
 
 ```toml
-# mcp-markdown-ragdocs configuration
+# .mcp-markdown-ragdocs/config.toml
 
 [server]
 host = "127.0.0.1"
@@ -209,10 +759,22 @@ index_path = ".ragdocs-index/"
 # Search subdirectories recursively
 recursive = true
 
+# Optional: Filter files by pattern
+include = ["**/*.md", "**/*.txt"]
+exclude = ["**/drafts/**", "**/archive/**"]
+
 [parsers]
 # Use MarkdownParser for all .md and .markdown files
 "**/*.md" = "MarkdownParser"
 "**/*.markdown" = "MarkdownParser"
+
+[chunking]
+# Chunking strategy for vector indexing
+strategy = "header_based"
+min_chunk_chars = 200
+max_chunk_chars = 1500
+overlap_chars = 100
+include_parent_headers = true
 
 [search]
 # Balance semantic and keyword search equally
@@ -224,6 +786,17 @@ recency_bias = 0.6
 
 # Standard RRF constant
 rrf_k_constant = 60
+
+# Result filtering
+min_confidence = 0.3           # Filter results below 30% confidence
+max_chunks_per_doc = 2         # Limit chunks per document for diversity
+dedup_enabled = true           # Enable semantic deduplication
+dedup_similarity_threshold = 0.85  # Similarity threshold for clustering
+
+# Re-ranking (adds ~50ms latency)
+rerank_enabled = true
+rerank_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+rerank_top_n = 10
 
 [llm]
 # Use local embedding model
@@ -242,6 +815,8 @@ No environment variables are currently supported. All configuration is file-base
 ### Scenario 1: Personal Notes (Obsidian Vault)
 
 ```toml
+# .mcp-markdown-ragdocs/config.toml
+
 [indexing]
 documents_path = "~/Documents/ObsidianVault"
 index_path = "~/.cache/ragdocs-obsidian"
@@ -253,6 +828,8 @@ recency_bias = 0.7     # Prioritize recent notes
 ```
 
 ### Scenario 2: Project Documentation
+# .mcp-markdown-ragdocs/config.toml
+
 
 ```toml
 [indexing]
@@ -266,6 +843,8 @@ recency_bias = 0.3    # Documentation changes less frequently
 ```
 
 ### Scenario 3: Research Papers
+# .mcp-markdown-ragdocs/config.toml
+
 
 ```toml
 [indexing]
@@ -280,6 +859,8 @@ recency_bias = 0.0     # Publication date more relevant than file mtime
 ```
 
 ### Scenario 4: Multi-Team Documentation Server
+# .mcp-markdown-ragdocs/config.toml
+
 
 ```toml
 [server]
@@ -289,6 +870,38 @@ port = 8080
 [indexing]
 documents_path = "/opt/team-docs"
 index_path = "/var/lib/ragdocs-indices"
+
+[search]
+semantic_weight = 1.0
+keyword_weight = 1.0
+recency_bias = 0.5
+```
+
+### Scenario 5: Monorepo Workflow
+
+For monorepo setups, place `.mcp-markdown-ragdocs/config.toml` in the repository root. All projects within the monorepo will inherit this configuration:
+
+```
+monorepo/
+├── .mcp-markdown-ragdocs/
+│   └── config.toml          # Shared configuration
+├── project-a/
+│   └── docs/
+├── project-b/
+│   └── docs/
+└── shared-docs/
+```
+
+When running the server from `monorepo/project-a/`, it will discover and use `monorepo/.mcp-markdown-ragdocs/config.toml`.
+
+```toml
+# .mcp-markdown-ragdocs/config.toml (in monorepo root)
+
+[indexing]
+# Index all docs in the monorepo
+documents_path = "."
+index_path = ".index_data/"
+recursive = true
 
 [search]
 semantic_weight = 1.0

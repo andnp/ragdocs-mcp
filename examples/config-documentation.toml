@@ -15,6 +15,12 @@ index_path = ".ragdocs-index/"
 # Index all subdirectories
 recursive = true
 
+# Optional: Filter files (uncomment to customize)
+# include = ["**/*.md", "**/*.txt"]  # Only markdown and text
+# exclude = ["**/drafts/**", "**/archive/**"]  # Skip drafts and archives
+# exclude_hidden_dirs = true  # Automatically exclude hidden directories (enabled by default)
+# reconciliation_interval_seconds = 3600  # Auto-cleanup every hour
+
 [parsers]
 # Support multiple documentation formats
 "**/*.md" = "MarkdownParser"

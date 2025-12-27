@@ -45,7 +45,9 @@ def test_config(tmp_path, test_docs_dir):
 
     Uses temporary paths to isolate E2E tests from development environment.
     """
-    config_file = tmp_path / "config.toml"
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
     config_file.write_text(f"""
 [server]
 host = "127.0.0.1"
@@ -178,7 +180,8 @@ def test_query_endpoint_accepts_requests_and_returns_results(client):
     Test that query endpoint processes requests and returns search results.
 
     Validates core search functionality: queries should be processed through
-    the hybrid search orchestrator and return synthesized LLM answers.
+    the hybrid search orchestrator and return synthesized LLM answers along
+    with scored results.
     """
     response = client.post(
         "/query_documents",
@@ -190,11 +193,29 @@ def test_query_endpoint_accepts_requests_and_returns_results(client):
 
     # Verify response structure
     assert "answer" in data
+    assert "results" in data
 
     # Verify answer is a non-empty string
     answer = data["answer"]
     assert isinstance(answer, str)
     assert len(answer) > 0
+
+    # Verify results structure (list of dict objects)
+    results = data["results"]
+    assert isinstance(results, list)
+    if results:
+        # Each result should be a dict with chunk_id, score, etc.
+        for result in results:
+            assert isinstance(result, dict)
+            assert "chunk_id" in result
+            assert "score" in result
+            chunk_id = result["chunk_id"]
+            score = result["score"]
+            assert isinstance(chunk_id, str)
+            assert isinstance(score, (int, float))
+            assert 0.0 <= score <= 1.0
+        # Highest score should be 1.0
+        assert results[0]["score"] == 1.0
 
 
 def test_file_changes_trigger_index_updates(client, test_docs_dir):
@@ -286,6 +307,7 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
         spec_version="0.9.0",  # Old version
         embedding_model="all-MiniLM-L6-v2",
         parsers={"**/*.md": "MarkdownParser"},
+        chunking_config={},
     )
     save_manifest(index_path, old_manifest)
 
@@ -395,3 +417,227 @@ def test_concurrent_query_requests(client):
         assert response.status_code == 200
         data = response.json()
         assert "answer" in data
+
+
+def test_query_documents_with_default_top_n(client):
+    """
+    Test that query endpoint works with default top_n parameter.
+
+    Validates:
+    - Default top_n=5 is applied when not specified
+    - Response includes both answer and results fields
+    - Results contain at most 5 items
+    """
+    response = client.post(
+        "/query_documents",
+        json={"query": "API documentation"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Verify response structure
+    assert "answer" in data
+    assert "results" in data
+    assert isinstance(data["results"], list)
+
+    # Default top_n is 5
+    assert len(data["results"]) <= 5
+
+    # Verify answer is a non-empty string
+    assert isinstance(data["answer"], str)
+    assert len(data["answer"]) > 0
+
+
+def test_query_documents_with_custom_top_n(client):
+    """
+    Test that custom top_n parameter limits results correctly.
+
+    Validates:
+    - top_n=3 returns at most 3 results
+    - top_n=1 returns at most 1 result
+    - top_n=10 returns at most 10 results
+    """
+    # Test top_n=3
+    response_3 = client.post(
+        "/query_documents",
+        json={"query": "API documentation", "top_n": 3},
+    )
+
+    assert response_3.status_code == 200
+    data_3 = response_3.json()
+    assert len(data_3["results"]) <= 3
+
+    # Test top_n=1
+    response_1 = client.post(
+        "/query_documents",
+        json={"query": "API documentation", "top_n": 1},
+    )
+
+    assert response_1.status_code == 200
+    data_1 = response_1.json()
+    assert len(data_1["results"]) <= 1
+
+    # Test top_n=10
+    response_10 = client.post(
+        "/query_documents",
+        json={"query": "documentation guide", "top_n": 10},
+    )
+
+    assert response_10.status_code == 200
+    data_10 = response_10.json()
+    assert len(data_10["results"]) <= 10
+
+
+def test_query_documents_returns_scores(client):
+    """
+    Test that API response includes normalized scores.
+
+    Validates:
+    - Each result is a tuple [chunk_id, score]
+    - chunk_id is a string
+    - score is a float in [0, 1] range
+    """
+    response = client.post(
+        "/query_documents",
+        json={"query": "user guide", "top_n": 5},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    results = data["results"]
+
+    # Verify each result has correct structure
+    for item in results:
+        assert isinstance(item, dict), f"Result item should be dict, got {type(item)}"
+
+        assert "chunk_id" in item
+        assert "score" in item
+        chunk_id = item["chunk_id"]
+        score = item["score"]
+
+        # Verify types
+        assert isinstance(chunk_id, str), f"chunk_id should be str, got {type(chunk_id)}"
+        assert isinstance(score, (int, float)), f"score should be numeric, got {type(score)}"
+
+        # Verify score range
+        assert 0.0 <= score <= 1.0, f"Score {score} out of range [0, 1]"
+
+
+def test_query_documents_scores_descending(client):
+    """
+    Test that scores are sorted in descending order.
+
+    Validates that the API returns results with highest relevance first,
+    ensuring scores are monotonically decreasing.
+    """
+    response = client.post(
+        "/query_documents",
+        json={"query": "introduction", "top_n": 5},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    results = data["results"]
+
+    if len(results) > 1:
+        scores = [result["score"] for result in results]
+
+        # Verify scores are in descending order
+        assert scores == sorted(scores, reverse=True), \
+            f"Scores should be descending, got {scores}"
+
+        # Verify each score is <= previous score
+        for i in range(len(scores) - 1):
+            assert scores[i] >= scores[i+1], \
+                f"Score at position {i} ({scores[i]}) should be >= score at {i+1} ({scores[i+1]})"
+
+
+def test_query_documents_top_score_is_1_0(client):
+    """
+    Test that the highest score in results is always 1.0.
+
+    Validates normalization invariant: the best match should always
+    have a normalized score of 1.0.
+    """
+    response = client.post(
+        "/query_documents",
+        json={"query": "API reference", "top_n": 5},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    results = data["results"]
+
+    if results:
+        top_score = results[0]["score"]
+        assert top_score == 1.0, \
+            f"Top score should be 1.0, got {top_score}"
+
+
+def test_query_documents_validates_top_n_range(client):
+    """
+    Test that API validates top_n parameter bounds.
+
+    Validates:
+    - top_n=0 is rejected (422 Unprocessable Entity)
+    - top_n=101 is rejected (exceeds max of 100)
+    - top_n must be between 1 and 100
+    """
+    # Test top_n=0 (too low)
+    response_zero = client.post(
+        "/query_documents",
+        json={"query": "test", "top_n": 0},
+    )
+    assert response_zero.status_code == 422
+
+    # Test top_n=101 (too high)
+    response_large = client.post(
+        "/query_documents",
+        json={"query": "test", "top_n": 101},
+    )
+    assert response_large.status_code == 422
+
+    # Test top_n=-1 (negative)
+    response_negative = client.post(
+        "/query_documents",
+        json={"query": "test", "top_n": -1},
+    )
+    assert response_negative.status_code == 422
+
+    # Verify valid bounds work (1 and 100)
+    response_min = client.post(
+        "/query_documents",
+        json={"query": "test", "top_n": 1},
+    )
+    assert response_min.status_code == 200
+
+    response_max = client.post(
+        "/query_documents",
+        json={"query": "test", "top_n": 100},
+    )
+    assert response_max.status_code == 200
+
+
+def test_query_documents_empty_query_with_scores(client):
+    """
+    Test that empty queries return empty results with valid structure.
+
+    Validates graceful handling: empty query should return empty results
+    list (not null) and still include the answer field.
+    """
+    response = client.post(
+        "/query_documents",
+        json={"query": "", "top_n": 5},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should have both fields even with empty query
+    assert "answer" in data
+    assert "results" in data
+
+    # Results should be empty list
+    assert isinstance(data["results"], list)
+    assert len(data["results"]) == 0

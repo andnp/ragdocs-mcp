@@ -16,6 +16,12 @@ index_path = "./.dev-indices"
 # Index all subdirectories
 recursive = true
 
+# Optional: Customize file patterns for testing
+# include = ["**/*.md", "**/*.txt"]
+# exclude = ["**/node_modules/**", "**/.git/**"]
+# exclude_hidden_dirs = true  # Exclude hidden directories (enabled by default)
+# reconciliation_interval_seconds = 300  # More frequent for development (5 min)
+
 [parsers]
 "**/*.md" = "MarkdownParser"
 "**/*.markdown" = "MarkdownParser"

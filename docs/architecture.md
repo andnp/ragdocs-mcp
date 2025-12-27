@@ -4,22 +4,33 @@ This document describes the system architecture of mcp-markdown-ragdocs, includi
 
 ## High-Level Architecture
 
-The system consists of three primary subsystems:
+The system consists of three primary subsystems with two transport modes:
 
 1. **Indexing Service**: Monitors file changes and updates three distinct indices
 2. **Query Orchestrator**: Executes parallel searches and fuses results
-3. **MCP Server**: Exposes the FastAPI HTTP interface
+3. **Server Layer**: Exposes interfaces via stdio (MCP) or HTTP (REST API)
+
+**Transport Modes:**
+
+- **Stdio Transport (`mcp` command)**: Used by VS Code, Claude Desktop, and MCP clients. Server communicates via stdin/stdout using MCP protocol.
+- **HTTP Transport (`run` command)**: REST API for development, testing, and custom integrations.
+
+Both transport modes use the same indexing and query orchestration subsystems.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                      MCP Server (FastAPI)                    │
-│  ┌────────────┐  ┌──────────────┐  ┌──────────────────────┐ │
-│  │ /health    │  │ /status      │  │ /query_documents     │ │
-│  └────────────┘  └──────────────┘  └──────────┬───────────┘ │
-└──────────────────────────────────────────────┼──────────────┘
-                                                │
-                        ┌───────────────────────┴──────────────┐
-                        ▼                                       ▼
+│                    Server Layer                              │
+│  ┌──────────────────────┐  ┌──────────────────────────────┐ │
+│  │ MCP Server (stdio)   │  │ HTTP Server (FastAPI)        │ │
+│  │ src/mcp_server.py    │  │ src/server.py                │ │
+│  │                      │  │                              │ │
+│  │ query_documents tool │  │ /health  /status  /query     │ │
+│  └──────────┬───────────┘  └──────────┬───────────────────┘ │
+└─────────────┼──────────────────────────┼──────────────────────┘
+              │                          │
+              │         ┌────────────────┴──────────────┐
+              │         │                                │
+              └─────────▼────────────────▼───────────────┘
         ┌───────────────────────────┐         ┌─────────────────────────┐
         │  Indexing Service         │         │  Query Orchestrator     │
         │                           │         │                         │
@@ -62,26 +73,72 @@ The system consists of three primary subsystems:
 
 ## Component Overview
 
-### Server (src/server.py)
+### Server Layer
+
+#### MCP Server (src/mcp_server.py)
+
+**Transport:** Stdio (stdin/stdout)
+
+**Responsibilities:**
+- Implement MCP protocol for tool invocation
+- Manage server lifecycle (startup/shutdown)
+- Coordinate with indexing service and orchestrator
+- Expose `query_documents` tool
+
+**Lifecycle:**
+1. Load configuration and detect project
+2. Initialize indices (vector, keyword, graph)
+3. Check manifest for version changes
+4. Index all documents if rebuild needed, otherwise load existing indices
+5. Start file watcher
+6. Enter stdio communication loop
+7. On shutdown: stop watcher, persist indices
+
+**Tool Definitions:**
+
+`query_documents`:
+```python
+{
+  "name": "query_documents",
+  "description": "Search local Markdown documentation using hybrid search",
+  "inputSchema": {
+    "query": "string (required)",
+    "top_n": "integer (optional, default: 5, max: 100)"
+  }
+}
+```
+
+`query_documents_compressed`:
+```python
+{
+  "name": "query_documents_compressed",
+  "description": "Search with context compression. Filters low-relevance results and removes semantic duplicates.",
+  "inputSchema": {
+    "query": "string (required)",
+    "top_n": "integer (optional, default: 5, max: 100)",
+    "min_score": "number (optional, default: 0.3, range: 0.0-1.0)",
+    "similarity_threshold": "number (optional, default: 0.85, range: 0.5-1.0)"
+  }
+}
+```
+
+#### HTTP Server (src/server.py)
+
+**Transport:** HTTP REST API
 
 **Responsibilities:**
 - FastAPI application lifecycle management
 - HTTP endpoint definitions
 - Dependency injection for indices and orchestrator
+- Same indexing logic as MCP server
 
 **Endpoints:**
 - `POST /query_documents`: Main query interface
+- `POST /query_documents_stream`: Streaming SSE variant
 - `GET /health`: Health check (returns `{"status": "ok"}`)
 - `GET /status`: Operational status (document count, queue size, failed files)
 
-**Lifecycle (lifespan context manager):**
-1. Load configuration from TOML file
-2. Initialize three indices (vector, keyword, graph)
-3. Check index manifest for version changes
-4. Index all documents if rebuild needed, otherwise load existing indices
-5. Start file watcher
-6. Yield control to server
-7. On shutdown: stop watcher, persist indices
+**Lifecycle:** Same as MCP server, but uses HTTP transport instead of stdio.
 
 ### Indexing Service
 
@@ -249,33 +306,54 @@ Rebuild triggered if:
 
 **Responsibilities:**
 - Execute parallel searches across all indices
+- Expand queries via concept vocabulary
 - Apply 1-hop graph neighbor boosting
 - Fuse results using Reciprocal Rank Fusion
 - Apply recency bias
+- Filter by confidence threshold and per-document limits
+- Deduplicate semantically similar chunks
+- Re-rank results using cross-encoder model (optional)
 - Synthesize answer from top-ranked chunks
 
 #### Search Strategies
 
-**1. Semantic Search (VectorIndex):**
+**1. Query Expansion (VectorIndex):**
+- Builds concept vocabulary from indexed chunks during `persist()`
+- Extracts unique terms, embeds each using the same model
+- On query, finds top-3 nearest terms via cosine similarity
+- Appends expansion terms to query for improved recall
+- Vocabulary persisted as `concept_vocabulary.json`
+
+**2. Semantic Search (VectorIndex):**
+- Expands query using concept vocabulary
 - Embeds query using same model as documents
 - Cosine similarity search in FAISS index
-- Returns document IDs ranked by similarity
+- Returns chunk IDs ranked by similarity
 
-**2. Keyword Search (KeywordIndex):**
-- BM25F scoring across content, aliases, tags
-- Returns document IDs ranked by term relevance
+**3. Keyword Search (KeywordIndex):**
+- BM25F scoring with field boosts:
+  - title (3.0), headers (2.5), keywords (2.5)
+  - description (2.0), tags (2.0), aliases (1.5)
+- Returns chunk IDs ranked by term relevance
 
-**3. Graph Traversal (GraphStore):**
+**4. Graph Traversal (GraphStore):**
 - 1-hop neighbor boosting: for each candidate document from semantic/keyword search, retrieve all directly linked documents
 - Neighbor documents added to result pool with reduced score (0.5x multiplier)
 - Surfaces structurally related content
 
-**4. Recency Bias:**
+**5. Recency Bias:**
 - Tier-based score multiplier:
   - Last 7 days: 1.2x
   - Last 30 days: 1.1x
   - Over 30 days: 1.0x
 - Applied during fusion stage
+
+**6. Cross-Encoder Re-Ranking (optional):**
+- Uses `cross-encoder/ms-marco-MiniLM-L-6-v2` by default
+- Re-scores top candidates after fusion pipeline
+- Computes query-document relevance jointly for higher precision
+- Model loaded lazily on first rerank call
+- Adds ~50ms latency for 10 candidates on CPU
 
 #### Reciprocal Rank Fusion (RRF)
 
@@ -367,8 +445,10 @@ POST /query_documents
       ↓
 QueryOrchestrator.query(query, top_k)
       ↓
+Query Expansion (concept vocabulary)
+      ↓
 Parallel execution:
-  ├─→ VectorIndex.search(query, top_k)
+  ├─→ VectorIndex.search(expanded_query, top_k)
   ├─→ KeywordIndex.search(query, top_k)
   └─→ (Results from above)
       ↓
@@ -376,13 +456,23 @@ GraphStore.get_neighbors(candidate_docs, depth=1)
       ↓
 Combine all ranked lists
       ↓
-RecencyBias.apply(ranked_lists)
-      ↓
 RRFFusion.fuse(ranked_lists, weights, k_constant)
       ↓
-Top-k document IDs
+RecencyBias.apply(fused_results)
       ↓
-QueryOrchestrator.synthesize_answer(query, doc_ids)
+Normalize scores [0.0, 1.0]
+      ↓
+Filter by min_confidence threshold
+      ↓
+Limit chunks per document (max_chunks_per_doc)
+      ↓
+Deduplicate by similarity (if enabled)
+      ↓
+Cross-encoder re-rank (if enabled)
+      ↓
+Top-n results
+      ↓
+QueryOrchestrator.synthesize_answer(query, chunk_ids)
       ↓
 Return answer string
 ```
@@ -444,7 +534,9 @@ Return answer string
 │   ├── docstore.json
 │   ├── index_store.json
 │   ├── faiss_index.bin
-│   └── doc_id_mapping.json
+│   ├── doc_id_mapping.json
+│   ├── chunk_id_mapping.json
+│   └── concept_vocabulary.json
 ├── keyword/
 │   ├── MAIN_*.toc
 │   ├── MAIN_*.seg

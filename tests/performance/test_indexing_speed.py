@@ -1,11 +1,3 @@
-"""
-Performance tests for indexing speed benchmarking.
-
-Benchmarks the initial indexing time for corpora of varying sizes,
-measuring throughput in documents/second. Uses realistic document
-sizes and content to simulate production scenarios.
-"""
-
 import time
 from pathlib import Path
 
@@ -20,11 +12,6 @@ from src.indices.vector import VectorIndex
 
 @pytest.fixture
 def config(tmp_path):
-    """
-    Create test configuration with temporary paths.
-
-    Uses tmp_path for isolated benchmark runs.
-    """
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
     return Config(
@@ -41,11 +28,6 @@ def config(tmp_path):
 
 @pytest.fixture
 def indices():
-    """
-    Create real index instances for benchmarking.
-
-    Returns tuple of (vector, keyword, graph) indices.
-    """
     vector = VectorIndex()
     keyword = KeywordIndex()
     graph = GraphStore()
@@ -54,25 +36,11 @@ def indices():
 
 @pytest.fixture
 def manager(config, indices):
-    """
-    Create IndexManager with real indices for benchmarking.
-
-    Provides fully functional manager for performance testing.
-    """
     vector, keyword, graph = indices
     return IndexManager(config, vector, keyword, graph)
 
 
 def create_realistic_document(doc_id: int, size: str = "medium") -> str:
-    """
-    Generate realistic markdown document content.
-
-    Args:
-        doc_id: Document identifier for unique content
-        size: Document size category (small, medium, large)
-
-    Returns markdown content string.
-    """
     if size == "small":
         paragraphs = 2
         sentences_per_para = 3
@@ -113,14 +81,6 @@ def create_realistic_document(doc_id: int, size: str = "medium") -> str:
 
 
 def create_test_corpus(docs_path: Path, num_docs: int, doc_size: str = "medium"):
-    """
-    Create test corpus with specified number of documents.
-
-    Args:
-        docs_path: Directory to create documents in
-        num_docs: Number of documents to create
-        doc_size: Size category for documents (small, medium, large)
-    """
     for i in range(num_docs):
         doc_file = docs_path / f"doc_{i:04d}.md"
         content = create_realistic_document(i, doc_size)
@@ -128,12 +88,7 @@ def create_test_corpus(docs_path: Path, num_docs: int, doc_size: str = "medium")
 
 
 def test_indexing_speed_10_documents(config, manager, tmp_path):
-    """
-    Benchmark indexing speed for 10 documents.
-
-    Measures throughput for small corpus indexing, providing baseline
-    for minimal dataset performance.
-    """
+    """Benchmark indexing speed for 10 documents."""
     docs_path = Path(config.indexing.documents_path)
     num_docs = 10
 
@@ -170,12 +125,7 @@ def test_indexing_speed_10_documents(config, manager, tmp_path):
 
 
 def test_indexing_speed_50_documents(config, manager, tmp_path):
-    """
-    Benchmark indexing speed for 50 documents.
-
-    Measures throughput for medium-sized corpus, typical for small
-    documentation projects or module-level documentation.
-    """
+    """Benchmark indexing speed for 50 documents."""
     docs_path = Path(config.indexing.documents_path)
     num_docs = 50
 
@@ -212,12 +162,7 @@ def test_indexing_speed_50_documents(config, manager, tmp_path):
 
 
 def test_indexing_speed_100_documents(config, manager, tmp_path):
-    """
-    Benchmark indexing speed for 100 documents.
-
-    Measures throughput for larger corpus, representative of
-    substantial documentation projects or knowledge bases.
-    """
+    """Benchmark indexing speed for 100 documents."""
     docs_path = Path(config.indexing.documents_path)
     num_docs = 100
 
@@ -259,12 +204,7 @@ def test_indexing_speed_varying_document_sizes(config, manager, tmp_path):
 
     Tests performance across small, medium, and large documents
     to identify size-dependent performance characteristics.
-    """
-    docs_path = Path(config.indexing.documents_path)
-
-    # Create mixed corpus: 5 small, 5 medium, 5 large
-    sizes = ["small"] * 5 + ["medium"] * 5 + ["large"] * 5
-    num_docs = len(sizes)
+    """Benchmark indexing with varied document sizes.num_docs = len(sizes)
 
     for i, size in enumerate(sizes):
         doc_file = docs_path / f"doc_{size}_{i:02d}.md"

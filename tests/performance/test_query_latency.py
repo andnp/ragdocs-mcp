@@ -1,11 +1,3 @@
-"""
-Performance tests for query latency benchmarking.
-
-Measures end-to-end query latency for hybrid search operations,
-including semantic search, keyword search, graph traversal, and
-RRF fusion. Tests both cold (first query) and warm (cached) scenarios.
-"""
-
 import asyncio
 import time
 from pathlib import Path
@@ -22,11 +14,6 @@ from src.search.orchestrator import QueryOrchestrator
 
 @pytest.fixture
 def config(tmp_path):
-    """
-    Create test configuration with temporary paths.
-
-    Uses tmp_path for isolated benchmark runs.
-    """
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
     return Config(
@@ -48,11 +35,6 @@ def config(tmp_path):
 
 @pytest.fixture
 def indices():
-    """
-    Create real index instances for benchmarking.
-
-    Returns tuple of (vector, keyword, graph) indices.
-    """
     vector = VectorIndex()
     keyword = KeywordIndex()
     graph = GraphStore()
@@ -61,33 +43,17 @@ def indices():
 
 @pytest.fixture
 def manager(config, indices):
-    """
-    Create IndexManager with real indices for benchmarking.
-
-    Provides fully functional manager for performance testing.
-    """
     vector, keyword, graph = indices
     return IndexManager(config, vector, keyword, graph)
 
 
 @pytest.fixture
 def orchestrator(config, indices, manager):
-    """
-    Create QueryOrchestrator for hybrid search benchmarking.
-
-    Provides fully functional orchestrator with real indices.
-    """
     vector, keyword, graph = indices
     return QueryOrchestrator(vector, keyword, graph, config, manager)
 
 
 def create_benchmark_corpus(docs_path: Path, num_docs: int = 50):
-    """
-    Create test corpus optimized for query benchmarking.
-
-    Creates documents with varied content to support semantic,
-    keyword, and graph search strategies.
-    """
     topics = [
         ("Machine Learning", "machine learning algorithms neural networks deep learning"),
         ("Cloud Infrastructure", "cloud computing AWS kubernetes docker containers"),
@@ -128,11 +94,6 @@ def create_benchmark_corpus(docs_path: Path, num_docs: int = 50):
 
 @pytest.fixture
 def indexed_corpus(config, manager):
-    """
-    Create and index test corpus for query benchmarking.
-
-    Module-scoped fixture to amortize indexing cost across query tests.
-    """
     docs_path = Path(config.indexing.documents_path)
 
     # Create corpus
@@ -161,7 +122,7 @@ async def test_query_latency_cold_start(config, orchestrator, indexed_corpus):
     query = "machine learning algorithms and neural networks"
 
     start_time = time.perf_counter()
-    results = await orchestrator.query(query, top_k=10)
+    results, compression_stats = await orchestrator.query(query, top_k=10, top_n=10)
     end_time = time.perf_counter()
 
     latency = (end_time - start_time) * 1000  # Convert to milliseconds
@@ -204,12 +165,12 @@ async def test_query_latency_warm_queries(config, orchestrator, indexed_corpus):
     latencies = []
 
     # Warm up with first query
-    await orchestrator.query(queries[0], top_k=10)
+    await orchestrator.query(queries[0], top_k=10, top_n=10)
 
     # Benchmark multiple queries
     for query in queries:
         start_time = time.perf_counter()
-        results = await orchestrator.query(query, top_k=10)
+        results, _ = await orchestrator.query(query, top_k=10, top_n=10)
         end_time = time.perf_counter()
 
         latency_ms = (end_time - start_time) * 1000
@@ -258,13 +219,13 @@ async def test_query_latency_by_top_k(config, orchestrator, indexed_corpus):
 
     for top_k in top_k_values:
         # Warm up
-        await orchestrator.query(query, top_k=top_k)
+        await orchestrator.query(query, top_k=top_k, top_n=top_k)
 
         # Benchmark
         latencies = []
         for _ in range(5):  # 5 runs per top_k
             start_time = time.perf_counter()
-            results = await orchestrator.query(query, top_k=top_k)
+            results, _ = await orchestrator.query(query, top_k=top_k, top_n=top_k)
             end_time = time.perf_counter()
 
             latency_ms = (end_time - start_time) * 1000
@@ -306,12 +267,12 @@ async def test_query_latency_concurrent_queries(config, orchestrator, indexed_co
     ]
 
     # Warm up
-    await orchestrator.query(queries[0], top_k=10)
+    await orchestrator.query(queries[0], top_k=10, top_n=10)
 
     # Benchmark concurrent queries
     start_time = time.perf_counter()
 
-    tasks = [orchestrator.query(q, top_k=10) for q in queries]
+    tasks = [orchestrator.query(q, top_k=10, top_n=10) for q in queries]
     results_list = await asyncio.gather(*tasks)
 
     end_time = time.perf_counter()
@@ -319,8 +280,8 @@ async def test_query_latency_concurrent_queries(config, orchestrator, indexed_co
     total_time = (end_time - start_time) * 1000
     avg_time_per_query = total_time / len(queries)
 
-    # Verify all queries completed
-    for i, results in enumerate(results_list):
+    # Verify all queries completed (results_list contains tuples of (results, stats))
+    for i, (results, _) in enumerate(results_list):
         assert len(results) > 0, f"Expected results for query {i}: '{queries[i]}'"
         assert len(results) <= 10, f"Expected at most 10 results for query {i}"
 
@@ -351,7 +312,7 @@ async def test_query_latency_empty_results(config, orchestrator, indexed_corpus)
 
     for _ in range(10):
         start_time = time.perf_counter()
-        results = await orchestrator.query(query, top_k=10)
+        results, _ = await orchestrator.query(query, top_k=10, top_n=10)
         end_time = time.perf_counter()
 
         latency_ms = (end_time - start_time) * 1000

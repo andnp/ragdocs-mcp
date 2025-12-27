@@ -1,16 +1,18 @@
 import asyncio
+import re
+from collections.abc import AsyncIterator
 from pathlib import Path
-
-from llama_index.core import get_response_synthesizer
-from llama_index.core.llms import MockLLM
-from llama_index.core.schema import NodeWithScore, TextNode
 
 from src.config import Config
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.indexing.manager import IndexManager
-from src.search.fusion import fuse_results
+from src.models import ChunkResult, CompressionStats
+from src.search.dedup import deduplicate_by_similarity
+from src.search.filters import filter_by_confidence, limit_per_document
+from src.search.fusion import fuse_results, normalize_scores
+from src.search.reranker import ReRanker
 
 
 class QueryOrchestrator:
@@ -28,8 +30,23 @@ class QueryOrchestrator:
         self._config = config
         self._index_manager = index_manager
         self._synthesizer = None
+        self._reranker: ReRanker | None = None
 
-    async def query(self, query_text: str, top_k: int):
+    async def query(
+        self,
+        query_text: str,
+        top_k: int = 10,
+        top_n: int = 5
+    ) -> tuple[list[ChunkResult], CompressionStats]:
+        if not query_text or not query_text.strip():
+            return [], CompressionStats(
+                original_count=0,
+                after_threshold=0,
+                after_doc_limit=0,
+                after_dedup=0,
+                clusters_merged=0,
+            )
+
         results = await asyncio.gather(
             self._search_vector(query_text, top_k),
             self._search_keyword(query_text, top_k),
@@ -38,18 +55,36 @@ class QueryOrchestrator:
         vector_results = results[0]
         keyword_results = results[1]
 
-        all_doc_ids = set(vector_results) | set(keyword_results)
+        all_doc_ids = set()
+        chunk_id_to_doc_id = {}
+
+        for result in vector_results:
+            chunk_id = result["chunk_id"]
+            doc_id = result["doc_id"]
+            all_doc_ids.add(doc_id)
+            chunk_id_to_doc_id[chunk_id] = doc_id
+
+        for result in keyword_results:
+            chunk_id = result["chunk_id"]
+            doc_id = result["doc_id"]
+            all_doc_ids.add(doc_id)
+            chunk_id_to_doc_id[chunk_id] = doc_id
+
         graph_neighbors = self._get_graph_neighbors(list(all_doc_ids))
 
+        # Convert graph document IDs to chunk IDs
+        graph_chunk_ids = []
+        for doc_id in graph_neighbors:
+            chunk_ids_for_doc = self._vector.get_chunk_ids_for_document(doc_id)
+            graph_chunk_ids.extend(chunk_ids_for_doc)
+
         results_dict = {
-            "semantic": vector_results,
-            "keyword": keyword_results,
-            "graph": graph_neighbors,
+            "semantic": [r["chunk_id"] for r in vector_results],
+            "keyword": [r["chunk_id"] for r in keyword_results],
+            "graph": graph_chunk_ids,
         }
 
-        modified_times = self._collect_modified_times(
-            set(vector_results) | set(keyword_results) | set(graph_neighbors)
-        )
+        modified_times = self._collect_modified_times(all_doc_ids | set(graph_neighbors))
 
         weights = {
             "semantic": self._config.search.semantic_weight,
@@ -64,25 +99,133 @@ class QueryOrchestrator:
             modified_times,
         )
 
-        return [doc_id for doc_id, _ in fused[:top_k]]
+        normalized = normalize_scores(fused)
+        original_count = len(normalized)
+
+        filtered = filter_by_confidence(
+            normalized,
+            self._config.search.min_confidence,
+        )
+        after_threshold = len(filtered)
+
+        limited = limit_per_document(
+            filtered,
+            self._config.search.max_chunks_per_doc,
+        )
+        after_doc_limit = len(limited)
+
+        clusters_merged = 0
+        if self._config.search.dedup_enabled:
+            limited, clusters_merged = deduplicate_by_similarity(
+                limited,
+                self._get_chunk_embedding,
+                self._config.search.dedup_similarity_threshold,
+            )
+        after_dedup = len(limited)
+
+        if self._config.search.rerank_enabled and limited:
+            reranker = self._get_reranker()
+            limited = reranker.rerank(
+                query_text,
+                limited,
+                self._get_chunk_content,
+                self._config.search.rerank_top_n,
+            )
+
+        final = limited[:top_n]
+
+        compression_stats = CompressionStats(
+            original_count=original_count,
+            after_threshold=after_threshold,
+            after_doc_limit=after_doc_limit,
+            after_dedup=after_dedup,
+            clusters_merged=clusters_merged,
+        )
+
+        chunk_results = []
+        for chunk_id, score in final:
+            chunk_data = self._vector.get_chunk_by_id(chunk_id)
+            if chunk_data:
+                chunk_results.append(ChunkResult(
+                    chunk_id=chunk_id,
+                    doc_id=chunk_data.get("doc_id", ""),
+                    score=score,
+                    header_path=chunk_data.get("header_path", ""),
+                    file_path=chunk_data.get("file_path", ""),
+                    content=chunk_data.get("content", ""),
+                ))
+            else:
+                chunk_results.append(ChunkResult(
+                    chunk_id=chunk_id,
+                    doc_id=chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else "",
+                    score=score,
+                    header_path="",
+                    file_path="",
+                    content="",
+                ))
+
+        return chunk_results, compression_stats
+
+    def _get_chunk_embedding(self, chunk_id: str) -> list[float] | None:
+        if self._vector._index is None:
+            return None
+        try:
+            docstore = self._vector._index.docstore
+            node = docstore.get_document(chunk_id)
+            if node is None:
+                return None
+            embedding = getattr(node, "embedding", None)
+            if embedding is not None:
+                return list(embedding)
+            text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
+            if not text:
+                return None
+            return self._vector._embedding_model.get_text_embedding(text)
+        except Exception:
+            return None
+
+    def _get_chunk_content(self, chunk_id: str) -> str | None:
+        chunk_data = self._vector.get_chunk_by_id(chunk_id)
+        if chunk_data:
+            return chunk_data.get("content")
+        return None
+
+    def _get_reranker(self) -> ReRanker:
+        if self._reranker is None:
+            self._reranker = ReRanker(model_name=self._config.search.rerank_model)
+        return self._reranker
 
     async def _search_vector(self, query_text: str, top_k: int):
+        import logging
+        logger = logging.getLogger(__name__)
+
+        expanded_query = self._vector.expand_query(query_text)
+
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, self._vector.search, query_text, top_k
+        results = await loop.run_in_executor(
+            None, self._vector.search, expanded_query, top_k
         )
+        logger.info(f"Vector search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
+        return results
 
     async def _search_keyword(self, query_text: str, top_k: int):
+        import logging
+        logger = logging.getLogger(__name__)
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        results = await loop.run_in_executor(
             None, self._keyword.search, query_text, top_k
         )
+        logger.info(f"Keyword search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
+        return results
 
     def _get_graph_neighbors(self, doc_ids: list[str]):
+        import logging
+        logger = logging.getLogger(__name__)
         neighbors = set()
         for doc_id in doc_ids:
             doc_neighbors = self._graph.get_neighbors(doc_id, depth=1)
             neighbors.update(doc_neighbors)
+        logger.info(f"Graph traversal for {doc_ids[:3]} returned {len(neighbors)} neighbors: {list(neighbors)[:5]}")
         return list(neighbors)
 
     def _collect_modified_times(self, doc_ids: set[str]):
@@ -120,34 +263,176 @@ class QueryOrchestrator:
 
         return documents
 
-    async def synthesize_answer(self, query: str, doc_ids: list[str]):
-        if not doc_ids:
+    async def synthesize_answer(self, query: str, chunk_ids: list[str]):
+        from llama_index.core import Settings, get_response_synthesizer
+        from llama_index.core.llms import MockLLM
+        from llama_index.core.prompts import PromptTemplate
+        from llama_index.core.schema import NodeWithScore, TextNode
+
+        if not chunk_ids:
             return "No relevant documents found for your query."
 
-        documents = self.get_documents(doc_ids)
+        chunks = self._get_chunks(chunk_ids)
 
-        if not documents:
-            return "Could not retrieve document content for the matched results."
+        if not chunks:
+            return "Could not retrieve content for the matched results."
+
+        TEXT_QA_TEMPLATE = PromptTemplate(
+            "Context information is below.\n"
+            "---------------------\n"
+            "{context_str}\n"
+            "---------------------\n"
+            "Answer the question: {query_str}\n"
+        )
 
         nodes = [
             NodeWithScore(
                 node=TextNode(
-                    text=doc.content,
-                    metadata={"doc_id": doc.id, "file_path": doc.file_path},
+                    text=chunk["content"],
+                    metadata={
+                        "chunk_id": chunk["chunk_id"],
+                        "doc_id": chunk["doc_id"],
+                        "header_path": chunk.get("header_path", ""),
+                        "file_path": chunk.get("file_path", ""),
+                    },
                 ),
-                score=1.0,
+                score=chunk.get("score", 1.0),
             )
-            for doc in documents
+            for chunk in chunks
         ]
 
         if self._synthesizer is None:
+            Settings.context_window = 32768
             try:
-                self._synthesizer = get_response_synthesizer()
+                self._synthesizer = get_response_synthesizer(text_qa_template=TEXT_QA_TEMPLATE)
             except ImportError:
-                self._synthesizer = get_response_synthesizer(llm=MockLLM())
+                self._synthesizer = get_response_synthesizer(llm=MockLLM(), text_qa_template=TEXT_QA_TEMPLATE)
 
         response = await asyncio.get_event_loop().run_in_executor(
             None, self._synthesizer.synthesize, query, nodes
         )
 
-        return str(response)
+        answer = str(response)
+        answer = self._clean_answer(answer)
+        return answer
+
+    async def synthesize_answer_stream(
+        self,
+        query: str,
+        chunk_ids: list[str]
+    ) -> AsyncIterator[dict[str, str | dict]]:
+        from llama_index.core import Settings, get_response_synthesizer
+        from llama_index.core.llms import MockLLM
+        from llama_index.core.prompts import PromptTemplate
+        from llama_index.core.schema import NodeWithScore, TextNode
+
+        if not chunk_ids:
+            yield {
+                "event": "error",
+                "data": {"message": "No relevant documents found for your query."}
+            }
+            return
+
+        chunks = self._get_chunks(chunk_ids)
+
+        if not chunks:
+            yield {
+                "event": "error",
+                "data": {"message": "Could not retrieve content for the matched results."}
+            }
+            return
+
+        yield {
+            "event": "start",
+            "data": {"chunk_count": len(chunks)}
+        }
+
+        TEXT_QA_TEMPLATE = PromptTemplate(
+            "Context information is below.\n"
+            "---------------------\n"
+            "{context_str}\n"
+            "---------------------\n"
+            "Answer the question: {query_str}\n"
+        )
+
+        nodes = [
+            NodeWithScore(
+                node=TextNode(
+                    text=chunk["content"],
+                    metadata={
+                        "chunk_id": chunk["chunk_id"],
+                        "doc_id": chunk["doc_id"],
+                        "header_path": chunk.get("header_path", ""),
+                        "file_path": chunk.get("file_path", ""),
+                    },
+                ),
+                score=chunk.get("score", 1.0),
+            )
+            for chunk in chunks
+        ]
+
+        if self._synthesizer is None:
+            Settings.context_window = 32768
+            try:
+                self._synthesizer = get_response_synthesizer(text_qa_template=TEXT_QA_TEMPLATE)
+            except ImportError:
+                self._synthesizer = get_response_synthesizer(llm=MockLLM(), text_qa_template=TEXT_QA_TEMPLATE)
+
+        try:
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, self._synthesizer.synthesize, query, nodes
+            )
+
+            answer_text = str(response)
+            answer_text = self._clean_answer(answer_text)
+
+            yield {
+                "event": "chunk",
+                "data": {"text": answer_text}
+            }
+
+            yield {
+                "event": "done",
+                "data": {"total_length": len(answer_text)}
+            }
+
+        except Exception as e:
+            yield {
+                "event": "error",
+                "data": {"message": f"Synthesis failed: {str(e)}"}
+            }
+
+    def _get_chunks(self, chunk_ids: list[str]) -> list[dict]:
+        import logging
+        logger = logging.getLogger(__name__)
+
+        chunks = []
+        logger.info(f"_get_chunks called with {len(chunk_ids)} chunk_ids: {chunk_ids[:3] if len(chunk_ids) > 3 else chunk_ids}")
+
+        for chunk_id in chunk_ids:
+            chunk_data = self._vector.get_chunk_by_id(chunk_id)
+            if chunk_data:
+                chunks.append(chunk_data)
+                logger.info(f"Successfully retrieved chunk {chunk_id}")
+            else:
+                logger.warning(f"Failed to retrieve chunk {chunk_id}")
+
+        logger.info(f"_get_chunks returning {len(chunks)} chunks")
+        return chunks
+
+    def _clean_answer(self, answer: str) -> str:
+        contamination_patterns = [
+            r"given the context information and not prior knowledge[,.]?",
+            r"based on the context[,.]?",
+            r"according to the context[,.]?",
+            r"from the context[,.]?",
+        ]
+
+        cleaned = answer
+        for pattern in contamination_patterns:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        cleaned = cleaned.strip()
+
+        return cleaned

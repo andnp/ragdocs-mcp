@@ -1,17 +1,37 @@
 # 3. Core Features (Hybrid Search)
 
-## 3.1. MCP Tool: `query_documents`
+## 3.1. MCP Tools
 
-The server will expose a single, powerful MCP tool that leverages a hybrid search engine.
+The server exposes two MCP tools for document search.
+
+### 3.1.1. `query_documents`
+
+Primary search tool using hybrid search engine.
 
 -   **Tool Name:** `query_documents`
 -   **Description:** "Queries a local knowledge base of Markdown documents using a hybrid search engine (semantic, keyword, graph, and recency) to answer a question. Use this for complex questions that involve finding specific terms, related concepts, or recently edited notes."
 -   **Input:**
     -   `query` (string, required): The natural language question or topic to search for.
+    -   `top_n` (integer, optional, default: 5): Maximum number of results to return.
 -   **Output:**
     -   A string containing the answer synthesized by the LLM based on the documents retrieved by the hybrid search engine.
 
-### Example Interaction
+### 3.1.2. `query_documents_compressed`
+
+Search tool with context compression to reduce token usage.
+
+-   **Tool Name:** `query_documents_compressed`
+-   **Description:** "Search documents with context compression. Filters low-relevance results and removes semantic duplicates to reduce context size."
+-   **Input:**
+    -   `query` (string, required): The natural language question or topic to search for.
+    -   `top_n` (integer, optional, default: 5): Maximum number of results to return.
+    -   `min_score` (number, optional, default: 0.3): Minimum relevance score threshold. Results below this score are filtered.
+    -   `similarity_threshold` (number, optional, default: 0.85): Cosine similarity threshold for deduplication. Chunks with similarity above this are merged.
+-   **Output:**
+    -   A string containing the answer, compression statistics, and source documents.
+-   **When to Use:** For queries where context window budget is limited or when you expect many similar results.
+
+### 3.1.3. Example Interaction
 
 > **LLM:** "In the new auth spec, what does the `getToken` function do?"
 >

@@ -2,6 +2,18 @@
 
 This document describes how to integrate mcp-markdown-ragdocs with MCP clients including VS Code, Claude Desktop, and other compatible applications.
 
+## Transport Methods
+
+This server supports two transport methods:
+
+1. **Stdio Transport (Recommended)**: Used by VS Code, Claude Desktop, and most MCP clients. Server communicates via stdin/stdout.
+2. **HTTP Transport**: REST API for development, testing, or custom integrations.
+
+| Transport | Command | Use Case |
+|-----------|---------|----------|
+| Stdio | `mcp-markdown-ragdocs mcp` | VS Code, Claude Desktop, MCP client integrations |
+| HTTP | `mcp-markdown-ragdocs run` | Development, testing, direct HTTP API access |
+
 ## MCP Protocol Overview
 
 The Model Context Protocol (MCP) enables LLMs to access external tools and data sources. This server exposes a `query_documents` tool that allows AI assistants to search and retrieve information from local Markdown documentation.
@@ -10,71 +22,109 @@ The Model Context Protocol (MCP) enables LLMs to access external tools and data 
 
 ### Prerequisites
 
-- VS Code with MCP extension installed
+- VS Code with MCP extension support
 - Python 3.13+
 - mcp-markdown-ragdocs installed via `uv`
 
-### Step 1: Start the Server
+### Configuration
 
-Start the server in a terminal:
+The server uses **stdio transport**, not HTTP. VS Code manages the server lifecycle automatically.
 
-```zsh
-cd /path/to/your/documentation
-uv run mcp-markdown-ragdocs run
-```
-
-The server will index your documentation and start listening on `http://127.0.0.1:8000`.
-
-### Step 2: Configure VS Code MCP Settings
-
-Open VS Code settings (JSON format) and add the MCP server configuration:
-
-**File:** `.vscode/settings.json` or User Settings
+**File:** `.vscode/settings.json` (workspace) or `~/.config/Code/User/mcp.json` (user-global)
 
 ```json
 {
-  "mcp.servers": {
+  "mcpServers": {
     "markdown-docs": {
-      "type": "http",
-      "url": "http://127.0.0.1:8000",
-      "tools": [
-        {
-          "name": "query_documents",
-          "description": "Search project documentation using hybrid search (semantic, keyword, graph traversal)",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "query": {
-                "type": "string",
-                "description": "Natural language query or question about the documentation"
-              }
-            },
-            "required": ["query"]
-          }
-        }
-      ]
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/mcp-markdown-ragdocs",
+        "run",
+        "mcp-markdown-ragdocs",
+        "mcp"
+      ],
+      "type": "stdio"
     }
   }
 }
 ```
 
-### Step 3: Verify Connection
+**Path Resolution:**
 
-Use the MCP extension UI or command palette to verify the connection:
+Replace `/absolute/path/to/mcp-markdown-ragdocs` with the actual installation directory:
 
-1. Open Command Palette (`Cmd/Ctrl+Shift+P`)
-2. Run "MCP: List Available Tools"
-3. Verify `query_documents` appears in the list
-
-### Step 4: Query from Copilot Chat
-
-In a GitHub Copilot Chat session, reference the tool:
-
-```
-@mcp query_documents How do I configure authentication in the API?
+```zsh
+cd /path/to/mcp-markdown-ragdocs
+pwd  # Copy this path
 ```
 
-The assistant will call the `query_documents` tool and incorporate the results into its response.
+**For installed package (not recommended for development):**
+
+```json
+{
+  "mcpServers": {
+    "markdown-docs": {
+      "command": "mcp-markdown-ragdocs",
+      "args": ["mcp"],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+### Multi-Project Configuration
+
+To specify which project to activate:
+
+```json
+{
+  "mcpServers": {
+    "markdown-docs": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/mcp-markdown-ragdocs",
+        "run",
+        "mcp-markdown-ragdocs",
+        "mcp",
+        "--project",
+        "my-project"
+      ],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+The `--project` flag accepts:
+- Project name from global config (e.g., `"my-project"`)
+- Absolute path to project root (e.g., `"/home/user/project"`)
+
+### Verification
+
+After configuration:
+
+1. Restart VS Code or reload window
+2. Open MCP extension panel
+3. Verify `markdown-docs` server appears as connected
+4. Check available tools list includes `query_documents`
+
+### Usage in Copilot Chat
+
+Query your documentation from Copilot Chat:
+
+```
+@markdown-docs How do I configure authentication?
+```
+
+Or let Copilot automatically invoke the tool based on context:
+
+```
+I need to implement OAuth2 authentication according to our project docs
+```
+
+Copilot will call `query_documents` when it determines documentation search is needed.
 
 ## Integration with Claude Desktop
 
@@ -84,54 +134,82 @@ The assistant will call the `query_documents` tool and incorporate the results i
 - Python 3.13+
 - mcp-markdown-ragdocs installed
 
-### Step 1: Start the Server
+### Configuration
 
-```zsh
-uv run mcp-markdown-ragdocs run --host 127.0.0.1 --port 8000
-```
+Claude Desktop uses **stdio transport** for MCP servers.
 
-### Step 2: Configure Claude Desktop
-
-Edit the Claude Desktop MCP configuration file:
-
-**File:** `~/Library/Application Support/Claude/mcp_config.json` (macOS)
-**File:** `%APPDATA%\Claude\mcp_config.json` (Windows)
-**File:** `~/.config/Claude/mcp_config.json` (Linux)
+**File:** `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+**File:** `%APPDATA%\Claude\claude_desktop_config.json` (Windows)
+**File:** `~/.config/Claude/claude_desktop_config.json` (Linux)
 
 ```json
 {
   "mcpServers": {
-    "markdown-ragdocs": {
-      "url": "http://127.0.0.1:8000",
-      "tools": {
-        "query_documents": {
-          "description": "Search local Markdown documentation using hybrid search"
-        }
-      }
+    "markdown-docs": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/mcp-markdown-ragdocs",
+        "run",
+        "mcp-markdown-ragdocs",
+        "mcp"
+      ]
     }
   }
 }
 ```
 
-### Step 3: Restart Claude Desktop
+**With project override:**
 
-Close and reopen Claude Desktop for the configuration to take effect.
+```json
+{
+  "mcpServers": {
+    "markdown-docs": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/mcp-markdown-ragdocs",
+        "run",
+        "mcp-markdown-ragdocs",
+        "mcp",
+        "--project",
+        "my-project"
+      ]
+    }
+  }
+}
+```
 
-### Step 4: Query from Chat
+### Verification
 
-In a Claude chat, use the tool implicitly:
+1. Close and reopen Claude Desktop
+2. Start a new conversation
+3. Type a documentation-related question
+4. Claude will automatically invoke `query_documents` when appropriate
+
+### Usage
+
+Claude will implicitly use the tool based on conversation context:
 
 ```
 What does the authentication guide say about OAuth tokens?
 ```
 
-Claude will automatically decide when to use the `query_documents` tool based on context.
+Claude decides when to search your documentation without explicit tool invocation.
 
-## Integration with Other MCP Clients
+## HTTP API Integration (Alternative)
+
+For custom integrations or testing, use the HTTP API.
+
+### Start HTTP Server
+
+```zsh
+uv run mcp-markdown-ragdocs run --host 127.0.0.1 --port 8000
+```
 
 ### Generic HTTP MCP Client
 
-Most MCP clients support HTTP-based tool servers. Configuration pattern:
+Configuration pattern for HTTP-based MCP clients:
 
 ```json
 {
@@ -142,16 +220,17 @@ Most MCP clients support HTTP-based tool servers. Configuration pattern:
       "method": "POST",
       "name": "query_documents",
       "parameters": {
-        "query": "string"
+        "query": "string",
+        "top_n": "integer"
       }
     }
   ]
 }
 ```
 
-### API Testing with curl
+### Direct API Testing
 
-Test the endpoint directly:
+Test the endpoint with curl:
 
 ```zsh
 curl -X POST http://127.0.0.1:8000/query_documents \
@@ -346,17 +425,43 @@ Response:
 
 ## Troubleshooting
 
-### Problem: MCP Client Cannot Connect
+### Problem: VS Code Cannot Start MCP Server
 
 **Symptoms:**
-- Connection refused errors
-- Tool not appearing in client
+- Server not appearing in MCP extension
+- "Failed to start server" error
+- Tool not available
 
 **Solutions:**
-1. Verify server is running: `curl http://127.0.0.1:8000/health`
-2. Check server logs for startup errors
-3. Verify port is not blocked by firewall
-4. Ensure host/port match in client configuration
+
+1. **Verify uv installation:**
+   ```zsh
+   which uv
+   uv --version
+   ```
+
+2. **Check absolute path in config:**
+   ```zsh
+   cd /path/to/mcp-markdown-ragdocs
+   pwd  # Use this exact path in config
+   ```
+
+3. **Test server manually:**
+   ```zsh
+   cd /path/to/mcp-markdown-ragdocs
+   uv run mcp-markdown-ragdocs mcp
+   ```
+   Server should start without errors. Press Ctrl+C to stop.
+
+4. **Check VS Code logs:**
+   - Open Output panel
+   - Select "MCP" from dropdown
+   - Look for startup errors
+
+5. **Verify file permissions:**
+   ```zsh
+   ls -la /path/to/mcp-markdown-ragdocs
+   ```
 
 ### Problem: Query Returns Empty Results
 
@@ -364,61 +469,94 @@ Response:
 - `query_documents` returns no answer or "No results found"
 
 **Solutions:**
-1. Check document count: `curl http://127.0.0.1:8000/status`
-2. Verify documents_path points to correct directory
-3. Rebuild index: `uv run mcp-markdown-ragdocs rebuild-index`
-4. Check for indexing errors in server logs
 
-### Problem: Server Uses High CPU
+1. **Check indices exist:**
+   ```zsh
+   ls ~/.local/share/mcp-markdown-ragdocs/  # Multi-project mode
+   ls .index_data/  # Local mode
+   ```
 
-**Symptoms:**
-- CPU usage spikes during query or indexing
-- Slow response times
+2. **Verify project detection:**
+   ```zsh
+   cd /your/project
+   uv run mcp-markdown-ragdocs check-config
+   ```
+   Should show detected project and document count.
 
-**Solutions:**
-1. Reduce concurrent queries (serial querying)
-2. Adjust search weights to disable expensive strategies
-3. Check for file watcher loops (rapid file changes)
-4. Consider smaller documents_path scope
+3. **Rebuild index manually:**
+   ```zsh
+   cd /your/project
+   uv run mcp-markdown-ragdocs rebuild-index
+   ```
 
-### Problem: Index Rebuild Loops
+4. **Check document paths in config:**
+   ```toml
+   [indexing]
+   documents_path = "/correct/path/to/docs"
+   ```
 
-**Symptoms:**
-- Server rebuilds index on every startup
-- Manifest file not persisted
-
-**Solutions:**
-1. Verify index_path is writable
-2. Check for file permission errors in logs
-3. Ensure index_path is not in `.gitignore` or deleted on restart
-4. Verify manifest file exists: `ls {index_path}/index.manifest.json`
-
-### Problem: File Changes Not Detected
+### Problem: Wrong Project Detected
 
 **Symptoms:**
-- Edited documents not reflected in search results
-- File watcher not triggering updates
+- Queries search incorrect project
+- Multi-project setup not working
 
 **Solutions:**
-1. Check pending queue: `curl http://127.0.0.1:8000/status`
-2. Verify watchdog is installed: `uv pip list | grep watchdog`
-3. Check for failed files in status endpoint
-4. Manually rebuild: `uv run mcp-markdown-ragdocs rebuild-index`
 
-### Problem: Authentication Errors (MCP Client)
+1. **Explicitly specify project:**
+   ```json
+   {
+     "args": [
+       "mcp",
+       "--project",
+       "correct-project-name"
+     ]
+   }
+   ```
+
+2. **Verify project configuration:**
+   ```zsh
+   cat ~/.config/mcp-markdown-ragdocs/config.toml
+   ```
+   Check `[[projects]]` paths are absolute and correct.
+
+3. **Test detection:**
+   ```zsh
+   cd /project/directory
+   uv run mcp-markdown-ragdocs check-config
+   ```
+
+### Problem: Claude Desktop Not Finding Tool
 
 **Symptoms:**
-- 401 Unauthorized or 403 Forbidden errors
-
-**Note:** This server does not implement authentication. All requests are unauthenticated. If you see authentication errors, they are likely from:
-1. MCP client misconfiguration (expecting auth headers)
-2. Reverse proxy or firewall requiring authentication
-3. Incorrect URL (pointing to different server)
+- Claude does not use documentation tool
+- No indication tool is available
 
 **Solutions:**
-1. Verify URL points directly to mcp-ragdocs server
-2. Remove any authentication configuration from MCP client
-3. Check reverse proxy logs if using one
+
+1. **Verify config file location:**
+   ```zsh
+   # macOS
+   cat ~/Library/Application\ Support/Claude/claude_desktop_config.json
+
+   # Linux
+   cat ~/.config/Claude/claude_desktop_config.json
+   ```
+
+2. **Check JSON syntax:**
+   Use `jq` to validate:
+   ```zsh
+   cat path/to/config.json | jq
+   ```
+
+3. **Restart Claude Desktop completely:**
+   - Quit application (not just close window)
+   - Reopen
+
+4. **Test server manually:**
+   ```zsh
+   uv run mcp-markdown-ragdocs mcp
+   ```
 
 ## Security Considerations
 

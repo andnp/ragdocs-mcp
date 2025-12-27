@@ -23,12 +23,53 @@ from pathlib import Path
 from typing import Generator
 
 import pytest
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
+
+
+# ============================================================================
+# Test Fixture Factories
+# ============================================================================
+
+
+def make_test_config(tmp_path: Path, **overrides):
+    docs_path = tmp_path / "docs"
+    docs_path.mkdir(exist_ok=True)
+    index_path = tmp_path / "index"
+    index_path.mkdir(exist_ok=True)
+
+    defaults = {
+        "server": ServerConfig(host="localhost", port=8080),
+        "indexing": IndexingConfig(
+            documents_path=str(docs_path),
+            index_path=str(index_path),
+        ),
+        "search": SearchConfig(),
+        "chunking": ChunkingConfig(),
+    }
+    defaults.update(overrides)
+    return Config(**defaults)
+
+
+def create_test_document(docs_dir: Path | str, doc_id: str, content: str):
+    doc_path = Path(docs_dir) / f"{doc_id}.md"
+    doc_path.write_text(content)
+    return str(doc_path)
+
+
+# ============================================================================
+# Shared Embedding Model Fixture
+# ============================================================================
+
+
+@pytest.fixture(scope="session")
+def shared_embedding_model():
+    return HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
 
 # ============================================================================
@@ -119,7 +160,7 @@ def persistent_config(
 
 
 @pytest.fixture(scope="module")
-def persistent_indices_module() -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
+def persistent_indices_module(shared_embedding_model) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
     """
     Create module-scoped indices that persist across tests in a module.
 
@@ -128,7 +169,7 @@ def persistent_indices_module() -> Generator[tuple[VectorIndex, KeywordIndex, Gr
 
     Yields tuple of (vector, keyword, graph) indices.
     """
-    vector = VectorIndex()
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
     yield vector, keyword, graph
@@ -157,7 +198,7 @@ def persistent_manager_module(
 
 
 @pytest.fixture
-def persistent_indices_isolated() -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
+def persistent_indices_isolated(shared_embedding_model) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
     """
     Create function-scoped indices that can use persistent storage.
 
@@ -166,7 +207,7 @@ def persistent_indices_isolated() -> Generator[tuple[VectorIndex, KeywordIndex, 
 
     Yields tuple of (vector, keyword, graph) indices.
     """
-    vector = VectorIndex()
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
     yield vector, keyword, graph

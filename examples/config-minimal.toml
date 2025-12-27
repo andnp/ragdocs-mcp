@@ -5,6 +5,12 @@
 # Path to your documents directory
 documents_path = "./docs"
 
+# Optional: Filter which files to index (defaults shown)
+# include = ["**/*"]  # Match all files
+# exclude = ["**/.venv/**", "**/venv/**", "**/build/**", "**/dist/**", "**/.git/**", "**/node_modules/**", "**/__pycache__/**", "**/.pytest_cache/**"]
+# exclude_hidden_dirs = true  # Automatically exclude files in hidden directories (starting with .)
+# reconciliation_interval_seconds = 3600  # Check for stale entries every hour (0 to disable)
+
 # All other settings use defaults:
 # - Server: 127.0.0.1:8000
 # - Index path: .index_data/

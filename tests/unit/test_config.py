@@ -13,10 +13,12 @@ from src.config import load_config
 
 def test_load_from_project_local_config(tmp_path):
     """
-    Load configuration from project-local config.toml.
+    Load configuration from project-local .mcp-markdown-ragdocs/config.toml.
     Ensures local config takes precedence over global config.
     """
-    local_config = tmp_path / "config.toml"
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    local_config = config_dir / "config.toml"
     local_config.write_text("""
 [server]
 host = "192.168.1.1"
@@ -117,7 +119,9 @@ def test_path_expansion_tilde_and_relative(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    local_config = tmp_path / "config.toml"
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    local_config = config_dir / "config.toml"
     local_config.write_text("""
 [indexing]
 documents_path = "~/my_docs"
@@ -146,7 +150,9 @@ def test_validation_of_required_fields(tmp_path):
     Tests that the loader handles TOML parsing and basic structure.
     """
     # Test that config with string port loads (TOML validation)
-    config_with_string = tmp_path / "config.toml"
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_with_string = config_dir / "config.toml"
     config_with_string.write_text("""
 [server]
 port = "not_a_number"
@@ -167,7 +173,9 @@ def test_partial_config_with_defaults(tmp_path):
     Load partial configuration with defaults for missing sections.
     Validates merging of user config with defaults.
     """
-    partial_config = tmp_path / "config.toml"
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    partial_config = config_dir / "config.toml"
     partial_config.write_text("""
 [server]
 port = 3000
@@ -193,7 +201,9 @@ def test_all_sections_present_in_config(tmp_path):
     Verify all configuration sections are present with full config.
     Integration test ensuring complete config structure.
     """
-    full_config = tmp_path / "config.toml"
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    full_config = config_dir / "config.toml"
     full_config.write_text("""
 [server]
 host = "0.0.0.0"
@@ -235,5 +245,234 @@ llm_provider = "openai"
         assert config.search.rrf_k_constant == 50
         assert config.llm.embedding_model == "custom"
         assert config.llm.llm_provider == "openai"
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_monorepo_walks_up_directory_tree(tmp_path):
+    """
+    Configuration discovery walks up directory tree for monorepo support.
+    Validates that config in parent directory is found from subdirectory.
+    """
+    # Create parent directory with config
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    parent_config = config_dir / "config.toml"
+    parent_config.write_text("""
+[server]
+host = "monorepo.local"
+port = 6000
+""")
+
+    # Create subdirectory structure (monorepo/project-a/src)
+    project_dir = tmp_path / "project-a" / "src"
+    project_dir.mkdir(parents=True)
+
+    original_cwd = os.getcwd()
+    try:
+        # Change to subdirectory
+        os.chdir(project_dir)
+        config = load_config()
+
+        # Should find parent config
+        assert config.server.host == "monorepo.local"
+        assert config.server.port == 6000
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_local_config_takes_precedence_over_parent(tmp_path):
+    """
+    Local config takes precedence over parent directory config.
+    Validates that closest config in tree is used.
+    """
+    # Create parent config
+    parent_config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    parent_config_dir.mkdir()
+    parent_config = parent_config_dir / "config.toml"
+    parent_config.write_text("""
+[server]
+host = "parent.local"
+port = 5000
+""")
+
+    # Create child directory with its own config
+    child_dir = tmp_path / "child"
+    child_dir.mkdir()
+    child_config_dir = child_dir / ".mcp-markdown-ragdocs"
+    child_config_dir.mkdir()
+    child_config = child_config_dir / "config.toml"
+    child_config.write_text("""
+[server]
+host = "child.local"
+port = 6000
+""")
+
+    original_cwd = os.getcwd()
+    try:
+        # Change to child directory
+        os.chdir(child_dir)
+        config = load_config()
+
+        # Should use child config, not parent
+        assert config.server.host == "child.local"
+        assert config.server.port == 6000
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_include_exclude_patterns_with_defaults(tmp_path):
+    """
+    Test that include/exclude patterns use correct defaults when not specified.
+    """
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[indexing]
+documents_path = "."
+""")
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+
+        assert config.indexing.include == ["**/*"]
+        assert config.indexing.exclude == [
+            "**/.venv/**",
+            "**/venv/**",
+            "**/build/**",
+            "**/dist/**",
+            "**/.git/**",
+            "**/node_modules/**",
+            "**/__pycache__/**",
+            "**/.pytest_cache/**"
+        ]
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_include_exclude_patterns_custom(tmp_path):
+    """
+    Test loading custom include/exclude patterns from config file.
+    """
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[indexing]
+documents_path = "."
+include = ["**/*.md", "**/*.txt"]
+exclude = ["**/build/**", "**/test/**"]
+""")
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+
+        assert config.indexing.include == ["**/*.md", "**/*.txt"]
+        assert config.indexing.exclude == ["**/build/**", "**/test/**"]
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_include_exclude_empty_lists(tmp_path):
+    """
+    Test that empty include/exclude lists can be specified.
+    """
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[indexing]
+documents_path = "."
+include = []
+exclude = []
+""")
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+
+        assert config.indexing.include == []
+        assert config.indexing.exclude == []
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_local_include_exclude_override_global(tmp_path, monkeypatch):
+    """
+    Test that local config include/exclude patterns override global config.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    # Create global config
+    global_config_dir = tmp_path / ".config" / "mcp-markdown-ragdocs"
+    global_config_dir.mkdir(parents=True)
+    global_config_path = global_config_dir / "config.toml"
+    global_config_path.write_text("""
+[indexing]
+include = ["**/*.md"]
+exclude = ["**/global_exclude/**"]
+""")
+
+    # Create local config
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    local_config_dir = work_dir / ".mcp-markdown-ragdocs"
+    local_config_dir.mkdir()
+    local_config = local_config_dir / "config.toml"
+    local_config.write_text("""
+[indexing]
+include = ["**/*.txt"]
+exclude = ["**/local_exclude/**"]
+""")
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(work_dir)
+        config = load_config()
+
+        # Local config should override global
+        assert config.indexing.include == ["**/*.txt"]
+        assert config.indexing.exclude == ["**/local_exclude/**"]
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_partial_include_exclude_config(tmp_path):
+    """
+    Test specifying only include or only exclude, with defaults for the other.
+    """
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[indexing]
+documents_path = "."
+include = ["**/*.md", "**/*.rst"]
+""")
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+
+        # Custom include
+        assert config.indexing.include == ["**/*.md", "**/*.rst"]
+        # Default exclude
+        assert config.indexing.exclude == [
+            "**/.venv/**",
+            "**/venv/**",
+            "**/build/**",
+            "**/dist/**",
+            "**/.git/**",
+            "**/node_modules/**",
+            "**/__pycache__/**",
+            "**/.pytest_cache/**"
+        ]
     finally:
         os.chdir(original_cwd)

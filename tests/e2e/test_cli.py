@@ -33,7 +33,9 @@ def config_file(tmp_path):
 
     Provides realistic configuration in isolated directory.
     """
-    config_path = tmp_path / "config.toml"
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_path = config_dir / "config.toml"
     config_path.write_text("""
 [server]
 host = "127.0.0.1"
@@ -79,45 +81,25 @@ def docs_dir(tmp_path):
 
 def test_check_config_command_prints_valid_config(runner, tmp_path, config_file):
     """
-    Test check-config command prints configuration in JSON format.
+    Test check-config command prints configuration in table format.
 
     Validates that check-config loads configuration successfully and
-    outputs all expected sections in readable JSON format.
+    outputs all expected sections in readable table format.
     """
-    # Change to temp directory with config file
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
 
         result = runner.invoke(cli, ["check-config"])
 
-        # Verify successful exit
         assert result.exit_code == 0
 
-        # Verify output contains expected text
-        assert "Configuration loaded successfully:" in result.output
-
-        # Parse and verify JSON structure
-        json_start = result.output.find("{")
-        json_end = result.output.rfind("}") + 1
-        config_json = result.output[json_start:json_end]
-        config_data = json.loads(config_json)
-
-        # Verify all config sections present
-        assert "server" in config_data
-        assert "indexing" in config_data
-        assert "search" in config_data
-        assert "llm" in config_data
-        assert "parsers" in config_data
-
-        # Verify server section
-        assert config_data["server"]["host"] == "127.0.0.1"
-        assert config_data["server"]["port"] == 8000
-
-        # Verify indexing section
-        assert "documents_path" in config_data["indexing"]
-        assert "index_path" in config_data["indexing"]
-        assert config_data["indexing"]["recursive"] is True
+        assert "Configuration" in result.output
+        assert "Server Host" in result.output
+        assert "Server Port" in result.output
+        assert "Documents Path" in result.output
+        assert "Index Path" in result.output
+        assert "✅ Configuration is valid" in result.output
 
     finally:
         os.chdir(original_cwd)
@@ -128,47 +110,44 @@ def test_rebuild_index_command_rebuilds_indices(runner, tmp_path, config_file, d
     Test rebuild-index command processes all markdown files.
 
     Validates that rebuild-index discovers files, indexes them, and
-    persists indices to disk with correct manifest.
+    persists indices to disk with correct manifest in global directory.
     """
-    # Setup environment
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
 
-        # Run rebuild-index command
         result = runner.invoke(cli, ["rebuild-index"])
 
-        # Verify successful exit
         assert result.exit_code == 0
 
-        # Verify success message
         assert "Successfully rebuilt index" in result.output
         assert "documents indexed" in result.output
-        assert "3" in result.output  # 3 documents
+        assert "3" in result.output
 
-        # Verify index directories created
-        index_path = tmp_path / ".index_data"
+        from pathlib import Path
+        data_home = os.getenv("XDG_DATA_HOME")
+        if data_home:
+            base_dir = Path(data_home)
+        else:
+            base_dir = Path.home() / ".local" / "share"
+
+        index_path = base_dir / "mcp-markdown-ragdocs" / f"local-{tmp_path.name}"
         assert index_path.exists()
 
-        # Verify vector index files
         vector_path = index_path / "vector"
         assert vector_path.exists()
         assert (vector_path / "docstore.json").exists()
 
-        # Verify keyword index directory
         keyword_path = index_path / "keyword"
         assert keyword_path.exists()
 
-        # Verify graph store file
         graph_path = index_path / "graph"
         assert graph_path.exists()
         assert (graph_path / "graph.json").exists()
 
-        # Verify manifest file created
         manifest_file = index_path / "index.manifest.json"
         assert manifest_file.exists()
 
-        # Verify manifest contents
         manifest_data = json.loads(manifest_file.read_text())
         assert "spec_version" in manifest_data
         assert "embedding_model" in manifest_data
@@ -248,20 +227,9 @@ def test_check_config_error_handling_missing_config(runner, tmp_path):
 
         result = runner.invoke(cli, ["check-config"])
 
-        # Should succeed with defaults
         assert result.exit_code == 0
-        assert "Configuration loaded successfully:" in result.output
-
-        # Parse and verify default values used
-        json_start = result.output.find("{")
-        json_end = result.output.rfind("}") + 1
-        config_json = result.output[json_start:json_end]
-        config_data = json.loads(config_json)
-
-        # Verify default values
-        assert config_data["server"]["host"] == "127.0.0.1"
-        assert config_data["server"]["port"] == 8000
-        assert config_data["llm"]["embedding_model"] == "local"
+        assert "Configuration" in result.output
+        assert "✅ Configuration is valid" in result.output
 
     finally:
         os.chdir(original_cwd)
@@ -274,7 +242,9 @@ def test_rebuild_index_error_handling_invalid_config(runner, tmp_path):
     Validates error handling when configured documents_path does not exist.
     """
     # Create config pointing to non-existent directory
-    config_path = tmp_path / "config.toml"
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_path = config_dir / "config.toml"
     config_path.write_text("""
 [indexing]
 documents_path = "/nonexistent/path"

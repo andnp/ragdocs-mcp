@@ -75,6 +75,7 @@ def current_manifest(config):
         spec_version="1.0.0",
         embedding_model=config.llm.embedding_model,
         parsers=config.parsers,
+        chunking_config={},
     )
 
 
@@ -193,6 +194,7 @@ def test_startup_version_mismatch_triggers_rebuild(config, manager, current_mani
         spec_version="0.9.0",  # Old version
         embedding_model="all-MiniLM-L6-v2",
         parsers={"**/*.md": "MarkdownParser"},
+        chunking_config={},
     )
     save_manifest(index_path, old_manifest)
 

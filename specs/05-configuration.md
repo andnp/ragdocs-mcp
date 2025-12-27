@@ -6,12 +6,34 @@ The server's behavior is controlled by a `config.toml` file. The system is desig
 
 The server will look for `config.toml` in the following locations, in order. The first one found will be used.
 
-1.  `./config.toml` (in the current working directory where the server is launched)
-2.  `$HOME/.config/mcp-markdown-ragdocs/config.toml` (user-specific global configuration)
+1.  `.mcp-markdown-ragdocs/config.toml` in current directory
+2.  `.mcp-markdown-ragdocs/config.toml` in parent directories (walks up to filesystem root)
+3.  `$HOME/.config/mcp-markdown-ragdocs/config.toml` (user-specific global configuration)
+
+This discovery order supports **monorepo workflows** where a single configuration can be placed in a parent directory and shared across multiple projects. The server walks up the directory tree until it finds a `.mcp-markdown-ragdocs/config.toml` file or reaches the filesystem root.
 
 If no configuration file is found, the default values specified below will be used.
 
 ## 5.2. Configuration Parameters
+
+### `[[projects]]` (Multi-Project Support)
+
+Define multiple projects with automatic detection and isolated storage (global config only).
+
+```toml
+[[projects]]
+name = "monorepo"
+path = "/home/user/work/monorepo"
+
+[[projects]]
+name = "personal-notes"
+path = "/home/user/Documents/notes"
+```
+
+- `name`: string, required. Alphanumeric, hyphens, underscores only. Used as directory name in data storage.
+- `path`: string, required. Absolute path to project root. Server detects project when CWD is under this path.
+
+See [Multi-Project Support Spec](10-multi-project-support.md) for full details.
 
 ### `[server]`
 
@@ -27,6 +49,7 @@ Controls document discovery and index management.
   - **Security Note:** For security, avoid pointing this to high-level system directories (e.g., `/`, `/etc`, `$HOME`). It's best to scope it to a specific project or notes folder.
 - `index_path`: string, default `".index_data/"`
   - The path where the persistent indices (Vector, Keyword, Graph) will be saved.
+  - **Note:** When using multi-project support, this is automatically set to `~/.local/share/mcp-markdown-ragdocs/{project-name}/` unless explicitly overridden in project-local config.
 - `recursive`: boolean, default `true`
   - Whether glob patterns should search recursively.
 
@@ -51,6 +74,7 @@ Controls the LLM used for synthesis. *(Note: For v1, these may not be fully impl
 ## 5.3. Example `config.toml`
 
 ```toml
+# .mcp-markdown-ragdocs/config.toml
 # Example configuration for mcp-markdown-ragdocs
 
 [server]
@@ -77,4 +101,3 @@ keyword_weight = 1.0
 # Apply a moderate bias towards recently edited notes
 recency_bias = 0.6
 ```
-

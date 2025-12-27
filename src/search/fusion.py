@@ -43,3 +43,25 @@ def fuse_results(
     ]
 
     return sorted(boosted_scores, key=lambda x: x[1], reverse=True)
+
+
+def normalize_scores(fused_results: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    if not fused_results:
+        return []
+
+    if len(fused_results) == 1:
+        return [(fused_results[0][0], 1.0)]
+
+    scores = [score for _, score in fused_results]
+    min_score = min(scores)
+    max_score = max(scores)
+
+    if max_score == min_score:
+        return [(doc_id, 1.0) for doc_id, _ in fused_results]
+
+    normalized = [
+        (doc_id, (score - min_score) / (max_score - min_score))
+        for doc_id, score in fused_results
+    ]
+
+    return normalized

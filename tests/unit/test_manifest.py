@@ -14,6 +14,7 @@ def sample_manifest():
         spec_version="1.0.0",
         embedding_model="all-MiniLM-L6-v2",
         parsers={"**/*.md": "MarkdownParser"},
+        chunking_config={},
     )
 
 
@@ -93,6 +94,7 @@ def test_should_rebuild_when_spec_version_differs(sample_manifest):
         spec_version="0.9.0",
         embedding_model="all-MiniLM-L6-v2",
         parsers={"**/*.md": "MarkdownParser"},
+        chunking_config={},
     )
 
     result = should_rebuild(sample_manifest, saved)
@@ -110,6 +112,7 @@ def test_should_rebuild_when_embedding_model_differs(sample_manifest):
         spec_version="1.0.0",
         embedding_model="different-model",
         parsers={"**/*.md": "MarkdownParser"},
+        chunking_config={},
     )
 
     result = should_rebuild(sample_manifest, saved)
@@ -127,6 +130,7 @@ def test_should_rebuild_when_parsers_differ(sample_manifest):
         spec_version="1.0.0",
         embedding_model="all-MiniLM-L6-v2",
         parsers={"**/*.txt": "TextParser"},
+        chunking_config={},
     )
 
     result = should_rebuild(sample_manifest, saved)
@@ -144,6 +148,8 @@ def test_should_not_rebuild_when_manifests_identical(sample_manifest):
         spec_version="1.0.0",
         embedding_model="all-MiniLM-L6-v2",
         parsers={"**/*.md": "MarkdownParser"},
+        chunking_config={},
+        indexed_files={},  # Must have indexed_files to skip rebuild
     )
 
     result = should_rebuild(sample_manifest, saved)
@@ -162,6 +168,7 @@ def test_save_manifest_creates_parent_directory(tmp_path):
         spec_version="1.0.0",
         embedding_model="test-model",
         parsers={},
+        chunking_config={},
     )
 
     save_manifest(nested_path, manifest)

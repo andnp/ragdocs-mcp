@@ -367,9 +367,11 @@ def test_plaintext_parser_basic(tmp_path):
 
 ```python
 @cli.command("stats")
-def stats_cmd():
+@click.option("--project", default=None, help="Override project detection")
+def stats_cmd(project: str | None):
     """Display index statistics."""
     config = load_config()
+    config = _apply_project_detection(config, project)
     # Implementation here
     click.echo(f"Total documents: {count}")
 ```
@@ -378,9 +380,60 @@ def stats_cmd():
 
 ```python
 def test_cli_stats(tmp_path):
+    runner = CliRunner()
     result = runner.invoke(cli, ["stats"])
     assert result.exit_code == 0
     assert "Total documents:" in result.output
+```
+
+3. **Update documentation** in `docs/configuration.md` CLI Commands section.
+
+## Manual Testing
+
+### Testing MCP Server (stdio)
+
+Start the MCP server manually:
+
+```zsh
+uv run mcp-markdown-ragdocs mcp
+```
+
+The server will start and wait for MCP protocol messages on stdin. Useful for:
+- Verifying server startup without errors
+- Testing with manual JSON-RPC messages
+- Debugging stdio transport issues
+
+Press Ctrl+C to stop.
+
+### Testing HTTP Server
+
+Start the HTTP server:
+
+```zsh
+uv run mcp-markdown-ragdocs run
+```
+
+Query the API:
+
+```zsh
+curl http://127.0.0.1:8000/health
+curl -X POST http://127.0.0.1:8000/query_documents \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test", "top_n": 3}'
+```
+
+### Testing CLI Query
+
+Run a direct query:
+
+```zsh
+uv run mcp-markdown-ragdocs query "authentication"
+```
+
+With JSON output for parsing:
+
+```zsh
+uv run mcp-markdown-ragdocs query "test" --json | jq
 ```
 
 ## Testing Patterns
@@ -550,16 +603,16 @@ test: add integration test for graph traversal
 
 ## Architecture Decision Records
 
-Document significant architecture decisions in `docs/architecture/`:
+Significant architecture decisions are documented in the `specs/` directory:
 
-- Why hybrid search over single strategy?
-- Why local-first instead of database service?
-- Why RRF fusion over learned fusion?
-- Why tree-sitter over regex parsing?
+- [specs/02-architecture-and-tech-stack.md](../specs/02-architecture-and-tech-stack.md): System architecture and technology choices
+- [specs/10-multi-project-support.md](../specs/10-multi-project-support.md): Project detection and index isolation
+- [specs/11-search-quality-improvements.md](../specs/11-search-quality-improvements.md): Search pipeline enhancements (BM25F, dedup, re-ranking)
+- [specs/12-context-compression.md](../specs/12-context-compression.md): Compression strategy decision (threshold + dedup)
 
-Each decision should include:
-- Context (what problem?)
-- Decision (what solution?)
-- Alternatives considered
-- Trade-offs
-- Consequences
+Each spec includes:
+- Executive summary
+- Current state analysis
+- Decision matrix with alternatives
+- Implementation details
+- Risk register

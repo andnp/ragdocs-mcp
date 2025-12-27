@@ -4,14 +4,16 @@ This document explains the hybrid search system, including each search strategy,
 
 ## Overview
 
-The query orchestrator combines four distinct retrieval strategies:
+The query orchestrator combines six distinct retrieval and enhancement strategies:
 
-1. **Semantic Search**: Conceptual similarity via vector embeddings
-2. **Keyword Search**: Exact term matching via BM25 scoring
-3. **Graph Traversal**: Structural relationships via wikilinks
-4. **Recency Bias**: Temporal relevance via file modification time
+1. **Query Expansion**: Vocabulary-based expansion for improved recall
+2. **Semantic Search**: Conceptual similarity via vector embeddings
+3. **Keyword Search**: Exact term matching via BM25F scoring with field boosts
+4. **Graph Traversal**: Structural relationships via wikilinks
+5. **Recency Bias**: Temporal relevance via file modification time
+6. **Cross-Encoder Re-Ranking**: Joint query-document relevance scoring (optional)
 
-Results from all strategies are fused using Reciprocal Rank Fusion (RRF) to produce a single ranked list of documents for synthesis.
+Results from retrieval strategies are fused using Reciprocal Rank Fusion (RRF), then filtered, deduplicated, and optionally re-ranked to produce a final list for synthesis.
 
 ## Search Strategies
 
@@ -51,7 +53,14 @@ Even though the word "secure" may not appear in these documents, the semantic si
 
 **Technology:**
 - Full-text index: Whoosh with BM25F scoring
-- Schema: ID (stored), TEXT (content + aliases), KEYWORD (tags)
+- Field boosts:
+  - title: 3.0x
+  - headers: 2.5x
+  - keywords: 2.5x
+  - description: 2.0x
+  - tags: 2.0x
+  - aliases: 1.5x
+  - author: 1.0x
 - Tokenization: StandardAnalyzer (strips punctuation, lowercases)
 
 **Process:**
@@ -163,6 +172,85 @@ The recent OAuth guide surfaces higher due to recency boost.
 
 Disable recency bias by setting `recency_bias = 0.0` in config.
 
+### 5. Query Expansion
+
+**Purpose:** Improve recall by appending semantically related terms to the query.
+
+**Technology:**
+- Concept vocabulary built during index persist
+- Extracts unique terms from all indexed chunks
+- Embeds each term using the same embedding model
+- Vocabulary persisted as `concept_vocabulary.json`
+
+**Process:**
+1. Embed the query using the embedding model
+2. Compute cosine similarity against all vocabulary terms
+3. Select top-3 terms with similarity ≥ 0.5
+4. Append non-duplicate terms to the original query
+
+**Example:**
+
+Original query: "database optimization"
+
+Expansion terms found:
+- "indexing" (similarity: 0.68)
+- "query" (similarity: 0.62)
+- "performance" (similarity: 0.58)
+
+Expanded query: "database optimization indexing query performance"
+
+**When Most Effective:**
+- Short queries that benefit from related terminology
+- Queries using general terms where specific jargon exists in the corpus
+- Technical documentation with domain-specific vocabulary
+
+**Configuration:**
+
+Query expansion is automatic when concept vocabulary exists. Rebuild index to generate vocabulary: `uv run mcp-markdown-ragdocs rebuild-index`
+
+### 6. Cross-Encoder Re-Ranking
+
+**Purpose:** Improve precision by re-scoring candidates using joint query-document relevance.
+
+**Technology:**
+- Default model: `cross-encoder/ms-marco-MiniLM-L-6-v2` (22MB)
+- Lazy loading: model downloaded and loaded on first rerank call
+- Sentence-transformers CrossEncoder implementation
+
+**Process:**
+1. Take top candidates from fusion pipeline (after filtering/dedup)
+2. Pair each candidate's content with the query
+3. Score all pairs using cross-encoder
+4. Sort by cross-encoder scores descending
+5. Return top `rerank_top_n` results
+
+**Performance:**
+- ~50ms for 10 candidates on CPU
+- ~30ms for TinyBERT variant
+- ~150ms for larger BAAI/bge-reranker-base
+
+**When Most Effective:**
+- Queries where initial ranking has relevant results in wrong order
+- Technical queries requiring precise term matching in context
+- High-stakes searches where precision matters more than latency
+
+**Model Options:**
+
+| Model | Size | Latency | Quality |
+|-------|------|---------|--------|
+| `cross-encoder/ms-marco-MiniLM-L-6-v2` | 22MB | ~50ms | Recommended |
+| `cross-encoder/ms-marco-TinyBERT-L-2-v2` | 17MB | ~30ms | Faster |
+| `BAAI/bge-reranker-base` | 110MB | ~150ms | Higher quality |
+
+**Configuration:**
+
+```toml
+[search]
+rerank_enabled = true
+rerank_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+rerank_top_n = 10
+```
+
 ## Reciprocal Rank Fusion (RRF)
 
 ### Algorithm
@@ -246,6 +334,32 @@ This increases the influence of semantic search results relative to keyword sear
 3. **Assumes list independence**: Does not account for correlation between lists
 
 ## Result Fusion Process
+
+### Processing Pipeline
+
+The complete pipeline processes results in this order:
+
+```
+Semantic Search + Keyword Search (parallel)
+        ↓
+Graph Neighbor Boosting (1-hop)
+        ↓
+RRF Fusion (weighted by strategy)
+        ↓
+Recency Bias (tier-based multiplier)
+        ↓
+Score Normalization [0.0, 1.0]
+        ↓
+Confidence Threshold (min_confidence)
+        ↓
+Per-Document Limit (max_chunks_per_doc)
+        ↓
+Semantic Deduplication (if dedup_enabled)
+        ↓
+Cross-Encoder Re-Ranking (if rerank_enabled)
+        ↓
+Top-N Selection
+```
 
 ### Step-by-Step Fusion
 
@@ -485,7 +599,6 @@ Potential improvements not currently implemented:
 
 1. **Multi-hop graph traversal**: Configurable depth (1-hop, 2-hop)
 2. **Custom analyzers**: Preserve punctuation for technical terms
-3. **Query-time strategy selection**: Automatically weight strategies based on query type
-4. **Learned fusion**: Train fusion weights on query/relevance pairs
-5. **Re-ranking**: Post-fusion re-ranking based on LLM scoring
-6. **Sparse+Dense retrieval**: Combine sparse (BM25) and dense (FAISS) in single index
+3. **Query type classification**: Automatically weight strategies based on query type (P3 in specs)
+4. **Code block index**: Specialized tokenization for code (P7 in specs)
+5. **Learned fusion**: Train fusion weights on query/relevance pairs

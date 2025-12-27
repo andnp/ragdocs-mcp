@@ -6,6 +6,14 @@ from src.indices.keyword import KeywordIndex
 from src.models import Document
 
 
+def _extract_chunk_ids(results: list) -> list[str]:
+    if not results:
+        return []
+    if isinstance(results[0], str):
+        return results
+    return [r["chunk_id"] for r in results]
+
+
 @pytest.fixture
 def sample_document():
     return Document(
@@ -29,7 +37,7 @@ def test_keyword_index_add_and_search(keyword_index, sample_document):
 
     results = keyword_index.search("machine learning", top_k=5)
 
-    assert "test-doc" in results
+    assert "test-doc" in _extract_chunk_ids(results)
     assert len(results) <= 5
 
 
@@ -38,7 +46,7 @@ def test_keyword_index_search_aliases(keyword_index, sample_document):
 
     results = keyword_index.search("AI Basics", top_k=5)
 
-    assert "test-doc" in results
+    assert "test-doc" in _extract_chunk_ids(results)
 
 
 def test_keyword_index_search_tags(keyword_index, sample_document):
@@ -46,19 +54,19 @@ def test_keyword_index_search_tags(keyword_index, sample_document):
 
     results = keyword_index.search("ml", top_k=5)
 
-    assert "test-doc" in results
+    assert "test-doc" in _extract_chunk_ids(results)
 
 
 def test_keyword_index_remove(keyword_index, sample_document):
     keyword_index.add(sample_document)
 
     results_before = keyword_index.search("machine learning", top_k=5)
-    assert "test-doc" in results_before
+    assert "test-doc" in _extract_chunk_ids(results_before)
 
     keyword_index.remove("test-doc")
 
     results_after = keyword_index.search("machine learning", top_k=5)
-    assert "test-doc" not in results_after
+    assert "test-doc" not in _extract_chunk_ids(results_after)
 
 
 def test_keyword_index_empty_query(keyword_index, sample_document):
@@ -84,7 +92,7 @@ def test_keyword_index_persist_and_load(tmp_path, sample_document):
     index2.load(persist_path)
 
     results = index2.search("machine learning", top_k=5)
-    assert "test-doc" in results
+    assert "test-doc" in _extract_chunk_ids(results)
 
 
 def test_keyword_index_multiple_documents(keyword_index):
@@ -112,10 +120,10 @@ def test_keyword_index_multiple_documents(keyword_index):
     keyword_index.add(doc2)
 
     results = keyword_index.search("python", top_k=5)
-    assert "doc1" in results
+    assert "doc1" in _extract_chunk_ids(results)
 
     results = keyword_index.search("javascript", top_k=5)
-    assert "doc2" in results
+    assert "doc2" in _extract_chunk_ids(results)
 
 
 def test_keyword_index_exact_match_priority(keyword_index):
@@ -144,8 +152,8 @@ def test_keyword_index_exact_match_priority(keyword_index):
 
     results = keyword_index.search("BM25", top_k=5)
 
-    assert "doc1" in results
-    assert results.index("doc1") < results.index("doc2") if "doc2" in results else True
+    assert "doc1" in _extract_chunk_ids(results)
+    assert _extract_chunk_ids(results).index("doc1") < _extract_chunk_ids(results).index("doc2") if "doc2" in results else True
 
 
 def test_keyword_index_update_document(keyword_index):
@@ -162,7 +170,7 @@ def test_keyword_index_update_document(keyword_index):
     keyword_index.add(doc)
 
     results = keyword_index.search("python", top_k=5)
-    assert "doc1" in results
+    assert "doc1" in _extract_chunk_ids(results)
 
     updated_doc = Document(
         id="doc1",
@@ -177,10 +185,10 @@ def test_keyword_index_update_document(keyword_index):
     keyword_index.add(updated_doc)
 
     results = keyword_index.search("javascript", top_k=5)
-    assert "doc1" in results
+    assert "doc1" in _extract_chunk_ids(results)
 
     results = keyword_index.search("python", top_k=5)
-    assert "doc1" not in results
+    assert "doc1" not in _extract_chunk_ids(results)
 
 
 def test_keyword_index_load_nonexistent_path(tmp_path):
@@ -201,7 +209,7 @@ def test_keyword_index_load_nonexistent_path(tmp_path):
     )
     index.add(doc)
     results = index.search("test content", top_k=5)
-    assert "test-doc" in results
+    assert "test-doc" in _extract_chunk_ids(results)
 
 
 @pytest.mark.skip(
@@ -223,10 +231,10 @@ def test_keyword_index_special_characters(keyword_index):
     keyword_index.add(doc)
 
     results = keyword_index.search("C++", top_k=5)
-    assert "special-doc" in results
+    assert "special-doc" in _extract_chunk_ids(results)
 
     results = keyword_index.search("Node.js", top_k=5)
-    assert "special-doc" in results
+    assert "special-doc" in _extract_chunk_ids(results)
 
 
 def test_keyword_index_phrase_search(keyword_index):
@@ -255,7 +263,7 @@ def test_keyword_index_phrase_search(keyword_index):
 
     results = keyword_index.search("quick brown fox", top_k=5)
 
-    assert "doc1" in results
+    assert "doc1" in _extract_chunk_ids(results)
 
 
 def test_keyword_index_no_results(keyword_index, sample_document):
@@ -280,7 +288,7 @@ def test_keyword_index_aliases_as_string(keyword_index):
     keyword_index.add(doc)
 
     results = keyword_index.search("Artificial Intelligence", top_k=5)
-    assert "doc1" in results
+    assert "doc1" in _extract_chunk_ids(results)
 
 
 def test_keyword_index_no_aliases(keyword_index):
@@ -297,7 +305,7 @@ def test_keyword_index_no_aliases(keyword_index):
     keyword_index.add(doc)
 
     results = keyword_index.search("content", top_k=5)
-    assert "doc1" in results
+    assert "doc1" in _extract_chunk_ids(results)
 
 
 def test_keyword_index_concurrent_access(keyword_index):
@@ -339,8 +347,8 @@ def test_keyword_index_concurrent_access(keyword_index):
     thread2.join()
 
     results = keyword_index.search("document", top_k=5)
-    assert "doc1" in results
-    assert "doc2" in results
+    assert "doc1" in _extract_chunk_ids(results)
+    assert "doc2" in _extract_chunk_ids(results)
 
 
 def test_keyword_index_empty_content(keyword_index):
@@ -361,7 +369,7 @@ def test_keyword_index_empty_content(keyword_index):
     keyword_index.add(doc)
 
     results = keyword_index.search("empty", top_k=5)
-    assert "empty-doc" in results
+    assert "empty-doc" in _extract_chunk_ids(results)
 
 
 def test_keyword_index_very_large_document(keyword_index):
@@ -387,7 +395,266 @@ def test_keyword_index_very_large_document(keyword_index):
     keyword_index.add(doc)
 
     results = keyword_index.search("sentence number 42", top_k=5)
-    assert "large-doc" in results
+    assert "large-doc" in _extract_chunk_ids(results)
 
     results = keyword_index.search("large", top_k=5)
-    assert "large-doc" in results
+    assert "large-doc" in _extract_chunk_ids(results)
+
+
+# ============================================================================
+# BM25F Field Boosting Tests (Phase 1 Search Quality)
+# ============================================================================
+
+
+def test_keyword_index_title_field_boosted():
+    """
+    Title field is indexed with boost factor 3.0.
+
+    Verifies P4: Title field has highest boost and matches rank higher.
+    """
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    # Chunk with search term in title
+    chunk_with_title = Chunk(
+        chunk_id="titled_chunk_0",
+        doc_id="titled-doc",
+        content="Some generic content about programming.",
+        metadata={"title": "Authentication Guide", "tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=50,
+        file_path="/tmp/auth.md",
+        modified_time=datetime.now(),
+    )
+
+    # Chunk with search term in content only
+    chunk_content_only = Chunk(
+        chunk_id="content_chunk_0",
+        doc_id="content-doc",
+        content="This document covers authentication patterns and best practices.",
+        metadata={"title": "Generic Document", "tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=70,
+        file_path="/tmp/generic.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(chunk_with_title)
+    keyword_index.add_chunk(chunk_content_only)
+
+    results = keyword_index.search("authentication", top_k=5)
+    chunk_ids = _extract_chunk_ids(results)
+
+    assert "titled_chunk_0" in chunk_ids
+    assert "content_chunk_0" in chunk_ids
+    # Title match should rank higher due to 3.0 boost
+    assert chunk_ids.index("titled_chunk_0") < chunk_ids.index("content_chunk_0")
+
+
+def test_keyword_index_headers_field_indexed():
+    """
+    Headers field is indexed with boost factor 2.5.
+
+    Verifies header_path is searchable in keyword index.
+    """
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    chunk = Chunk(
+        chunk_id="header_chunk_0",
+        doc_id="header-doc",
+        content="Implementation details for the feature.",
+        metadata={"tags": []},
+        chunk_index=0,
+        header_path="API Reference > Endpoints > User Management",
+        start_pos=0,
+        end_pos=50,
+        file_path="/tmp/api.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(chunk)
+
+    # Search for terms in header_path
+    results = keyword_index.search("API endpoints", top_k=5)
+    assert "header_chunk_0" in _extract_chunk_ids(results)
+
+    results = keyword_index.search("user management", top_k=5)
+    assert "header_chunk_0" in _extract_chunk_ids(results)
+
+
+def test_keyword_index_keywords_field_indexed():
+    """
+    Keywords field is indexed with boost factor 2.5.
+
+    Verifies frontmatter keywords are searchable.
+    """
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    chunk = Chunk(
+        chunk_id="kw_chunk_0",
+        doc_id="kw-doc",
+        content="General content without specific terms.",
+        metadata={
+            "keywords": ["microservices", "distributed-systems", "scalability"],
+            "tags": [],
+        },
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=50,
+        file_path="/tmp/arch.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(chunk)
+
+    # Search for keywords
+    results = keyword_index.search("microservices", top_k=5)
+    assert "kw_chunk_0" in _extract_chunk_ids(results)
+
+    results = keyword_index.search("distributed systems", top_k=5)
+    assert "kw_chunk_0" in _extract_chunk_ids(results)
+
+
+def test_keyword_index_description_field_indexed():
+    """
+    Description field is indexed with boost factor 2.0.
+
+    Verifies frontmatter description is searchable.
+    """
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    chunk = Chunk(
+        chunk_id="desc_chunk_0",
+        doc_id="desc-doc",
+        content="Code examples and snippets.",
+        metadata={
+            "description": "A comprehensive guide to containerization with Docker",
+            "tags": [],
+        },
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=30,
+        file_path="/tmp/docker.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(chunk)
+
+    # Search for terms in description
+    results = keyword_index.search("containerization Docker", top_k=5)
+    assert "desc_chunk_0" in _extract_chunk_ids(results)
+
+
+def test_keyword_index_author_field_indexed():
+    """
+    Author field is indexed for searchability.
+
+    Verifies documents can be found by author name.
+    """
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    chunk = Chunk(
+        chunk_id="author_chunk_0",
+        doc_id="author-doc",
+        content="Technical documentation content.",
+        metadata={"author": "John Smith", "tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=40,
+        file_path="/tmp/authored.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(chunk)
+
+    # Search by author
+    results = keyword_index.search("John Smith", top_k=5)
+    assert "author_chunk_0" in _extract_chunk_ids(results)
+
+
+def test_keyword_index_category_field_indexed():
+    """
+    Category field is indexed as KEYWORD type.
+
+    Verifies documents can be filtered/searched by category.
+    """
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    chunk = Chunk(
+        chunk_id="cat_chunk_0",
+        doc_id="cat-doc",
+        content="Tutorial content here.",
+        metadata={"category": "tutorials", "tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=25,
+        file_path="/tmp/tutorial.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(chunk)
+
+    # Category is a KEYWORD field, exact match search
+    results = keyword_index.search("tutorials", top_k=5)
+    assert "cat_chunk_0" in _extract_chunk_ids(results)
+
+
+def test_keyword_index_all_boosted_fields_together():
+    """
+    All boosted fields work together for comprehensive search.
+
+    Verifies multiple frontmatter fields are indexed and searchable.
+    """
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    chunk = Chunk(
+        chunk_id="full_chunk_0",
+        doc_id="full-doc",
+        content="Main content of the document.",
+        metadata={
+            "title": "Kubernetes Deployment Guide",
+            "description": "Step-by-step instructions for deploying applications",
+            "keywords": ["k8s", "containers", "orchestration"],
+            "author": "DevOps Team",
+            "category": "infrastructure",
+            "aliases": ["k8s-guide", "deployment-howto"],
+            "tags": ["kubernetes", "devops"],
+        },
+        chunk_index=0,
+        header_path="Getting Started > Prerequisites",
+        start_pos=0,
+        end_pos=35,
+        file_path="/tmp/k8s.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(chunk)
+
+    # Search various fields
+    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("Kubernetes", top_k=5))
+    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("deploying applications", top_k=5))
+    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("k8s containers", top_k=5))
+    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("DevOps Team", top_k=5))
+    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("prerequisites", top_k=5))
+    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("k8s-guide", top_k=5))

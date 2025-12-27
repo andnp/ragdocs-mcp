@@ -15,6 +15,12 @@ index_path = "~/.cache/ragdocs-obsidian"
 # Search all subdirectories recursively
 recursive = true
 
+# Optional: Include only markdown files, exclude templates and dailies
+# include = ["**/*.md"]
+# exclude = ["**/templates/**", "**/Daily Notes/**", "**/.obsidian/**"]
+# exclude_hidden_dirs = true  # Exclude hidden dirs like .obsidian (enabled by default)
+# reconciliation_interval_seconds = 3600  # Periodic cleanup (1 hour)
+
 [parsers]
 # Support both .md and .markdown files
 "**/*.md" = "MarkdownParser"

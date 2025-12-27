@@ -1,0 +1,81 @@
+# Multi-Project Configuration Example
+# Location: ~/.config/mcp-markdown-ragdocs/config.toml
+
+# ============================================================================
+# PROJECT REGISTRY
+# ============================================================================
+# Register all projects you want to manage with mcp-markdown-ragdocs.
+# The server will automatically detect which project you're working in based
+# on your current directory and use isolated indices for each project.
+
+[[projects]]
+name = "monorepo"
+path = "/home/user/work/monorepo"
+
+[[projects]]
+name = "documentation"
+path = "/home/user/work/docs-site"
+
+[[projects]]
+name = "personal-notes"
+path = "/home/user/Documents/notes"
+
+[[projects]]
+name = "research"
+path = "/home/user/Documents/research-papers"
+
+# ============================================================================
+# GLOBAL DEFAULTS
+# ============================================================================
+# These settings apply to all projects unless overridden by a project-local
+# .mcp-markdown-ragdocs/config.toml file.
+
+[indexing]
+# Where to find markdown files (relative to project root)
+documents_path = "."
+
+# Whether to search subdirectories recursively
+recursive = true
+
+# Optional: Filter files by pattern (defaults shown)
+# include = ["**/*"]  # Match all files
+# exclude = ["**/.venv/**", "**/venv/**", "**/build/**", "**/dist/**", "**/.git/**", "**/node_modules/**", "**/__pycache__/**", "**/.pytest_cache/**"]
+# exclude_hidden_dirs = true  # Automatically exclude hidden directories (enabled by default)
+# reconciliation_interval_seconds = 3600  # Auto-cleanup stale entries every hour
+
+# Note: index_path is managed automatically per-project
+# (stored in ~/.local/share/mcp-markdown-ragdocs/{project-name}/)
+# Override in project-local config if needed.
+
+[parsers]
+# File patterns and their corresponding parsers
+"**/*.md" = "MarkdownParser"
+"**/*.markdown" = "MarkdownParser"
+
+[search]
+# Weighting for hybrid search components
+semantic_weight = 1.0   # Semantic (vector) search
+keyword_weight = 1.0    # BM25 keyword search
+recency_bias = 0.5      # Boost recently modified documents
+rrf_k_constant = 60     # Reciprocal Rank Fusion parameter
+
+[llm]
+# Embedding model for vector search
+embedding_model = "local"  # Uses BAAI/bge-small-en-v1.5
+
+[chunking]
+# Document chunking strategy for indexing
+strategy = "header_based"
+min_chunk_chars = 200
+max_chunk_chars = 1500
+overlap_chars = 100
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# - Project names must be unique and alphanumeric (plus hyphens/underscores)
+# - Project paths must be absolute and unique
+# - The server detects your project by matching your current working directory
+#   against the registered project paths
+# - Per-project overrides: Create .mcp-markdown-ragdocs/config.toml in the
+#   project root to override any settings from this global config
