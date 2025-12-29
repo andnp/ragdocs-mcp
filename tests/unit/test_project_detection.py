@@ -143,3 +143,31 @@ def test_detect_project_override_arbitrary_path(tmp_path, sample_projects):
     )
 
     assert result == "arbitrary_project"
+
+
+def test_detect_project_override_subdirectory_of_known_project(sample_projects):
+    """
+    Test that --project flag with a subdirectory of a known project returns the parent project.
+    When the user opens the MCP server from monorepo/docs but monorepo is the known project,
+    the server should use monorepo instead of creating a new 'docs' project.
+    """
+    result = detect_project(
+        cwd=Path("/home/user/other"),
+        projects=sample_projects,
+        project_override="/home/user/shallow/src/lib"
+    )
+    assert result == "shallow"
+
+
+def test_detect_project_override_subdirectory_deepest_match(sample_projects):
+    """
+    Test that subdirectory override uses deepest-match-wins algorithm.
+    If /home/user/shallow/deep/src is passed and both shallow and deep are known,
+    should return deep (the deepest match).
+    """
+    result = detect_project(
+        cwd=Path("/home/user/other"),
+        projects=sample_projects,
+        project_override="/home/user/shallow/deep/src"
+    )
+    assert result == "deep"

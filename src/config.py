@@ -341,6 +341,21 @@ def detect_project(cwd: Path | None = None, projects: list[ProjectConfig] | None
                     logger.info(f"Using project from --project flag (matched by path): {project.name}")
                     return project.name
 
+            # Check if project_override path is a subdirectory of a known project (deepest-match-wins)
+            projects_sorted = sorted(
+                projects,
+                key=lambda p: len(Path(p.path).parts),
+                reverse=True
+            )
+            for project in projects_sorted:
+                project_path_resolved = Path(project.path).resolve()
+                try:
+                    project_path.relative_to(project_path_resolved)
+                    logger.info(f"Using project from --project flag (subdirectory of '{project.name}'): {project.path}")
+                    return project.name
+                except ValueError:
+                    continue
+
         project_path = Path(project_override).expanduser().resolve()
         if project_path.exists():
             logger.info(f"Using arbitrary path from --project flag: {project_path}")
