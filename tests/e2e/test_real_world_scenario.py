@@ -404,7 +404,7 @@ def app_with_corpus(tmp_path, docs_corpus, monkeypatch):
             ),
         )
 
-    monkeypatch.setattr("src.server.load_config", mock_load_config)
+    monkeypatch.setattr("src.context.load_config", mock_load_config)
     app = create_app()
     return app
 

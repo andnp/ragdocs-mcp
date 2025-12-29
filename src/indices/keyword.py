@@ -1,3 +1,5 @@
+import atexit
+import shutil
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -9,6 +11,23 @@ from whoosh.qparser import MultifieldParser
 from whoosh.scoring import BM25F
 
 from src.models import Chunk, Document
+
+
+# REVIEW [LOW] Type Safety: STOPWORDS typed as Any but should be frozenset[str].
+# The Any annotation is unnecessary here.
+_temp_dirs: set[Path] = set()
+
+
+def _cleanup_temp_dirs() -> None:
+    for temp_dir in list(_temp_dirs):
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
+    _temp_dirs.clear()
+
+
+atexit.register(_cleanup_temp_dirs)
 
 
 STOPWORDS: Any = frozenset([
@@ -186,7 +205,24 @@ class KeywordIndex:
                 return
 
             try:
-                self._index = whoosh_index.open_dir(str(path))
+                existing_index = whoosh_index.open_dir(str(path))
+                existing_fields = set(existing_index.schema.names())
+                expected_fields = set(self._schema.names())
+
+                if existing_fields != expected_fields:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    missing = expected_fields - existing_fields
+                    extra = existing_fields - expected_fields
+                    logger.warning(
+                        f"Keyword index schema mismatch. Missing: {missing}, Extra: {extra}. "
+                        "Rebuilding index."
+                    )
+                    existing_index.close()
+                    self._initialize_index()
+                    return
+
+                self._index = existing_index
                 self._index_path = path
             except (whoosh_index.EmptyIndexError, FileNotFoundError):
                 self._initialize_index()
@@ -195,5 +231,61 @@ class KeywordIndex:
         import tempfile
 
         temp_dir = Path(tempfile.mkdtemp(prefix="whoosh_"))
+        _temp_dirs.add(temp_dir)
         self._index = whoosh_index.create_in(str(temp_dir), self._schema)
         self._index_path = temp_dir
+
+    # IndexProtocol methods
+
+    def add_document(self, doc_id: str, content: str, metadata: dict[str, Any]) -> None:
+        with self._lock:
+            if self._index is None:
+                self._initialize_index()
+
+            assert self._index is not None
+
+            tags = metadata.get("tags", [])
+            tags_text = ",".join(tags) if isinstance(tags, list) else str(tags)
+            title = str(metadata.get("title", ""))
+            description = str(metadata.get("description", ""))
+            keywords_list = metadata.get("keywords", [])
+            keywords_text = " ".join(keywords_list) if isinstance(keywords_list, list) else str(keywords_list)
+            aliases_list = metadata.get("aliases", [])
+            aliases_text = " ".join(str(a) for a in aliases_list) if isinstance(aliases_list, list) else str(aliases_list)
+
+            writer = self._index.writer()
+            try:
+                writer.update_document(
+                    id=doc_id,
+                    doc_id=doc_id,
+                    content=content,
+                    title=title,
+                    description=description,
+                    keywords=keywords_text,
+                    aliases=aliases_text,
+                    tags=tags_text,
+                )
+                writer.commit()
+            except Exception:
+                writer.cancel()
+                raise
+
+    def remove_document(self, doc_id: str) -> None:
+        self.remove(doc_id)
+
+    def clear(self) -> None:
+        with self._lock:
+            if self._index_path and self._index_path in _temp_dirs:
+                shutil.rmtree(self._index_path, ignore_errors=True)
+                _temp_dirs.discard(self._index_path)
+            self._index = None
+            self._index_path = None
+
+    def save(self, path: Path) -> None:
+        self.persist(path)
+
+    def __len__(self) -> int:
+        with self._lock:
+            if self._index is None:
+                return 0
+            return self._index.doc_count()

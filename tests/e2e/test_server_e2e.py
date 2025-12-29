@@ -106,7 +106,7 @@ def app_with_config(tmp_path, test_docs_dir, monkeypatch):
             ),
         )
 
-    monkeypatch.setattr("src.server.load_config", mock_load_config)
+    monkeypatch.setattr("src.context.load_config", mock_load_config)
     app = create_app()
     return app
 
@@ -352,7 +352,7 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
             ),
         )
 
-    monkeypatch.setattr("src.server.load_config", mock_load_config)
+    monkeypatch.setattr("src.context.load_config", mock_load_config)
 
     # Start server - should detect version mismatch and rebuild
     app = create_app()

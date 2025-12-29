@@ -8,7 +8,7 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.models import ChunkResult
-from src.search.orchestrator import QueryOrchestrator
+from src.search.orchestrator import SearchOrchestrator
 from tests.conftest import create_test_document
 
 
@@ -95,7 +95,7 @@ class TestQueryExpansionInOrchestrator:
         """
         vector, keyword, graph = indices
         manager = IndexManager(config_query_expansion, vector, keyword, graph)
-        orchestrator = QueryOrchestrator(
+        orchestrator = SearchOrchestrator(
             vector, keyword, graph, config_query_expansion, manager
         )
 
@@ -152,7 +152,7 @@ Permissions are granted based on user roles.
         """
         vector, keyword, graph = indices
         manager = IndexManager(config_query_expansion, vector, keyword, graph)
-        orchestrator = QueryOrchestrator(
+        orchestrator = SearchOrchestrator(
             vector, keyword, graph, config_query_expansion, manager
         )
 
@@ -216,7 +216,7 @@ class TestRerankingInPipeline:
         keyword = KeywordIndex()
         graph = GraphStore()
         manager = IndexManager(config_reranking, vector, keyword, graph)
-        orchestrator = QueryOrchestrator(
+        orchestrator = SearchOrchestrator(
             vector, keyword, graph, config_reranking, manager
         )
 
@@ -285,7 +285,7 @@ It is used for web development and scripting.
         keyword = KeywordIndex()
         graph = GraphStore()
         manager = IndexManager(config_reranking, vector, keyword, graph)
-        orchestrator = QueryOrchestrator(
+        orchestrator = SearchOrchestrator(
             vector, keyword, graph, config_reranking, manager
         )
 
@@ -365,7 +365,7 @@ class TestQueryExpansionAndReranking:
         keyword = KeywordIndex()
         graph = GraphStore()
         manager = IndexManager(config, vector, keyword, graph)
-        orchestrator = QueryOrchestrator(vector, keyword, graph, config, manager)
+        orchestrator = SearchOrchestrator(vector, keyword, graph, config, manager)
 
         create_test_document(
             docs_path,

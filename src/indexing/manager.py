@@ -29,28 +29,39 @@ class IndexManager:
         graph: GraphStore,
     ):
         self._config = config
-        self._vector = vector
-        self._keyword = keyword
-        self._graph = graph
+        self.vector = vector
+        self.keyword = keyword
+        self.graph = graph
         self._failed_files: list[FailedFile] = []
         self._chunker = get_chunker(config.chunking)
+
+    def _compute_doc_id(self, file_path: str) -> str:
+        docs_path = Path(self._config.indexing.documents_path)
+        abs_path = Path(file_path).resolve()
+        try:
+            rel_path = abs_path.relative_to(docs_path.resolve())
+            return str(rel_path.with_suffix(""))
+        except ValueError:
+            return Path(file_path).stem
 
     def index_document(self, file_path: str):
         try:
             parser = dispatch_parser(file_path, self._config)
             document = parser.parse(file_path)
 
+            document.id = self._compute_doc_id(file_path)
+
             chunks = self._chunker.chunk_document(document)
             document.chunks = chunks
 
             for chunk in chunks:
-                self._vector.add_chunk(chunk)
-                self._keyword.add_chunk(chunk)
+                self.vector.add_chunk(chunk)
+                self.keyword.add_chunk(chunk)
 
-            self._graph.add_node(document.id, document.metadata)
+            self.graph.add_node(document.id, document.metadata)
 
             for link in document.links:
-                self._graph.add_edge(document.id, link, edge_type="link")
+                self.graph.add_edge(document.id, link, edge_type="link")
 
             self._failed_files = [
                 f for f in self._failed_files if f.path != file_path
@@ -82,7 +93,7 @@ class IndexManager:
             # Don't raise - continue indexing other files
             logger.info(f"Continuing with remaining files after encoding error in {file_path}")
         except Exception as e:
-            logger.error(f"Failed to index document {file_path}: {e}")
+            logger.error(f"Failed to index document {file_path}: {e}", exc_info=True)
             failed = FailedFile(
                 path=file_path,
                 error=str(e),
@@ -95,35 +106,36 @@ class IndexManager:
 
     def remove_document(self, doc_id: str):
         try:
-            self._vector.remove(doc_id)
-            self._keyword.remove(doc_id)
-            self._graph.remove_node(doc_id)
+            self.vector.remove(doc_id)
+            self.keyword.remove(doc_id)
+            self.graph.remove_node(doc_id)
         except Exception as e:
-            logger.error(f"Failed to remove document {doc_id}: {e}")
+            logger.error(f"Failed to remove document {doc_id}: {e}", exc_info=True)
 
     def persist(self):
         index_path = Path(self._config.indexing.index_path)
         try:
-            self._vector.build_concept_vocabulary()
-            self._vector.persist(index_path / "vector")
-            self._keyword.persist(index_path / "keyword")
-            self._graph.persist(index_path / "graph")
+            # Note: vocabulary is built incrementally in background task
+            # See ApplicationContext._update_vocabulary_incremental()
+            self.vector.persist(index_path / "vector")
+            self.keyword.persist(index_path / "keyword")
+            self.graph.persist(index_path / "graph")
         except Exception as e:
-            logger.error(f"Failed to persist indices: {e}")
+            logger.error(f"Failed to persist indices: {e}", exc_info=True)
             raise
 
     def load(self):
         index_path = Path(self._config.indexing.index_path)
         try:
-            self._vector.load(index_path / "vector")
-            self._keyword.load(index_path / "keyword")
-            self._graph.load(index_path / "graph")
+            self.vector.load(index_path / "vector")
+            self.keyword.load(index_path / "keyword")
+            self.graph.load(index_path / "graph")
         except Exception as e:
-            logger.error(f"Failed to load indices: {e}")
+            logger.error(f"Failed to load indices: {e}", exc_info=True)
             raise
 
     def get_document_count(self) -> int:
-        return len(self._vector._doc_id_to_node_ids)
+        return len(self.vector.get_document_ids())
 
     def get_failed_files(self) -> list[dict[str, str]]:
         return [

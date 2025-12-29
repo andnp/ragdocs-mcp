@@ -17,6 +17,7 @@ def docs_path(tmp_path):
 
 @pytest.fixture
 def sample_manifest():
+    # doc_id is now relative path without extension (e.g., "subdir/doc2" not "doc2")
     return IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
@@ -24,7 +25,7 @@ def sample_manifest():
         chunking_config={},
         indexed_files={
             "doc1": "doc1.md",
-            "doc2": "subdir/doc2.md",
+            "subdir/doc2": "subdir/doc2.md",
             "doc3": "doc3.md",
         }
     )
@@ -103,7 +104,7 @@ def test_reconcile_deleted_files(docs_path, sample_manifest):
 
     assert files_to_add == []
     assert len(doc_ids_to_remove) == 2
-    assert "doc2" in doc_ids_to_remove
+    assert "subdir/doc2" in doc_ids_to_remove
     assert "doc3" in doc_ids_to_remove
 
 
@@ -131,7 +132,7 @@ def test_reconcile_mixed_changes(docs_path, sample_manifest):
     assert str(docs_path / "another.md") in files_to_add
 
     assert len(doc_ids_to_remove) == 2
-    assert "doc2" in doc_ids_to_remove
+    assert "subdir/doc2" in doc_ids_to_remove
     assert "doc3" in doc_ids_to_remove
 
 
@@ -200,9 +201,10 @@ def test_build_indexed_files_map(docs_path):
 
     indexed_map = build_indexed_files_map(files, docs_path)
 
+    # doc_id is now relative path without extension
     assert indexed_map == {
         "doc1": "doc1.md",
-        "doc2": "subdir/doc2.md",
+        "subdir/doc2": "subdir/doc2.md",
     }
 
 

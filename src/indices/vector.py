@@ -1,8 +1,9 @@
 import json
 import logging
 import re
+import threading
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -39,22 +40,40 @@ class EmbeddingModel(Protocol):
 
 
 class VectorIndex:
-    def __init__(self, embedding_model_name: str = "BAAI/bge-small-en-v1.5", embedding_model = None):
-        from llama_index.core import Settings
+    def __init__(self, embedding_model_name: str = "BAAI/bge-small-en-v1.5", embedding_model: EmbeddingModel | None = None):
+        self._embedding_model_name = embedding_model_name
+        self._embedding_model: EmbeddingModel | None = embedding_model
+        self._model_lock = threading.Lock()
+        self._model_loaded = embedding_model is not None
 
+        # If embedding model was provided, set it in Settings immediately
         if embedding_model is not None:
-            self._embedding_model = embedding_model
-        else:
-            from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-            self._embedding_model = HuggingFaceEmbedding(model_name=embedding_model_name)
-
-        Settings.embed_model = self._embedding_model
+            from llama_index.core import Settings
+            Settings.embed_model = embedding_model
 
         self._doc_id_to_node_ids: dict[str, list[str]] = {}
         self._chunk_id_to_node_id: dict[str, str] = {}
         self._vector_store = None
         self._index = None
         self._concept_vocabulary: dict[str, list[float]] = {}
+        self._term_counts: dict[str, int] = {}  # Track term frequencies for incremental updates
+        self._pending_terms: set[str] = set()  # Terms that need embedding
+
+    def _ensure_model_loaded(self) -> None:
+        if self._model_loaded:
+            return
+        with self._model_lock:
+            if self._model_loaded:
+                return
+            from llama_index.core import Settings
+            from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
+            self._embedding_model = HuggingFaceEmbedding(model_name=self._embedding_model_name)
+            Settings.embed_model = self._embedding_model
+            self._model_loaded = True
+
+    def warm_up(self) -> None:
+        self._ensure_model_loaded()
 
     def add(self, document: Document) -> None:
         from llama_index.core import Document as LlamaDocument
@@ -64,6 +83,7 @@ class VectorIndex:
                 self.add_chunk(chunk)
             return
 
+        self._ensure_model_loaded()
         if self._index is None:
             self._initialize_index()
 
@@ -88,6 +108,7 @@ class VectorIndex:
     def add_chunk(self, chunk: Chunk) -> None:
         from llama_index.core import Document as LlamaDocument
 
+        self._ensure_model_loaded()
         if self._index is None:
             self._initialize_index()
 
@@ -118,6 +139,9 @@ class VectorIndex:
 
         self._index.insert_nodes([llama_doc])
 
+        # Register terms for incremental vocabulary update
+        self.register_document_terms(embedding_text)
+
     def remove(self, document_id: str) -> None:
         if self._index is None or document_id not in self._doc_id_to_node_ids:
             return
@@ -128,6 +152,7 @@ class VectorIndex:
         if self._index is None or not query.strip():
             return []
 
+        self._ensure_model_loaded()
         retriever = self._index.as_retriever(similarity_top_k=top_k)
         nodes = retriever.retrieve(query)
 
@@ -162,12 +187,15 @@ class VectorIndex:
 
         return results
 
+    # REVIEW [MED] Logging: Using INFO level for routine operations like chunk retrieval.
+    # These should be DEBUG level - INFO is too verbose for per-chunk logging that
+    # happens many times per query. The warning for index=None is appropriate.
     def get_chunk_by_id(self, chunk_id: str):
         if self._index is None:
             logger.warning(f"get_chunk_by_id({chunk_id}): index is None")
             return None
 
-        logger.info(f"get_chunk_by_id({chunk_id}): attempting direct docstore lookup")
+        logger.debug(f"get_chunk_by_id({chunk_id}): attempting direct docstore lookup")
 
         # Try direct lookup in docstore first
         try:
@@ -175,7 +203,7 @@ class VectorIndex:
             node = docstore.get_document(chunk_id)
 
             if node:
-                logger.info(f"get_chunk_by_id({chunk_id}): found in docstore")
+                logger.debug(f"get_chunk_by_id({chunk_id}): found in docstore")
                 node_text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
 
                 return {
@@ -192,7 +220,7 @@ class VectorIndex:
         except Exception as e:
             logger.warning(f"get_chunk_by_id({chunk_id}): docstore lookup failed: {e}")
 
-        logger.info(f"get_chunk_by_id({chunk_id}): falling back to retriever search")
+        logger.debug(f"get_chunk_by_id({chunk_id}): falling back to retriever search")
         # Fallback to retriever search
         retriever = self._index.as_retriever(similarity_top_k=100)
         nodes = retriever.retrieve(chunk_id)
@@ -214,14 +242,17 @@ class VectorIndex:
         return None
 
     def get_chunk_ids_for_document(self, doc_id: str) -> list[str]:
-        """Get all chunk IDs for a given document ID."""
         return self._doc_id_to_node_ids.get(doc_id, [])
+
+    def get_document_ids(self) -> list[str]:
+        return list(self._doc_id_to_node_ids.keys())
 
     def build_concept_vocabulary(
         self,
         min_term_length: int = 3,
         max_terms: int = 10000,
     ) -> None:
+        """Build concept vocabulary from scratch. Prefer update_vocabulary_incremental() for efficiency."""
         if self._index is None:
             return
 
@@ -241,18 +272,130 @@ class VectorIndex:
             except Exception:
                 continue
 
+        # Store term counts for future incremental updates
+        self._term_counts = term_counts
+
         sorted_terms = sorted(term_counts.items(), key=lambda x: x[1], reverse=True)
         top_terms = [term for term, _ in sorted_terms[:max_terms]]
 
+        self._ensure_model_loaded()
         self._concept_vocabulary = {}
         for term in top_terms:
             try:
+                assert self._embedding_model is not None
                 embedding = self._embedding_model.get_text_embedding(term)
                 self._concept_vocabulary[term] = embedding
             except Exception:
                 continue
 
+        self._pending_terms.clear()
         logger.info(f"Built concept vocabulary with {len(self._concept_vocabulary)} terms")
+
+    def extract_terms_from_text(self, text: str, min_term_length: int = 3) -> dict[str, int]:
+        """Extract terms and their counts from text."""
+        term_counts: dict[str, int] = {}
+        tokens = re.findall(r'\b[a-zA-Z][a-zA-Z0-9_-]*\b', text.lower())
+        for token in tokens:
+            if len(token) >= min_term_length and token not in STOPWORDS:
+                term_counts[token] = term_counts.get(token, 0) + 1
+        return term_counts
+
+    def register_document_terms(self, text: str, min_term_length: int = 3) -> None:
+        """Register terms from a newly indexed document for later vocabulary update."""
+        doc_terms = self.extract_terms_from_text(text, min_term_length)
+        for term, count in doc_terms.items():
+            self._term_counts[term] = self._term_counts.get(term, 0) + count
+            # Mark as pending if not already in vocabulary
+            if term not in self._concept_vocabulary:
+                self._pending_terms.add(term)
+
+    def update_vocabulary_incremental(
+        self,
+        max_terms: int = 10000,
+        batch_size: int = 100,
+    ) -> int:
+        """
+        Incrementally update vocabulary by embedding only new high-frequency terms.
+        Returns the number of new terms embedded.
+        """
+        if not self._pending_terms:
+            return 0
+
+        # Get top terms by frequency that aren't in vocabulary yet
+        pending_with_counts = [
+            (term, self._term_counts.get(term, 0))
+            for term in self._pending_terms
+        ]
+        pending_with_counts.sort(key=lambda x: x[1], reverse=True)
+
+        # Only embed terms that would make it into top max_terms
+        current_vocab_size = len(self._concept_vocabulary)
+        if current_vocab_size >= max_terms:
+            # Vocabulary is full - only add terms with higher freq than lowest in vocab
+            if self._concept_vocabulary:
+                min_vocab_freq = min(
+                    self._term_counts.get(t, 0)
+                    for t in self._concept_vocabulary
+                )
+                pending_with_counts = [
+                    (t, c) for t, c in pending_with_counts if c > min_vocab_freq
+                ]
+
+        # Limit batch size to avoid long blocking
+        terms_to_embed = [t for t, _ in pending_with_counts[:batch_size]]
+
+        if not terms_to_embed:
+            self._pending_terms.clear()
+            return 0
+
+        self._ensure_model_loaded()
+        assert self._embedding_model is not None
+
+        embedded_count = 0
+        for term in terms_to_embed:
+            try:
+                embedding = self._embedding_model.get_text_embedding(term)
+                self._concept_vocabulary[term] = embedding
+                self._pending_terms.discard(term)
+                embedded_count += 1
+            except Exception:
+                self._pending_terms.discard(term)
+                continue
+
+        if embedded_count > 0:
+            logger.debug(f"Incrementally added {embedded_count} terms to vocabulary")
+
+        return embedded_count
+
+    def get_pending_vocabulary_count(self) -> int:
+        """Return count of terms waiting to be embedded."""
+        return len(self._pending_terms)
+
+    def get_text_embedding(self, text: str) -> list[float]:
+        self._ensure_model_loaded()
+        assert self._embedding_model is not None
+        return self._embedding_model.get_text_embedding(text)
+
+    def is_ready(self) -> bool:
+        return self._index is not None
+
+    def get_embedding_for_chunk(self, chunk_id: str) -> list[float] | None:
+        if self._index is None:
+            return None
+        try:
+            docstore = self._index.docstore
+            node = docstore.get_document(chunk_id)
+            if node is None:
+                return None
+            embedding = getattr(node, "embedding", None)
+            if embedding is not None:
+                return list(embedding)
+            text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
+            if not text:
+                return None
+            return self.get_text_embedding(text)
+        except Exception:
+            return None
 
     def expand_query(
         self,
@@ -263,6 +406,8 @@ class VectorIndex:
         if not self._concept_vocabulary:
             return query
 
+        self._ensure_model_loaded()
+        assert self._embedding_model is not None
         query_embedding = np.array(
             self._embedding_model.get_text_embedding(query),
             dtype=np.float64,
@@ -313,13 +458,23 @@ class VectorIndex:
         with open(vocab_file, "w") as f:
             json.dump(self._concept_vocabulary, f)
 
+        term_counts_file = path / "term_counts.json"
+        with open(term_counts_file, "w") as f:
+            json.dump(self._term_counts, f)
+
     def load(self, path: Path) -> None:
         from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage
         from llama_index.vector_stores.faiss import FaissVectorStore
 
-        if not path.exists():
+        # Check if index exists and has required files
+        docstore_path = path / "docstore.json"
+        if not path.exists() or not docstore_path.exists():
             self._initialize_index()
             return
+
+        # Ensure embedding model is loaded before calling load_index_from_storage
+        # LlamaIndex requires Settings.embed_model to be set
+        self._ensure_model_loaded()
 
         import faiss
 
@@ -360,9 +515,20 @@ class VectorIndex:
         else:
             self._concept_vocabulary = {}
 
+        term_counts_file = path / "term_counts.json"
+        if term_counts_file.exists():
+            with open(term_counts_file, "r") as f:
+                self._term_counts = json.load(f)
+        else:
+            self._term_counts = {}
+
+        self._pending_terms.clear()
+
     def _initialize_index(self) -> None:
         from llama_index.core import StorageContext, VectorStoreIndex
         from llama_index.vector_stores.faiss import FaissVectorStore
+
+        self._ensure_model_loaded()
 
         import faiss
 
@@ -378,3 +544,42 @@ class VectorIndex:
             nodes=[],
             storage_context=storage_context,
         )
+
+    # IndexProtocol methods
+
+    def add_document(self, doc_id: str, content: str, metadata: dict[str, Any]) -> None:
+        from llama_index.core import Document as LlamaDocument
+
+        self._ensure_model_loaded()
+        if self._index is None:
+            self._initialize_index()
+
+        assert self._index is not None
+
+        llama_doc = LlamaDocument(
+            text=content,
+            metadata={"doc_id": doc_id, **metadata},
+            id_=doc_id,
+        )
+
+        node_id = llama_doc.id_
+        self._doc_id_to_node_ids[doc_id] = [node_id]
+        self._index.insert_nodes([llama_doc])
+
+    def remove_document(self, doc_id: str) -> None:
+        self.remove(doc_id)
+
+    def clear(self) -> None:
+        self._doc_id_to_node_ids = {}
+        self._chunk_id_to_node_id = {}
+        self._vector_store = None
+        self._index = None
+        self._concept_vocabulary = {}
+        self._term_counts = {}
+        self._pending_terms.clear()
+
+    def save(self, path: Path) -> None:
+        self.persist(path)
+
+    def __len__(self) -> int:
+        return len(self._doc_id_to_node_ids)

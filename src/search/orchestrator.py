@@ -9,13 +9,11 @@ from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.indexing.manager import IndexManager
 from src.models import ChunkResult, CompressionStats
-from src.search.dedup import deduplicate_by_similarity
-from src.search.filters import filter_by_confidence, limit_per_document
-from src.search.fusion import fuse_results, normalize_scores
-from src.search.reranker import ReRanker
+from src.search.fusion import fuse_results
+from src.search.pipeline import SearchPipeline, SearchPipelineConfig
 
 
-class QueryOrchestrator:
+class SearchOrchestrator:
     def __init__(
         self,
         vector_index: VectorIndex,
@@ -30,13 +28,28 @@ class QueryOrchestrator:
         self._config = config
         self._index_manager = index_manager
         self._synthesizer = None
-        self._reranker: ReRanker | None = None
+        self._pipeline: SearchPipeline | None = None
+
+    def _get_pipeline(self) -> SearchPipeline:
+        if self._pipeline is None:
+            pipeline_config = SearchPipelineConfig(
+                min_confidence=self._config.search.min_confidence,
+                max_chunks_per_doc=self._config.search.max_chunks_per_doc,
+                dedup_enabled=self._config.search.dedup_enabled,
+                dedup_threshold=self._config.search.dedup_similarity_threshold,
+                rerank_enabled=self._config.search.rerank_enabled,
+                rerank_model=self._config.search.rerank_model,
+                rerank_top_n=self._config.search.rerank_top_n,
+            )
+            self._pipeline = SearchPipeline(pipeline_config)
+        return self._pipeline
 
     async def query(
         self,
         query_text: str,
         top_k: int = 10,
-        top_n: int = 5
+        top_n: int = 5,
+        pipeline_config: SearchPipelineConfig | None = None,
     ) -> tuple[list[ChunkResult], CompressionStats]:
         if not query_text or not query_text.strip():
             return [], CompressionStats(
@@ -99,47 +112,17 @@ class QueryOrchestrator:
             modified_times,
         )
 
-        normalized = normalize_scores(fused)
-        original_count = len(normalized)
+        if pipeline_config is not None:
+            pipeline = SearchPipeline(pipeline_config)
+        else:
+            pipeline = self._get_pipeline()
 
-        filtered = filter_by_confidence(
-            normalized,
-            self._config.search.min_confidence,
-        )
-        after_threshold = len(filtered)
-
-        limited = limit_per_document(
-            filtered,
-            self._config.search.max_chunks_per_doc,
-        )
-        after_doc_limit = len(limited)
-
-        clusters_merged = 0
-        if self._config.search.dedup_enabled:
-            limited, clusters_merged = deduplicate_by_similarity(
-                limited,
-                self._get_chunk_embedding,
-                self._config.search.dedup_similarity_threshold,
-            )
-        after_dedup = len(limited)
-
-        if self._config.search.rerank_enabled and limited:
-            reranker = self._get_reranker()
-            limited = reranker.rerank(
-                query_text,
-                limited,
-                self._get_chunk_content,
-                self._config.search.rerank_top_n,
-            )
-
-        final = limited[:top_n]
-
-        compression_stats = CompressionStats(
-            original_count=original_count,
-            after_threshold=after_threshold,
-            after_doc_limit=after_doc_limit,
-            after_dedup=after_dedup,
-            clusters_merged=clusters_merged,
+        final, compression_stats = pipeline.process(
+            fused,
+            self._get_chunk_embedding,
+            self._get_chunk_content,
+            query_text,
+            top_n,
         )
 
         chunk_results = []
@@ -167,22 +150,7 @@ class QueryOrchestrator:
         return chunk_results, compression_stats
 
     def _get_chunk_embedding(self, chunk_id: str) -> list[float] | None:
-        if self._vector._index is None:
-            return None
-        try:
-            docstore = self._vector._index.docstore
-            node = docstore.get_document(chunk_id)
-            if node is None:
-                return None
-            embedding = getattr(node, "embedding", None)
-            if embedding is not None:
-                return list(embedding)
-            text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
-            if not text:
-                return None
-            return self._vector._embedding_model.get_text_embedding(text)
-        except Exception:
-            return None
+        return self._vector.get_embedding_for_chunk(chunk_id)
 
     def _get_chunk_content(self, chunk_id: str) -> str | None:
         chunk_data = self._vector.get_chunk_by_id(chunk_id)
@@ -190,11 +158,8 @@ class QueryOrchestrator:
             return chunk_data.get("content")
         return None
 
-    def _get_reranker(self) -> ReRanker:
-        if self._reranker is None:
-            self._reranker = ReRanker(model_name=self._config.search.rerank_model)
-        return self._reranker
-
+    # REVIEW [LOW] Logging: Module-level logger exists but this method creates a local
+    # logger import. Remove the local import and use the module-level logger instead.
     async def _search_vector(self, query_text: str, top_k: int):
         import logging
         logger = logging.getLogger(__name__)
@@ -218,6 +183,7 @@ class QueryOrchestrator:
         logger.info(f"Keyword search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
         return results
 
+    # REVIEW [LOW] Logging: Same issue - redundant local logger import.
     def _get_graph_neighbors(self, doc_ids: list[str]):
         import logging
         logger = logging.getLogger(__name__)
@@ -233,6 +199,7 @@ class QueryOrchestrator:
         docs_path = Path(self._config.indexing.documents_path)
 
         for doc_id in doc_ids:
+            # doc_id is now relative path without extension (e.g., "dir/subdir/filename")
             md_file = docs_path / f"{doc_id}.md"
             if md_file.exists():
                 modified_times[doc_id] = md_file.stat().st_mtime
@@ -248,6 +215,7 @@ class QueryOrchestrator:
         documents = []
 
         for doc_id in doc_ids:
+            # doc_id is now relative path without extension
             md_file = docs_path / f"{doc_id}.md"
             if not md_file.exists():
                 md_file = docs_path / f"{doc_id}.markdown"
@@ -402,6 +370,7 @@ class QueryOrchestrator:
                 "data": {"message": f"Synthesis failed: {str(e)}"}
             }
 
+    # REVIEW [LOW] Logging: Same issue - redundant local logger import.
     def _get_chunks(self, chunk_ids: list[str]) -> list[dict]:
         import logging
         logger = logging.getLogger(__name__)

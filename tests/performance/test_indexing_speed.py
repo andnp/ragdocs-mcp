@@ -204,7 +204,11 @@ def test_indexing_speed_varying_document_sizes(config, manager, tmp_path):
 
     Tests performance across small, medium, and large documents
     to identify size-dependent performance characteristics.
-    """Benchmark indexing with varied document sizes.num_docs = len(sizes)
+    """
+    sizes = ["small", "medium", "large"]
+    docs_path = tmp_path / "docs"
+    docs_path.mkdir(exist_ok=True)
+    num_docs = len(sizes)
 
     for i, size in enumerate(sizes):
         doc_file = docs_path / f"doc_{size}_{i:02d}.md"

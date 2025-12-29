@@ -1,6 +1,4 @@
 import asyncio
-import fnmatch
-import glob
 import json
 import logging
 import sys
@@ -14,46 +12,22 @@ from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, T
 from rich.table import Table
 
 from src.config import load_config
-from src.indexing.manager import IndexManager
+from src.context import ApplicationContext
 from src.indexing.manifest import IndexManifest, save_manifest
 from src.indexing.reconciler import build_indexed_files_map
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.search.orchestrator import QueryOrchestrator
+from src.utils import should_include_file
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def _should_include_file(file_path: str, include_patterns: list[str], exclude_patterns: list[str], exclude_hidden_dirs: bool = True):
-    # Convert to forward slashes for consistent matching
-    normalized_path = file_path.replace("\\", "/")
-
-    # Check if file is in a hidden directory (if enabled)
-    if exclude_hidden_dirs:
-        path_parts = normalized_path.split("/")
-        for part in path_parts:
-            # Skip empty parts and check if any directory component starts with '.'
-            if part and part.startswith("."):
-                return False
-
-    # Check if file matches any include pattern
-    included = False
-    for pattern in include_patterns:
-        if fnmatch.fnmatch(normalized_path, pattern):
-            included = True
-            break
-
-    if not included:
-        return False
-
-    # Check if file matches any exclude pattern (exclude takes precedence)
-    for pattern in exclude_patterns:
-        if fnmatch.fnmatch(normalized_path, pattern):
-            return False
-
-    return True
+def _should_include_file(
+    file_path: str,
+    include_patterns: list[str],
+    exclude_patterns: list[str],
+    exclude_hidden_dirs: bool = True,
+):
+    return should_include_file(file_path, include_patterns, exclude_patterns, exclude_hidden_dirs)
 
 
 @click.group()
@@ -85,7 +59,10 @@ def mcp(project: str | None):
         argv = []
         if project:
             argv.extend(["--project", project])
+
         asyncio.run(mcp_main(argv))
+    except KeyboardInterrupt:
+        pass  # Graceful shutdown handled
     except Exception as e:
         logger.error(f"Failed to start MCP server: {e}")
         sys.exit(1)
@@ -119,28 +96,17 @@ def run(host: str | None, port: int | None, project: str | None):
 @click.option("--project", default=None, help="Override project detection (name or path)")
 def rebuild_index_cmd(project: str | None):
     try:
-        config = load_config()
-        config = _apply_project_detection(config, project)
+        ctx = ApplicationContext.create(
+            project_override=project,
+            enable_watcher=False,
+            lazy_embeddings=False,
+        )
 
-        vector = VectorIndex()
-        keyword = KeywordIndex()
-        graph = GraphStore()
-
-        manager = IndexManager(config, vector, keyword, graph)
-
-        docs_path = Path(config.indexing.documents_path)
-        index_path = Path(config.indexing.index_path)
-        index_path.mkdir(parents=True, exist_ok=True)
-
-        pattern = str(docs_path / "**" / "*.md")
-        all_files = glob.glob(pattern, recursive=config.indexing.recursive)
-
-        # Filter files using include/exclude patterns
-        files_to_index = [
-            f for f in all_files
-            if _should_include_file(f, config.indexing.include, config.indexing.exclude, config.indexing.exclude_hidden_dirs)
-        ]
+        docs_path = Path(ctx.config.indexing.documents_path)
+        files_to_index = ctx.discover_files()
         total_files = len(files_to_index)
+
+        ctx.index_path.mkdir(parents=True, exist_ok=True)
 
         with Progress(
             TextColumn("[bold blue]{task.description}"),
@@ -151,33 +117,31 @@ def rebuild_index_cmd(project: str | None):
             task = progress.add_task("Indexing documents...", total=total_files)
 
             for file_path in files_to_index:
-                # Show path relative to documents_path for cleaner output
                 try:
                     rel_path = Path(file_path).relative_to(docs_path)
                     display_path = str(rel_path)
                 except ValueError:
-                    # If relative_to fails, use the full path
                     display_path = file_path
 
                 progress.update(task, description=f"[bold blue]Indexing: {display_path}")
-                manager.index_document(file_path)
+                ctx.index_manager.index_document(file_path)
                 progress.advance(task)
 
-        manager.persist()
+        ctx.index_manager.persist()
 
         current_manifest = IndexManifest(
             spec_version="1.0.0",
-            embedding_model=config.llm.embedding_model,
-            parsers=config.parsers,
+            embedding_model=ctx.config.llm.embedding_model,
+            parsers=ctx.config.parsers,
             chunking_config={
-                "strategy": config.chunking.strategy,
-                "min_chunk_chars": config.chunking.min_chunk_chars,
-                "max_chunk_chars": config.chunking.max_chunk_chars,
-                "overlap_chars": config.chunking.overlap_chars,
+                "strategy": ctx.config.chunking.strategy,
+                "min_chunk_chars": ctx.config.chunking.min_chunk_chars,
+                "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
+                "overlap_chars": ctx.config.chunking.overlap_chars,
             },
             indexed_files=build_indexed_files_map(files_to_index, docs_path)
         )
-        save_manifest(index_path, current_manifest)
+        save_manifest(ctx.index_path, current_manifest)
 
         click.echo(f"✅ Successfully rebuilt index: {total_files} documents indexed")
 
@@ -259,36 +223,30 @@ def check_config_cmd(project: str | None):
 @click.option("--project", default=None, help="Override project detection (name or path)")
 def query(query_text: str, output_json: bool, top_n: int, project: str | None):
     try:
-        # Suppress logging output for clean CLI experience
         logging.getLogger().setLevel(logging.WARNING)
-
         console = Console()
 
-        config = load_config()
-        config = _apply_project_detection(config, project)
+        ctx = ApplicationContext.create(
+            project_override=project,
+            enable_watcher=False,
+            lazy_embeddings=False,
+        )
 
-        vector = VectorIndex()
-        keyword = KeywordIndex()
-        graph = GraphStore()
-
-        manager = IndexManager(config, vector, keyword, graph)
-
-        index_path = Path(config.indexing.index_path)
-        if not index_path.exists():
+        if not ctx.index_path.exists():
             click.echo("Error: No index found. Run 'rebuild-index' first.", err=True)
             sys.exit(1)
 
-        manager.load()
+        ctx.index_manager.load()
 
-        orchestrator = QueryOrchestrator(vector, keyword, graph, config, manager)
-
+        # REVIEW [LOW] Configuration: Magic numbers 1 and 100 duplicated here and in
+        # mcp_server.py/server.py. Consider extracting to config constants.
         if top_n < 1 or top_n > 100:
             click.echo("Error: --top-n must be between 1 and 100", err=True)
             sys.exit(1)
 
         with console.status("[bold green]Searching documents..."):
             top_k = max(20, top_n * 4)
-            results, _ = asyncio.run(orchestrator.query(
+            results, _ = asyncio.run(ctx.orchestrator.query(
                 query_text,
                 top_k=top_k,
                 top_n=top_n

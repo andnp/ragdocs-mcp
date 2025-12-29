@@ -52,21 +52,26 @@ class FileWatcher:
 
         self._running = False
 
+        # Stop the observer thread first (it's what feeds the queue)
         if self._observer:
             self._observer.stop()
-            self._observer.join()
+            # Join with short timeout - don't wait forever
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._observer.join, timeout=1.0),
+                    timeout=1.5,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Observer thread did not stop within timeout")
             self._observer = None
 
+        # Cancel the event processing task
         if self._task:
-            self._event_queue.put(("deleted", ""))
+            self._task.cancel()
             try:
-                await asyncio.wait_for(self._task, timeout=5.0)
-            except asyncio.TimeoutError:
-                self._task.cancel()
-                try:
-                    await self._task
-                except asyncio.CancelledError:
-                    pass
+                await asyncio.wait_for(self._task, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
             self._task = None
 
         logger.info("File watcher stopped")
@@ -76,21 +81,28 @@ class FileWatcher:
 
         while self._running:
             try:
-                event_type, file_path = await asyncio.to_thread(
-                    self._event_queue.get, timeout=self._cooldown
-                )
+                try:
+                    # Use timeout on queue.get to allow checking _running flag
+                    event_type, file_path = await asyncio.to_thread(
+                        self._event_queue.get, timeout=0.5
+                    )
+                    if file_path:
+                        events[file_path] = event_type
+                except queue.Empty:
+                    if events:
+                        await self._batch_process(events)
+                        events = {}
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in event processing: {e}")
 
-                if not file_path:
-                    continue
-
-                events[file_path] = event_type
-            except queue.Empty:
-                if events:
-                    await self._batch_process(events)
-                    events = {}
-
+        # Process remaining events with timeout
         if events:
-            await self._batch_process(events)
+            try:
+                await asyncio.wait_for(self._batch_process(events), timeout=1.0)
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.warning(f"Failed to process final events: {e}")
 
     async def _batch_process(self, events: dict[str, EventType]):
         for file_path, event_type in events.items():
@@ -101,15 +113,18 @@ class FileWatcher:
                     )
                     logger.info(f"Indexed: {file_path}")
                 elif event_type == "deleted":
-                    doc_id = Path(file_path).stem
+                    # Compute doc_id same way as IndexManager
+                    try:
+                        rel_path = Path(file_path).relative_to(self._documents_path)
+                        doc_id = str(rel_path.with_suffix(""))
+                    except ValueError:
+                        doc_id = Path(file_path).stem
                     await asyncio.to_thread(
                         self._index_manager.remove_document, doc_id
                     )
                     logger.info(f"Removed: {file_path}")
             except Exception as e:
                 logger.error(f"Failed to process {file_path}: {e}")
-
-        self._last_sync_time = datetime.now(timezone.utc).isoformat()
 
         self._last_sync_time = datetime.now(timezone.utc).isoformat()
 

@@ -1,7 +1,7 @@
 """
 Integration tests for Hybrid Search (D13).
 
-Tests the QueryOrchestrator's ability to combine results from multiple search
+Tests the SearchOrchestrator's ability to combine results from multiple search
 strategies (semantic, keyword, graph) with recency boosting and RRF fusion.
 Uses real indices and async query methods.
 """
@@ -17,7 +17,7 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.models import ChunkResult
-from src.search.orchestrator import QueryOrchestrator
+from src.search.orchestrator import SearchOrchestrator
 
 
 def _doc_in_chunk_ids(doc_id: str, results: list[ChunkResult]):
@@ -56,7 +56,7 @@ def indices():
     """
     Create real index instances.
 
-    Returns tuple of (vector, keyword, graph) indices for QueryOrchestrator.
+    Returns tuple of (vector, keyword, graph) indices for SearchOrchestrator.
     """
     vector = VectorIndex()
     keyword = KeywordIndex()
@@ -78,12 +78,12 @@ def manager(config, indices):
 @pytest.fixture
 def orchestrator(config, indices, manager):
     """
-    Create QueryOrchestrator with real indices and configuration.
+    Create SearchOrchestrator with real indices and configuration.
 
     Provides the hybrid search engine for query testing.
     """
     vector, keyword, graph = indices
-    return QueryOrchestrator(vector, keyword, graph, config, manager)
+    return SearchOrchestrator(vector, keyword, graph, config, manager)
 
 
 def create_test_corpus(config, manager):
@@ -359,7 +359,7 @@ async def test_weighted_strategies_affect_ranking(config, manager, orchestrator,
     graph_new = GraphStore()
     manager_new = IndexManager(config_semantic_heavy, vector_new, keyword_new, graph_new)
     create_test_corpus(config_semantic_heavy, manager_new)
-    orchestrator_semantic = QueryOrchestrator(
+    orchestrator_semantic = SearchOrchestrator(
         vector_new, keyword_new, graph_new, config_semantic_heavy, manager_new
     )
 
@@ -425,7 +425,7 @@ async def test_hybrid_search_integration_end_to_end(config, manager, orchestrato
 @pytest.mark.asyncio
 async def test_query_returns_normalized_scores(config, manager, orchestrator):
     """
-    Test that QueryOrchestrator returns properly normalized scores.
+    Test that SearchOrchestrator returns properly normalized scores.
 
     Validates that the score normalization pipeline works correctly:
     - Scores are in [0, 1] range

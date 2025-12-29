@@ -2,7 +2,7 @@ from typing import Protocol
 
 
 class ContentProvider(Protocol):
-    def __call__(self, chunk_id: str) -> str | None: ...
+    def __call__(self, chunk_id: str, /) -> str | None: ...
 
 
 class ReRanker:

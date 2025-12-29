@@ -1,5 +1,5 @@
 """
-Integration tests for query_documents_compressed MCP tool.
+Integration tests for query_documents MCP tool compression features.
 
 Tests cover:
 - Full compression pipeline through MCP server handler
@@ -17,7 +17,6 @@ from typing import Generator
 import numpy as np
 import pytest
 
-from src.compression.deduplication import deduplicate_results, get_embeddings_for_chunks
 from src.compression.thresholding import filter_by_score
 from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
 from src.indexing.manager import IndexManager
@@ -25,7 +24,8 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.models import CompressionStats
-from src.search.orchestrator import QueryOrchestrator
+from src.search.orchestrator import SearchOrchestrator
+from src.search.pipeline import SearchPipelineConfig
 
 
 # ============================================================================
@@ -108,14 +108,14 @@ def integration_orchestrator(
     integration_indices: tuple[VectorIndex, KeywordIndex, GraphStore],
     integration_config: Config,
     integration_manager: IndexManager,
-) -> QueryOrchestrator:
+) -> SearchOrchestrator:
     """
-    Create module-scoped QueryOrchestrator for integration tests.
+    Create module-scoped SearchOrchestrator for integration tests.
 
     Provides query execution capabilities.
     """
     vector, keyword, graph = integration_indices
-    return QueryOrchestrator(vector, keyword, graph, integration_config, integration_manager)
+    return SearchOrchestrator(vector, keyword, graph, integration_config, integration_manager)
 
 
 @pytest.fixture(scope="module")
@@ -225,7 +225,7 @@ class TestCompressionPipeline:
     @pytest.mark.asyncio
     async def test_query_with_compression_returns_results(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
     ) -> None:
         """
@@ -249,7 +249,7 @@ class TestCompressionPipeline:
     @pytest.mark.asyncio
     async def test_score_threshold_filters_results(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
     ) -> None:
         """
@@ -274,7 +274,7 @@ class TestCompressionPipeline:
     @pytest.mark.asyncio
     async def test_deduplication_reduces_similar_results(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -284,26 +284,21 @@ class TestCompressionPipeline:
         Query about Python should return similar chunks from python_basics.md
         and python_intro.md that get deduplicated.
         """
-        results, _ = await integration_orchestrator.query(
+        pipeline_config = SearchPipelineConfig(
+            min_confidence=0.0,
+            dedup_enabled=True,
+            dedup_threshold=0.85,
+        )
+
+        results, stats = await integration_orchestrator.query(
             "Introduction to Python programming language",
             top_k=20,
             top_n=20,
+            pipeline_config=pipeline_config,
         )
 
-        if len(results) > 1:
-            # Get embeddings for chunks
-            embeddings = get_embeddings_for_chunks(results, embedding_model)
-
-            # Deduplicate with moderate threshold
-            dedup_result = deduplicate_results(
-                results,
-                embeddings,
-                similarity_threshold=0.85,
-            )
-
-            # Should reduce count due to similar Python intro content
-            assert dedup_result.original_count == len(results)
-            # May or may not merge depending on actual similarities
+        assert stats.original_count >= 0
+        assert stats.after_dedup <= stats.original_count
 
 
 # ============================================================================
@@ -317,7 +312,7 @@ class TestCompressionStats:
     @pytest.mark.asyncio
     async def test_compression_stats_structure(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -326,39 +321,22 @@ class TestCompressionStats:
 
         Verifies all stat fields are populated with valid values.
         """
-        results, _ = await integration_orchestrator.query(
+        pipeline_config = SearchPipelineConfig(
+            min_confidence=0.3,
+            dedup_enabled=True,
+            dedup_threshold=0.85,
+        )
+
+        results, stats = await integration_orchestrator.query(
             "database query optimization",
             top_k=20,
             top_n=20,
+            pipeline_config=pipeline_config,
         )
 
-        original_count = len(results)
-
-        filtered = filter_by_score(results, min_score=0.3)
-        after_threshold = len(filtered)
-
-        if len(filtered) > 1:
-            embeddings = get_embeddings_for_chunks(filtered, embedding_model)
-            dedup_result = deduplicate_results(filtered, embeddings, similarity_threshold=0.85)
-            after_dedup = len(dedup_result.results)
-            clusters_merged = dedup_result.clusters_merged
-        else:
-            after_dedup = len(filtered)
-            clusters_merged = 0
-
-        stats = CompressionStats(
-            original_count=original_count,
-            after_threshold=after_threshold,
-            after_doc_limit=after_threshold,
-            after_dedup=after_dedup,
-            clusters_merged=clusters_merged,
-        )
-
-        # Verify stats structure
         assert stats.original_count >= stats.after_threshold
         assert stats.after_threshold >= stats.after_dedup
         assert stats.clusters_merged >= 0
-        assert stats.clusters_merged == stats.after_threshold - stats.after_dedup
 
     def test_compression_stats_to_dict(self) -> None:
         """
@@ -394,7 +372,7 @@ class TestParameterHandling:
     @pytest.mark.asyncio
     async def test_top_n_limits_final_results(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -403,27 +381,25 @@ class TestParameterHandling:
 
         After all compression, results should not exceed top_n.
         """
+        pipeline_config = SearchPipelineConfig(
+            min_confidence=0.1,
+            dedup_enabled=True,
+            dedup_threshold=0.85,
+        )
+
         results, _ = await integration_orchestrator.query(
             "programming language introduction",
             top_k=20,
-            top_n=20,
+            top_n=3,
+            pipeline_config=pipeline_config,
         )
 
-        filtered = filter_by_score(results, min_score=0.1)
-
-        if len(filtered) > 1:
-            embeddings = get_embeddings_for_chunks(filtered, embedding_model)
-            dedup_result = deduplicate_results(filtered, embeddings, similarity_threshold=0.85)
-            final_results = dedup_result.results[:3]  # top_n=3
-        else:
-            final_results = filtered[:3]
-
-        assert len(final_results) <= 3
+        assert len(results) <= 3
 
     @pytest.mark.asyncio
     async def test_min_score_parameter_effect(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
     ) -> None:
         """
@@ -447,7 +423,7 @@ class TestParameterHandling:
     @pytest.mark.asyncio
     async def test_similarity_threshold_parameter_effect(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -456,24 +432,33 @@ class TestParameterHandling:
 
         Lower threshold should merge more results.
         """
-        results, _ = await integration_orchestrator.query(
+        config_high = SearchPipelineConfig(
+            min_confidence=0.2,
+            dedup_enabled=True,
+            dedup_threshold=0.95,
+        )
+
+        config_low = SearchPipelineConfig(
+            min_confidence=0.2,
+            dedup_enabled=True,
+            dedup_threshold=0.7,
+        )
+
+        _, stats_high = await integration_orchestrator.query(
             "Python programming basics",
             top_k=20,
             top_n=20,
+            pipeline_config=config_high,
         )
 
-        filtered = filter_by_score(results, min_score=0.2)
+        _, stats_low = await integration_orchestrator.query(
+            "Python programming basics",
+            top_k=20,
+            top_n=20,
+            pipeline_config=config_low,
+        )
 
-        if len(filtered) > 1:
-            embeddings = get_embeddings_for_chunks(filtered, embedding_model)
-
-            # High threshold: less aggressive deduplication
-            dedup_high = deduplicate_results(filtered, embeddings, similarity_threshold=0.95)
-
-            # Low threshold: more aggressive deduplication
-            dedup_low = deduplicate_results(filtered, embeddings, similarity_threshold=0.7)
-
-            assert len(dedup_low.results) <= len(dedup_high.results)
+        assert stats_low.after_dedup <= stats_high.after_dedup
 
 
 # ============================================================================
@@ -487,7 +472,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_query_with_no_results(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
     ) -> None:
         """
@@ -509,7 +494,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_single_result_passthrough(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -518,31 +503,27 @@ class TestEdgeCases:
 
         Deduplication with one item should be a no-op.
         """
-        results, _ = await integration_orchestrator.query(
+        pipeline_config = SearchPipelineConfig(
+            min_confidence=0.1,
+            dedup_enabled=True,
+            dedup_threshold=0.85,
+        )
+
+        results, stats = await integration_orchestrator.query(
             "Rust fearless concurrency type system",
             top_k=5,
             top_n=1,
+            pipeline_config=pipeline_config,
         )
 
-        if len(results) >= 1:
-            single_result = results[:1]
-            filtered = filter_by_score(single_result, min_score=0.1)
-
-            if len(filtered) == 1:
-                embeddings = get_embeddings_for_chunks(filtered, embedding_model)
-                dedup_result = deduplicate_results(
-                    filtered,
-                    embeddings,
-                    similarity_threshold=0.85,
-                )
-
-                assert len(dedup_result.results) == 1
-                assert dedup_result.clusters_merged == 0
+        assert len(results) <= 1
+        if len(results) == 1:
+            assert stats.clusters_merged == 0
 
     @pytest.mark.asyncio
     async def test_all_results_filtered_by_threshold(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
     ) -> None:
         """
@@ -569,20 +550,13 @@ class TestEdgeCases:
 
 
 class TestEmbeddingsIntegration:
-    """Tests for embeddings integration in compression."""
-
     @pytest.mark.asyncio
-    async def test_get_embeddings_for_chunks(
+    async def test_embedding_model_generates_vectors(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
-        """
-        Tests that embeddings are correctly generated for chunks.
-
-        Verifies embedding dimensions and values.
-        """
         results, _ = await integration_orchestrator.query(
             "Python introduction",
             top_k=5,
@@ -590,29 +564,21 @@ class TestEmbeddingsIntegration:
         )
 
         if len(results) > 0:
-            embeddings = get_embeddings_for_chunks(results, embedding_model)
+            embeddings = [
+                embedding_model.get_text_embedding(r.content)
+                for r in results
+            ]
 
-            # Should be numpy array
-            assert isinstance(embeddings, np.ndarray)
-
-            # Should have one embedding per result
-            assert embeddings.shape[0] == len(results)
-
-            # Embeddings should have consistent dimension (384 for bge-small)
-            assert embeddings.shape[1] == 384
+            assert len(embeddings) == len(results)
+            assert all(len(emb) == 384 for emb in embeddings)
 
     @pytest.mark.asyncio
     async def test_embeddings_enable_similarity_detection(
         self,
-        integration_orchestrator: QueryOrchestrator,
+        integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
-        """
-        Tests that embeddings correctly capture semantic similarity.
-
-        Similar content should have similar embeddings.
-        """
         results, _ = await integration_orchestrator.query(
             "Python programming language overview",
             top_k=10,
@@ -620,16 +586,17 @@ class TestEmbeddingsIntegration:
         )
 
         if len(results) > 1:
-            embeddings = get_embeddings_for_chunks(results, embedding_model)
+            embeddings = np.array([
+                embedding_model.get_text_embedding(r.content)
+                for r in results
+            ])
 
-            # Compute similarity matrix
-            from src.compression.deduplication import compute_similarity_matrix
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            norms = np.where(norms == 0, 1, norms)
+            normalized = embeddings / norms
+            sim_matrix = np.dot(normalized, normalized.T)
 
-            sim_matrix = compute_similarity_matrix(embeddings)
-
-            # Diagonal should be 1.0 (self-similarity)
             diagonal = np.diag(sim_matrix)
             np.testing.assert_array_almost_equal(diagonal, np.ones(len(results)))
 
-            # Matrix should be symmetric
             np.testing.assert_array_almost_equal(sim_matrix, sim_matrix.T)

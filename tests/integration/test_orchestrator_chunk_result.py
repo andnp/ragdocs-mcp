@@ -6,7 +6,7 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.models import ChunkResult
-from src.search.orchestrator import QueryOrchestrator
+from src.search.orchestrator import SearchOrchestrator
 from tests.conftest import create_test_document
 
 
@@ -58,7 +58,7 @@ def manager(config, indices):
 
 @pytest.fixture
 def orchestrator(config, indices, manager):
-    return QueryOrchestrator(
+    return SearchOrchestrator(
         indices["vector"],
         indices["keyword"],
         indices["graph"],
@@ -70,7 +70,7 @@ def orchestrator(config, indices, manager):
 @pytest.mark.asyncio
 async def test_query_returns_chunk_result_objects(config, manager, orchestrator):
     """
-    Test that QueryOrchestrator.query() returns list of ChunkResult objects.
+    Test that SearchOrchestrator.query() returns list of ChunkResult objects.
 
     Verifies:
     - Return type is list[ChunkResult]

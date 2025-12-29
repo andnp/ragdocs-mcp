@@ -658,3 +658,48 @@ def test_keyword_index_all_boosted_fields_together():
     assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("DevOps Team", top_k=5))
     assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("prerequisites", top_k=5))
     assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("k8s-guide", top_k=5))
+
+
+def test_keyword_index_schema_mismatch_triggers_rebuild(tmp_path):
+    """
+    Loading an index with mismatched schema triggers a rebuild.
+
+    When the persisted index has a different schema than expected (e.g.,
+    missing new fields), the index should be rebuilt from scratch to
+    avoid field errors.
+    """
+    from whoosh import index as whoosh_index
+    from whoosh.fields import ID, TEXT, Schema
+
+    old_schema = Schema(
+        id=ID(stored=True, unique=True),
+        doc_id=ID(stored=True),
+        content=TEXT(stored=False),
+        aliases=TEXT(stored=False),
+        tags=TEXT(stored=False),
+    )
+    index_path = tmp_path / "old_keyword_index"
+    index_path.mkdir()
+    whoosh_index.create_in(str(index_path), old_schema)
+
+    keyword_index = KeywordIndex()
+    keyword_index.load(index_path)
+
+    from src.models import Chunk
+
+    chunk = Chunk(
+        chunk_id="new_chunk_0",
+        doc_id="new-doc",
+        content="Test content.",
+        metadata={"author": "Test Author", "tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=13,
+        file_path="/tmp/test.md",
+        modified_time=datetime.now(),
+    )
+    keyword_index.add_chunk(chunk)
+
+    results = keyword_index.search("Test Author", top_k=5)
+    assert "new_chunk_0" in _extract_chunk_ids(results)

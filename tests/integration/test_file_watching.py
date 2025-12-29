@@ -41,13 +41,13 @@ def config(tmp_path):
 
 
 @pytest.fixture
-def indices():
+def indices(shared_embedding_model):
     """
     Create real index instances.
 
     Returns tuple of (vector, keyword, graph) indices for IndexManager.
     """
-    vector = VectorIndex()
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
     return vector, keyword, graph

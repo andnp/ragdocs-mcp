@@ -11,35 +11,36 @@ def reconcile_indices(
     manifest: IndexManifest,
     docs_path: Path
 ) -> tuple[list[str], list[str]]:
-    # Convert discovered files to relative paths with doc_id mapping
-    discovered_map: dict[str, str] = {}  # relative_path -> absolute_path
+    # Convert discovered files to doc_ids (relative path without extension)
+    discovered_doc_ids: set[str] = set()
+    doc_id_to_abs: dict[str, str] = {}
     for abs_path in discovered_files:
         try:
-            rel_path = str(Path(abs_path).relative_to(docs_path))
-            # Generate doc_id same way as in manager (filename without extension)
-            doc_id = Path(abs_path).stem
-            discovered_map[rel_path] = abs_path
+            rel_path = Path(abs_path).relative_to(docs_path)
+            doc_id = str(rel_path.with_suffix(""))
+            discovered_doc_ids.add(doc_id)
+            doc_id_to_abs[doc_id] = abs_path
         except ValueError:
-            # File is outside docs_path, skip
             logger.warning(f"File outside documents path, skipping: {abs_path}")
             continue
 
-    # Get currently indexed files (doc_id -> relative_path)
+    # Get currently indexed doc_ids from manifest
     indexed_files = manifest.indexed_files or {}
+    indexed_doc_ids = set(indexed_files.keys())
 
-    # Find stale entries: files in manifest but not discovered
+    # Find stale entries: doc_ids in manifest but not discovered
     stale_doc_ids = []
-    for doc_id, rel_path in indexed_files.items():
-        if rel_path not in discovered_map:
+    for doc_id in indexed_doc_ids:
+        if doc_id not in discovered_doc_ids:
             stale_doc_ids.append(doc_id)
-            logger.info(f"Stale entry detected: {doc_id} (path: {rel_path})")
+            logger.info(f"Stale entry detected: {doc_id}")
 
     # Find new files: discovered but not in manifest
     new_files = []
-    for rel_path, abs_path in discovered_map.items():
-        if rel_path not in indexed_files.values():
-            new_files.append(abs_path)
-            logger.info(f"New file detected: {abs_path}")
+    for doc_id in discovered_doc_ids:
+        if doc_id not in indexed_doc_ids:
+            new_files.append(doc_id_to_abs[doc_id])
+            logger.info(f"New file detected: {doc_id_to_abs[doc_id]}")
 
     if stale_doc_ids:
         logger.info(f"Reconciliation: {len(stale_doc_ids)} stale entries to remove")
@@ -58,9 +59,10 @@ def build_indexed_files_map(
     indexed_map: dict[str, str] = {}
     for abs_path in indexed_files:
         try:
-            rel_path = str(Path(abs_path).relative_to(docs_path))
-            doc_id = Path(abs_path).stem
-            indexed_map[doc_id] = rel_path
+            rel_path = Path(abs_path).relative_to(docs_path)
+            doc_id = str(rel_path.with_suffix(""))
+            # Map doc_id -> relative path (with extension for reference)
+            indexed_map[doc_id] = str(rel_path)
         except ValueError:
             logger.warning(f"File outside documents path, skipping: {abs_path}")
             continue
