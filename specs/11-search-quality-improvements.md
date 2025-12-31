@@ -2,11 +2,11 @@
 
 ## Executive Summary
 
-**Purpose:** Document 10 search quality improvement proposals for mcp-markdown-ragdocs, a local RAG documentation search system. Each proposal targets vocabulary mismatch, ranking precision, or result diversity.
+**Purpose:** Document 13 search quality improvement proposals for mcp-markdown-ragdocs, a local RAG documentation search system. Each proposal targets vocabulary mismatch, ranking precision, or result diversity.
 
-**Scope:** Proposals span query expansion, embedding enrichment, re-ranking, index schema changes, and result filtering. All changes must work locally without API keys or internet. Constraints: deterministic, reproducible, minimal latency impact.
+**Scope:** Proposals span query expansion, embedding enrichment, re-ranking, index schema changes, result filtering, and diversity enforcement. All changes must work locally without API keys or internet. Constraints: deterministic, reproducible, minimal latency impact.
 
-**Decision:** Phase 1 (P2, P4, P8, P9, P10) implemented. Phase 2 (P1, P6) implemented: query expansion via embeddings and cross-encoder re-ranking. Phase 3 adds adaptive strategies and specialized indices (P3, P7). P5 (WordNet) deferred due to dependency overhead.
+**Decision:** Phase 1 (P2, P4, P8, P9, P10) implemented. Phase 2 (P1, P6) implemented: query expansion via embeddings and cross-encoder re-ranking. Phase 3 adds adaptive strategies and specialized indices (P3, P7). Phase 4 adds advanced diversity and context techniques (P11, P12, P13). P5 (WordNet) deferred due to dependency overhead.
 
 ---
 
@@ -686,20 +686,255 @@ RRF Fusion → Normalize → P10: Threshold Filter → P8: Semantic Dedup → P8
 
 ---
 
+### P11: Maximal Marginal Relevance (MMR)
+
+**Impact:** High | **Complexity:** Low
+
+**Description:** Replace greedy semantic deduplication with MMR-based selection. MMR iteratively selects documents that maximize a weighted combination of relevance to query and diversity from already-selected results.
+
+**Rationale:** Current semantic dedup uses a fixed similarity threshold (0.85) which is binary—chunks are either duplicates or not. MMR provides a principled trade-off between relevance and diversity, allowing more nuanced selection.
+
+**MMR Formula:**
+
+$$\text{MMR} = \arg\max_{d \in R \setminus S} \left[ \lambda \cdot \text{Sim}(d, q) - (1-\lambda) \cdot \max_{d' \in S} \text{Sim}(d, d') \right]$$
+
+Where:
+- $d$ = candidate document
+- $q$ = query
+- $R$ = candidate set
+- $S$ = already-selected set
+- $\lambda$ = relevance vs diversity trade-off (0.5-0.7 typical)
+- $\text{Sim}$ = cosine similarity
+
+**Implementation Approach:**
+
+```python
+def select_mmr(
+    query_embedding: list[float],
+    candidates: list[tuple[str, float]],
+    get_embedding: Callable[[str], list[float]],
+    lambda_param: float = 0.7,
+    top_n: int = 10,
+) -> list[tuple[str, float]]:
+    selected = []
+    remaining = list(candidates)
+
+    while len(selected) < top_n and remaining:
+        best_score = float('-inf')
+        best_idx = 0
+
+        for i, (chunk_id, relevance_score) in enumerate(remaining):
+            chunk_emb = get_embedding(chunk_id)
+
+            # Relevance to query (use original score as proxy)
+            relevance = relevance_score
+
+            # Max similarity to already-selected
+            if selected:
+                max_sim = max(
+                    cosine_similarity(chunk_emb, get_embedding(sel_id))
+                    for sel_id, _ in selected
+                )
+            else:
+                max_sim = 0.0
+
+            # MMR score
+            mmr_score = lambda_param * relevance - (1 - lambda_param) * max_sim
+
+            if mmr_score > best_score:
+                best_score = mmr_score
+                best_idx = i
+
+        selected.append(remaining.pop(best_idx))
+
+    return selected
+```
+
+**File Changes:**
+- [src/search/diversity.py](../src/search/diversity.py): New file with `select_mmr()`
+- [src/search/orchestrator.py](../src/search/orchestrator.py): Replace semantic dedup with MMR when `mmr_enabled=True`
+- [src/config.py](../src/config.py): Add `mmr_enabled: bool`, `mmr_lambda: float`
+
+**API Changes:**
+- New config option: `[search] mmr_enabled = false`
+- New config option: `[search] mmr_lambda = 0.7` (higher = more relevance, lower = more diversity)
+
+**Testing Strategy:**
+- Unit: `test_mmr_selects_diverse`, `test_mmr_respects_lambda`, `test_mmr_empty_candidates`
+- Integration: `test_mmr_improves_diversity_over_dedup`
+
+**LOC Estimate:** ~60 lines
+
+---
+
+### P12: N-gram Overlap Deduplication (Fast Pre-filter)
+
+**Impact:** Medium | **Complexity:** Low
+
+**Description:** Add a fast pre-filter before embedding-based deduplication that removes exact and near-exact duplicates using character n-gram overlap (Jaccard similarity).
+
+**Rationale:** Embedding comparison is expensive (requires embedding lookup + cosine computation). Many duplicates in chunked retrieval are exact or near-exact text matches (overlapping chunks, copy-pasted content). N-gram overlap is much faster and catches these cases.
+
+**Jaccard Similarity with N-grams:**
+
+$$\text{Jaccard}(A, B) = \frac{|\text{ngrams}(A) \cap \text{ngrams}(B)|}{|\text{ngrams}(A) \cup \text{ngrams}(B)|}$$
+
+**Implementation Approach:**
+
+```python
+def get_ngrams(text: str, n: int = 3) -> set[str]:
+    text = text.lower().replace(' ', '')
+    return {text[i:i+n] for i in range(len(text) - n + 1)}
+
+def jaccard_similarity(text_a: str, text_b: str, n: int = 3) -> float:
+    ngrams_a = get_ngrams(text_a, n)
+    ngrams_b = get_ngrams(text_b, n)
+    if not ngrams_a or not ngrams_b:
+        return 0.0
+    intersection = len(ngrams_a & ngrams_b)
+    union = len(ngrams_a | ngrams_b)
+    return intersection / union
+
+def deduplicate_by_ngram(
+    results: list[tuple[str, float]],
+    get_content: Callable[[str], str],
+    threshold: float = 0.7,
+    n: int = 3,
+) -> tuple[list[tuple[str, float]], int]:
+    kept = []
+    removed_count = 0
+
+    for chunk_id, score in results:
+        content = get_content(chunk_id)
+        is_duplicate = False
+
+        for kept_id, _ in kept:
+            kept_content = get_content(kept_id)
+            if jaccard_similarity(content, kept_content, n) >= threshold:
+                is_duplicate = True
+                removed_count += 1
+                break
+
+        if not is_duplicate:
+            kept.append((chunk_id, score))
+
+    return kept, removed_count
+```
+
+**Processing Pipeline Position:**
+```
+RRF → Normalize → Threshold → N-gram Dedup (fast) → Semantic Dedup/MMR (slow) → Re-rank
+```
+
+**File Changes:**
+- [src/search/dedup.py](../src/search/dedup.py): Add `get_ngrams()`, `jaccard_similarity()`, `deduplicate_by_ngram()`
+- [src/search/orchestrator.py](../src/search/orchestrator.py): Insert n-gram dedup before semantic dedup
+- [src/config.py](../src/config.py): Add `ngram_dedup_enabled: bool`, `ngram_dedup_threshold: float`
+
+**API Changes:**
+- New config option: `[search] ngram_dedup_enabled = true` (on by default—fast and effective)
+- New config option: `[search] ngram_dedup_threshold = 0.7`
+
+**Testing Strategy:**
+- Unit: `test_ngram_extraction`, `test_jaccard_similarity`, `test_ngram_dedup_removes_exact_duplicates`
+- Integration: `test_ngram_dedup_before_semantic`, `test_ngram_dedup_performance`
+
+**LOC Estimate:** ~50 lines
+
+---
+
+### P13: Parent Document Retrieval
+
+**Impact:** High | **Complexity:** Medium
+
+**Description:** Embed small chunks for precision, but return the parent section (larger context window) in results. This provides both fine-grained retrieval and sufficient context for LLM consumption.
+
+**Rationale:** Small chunks (512 chars) improve retrieval precision—specific sentences match better than paragraphs. But returning small chunks to an LLM loses context. Parent document retrieval decouples the unit of retrieval from the unit of return.
+
+**Architecture:**
+
+```
+Document → Split into Sections (parent, ~2000 chars)
+         → Split Sections into Chunks (child, ~512 chars)
+         → Embed children, store parent_id reference
+         → Search returns child matches
+         → Expand to parent sections before returning
+```
+
+**Implementation Approach:**
+
+```python
+# During indexing: store parent reference in chunk metadata
+chunk.metadata["parent_chunk_id"] = parent_section.chunk_id
+chunk.metadata["parent_content"] = parent_section.content
+
+# During retrieval: expand to parents
+def expand_to_parents(
+    results: list[tuple[str, float]],
+    get_parent_id: Callable[[str], str | None],
+    get_parent_content: Callable[[str], str],
+) -> list[tuple[str, float, str]]:
+    seen_parents = set()
+    expanded = []
+
+    for chunk_id, score in results:
+        parent_id = get_parent_id(chunk_id)
+        if parent_id and parent_id not in seen_parents:
+            seen_parents.add(parent_id)
+            parent_content = get_parent_content(parent_id)
+            expanded.append((parent_id, score, parent_content))
+        elif not parent_id:
+            # Chunk has no parent (is already a section)
+            expanded.append((chunk_id, score, get_content(chunk_id)))
+
+    return expanded
+```
+
+**Chunking Strategy Change:**
+
+| Level | Size | Overlap | Purpose |
+|-------|------|---------|----------|
+| Section (parent) | 1500-2000 chars | 200 chars | Return unit, provides context |
+| Chunk (child) | 400-600 chars | 100 chars | Retrieval unit, precision |
+
+**File Changes:**
+- [src/parsers/markdown.py](../src/parsers/markdown.py): Generate two-level chunks (sections + sub-chunks)
+- [src/indices/vector.py](../src/indices/vector.py): Store parent reference in metadata
+- [src/search/orchestrator.py](../src/search/orchestrator.py): Expand to parents before returning
+- [src/models.py](../src/models.py): Add `parent_chunk_id`, `parent_content` to ChunkResult
+- [src/config.py](../src/config.py): Add `parent_retrieval_enabled: bool`
+
+**API Changes:**
+- New config option: `[search] parent_retrieval_enabled = false`
+- ChunkResult may contain parent content instead of child content when enabled
+
+**Testing Strategy:**
+- Unit: `test_two_level_chunking`, `test_parent_reference_stored`, `test_expand_to_parents`
+- Integration: `test_parent_retrieval_returns_larger_context`, `test_parent_dedup_across_children`
+
+**LOC Estimate:** ~120 lines
+
+**Note:** Requires reindexing for two-level chunk structure.
+
+---
+
 ## 4. Decision Matrix
 
 | Proposal | Impact | Complexity | Risk | Dependencies | Phase |
 |----------|--------|------------|------|--------------|-------|
-| **P1: Query Expansion** | High | Low | Low | None | 2 |
-| **P2: Heading-Weighted Embeddings** | High | Low | Low | Reindex | **1** |
+| **P1: Query Expansion** | High | Low | Low | None | **2** ✅ |
+| **P2: Heading-Weighted Embeddings** | High | Low | Low | Reindex | **1** ✅ |
 | **P3: Adaptive Weights** | High | Medium | Medium | None | 3 |
-| **P4: BM25F Field Boosting** | Medium | Low | Low | Reindex | **1** |
+| **P4: BM25F Field Boosting** | Medium | Low | Low | Reindex | **1** ✅ |
 | **P5: WordNet Synonyms** | Medium | Low | Low | NLTK (~50MB) | Deferred |
-| **P6: Cross-Encoder Re-Ranking** | High | Medium | Medium | sentence-transformers | 2 |
+| **P6: Cross-Encoder Re-Ranking** | High | Medium | Medium | sentence-transformers | **2** ✅ |
 | **P7: Code Block Index** | Medium | Medium | Medium | New index | 3 |
-| **P8: Result Clustering + Dedup** | Medium | Low-Medium | Low | Embeddings access | **1** |
-| **P9: Frontmatter Indexing** | Medium | Low-Medium | Low | Reindex | **1** |
-| **P10: Confidence Filtering** | Medium | Low | Low | None | **1** |
+| **P8: Result Clustering + Dedup** | Medium | Low-Medium | Low | Embeddings access | **1** ✅ |
+| **P9: Frontmatter Indexing** | Medium | Low-Medium | Low | Reindex | **1** ✅ |
+| **P10: Confidence Filtering** | Medium | Low | Low | None | **1** ✅ |
+| **P11: MMR Diversity** | High | Low | Low | Embeddings access | 4 |
+| **P12: N-gram Pre-filter** | Medium | Low | Low | None | 4 |
+| **P13: Parent Document Retrieval** | High | Medium | Medium | Reindex | 4 |
 
 ### Impact Assessment
 
@@ -722,6 +957,9 @@ quadrantChart
     P8-ResultClustering: [0.25, 0.50]
     P9-FrontmatterBoost: [0.15, 0.50]
     P10-ConfidenceFilter: [0.10, 0.50]
+    P11-MMR: [0.20, 0.85]
+    P12-NgramDedup: [0.15, 0.55]
+    P13-ParentRetrieval: [0.55, 0.90]
 ```
 
 ---
@@ -829,6 +1067,23 @@ quadrantChart
 - [ ] Factual queries (with code identifiers) boost keyword weight
 - [ ] Code search finds `getAuthToken` exactly
 - [ ] Top-5 results include chunks from ≥3 different documents
+
+### Phase 4: Diversity & Context (Week 6+)
+
+| Task | Proposal | LOC | Duration |
+|------|----------|-----|----------|
+| MMR-based selection | P11 | 60 | 2h |
+| N-gram overlap deduplication | P12 | 50 | 1.5h |
+| Two-level chunking (parent/child) | P13 | 80 | 3h |
+| Parent expansion in retrieval | P13 | 40 | 1.5h |
+
+**Total:** ~230 LOC, 8 hours
+
+**Acceptance Criteria:**
+- [ ] MMR with λ=0.5 produces more diverse results than threshold dedup
+- [ ] N-gram dedup removes >90% of exact duplicates before semantic dedup
+- [ ] Parent retrieval returns sections containing matched chunks
+- [ ] Processing pipeline: threshold → n-gram → MMR/semantic → doc-limit → rerank
 
 ---
 

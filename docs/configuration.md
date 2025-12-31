@@ -552,6 +552,47 @@ Controls document chunking strategy for vector indexing.
   include_parent_headers = true
   ```
 
+#### `parent_retrieval_enabled`
+
+- **Type:** boolean
+- **Default:** `false`
+- **Description:** Enable two-level chunking with parent document retrieval. When enabled, documents are chunked at two levels: larger parent sections (return unit) and smaller child chunks (retrieval unit). Search matches child chunks but returns parent sections for better context.
+- **Effect:** Improves retrieval precision while providing sufficient context for LLM consumption.
+- **Note:** Requires index rebuild when changing this setting.
+- **Example:**
+  ```toml
+  [chunking]
+  parent_retrieval_enabled = true
+  ```
+
+#### `parent_chunk_min_chars`
+
+- **Type:** integer
+- **Default:** `1500`
+- **Description:** Minimum size in characters for parent chunks. Child chunks are grouped into parent sections until this minimum is reached.
+- **Range:** 500 to 10000 (typical: 1000 to 2000)
+- **Requires:** `parent_retrieval_enabled = true`
+- **Example:**
+  ```toml
+  [chunking]
+  parent_retrieval_enabled = true
+  parent_chunk_min_chars = 1500
+  ```
+
+#### `parent_chunk_max_chars`
+
+- **Type:** integer
+- **Default:** `2000`
+- **Description:** Maximum size in characters for parent chunks. When accumulated child content exceeds this, a new parent section begins.
+- **Range:** 1000 to 20000 (typical: 1500 to 3000)
+- **Requires:** `parent_retrieval_enabled = true`
+- **Example:**
+  ```toml
+  [chunking]
+  parent_retrieval_enabled = true
+  parent_chunk_max_chars = 2000
+  ```
+
 **Chunking Trade-offs:**
 
 | Setting | Small Values | Large Values |
@@ -592,16 +633,16 @@ Controls hybrid search behavior and result fusion.
 
 - **Type:** float
 - **Default:** `0.5`
-- **Description:** Multiplier for recency boost. Controls how strongly recently modified documents are prioritized.
+- **Description:** Configuration option for recency boost. **Note:** The current implementation uses fixed tier multipliers (1.2x for 7 days, 1.1x for 30 days) regardless of this setting. Reserved for future dynamic tier calculation.
 - **Range:** 0.0 (no recency bias) to 1.0 (maximum recency bias)
 - **Recency Tiers (applied during fusion):**
-  - Last 7 days: `1.0 + (recency_bias * 0.2)`
-  - Last 30 days: `1.0 + (recency_bias * 0.1)`
-  - Over 30 days: `1.0`
+  - Last 7 days: 1.2x
+  - Last 30 days: 1.1x
+  - Over 30 days: 1.0x
 - **Example:**
   ```toml
   [search]
-  recency_bias = 0.0  # Disable recency boosting
+  recency_bias = 0.0  # (Currently unused, tiers are fixed)
   ```
 
 #### `rrf_k_constant`
@@ -713,6 +754,103 @@ Controls hybrid search behavior and result fusion.
   rerank_top_n = 10
   ```
 
+#### `adaptive_weights_enabled`
+
+- **Type:** boolean
+- **Default:** `false`
+- **Description:** Enable automatic query type classification and adaptive weight adjustment. When enabled, the system detects query intent (factual, navigational, exploratory) and adjusts search strategy weights accordingly.
+- **Query Types:**
+  - **Factual**: Queries with code identifiers, versions, quoted phrases → keyword weight × 1.5
+  - **Navigational**: Queries mentioning sections, guides, documentation → graph weight × 1.5
+  - **Exploratory**: Questions (what, how, why) → semantic weight × 1.3
+- **Example:**
+  ```toml
+  [search]
+  adaptive_weights_enabled = true
+  ```
+
+#### `code_search_enabled`
+
+- **Type:** boolean
+- **Default:** `false`
+- **Description:** Enable specialized code block search index. When enabled, code blocks extracted from Markdown are indexed separately with code-aware tokenization that handles camelCase, snake_case, and programming identifiers.
+- **Effect:** Improves retrieval of code snippets, function names, and technical identifiers.
+- **Example:**
+  ```toml
+  [search]
+  code_search_enabled = true
+  ```
+
+#### `code_search_weight`
+
+- **Type:** float
+- **Default:** `1.0`
+- **Description:** Weight multiplier for code search results in RRF fusion.
+- **Range:** 0.0 to infinity (typical: 0.5 to 2.0)
+- **Requires:** `code_search_enabled = true`
+- **Example:**
+  ```toml
+  [search]
+  code_search_enabled = true
+  code_search_weight = 1.2
+  ```
+
+#### `mmr_enabled`
+
+- **Type:** boolean
+- **Default:** `false`
+- **Description:** Enable Maximal Marginal Relevance (MMR) for result selection. MMR balances relevance with diversity by penalizing results similar to already-selected items. When enabled, replaces per-document limiting as the diversity mechanism.
+- **Example:**
+  ```toml
+  [search]
+  mmr_enabled = true
+  ```
+
+#### `mmr_lambda`
+
+- **Type:** float
+- **Default:** `0.7`
+- **Description:** Lambda parameter for MMR selection. Controls the trade-off between relevance (1.0) and diversity (0.0).
+- **Range:** 0.0 to 1.0
+  - `1.0`: Pure relevance ranking (no diversity)
+  - `0.7`: Balanced (default, recommended)
+  - `0.5`: Equal weight to relevance and diversity
+  - `0.3`: Diversity-focused
+- **Requires:** `mmr_enabled = true`
+- **Example:**
+  ```toml
+  [search]
+  mmr_enabled = true
+  mmr_lambda = 0.7
+  ```
+
+#### `ngram_dedup_enabled`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** Enable n-gram overlap deduplication as a fast pre-filter before semantic deduplication. Uses character trigrams and Jaccard similarity to detect near-duplicate content.
+- **Effect:** Removes obvious duplicates cheaply, reducing candidates for expensive embedding-based dedup.
+- **Example:**
+  ```toml
+  [search]
+  ngram_dedup_enabled = true
+  ```
+
+#### `ngram_dedup_threshold`
+
+- **Type:** float
+- **Default:** `0.7`
+- **Description:** Jaccard similarity threshold for n-gram deduplication. Chunks with n-gram similarity above this threshold are considered duplicates.
+- **Range:** 0.0 to 1.0 (recommended: 0.6 to 0.8)
+- **Effect:** Lower values cluster more aggressively (fewer results). Higher values preserve more distinct chunks.
+- **Requires:** `ngram_dedup_enabled = true`
+- **Example:**
+  ```toml
+  [search]
+  ngram_dedup_enabled = true
+  ngram_dedup_threshold = 0.7
+  ```
+
 ### [llm]
 
 Controls embedding model and LLM provider configuration.
@@ -776,6 +914,11 @@ max_chunk_chars = 1500
 overlap_chars = 100
 include_parent_headers = true
 
+# Parent document retrieval (two-level chunking)
+parent_retrieval_enabled = false
+parent_chunk_min_chars = 1500
+parent_chunk_max_chars = 2000
+
 [search]
 # Balance semantic and keyword search equally
 semantic_weight = 1.0
@@ -792,6 +935,21 @@ min_confidence = 0.3           # Filter results below 30% confidence
 max_chunks_per_doc = 2         # Limit chunks per document for diversity
 dedup_enabled = true           # Enable semantic deduplication
 dedup_similarity_threshold = 0.85  # Similarity threshold for clustering
+
+# N-gram deduplication (fast pre-filter)
+ngram_dedup_enabled = true
+ngram_dedup_threshold = 0.7
+
+# MMR diversity selection (alternative to max_chunks_per_doc)
+mmr_enabled = false
+mmr_lambda = 0.7
+
+# Query type classification
+adaptive_weights_enabled = false
+
+# Code search
+code_search_enabled = false
+code_search_weight = 1.0
 
 # Re-ranking (adds ~50ms latency)
 rerank_enabled = true

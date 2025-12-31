@@ -62,8 +62,9 @@ Both transport modes use the same indexing and query orchestration subsystems.
         │  ┌──────────────────────┐ │
         │  │ KeywordIndex(Whoosh) │ │
         │  └──────────────────────┘ │
-        │  ┌──────────────────────┐ │
-        │  │ GraphStore(NetworkX) │ │
+        │  ┌──────────────────────┐ │        │  │ CodeIndex (Whoosh)   │ │
+        │  └──────────────────────┘ │
+        │  ┌──────────────────────┐ │        │  │ GraphStore(NetworkX) │ │
         │  └──────────────────────┘ │
         │  ┌──────────────────────┐ │
         │  │ Manifest (JSON)      │ │
@@ -280,6 +281,31 @@ Rebuild triggered if:
 
 **Tokenization Limitation:** StandardAnalyzer strips punctuation. Terms like "C++" normalize to "c". Custom analyzer required for preserving special characters.
 
+#### CodeIndex (src/indices/code.py)
+
+**Technology:** Whoosh with custom code-aware analyzer
+
+**Purpose:** Index code blocks extracted from Markdown with programming-aware tokenization.
+
+**Schema:**
+- `id`: Unique code block identifier
+- `doc_id`: Parent document ID
+- `chunk_id`: Associated chunk ID
+- `content`: Code block text (searchable with code analyzer)
+- `language`: Programming language (if specified in fenced block)
+
+**Custom Analyzer:**
+- **RegexTokenizer**: Extracts alphanumeric identifiers and numbers
+- **CamelCaseSplitter**: Splits `getUserById` → `["getUserById", "get", "User", "By", "Id"]`
+- **SnakeCaseSplitter**: Splits `parse_json` → `["parse_json", "parse", "json"]`
+
+**Operations:**
+- `add_code_block(code_block)`: Add code block to index
+- `remove_by_doc_id(doc_id)`: Remove all code blocks for a document
+- `search(query, top_k)`: BM25 search with code-aware tokenization
+- `persist(path)`: Save index to disk
+- `load(path)`: Load existing index from disk
+
 #### GraphStore (src/indices/graph.py)
 
 **Technology:** NetworkX directed graph
@@ -445,12 +471,14 @@ POST /query_documents
       ↓
 QueryOrchestrator.query(query, top_k)
       ↓
+Query Type Classification (if adaptive_weights_enabled)
+      ↓
 Query Expansion (concept vocabulary)
       ↓
 Parallel execution:
   ├─→ VectorIndex.search(expanded_query, top_k)
   ├─→ KeywordIndex.search(query, top_k)
-  └─→ (Results from above)
+  └─→ CodeIndex.search(query, top_k) (if code_search_enabled)
       ↓
 GraphStore.get_neighbors(candidate_docs, depth=1)
       ↓
@@ -464,11 +492,17 @@ Normalize scores [0.0, 1.0]
       ↓
 Filter by min_confidence threshold
       ↓
-Limit chunks per document (max_chunks_per_doc)
+Content hash deduplication (exact text match)
       ↓
-Deduplicate by similarity (if enabled)
+N-gram deduplication (if ngram_dedup_enabled)
       ↓
-Cross-encoder re-rank (if enabled)
+Semantic deduplication (if dedup_enabled)
+      ↓
+MMR selection (if mmr_enabled) OR Per-doc limit
+      ↓
+Cross-encoder re-rank (if rerank_enabled)
+      ↓
+Parent expansion (if parent_retrieval_enabled)
       ↓
 Top-n results
       ↓
@@ -536,8 +570,13 @@ Return answer string
 │   ├── faiss_index.bin
 │   ├── doc_id_mapping.json
 │   ├── chunk_id_mapping.json
-│   └── concept_vocabulary.json
+│   ├── concept_vocabulary.json
+│   └── term_counts.json
 ├── keyword/
+│   ├── MAIN_*.toc
+│   ├── MAIN_*.seg
+│   └── _MAIN_*.pos
+├── code/
 │   ├── MAIN_*.toc
 │   ├── MAIN_*.seg
 │   └── _MAIN_*.pos

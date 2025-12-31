@@ -4,18 +4,75 @@ This document explains the hybrid search system, including each search strategy,
 
 ## Overview
 
-The query orchestrator combines six distinct retrieval and enhancement strategies:
+The query orchestrator combines eight distinct retrieval and enhancement strategies:
 
-1. **Query Expansion**: Vocabulary-based expansion for improved recall
-2. **Semantic Search**: Conceptual similarity via vector embeddings
-3. **Keyword Search**: Exact term matching via BM25F scoring with field boosts
-4. **Graph Traversal**: Structural relationships via wikilinks
-5. **Recency Bias**: Temporal relevance via file modification time
-6. **Cross-Encoder Re-Ranking**: Joint query-document relevance scoring (optional)
+1. **Query Type Classification**: Adaptive weight adjustment based on query intent (optional)
+2. **Query Expansion**: Vocabulary-based expansion for improved recall
+3. **Semantic Search**: Conceptual similarity via vector embeddings
+4. **Keyword Search**: Exact term matching via BM25F scoring with field boosts
+5. **Code Search**: Specialized code block retrieval with identifier-aware tokenization (optional)
+6. **Graph Traversal**: Structural relationships via wikilinks
+7. **Recency Bias**: Temporal relevance via file modification time
+8. **Cross-Encoder Re-Ranking**: Joint query-document relevance scoring (optional)
 
-Results from retrieval strategies are fused using Reciprocal Rank Fusion (RRF), then filtered, deduplicated, and optionally re-ranked to produce a final list for synthesis.
+Results from retrieval strategies are fused using Reciprocal Rank Fusion (RRF), then filtered, deduplicated (n-gram and semantic), diversified (MMR), and optionally re-ranked to produce a final list for synthesis.
 
 ## Search Strategies
+
+### Query Type Classification (Optional)
+
+**Purpose:** Automatically adjust search weights based on query intent detection.
+
+**Technology:**
+- Heuristic pattern matching (regex-based)
+- Zero ML dependencies
+
+**Query Types:**
+
+| Type | Signals | Weight Adjustment |
+|------|---------|-------------------|
+| Factual | camelCase, snake_case, backticks, versions, quoted phrases | keyword × 1.5 |
+| Navigational | "section", "guide", "docs", wikilinks (`[[...]]`) | graph × 1.5 |
+| Exploratory | Question words (what, how, why), question mark | semantic × 1.3 |
+
+**Detection Priority:** Factual → Navigational → Exploratory (first match wins).
+
+**Pattern Examples:**
+
+```python
+# Factual signals
+_CAMEL_CASE_PATTERN = re.compile(r'[a-z][A-Z]|[A-Z]{2,}[a-z]')
+_SNAKE_CASE_PATTERN = re.compile(r'\b[a-z]+_[a-z_]+\b')
+_BACKTICK_PATTERN = re.compile(r'`[^`]+`')
+_VERSION_PATTERN = re.compile(r'\b[vV]?\d+\.\d+(?:\.\d+)?(?:-\w+)?\b')
+
+# Navigational keywords
+_NAVIGATIONAL_KEYWORDS = {'section', 'chapter', 'guide', 'tutorial', 'documentation', ...}
+
+# Exploratory signals
+_QUESTION_WORDS = {'what', 'how', 'why', 'when', 'where', 'which', ...}
+```
+
+**Example:**
+
+```
+Query: "getUserById function"
+→ Detected: FACTUAL (camelCase signal)
+→ Weights: semantic=1.0, keyword=1.5, graph=1.0
+
+Query: "How do I configure authentication?"
+→ Detected: EXPLORATORY ("How" question word)
+→ Weights: semantic=1.3, keyword=1.0, graph=1.0
+```
+
+**Configuration:**
+
+```toml
+[search]
+adaptive_weights_enabled = true
+```
+
+**Code Reference:** [src/search/classifier.py](../src/search/classifier.py)
 
 ### 1. Semantic Search
 
@@ -88,6 +145,73 @@ Semantic search might miss these if "getToken" is a custom function name without
 
 StandardAnalyzer strips punctuation. Queries for "C++" or "Node.js" normalize to "c" and "node". Custom analyzer required to preserve special characters.
 
+### Code Block Search (Optional)
+
+**Purpose:** Find code snippets in documentation using identifier-aware tokenization that handles programming language conventions.
+
+**Technology:**
+- Whoosh with BM25F scoring
+- Custom analyzer with CamelCase and snake_case splitting
+- Preserves code identifier structure
+
+**Tokenization:**
+
+Standard tokenizers break code identifiers incorrectly:
+
+| Input | Standard Tokenizer | Code Analyzer |
+|-------|-------------------|---------------|
+| `getUserById` | `getuserbyid` | `getUserById`, `get`, `user`, `by`, `id` |
+| `parse_json_data` | `parse_json_data` | `parse_json_data`, `parse`, `json`, `data` |
+| `HTTPResponseError` | `httpresponseerror` | `HTTPResponseError`, `HTTP`, `Response`, `Error` |
+
+**Analyzer Pipeline:**
+
+```python
+# 1. RegexTokenizer: extract alphanumeric identifiers
+_CODE_TOKEN_PATTERN = re.compile(r'[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+')
+
+# 2. CamelCaseSplitter: split on case transitions
+"getUserById" → ["getUserById", "get", "User", "By", "Id"]
+
+# 3. SnakeCaseSplitter: split on underscores
+"parse_json" → ["parse_json", "parse", "json"]
+```
+
+**Schema:**
+
+```python
+Schema(
+    id=ID(stored=True, unique=True),
+    doc_id=ID(stored=True),
+    chunk_id=ID(stored=True),
+    content=TEXT(stored=True, analyzer=code_analyzer),
+    language=ID(stored=True),
+)
+```
+
+**When Most Effective:**
+- Searching for function names, class names, variable names
+- Finding code examples with specific patterns
+- Technical documentation with embedded code blocks
+
+**Example:**
+
+```
+Query: "getUserById"
+→ Code search finds: code blocks containing getUserById, get_user_by_id
+→ Matches both camelCase and snake_case variants
+```
+
+**Configuration:**
+
+```toml
+[search]
+code_search_enabled = true
+code_search_weight = 1.0
+```
+
+**Code Reference:** [src/indices/code.py](../src/indices/code.py)
+
 ### 3. Graph Traversal
 
 **Purpose:** Surface structurally related documents connected via wikilinks, even when query terms do not appear in linked documents.
@@ -139,14 +263,11 @@ Tier-based score multiplier applied during fusion:
 
 | Modification Time | Multiplier |
 |-------------------|------------|
-| Last 7 days       | 1.0 + (recency_bias * 0.2) |
-| Last 30 days      | 1.0 + (recency_bias * 0.1) |
-| Over 30 days      | 1.0 |
+| Last 7 days       | 1.2x |
+| Last 30 days      | 1.1x |
+| Over 30 days      | 1.0x |
 
-Default `recency_bias = 0.5`:
-- Last 7 days: 1.1x
-- Last 30 days: 1.05x
-- Over 30 days: 1.0x
+These multipliers are applied directly to the RRF score during fusion. The `recency_bias` config option (default 0.5) is not currently applied to these tiers in the implementation.
 
 **When Most Effective:**
 - Documentation that changes frequently (API specs, deployment guides)
@@ -340,7 +461,11 @@ This increases the influence of semantic search results relative to keyword sear
 The complete pipeline processes results in this order:
 
 ```
-Semantic Search + Keyword Search (parallel)
+Query Type Classification (if adaptive_weights_enabled)
+        ↓
+Query Expansion (concept vocabulary)
+        ↓
+Semantic Search + Keyword Search + Code Search (parallel)
         ↓
 Graph Neighbor Boosting (1-hop)
         ↓
@@ -352,11 +477,17 @@ Score Normalization [0.0, 1.0]
         ↓
 Confidence Threshold (min_confidence)
         ↓
-Per-Document Limit (max_chunks_per_doc)
+Content Hash Deduplication (exact text match)
+        ↓
+N-gram Deduplication (if ngram_dedup_enabled)
         ↓
 Semantic Deduplication (if dedup_enabled)
         ↓
+MMR Selection (if mmr_enabled) OR Per-Document Limit
+        ↓
 Cross-Encoder Re-Ranking (if rerank_enabled)
+        ↓
+Parent Expansion (if parent_retrieval_enabled)
         ↓
 Top-N Selection
 ```
@@ -593,12 +724,196 @@ keyword_weight = 0.5
 recency_bias = 0.0
 ```
 
+## Deduplication Strategies
+
+### N-gram Overlap Deduplication
+
+**Purpose:** Fast pre-filter to remove near-duplicate chunks before expensive embedding-based deduplication.
+
+**Technology:**
+- Character n-grams (trigrams by default)
+- Jaccard similarity for set comparison
+- O(n) complexity per comparison
+
+**How it Works:**
+
+1. Convert each chunk to a set of character n-grams:
+   ```
+   "hello world" → {"hel", "ell", "llo", "lo ", "o w", " wo", "wor", "orl", "rld"}
+   ```
+
+2. Compute Jaccard similarity:
+   $$
+   J(A, B) = \frac{|A \cap B|}{|A \cup B|}
+   $$
+
+3. If similarity ≥ threshold (default 0.7), mark as duplicate
+
+**Example:**
+
+```python
+text_a = "Configure the authentication settings in config.toml"
+text_b = "Configure authentication settings in the config.toml file"
+
+ngrams_a = get_ngrams(text_a, n=3)  # 48 trigrams
+ngrams_b = get_ngrams(text_b, n=3)  # 52 trigrams
+
+intersection = 41
+union = 59
+jaccard = 41 / 59 = 0.69  # Below 0.7 threshold: NOT duplicate
+```
+
+**Why N-grams Before Embeddings?**
+
+| Method | Time per Comparison | Memory |
+|--------|--------------------|---------|
+| N-gram Jaccard | ~0.1ms | Minimal (sets) |
+| Embedding Cosine | ~0.5ms | 1.5KB per embedding |
+
+N-gram dedup removes obvious duplicates cheaply, reducing the candidate set for expensive semantic dedup.
+
+**Configuration:**
+
+```toml
+[search]
+ngram_dedup_enabled = true
+ngram_dedup_threshold = 0.7
+```
+
+**Code Reference:** [src/search/dedup.py](../src/search/dedup.py)
+
+### Maximal Marginal Relevance (MMR)
+
+**Purpose:** Select diverse results by penalizing similarity to already-selected items.
+
+**MMR Formula:**
+
+$$
+\text{MMR}(d) = \lambda \cdot \text{Sim}(d, q) - (1 - \lambda) \cdot \max_{s \in S} \text{Sim}(d, s)
+$$
+
+Where:
+- $d$ = candidate document
+- $q$ = query
+- $S$ = already-selected documents
+- $\lambda$ = relevance/diversity trade-off (0.0–1.0)
+
+**Lambda Trade-off:**
+
+| Lambda | Behavior |
+|--------|----------|
+| 1.0 | Pure relevance (no diversity penalty) |
+| 0.7 | Balanced (default) |
+| 0.5 | Equal weight to relevance and diversity |
+| 0.3 | Diversity-focused |
+
+**Greedy Selection Algorithm:**
+
+```python
+selected = []
+remaining = all_candidates
+
+while len(selected) < top_n and remaining:
+    best_id = None
+    best_mmr = -inf
+
+    for candidate in remaining:
+        relevance = similarity(candidate, query)
+        max_sim_to_selected = max(similarity(candidate, s) for s in selected)
+        mmr_score = lambda * relevance - (1 - lambda) * max_sim_to_selected
+
+        if mmr_score > best_mmr:
+            best_mmr = mmr_score
+            best_id = candidate
+
+    selected.append(best_id)
+    remaining.remove(best_id)
+```
+
+**When to Use:**
+- Query results cluster around similar content
+- Need diverse perspectives on a topic
+- Want to avoid repetitive chunks from same document section
+
+**Configuration:**
+
+```toml
+[search]
+mmr_enabled = true
+mmr_lambda = 0.7
+```
+
+**Code Reference:** [src/search/diversity.py](../src/search/diversity.py)
+
+---
+
+## Parent Document Retrieval
+
+**Purpose:** Embed small chunks for retrieval precision, but return larger parent sections for sufficient LLM context.
+
+**The Retrieval vs. Return Problem:**
+
+Small chunks (~500 chars) improve retrieval precision—specific sentences match queries better than paragraphs. But returning small chunks to an LLM loses context. Parent document retrieval decouples the **retrieval unit** from the **return unit**.
+
+**Two-Level Chunking:**
+
+| Level | Size | Purpose |
+|-------|------|---------|
+| Parent (Section) | 1500–2000 chars | Return unit, provides context |
+| Child (Sub-chunk) | 200–1500 chars | Retrieval unit, precision matching |
+
+**Architecture:**
+
+```
+Document → Split into Sections (parent, ~2000 chars)
+         → Split Sections into Chunks (child, ~500 chars)
+         → Embed children, store parent_chunk_id reference
+         → Search returns child matches
+         → Expand to parent sections before returning
+```
+
+**Expansion Logic:**
+
+```python
+def _expand_to_parents(results: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    seen_parents: set[str] = set()
+    expanded: list[tuple[str, float]] = []
+
+    for chunk_id, score in results:
+        parent_chunk_id = get_parent_id(chunk_id)
+        if parent_chunk_id:
+            if parent_chunk_id not in seen_parents:
+                seen_parents.add(parent_chunk_id)
+                expanded.append((parent_chunk_id, score))
+        else:
+            # Chunk is already a parent or has no parent
+            expanded.append((chunk_id, score))
+
+    return expanded
+```
+
+**Deduplication:** Multiple child chunks may share the same parent. The expansion logic deduplicates parents, keeping the highest-scoring child's score.
+
+**Configuration:**
+
+```toml
+[chunking]
+parent_retrieval_enabled = true
+parent_chunk_min_chars = 1500
+parent_chunk_max_chars = 2000
+```
+
+**Note:** Requires index rebuild when enabling (`uv run mcp-markdown-ragdocs rebuild-index`).
+
+**Code Reference:** [src/chunking/header_chunker.py](../src/chunking/header_chunker.py), [src/search/orchestrator.py](../src/search/orchestrator.py)
+
+---
+
 ## Future Enhancements
 
 Potential improvements not currently implemented:
 
 1. **Multi-hop graph traversal**: Configurable depth (1-hop, 2-hop)
 2. **Custom analyzers**: Preserve punctuation for technical terms
-3. **Query type classification**: Automatically weight strategies based on query type (P3 in specs)
-4. **Code block index**: Specialized tokenization for code (P7 in specs)
-5. **Learned fusion**: Train fusion weights on query/relevance pairs
+3. **Learned fusion**: Train fusion weights on query/relevance pairs
+4. **Query-dependent MMR lambda**: Adjust diversity based on query type
