@@ -96,6 +96,11 @@ class MCPServer:
         if not query:
             raise ValueError("Missing required parameter: query")
 
+        # Wait for indices to be ready (blocks only if still initializing)
+        if self.ctx and not self.ctx.is_ready():
+            logger.info("Query received while initializing, waiting for indices...")
+            await self._coordinator.wait_ready(timeout=60.0)
+
         # REVIEW [LOW] Configuration: Bounds 1-100 duplicated in cli.py, server.py.
         # Extract to shared constant like MAX_TOP_N = 100, MIN_TOP_N = 1.
         top_n = arguments.get("top_n", 5)
@@ -173,20 +178,36 @@ class MCPServer:
         self._coordinator.install_signal_handlers(loop)
 
         try:
+            # Create minimal context BEFORE entering stdio (lightweight, no model loading)
             if self.ctx is None:
                 self.ctx = ApplicationContext.create(
                     project_override=self.project_override,
                     enable_watcher=True,
                     lazy_embeddings=True,
                 )
-            await self._coordinator.start(self.ctx, background_index=True)
 
+            # Enter MCP protocol loop IMMEDIATELY to respond to initialize handshake fast
             async with stdio_server() as (read_stream, write_stream):
-                await self.server.run(
-                    read_stream,
-                    write_stream,
-                    self.server.create_initialization_options(),
+                # Start background initialization AFTER entering stdio
+                # This allows MCP handshake to complete while indices load
+                init_task = asyncio.create_task(
+                    self._coordinator.start(self.ctx, background_index=True)
                 )
+
+                try:
+                    await self.server.run(
+                        read_stream,
+                        write_stream,
+                        self.server.create_initialization_options(),
+                    )
+                finally:
+                    # Ensure init task completes or is cancelled
+                    if not init_task.done():
+                        init_task.cancel()
+                        try:
+                            await init_task
+                        except asyncio.CancelledError:
+                            pass
         except asyncio.CancelledError:
             logger.info("Server run cancelled")
         finally:

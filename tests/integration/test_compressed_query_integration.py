@@ -347,8 +347,9 @@ class TestCompressionStats:
         stats = CompressionStats(
             original_count=20,
             after_threshold=15,
-            after_doc_limit=15,
-            after_dedup=10,
+            after_content_dedup=14,
+            after_dedup=12,
+            after_doc_limit=10,
             clusters_merged=5,
         )
 
@@ -356,8 +357,9 @@ class TestCompressionStats:
 
         assert stats_dict["original_count"] == 20
         assert stats_dict["after_threshold"] == 15
-        assert stats_dict["after_doc_limit"] == 15
-        assert stats_dict["after_dedup"] == 10
+        assert stats_dict["after_content_dedup"] == 14
+        assert stats_dict["after_dedup"] == 12
+        assert stats_dict["after_doc_limit"] == 10
         assert stats_dict["clusters_merged"] == 5
 
 

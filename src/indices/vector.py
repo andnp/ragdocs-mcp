@@ -379,6 +379,10 @@ class VectorIndex:
     def is_ready(self) -> bool:
         return self._index is not None
 
+    def model_ready(self) -> bool:
+        """Check if embedding model is loaded and ready for queries."""
+        return self._model_loaded
+
     def get_embedding_for_chunk(self, chunk_id: str) -> list[float] | None:
         if self._index is None:
             return None

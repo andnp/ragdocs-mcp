@@ -30,6 +30,8 @@ class ApplicationContext:
     current_manifest: IndexManifest | None = None
     reconciliation_task: asyncio.Task | None = field(default=None, repr=False)
     _background_index_task: asyncio.Task | None = field(default=None, repr=False)
+    _ready_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    _init_error: Exception | None = field(default=None, repr=False)
 
     @classmethod
     def create(
@@ -132,11 +134,13 @@ class ApplicationContext:
                 self._background_index_task = asyncio.create_task(self._background_index())
             else:
                 self._full_index()
+                self._ready_event.set()
                 # Build vocabulary after full index (in background)
                 asyncio.create_task(self._build_initial_vocabulary())
         else:
             logger.info("Loading existing indices")
             self.index_manager.load()
+            self._ready_event.set()
             await self._startup_reconciliation()
             # Build vocabulary if empty (migration from old index)
             if not self.index_manager.vector._concept_vocabulary:
@@ -184,11 +188,14 @@ class ApplicationContext:
                 await asyncio.to_thread(save_manifest, self.index_path, self.current_manifest)
 
             logger.info(f"Background indexing complete: {len(files_to_index)} documents indexed")
+            self._ready_event.set()
         except Exception as e:
             # REVIEW [HIGH] Logging: Error log lacks context about which files were being
             # indexed and at what stage the failure occurred. Add exc_info=True for
             # stack trace and include files_to_index count or current file path.
             logger.error(f"Background indexing failed: {e}")
+            self._init_error = e
+            self._ready_event.set()  # Unblock waiters so they can see the error
 
     async def _startup_reconciliation(self) -> None:
         logger.info("Running startup reconciliation")
@@ -306,6 +313,20 @@ class ApplicationContext:
             logger.info("Vocabulary building cancelled")
         except Exception as e:
             logger.error(f"Failed to build vocabulary: {e}", exc_info=True)
+
+    def is_ready(self) -> bool:
+        """Check if initialization is complete and indices are ready."""
+        return self._ready_event.is_set() and self._init_error is None and self.index_manager.is_ready()
+
+    async def ensure_ready(self, timeout: float = 60.0) -> None:
+        """Wait for initialization to complete. Call before first query."""
+        try:
+            await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            raise RuntimeError(f"Index initialization timed out after {timeout}s") from None
+
+        if self._init_error is not None:
+            raise RuntimeError(f"Index initialization failed: {self._init_error}") from self._init_error
 
     async def stop(self) -> None:
         logger.info("Stopping ApplicationContext")

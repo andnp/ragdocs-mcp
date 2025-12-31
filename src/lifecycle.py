@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 class LifecycleState(StrEnum):
     UNINITIALIZED = "uninitialized"
     STARTING = "starting"
+    INITIALIZING = "initializing"  # MCP running, indices loading in background
     READY = "ready"
     DEGRADED = "degraded"
     SHUTTING_DOWN = "shutting_down"
@@ -40,7 +41,7 @@ class LifecycleCoordinator:
         return self._state
 
     def is_running(self) -> bool:
-        return self._state in (LifecycleState.READY, LifecycleState.DEGRADED)
+        return self._state in (LifecycleState.INITIALIZING, LifecycleState.READY, LifecycleState.DEGRADED)
 
     async def start(self, ctx: ApplicationContext, *, background_index: bool = False) -> None:
         if self._state != LifecycleState.UNINITIALIZED:
@@ -51,11 +52,28 @@ class LifecycleCoordinator:
 
         try:
             await ctx.start(background_index=background_index)
-            self._state = LifecycleState.READY
-            logger.info("Lifecycle: READY")
+            if background_index:
+                self._state = LifecycleState.INITIALIZING
+                logger.info("Lifecycle: INITIALIZING (indices loading in background)")
+            else:
+                self._state = LifecycleState.READY
+                logger.info("Lifecycle: READY")
         except Exception:
             self._state = LifecycleState.TERMINATED
             raise
+
+    async def wait_ready(self, timeout: float = 60.0) -> None:
+        """Wait for indices to be ready. Call from tool handlers before queries."""
+        if self._state == LifecycleState.READY:
+            return
+        if self._state != LifecycleState.INITIALIZING:
+            raise RuntimeError(f"Cannot wait for ready from state {self._state}")
+        if self._ctx is None:
+            raise RuntimeError("No context available")
+
+        await self._ctx.ensure_ready(timeout=timeout)
+        self._state = LifecycleState.READY
+        logger.info("Lifecycle: READY (initialization complete)")
 
     def request_shutdown(self) -> None:
         self._shutdown_count += 1

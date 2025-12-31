@@ -137,6 +137,10 @@ class IndexManager:
     def get_document_count(self) -> int:
         return len(self.vector.get_document_ids())
 
+    def is_ready(self) -> bool:
+        """Check if all indices are loaded and ready for queries."""
+        return self.vector.is_ready() and self.vector.model_ready()
+
     def get_failed_files(self) -> list[dict[str, str]]:
         return [
             {"path": f.path, "error": f.error, "timestamp": f.timestamp}

@@ -55,8 +55,9 @@ class SearchOrchestrator:
             return [], CompressionStats(
                 original_count=0,
                 after_threshold=0,
-                after_doc_limit=0,
+                after_content_dedup=0,
                 after_dedup=0,
+                after_doc_limit=0,
                 clusters_merged=0,
             )
 

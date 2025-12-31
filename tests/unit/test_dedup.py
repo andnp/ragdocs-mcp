@@ -5,7 +5,11 @@ Unit tests for deduplication functions.
 import numpy as np
 import pytest
 
-from src.search.dedup import cosine_similarity, deduplicate_by_similarity
+from src.search.dedup import (
+    cosine_similarity,
+    deduplicate_by_content_hash,
+    deduplicate_by_similarity,
+)
 
 
 class TestCosineSimilarity:
@@ -266,3 +270,170 @@ class TestDeduplicateBySimilarity:
         # chunk_b should be removed at default threshold 0.85
         assert len(deduped) == 1
         assert clusters_merged == 1
+
+
+class TestDeduplicateByContentHash:
+    """Tests for deduplicate_by_content_hash function."""
+
+    def test_empty_list_returns_empty(self):
+        """Empty input returns empty list and 0 removed."""
+        def get_content(chunk_id: str):
+            return None
+
+        result, removed = deduplicate_by_content_hash([], get_content)
+
+        assert result == []
+        assert removed == 0
+
+    def test_single_item_returns_unchanged(self):
+        """Single item returns unchanged, 0 removed."""
+        def get_content(chunk_id: str):
+            return "some content"
+
+        results = [("chunk_a", 0.9)]
+        deduped, removed = deduplicate_by_content_hash(results, get_content)
+
+        assert deduped == [("chunk_a", 0.9)]
+        assert removed == 0
+
+    def test_removes_exact_duplicates(self):
+        """Removes chunks with identical content."""
+        contents = {
+            "chunk_a": "Hello world",
+            "chunk_b": "Hello world",  # Exact duplicate
+            "chunk_c": "Different content",
+        }
+
+        def get_content(chunk_id: str):
+            return contents.get(chunk_id)
+
+        results = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.8),
+            ("chunk_c", 0.7),
+        ]
+
+        deduped, removed = deduplicate_by_content_hash(results, get_content)
+
+        assert len(deduped) == 2
+        assert ("chunk_a", 0.9) in deduped
+        assert ("chunk_c", 0.7) in deduped
+        assert ("chunk_b", 0.8) not in deduped
+        assert removed == 1
+
+    def test_keeps_first_occurrence(self):
+        """First occurrence (highest score) is kept."""
+        contents = {
+            "chunk_a": "Same content",
+            "chunk_b": "Same content",
+        }
+
+        def get_content(chunk_id: str):
+            return contents.get(chunk_id)
+
+        results = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.7),
+        ]
+
+        deduped, removed = deduplicate_by_content_hash(results, get_content)
+
+        assert deduped == [("chunk_a", 0.9)]
+        assert removed == 1
+
+    def test_handles_missing_content_gracefully(self):
+        """Chunks with None content are kept (not removed as duplicates)."""
+        contents = {
+            "chunk_a": "Hello world",
+            # chunk_b returns None
+            "chunk_c": "Hello world",
+        }
+
+        def get_content(chunk_id: str):
+            return contents.get(chunk_id)
+
+        results = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.8),
+            ("chunk_c", 0.7),
+        ]
+
+        deduped, removed = deduplicate_by_content_hash(results, get_content)
+
+        # chunk_b kept (None content), chunk_c removed (duplicate of chunk_a)
+        assert len(deduped) == 2
+        assert ("chunk_a", 0.9) in deduped
+        assert ("chunk_b", 0.8) in deduped
+        assert removed == 1
+
+    def test_strips_whitespace_before_hashing(self):
+        """Whitespace differences are ignored."""
+        contents = {
+            "chunk_a": "  Hello world  ",
+            "chunk_b": "Hello world",
+            "chunk_c": "\n\tHello world\n",
+        }
+
+        def get_content(chunk_id: str):
+            return contents.get(chunk_id)
+
+        results = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.8),
+            ("chunk_c", 0.7),
+        ]
+
+        deduped, removed = deduplicate_by_content_hash(results, get_content)
+
+        # All three have same stripped content
+        assert len(deduped) == 1
+        assert deduped[0][0] == "chunk_a"
+        assert removed == 2
+
+    def test_multiple_duplicates_removed(self):
+        """Correctly counts multiple duplicates being removed."""
+        contents = {
+            "chunk_a": "Content A",
+            "chunk_b": "Content A",
+            "chunk_c": "Content A",
+            "chunk_d": "Content B",
+        }
+
+        def get_content(chunk_id: str):
+            return contents.get(chunk_id)
+
+        results = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.8),
+            ("chunk_c", 0.7),
+            ("chunk_d", 0.6),
+        ]
+
+        deduped, removed = deduplicate_by_content_hash(results, get_content)
+
+        assert len(deduped) == 2
+        assert ("chunk_a", 0.9) in deduped
+        assert ("chunk_d", 0.6) in deduped
+        assert removed == 2
+
+    def test_different_content_all_kept(self):
+        """All unique content chunks are kept."""
+        contents = {
+            "chunk_a": "Content A",
+            "chunk_b": "Content B",
+            "chunk_c": "Content C",
+        }
+
+        def get_content(chunk_id: str):
+            return contents.get(chunk_id)
+
+        results = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.8),
+            ("chunk_c", 0.7),
+        ]
+
+        deduped, removed = deduplicate_by_content_hash(results, get_content)
+
+        assert len(deduped) == 3
+        assert removed == 0

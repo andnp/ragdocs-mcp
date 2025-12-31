@@ -40,16 +40,18 @@ class ChunkResult:
 class CompressionStats:
     original_count: int
     after_threshold: int
-    after_doc_limit: int
+    after_content_dedup: int
     after_dedup: int
+    after_doc_limit: int
     clusters_merged: int
 
     def to_dict(self):
         return {
             "original_count": self.original_count,
             "after_threshold": self.after_threshold,
-            "after_doc_limit": self.after_doc_limit,
+            "after_content_dedup": self.after_content_dedup,
             "after_dedup": self.after_dedup,
+            "after_doc_limit": self.after_doc_limit,
             "clusters_merged": self.clusters_merged,
         }
 

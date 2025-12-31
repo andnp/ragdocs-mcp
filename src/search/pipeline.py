@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from src.models import CompressionStats
-from src.search.dedup import deduplicate_by_similarity
+from src.search.dedup import deduplicate_by_content_hash, deduplicate_by_similarity
 from src.search.filters import filter_by_confidence, limit_per_document
 from src.search.fusion import normalize_scores
 from src.search.reranker import ReRanker
@@ -36,8 +36,9 @@ class SearchPipeline:
             return [], CompressionStats(
                 original_count=0,
                 after_threshold=0,
-                after_doc_limit=0,
+                after_content_dedup=0,
                 after_dedup=0,
+                after_doc_limit=0,
                 clusters_merged=0,
             )
 
@@ -47,17 +48,23 @@ class SearchPipeline:
         filtered = filter_by_confidence(normalized, self._config.min_confidence)
         after_threshold = len(filtered)
 
-        limited = limit_per_document(filtered, self._config.max_chunks_per_doc)
-        after_doc_limit = len(limited)
+        # Content hash dedup (exact text match)
+        content_deduped, _ = deduplicate_by_content_hash(filtered, get_content)
+        after_content_dedup = len(content_deduped)
 
+        # Semantic dedup (embedding similarity)
         clusters_merged = 0
-        if self._config.dedup_enabled and len(limited) > 1:
-            limited, clusters_merged = deduplicate_by_similarity(
-                limited,
+        if self._config.dedup_enabled and len(content_deduped) > 1:
+            content_deduped, clusters_merged = deduplicate_by_similarity(
+                content_deduped,
                 get_embedding,
                 self._config.dedup_threshold,
             )
-        after_dedup = len(limited)
+        after_dedup = len(content_deduped)
+
+        # Doc limit (after dedup to maximize diversity)
+        limited = limit_per_document(content_deduped, self._config.max_chunks_per_doc)
+        after_doc_limit = len(limited)
 
         if self._config.rerank_enabled and limited:
             reranker = self._get_reranker()
@@ -73,8 +80,9 @@ class SearchPipeline:
         stats = CompressionStats(
             original_count=original_count,
             after_threshold=after_threshold,
-            after_doc_limit=after_doc_limit,
+            after_content_dedup=after_content_dedup,
             after_dedup=after_dedup,
+            after_doc_limit=after_doc_limit,
             clusters_merged=clusters_merged,
         )
 

@@ -67,9 +67,9 @@ class SearchConfig:
     recency_bias: float = 0.5
     rrf_k_constant: int = 60
     min_confidence: float = 0.0
-    max_chunks_per_doc: int = 0
+    max_chunks_per_doc: int = 2
     dedup_enabled: bool = False
-    dedup_similarity_threshold: float = 0.85
+    dedup_similarity_threshold: float = 0.80
     rerank_enabled: bool = False
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_top_n: int = 10

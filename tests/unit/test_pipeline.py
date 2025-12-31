@@ -45,15 +45,16 @@ class TestSearchPipelineEmptyInput:
             return [0.1, 0.2, 0.3]
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         results, stats = pipeline.process([], get_embedding, get_content, "query")
 
         assert results == []
         assert stats.original_count == 0
         assert stats.after_threshold == 0
-        assert stats.after_doc_limit == 0
+        assert stats.after_content_dedup == 0
         assert stats.after_dedup == 0
+        assert stats.after_doc_limit == 0
         assert stats.clusters_merged == 0
 
 
@@ -78,7 +79,7 @@ class TestSearchPipelineThresholdFilter:
             return None
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
@@ -107,7 +108,7 @@ class TestSearchPipelineThresholdFilter:
             return None
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
@@ -134,7 +135,7 @@ class TestSearchPipelineDocLimit:
             return None
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
@@ -160,7 +161,7 @@ class TestSearchPipelineDocLimit:
             return None
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
@@ -185,7 +186,7 @@ class TestSearchPipelineDeduplication:
             return embeddings.get(chunk_id)
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         fused = [
             ("chunk_a", 0.9),
@@ -217,7 +218,7 @@ class TestSearchPipelineDeduplication:
             return embeddings.get(chunk_id)
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         fused = [
             ("chunk_a", 0.9),
@@ -247,7 +248,7 @@ class TestSearchPipelineTopN:
             return None
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=3)
 
@@ -277,7 +278,7 @@ class TestSearchPipelineCompressionStats:
             return embeddings.get(chunk_id)
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         # After normalization: 1.0, 0.67, 0.33, 0.0
         fused = [
@@ -291,10 +292,11 @@ class TestSearchPipelineCompressionStats:
 
         assert isinstance(stats, CompressionStats)
         assert stats.original_count == 4
-        # Check that compression happened
+        # Check that compression happened (new order: threshold -> content_dedup -> semantic_dedup -> doc_limit)
         assert stats.after_threshold <= stats.original_count
-        assert stats.after_doc_limit <= stats.after_threshold
-        assert stats.after_dedup <= stats.after_doc_limit
+        assert stats.after_content_dedup <= stats.after_threshold
+        assert stats.after_dedup <= stats.after_content_dedup
+        assert stats.after_doc_limit <= stats.after_dedup
 
     def test_stats_with_normalization(self):
         config = SearchPipelineConfig(dedup_enabled=False)
@@ -309,7 +311,7 @@ class TestSearchPipelineCompressionStats:
             return None
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
@@ -330,7 +332,7 @@ class TestSearchPipelineLazyReranker:
             return None
 
         def get_content(chunk_id: str):
-            return "content"
+            return f"content for {chunk_id}"
 
         pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
