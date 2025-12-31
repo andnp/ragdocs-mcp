@@ -126,6 +126,7 @@ class VectorIndex:
                 "file_path": chunk.file_path,
                 "tags": chunk.metadata.get("tags", []),
                 "links": chunk.metadata.get("links", []),
+                "parent_chunk_id": chunk.parent_chunk_id,
             },
             id_=chunk.chunk_id,
         )
@@ -247,6 +248,12 @@ class VectorIndex:
     def get_document_ids(self) -> list[str]:
         return list(self._doc_id_to_node_ids.keys())
 
+    def get_parent_content(self, parent_chunk_id: str) -> str | None:
+        chunk_data = self.get_chunk_by_id(parent_chunk_id)
+        if chunk_data:
+            return chunk_data.get("content")
+        return None
+
     def build_concept_vocabulary(
         self,
         min_term_length: int = 3,
@@ -259,7 +266,9 @@ class VectorIndex:
         term_counts: dict[str, int] = {}
         docstore = self._index.docstore
 
-        for chunk_id in self._chunk_id_to_node_id:
+        # Snapshot to avoid race condition with concurrent indexing
+        chunk_ids_snapshot = list(self._chunk_id_to_node_id.keys())
+        for chunk_id in chunk_ids_snapshot:
             try:
                 node = docstore.get_document(chunk_id)
                 if node is None:
@@ -321,21 +330,26 @@ class VectorIndex:
         if not self._pending_terms:
             return 0
 
+        # Snapshot to avoid race condition with concurrent indexing
+        pending_snapshot = set(self._pending_terms)
+        term_counts_snapshot = dict(self._term_counts)
+
         # Get top terms by frequency that aren't in vocabulary yet
         pending_with_counts = [
-            (term, self._term_counts.get(term, 0))
-            for term in self._pending_terms
+            (term, term_counts_snapshot.get(term, 0))
+            for term in pending_snapshot
         ]
         pending_with_counts.sort(key=lambda x: x[1], reverse=True)
 
         # Only embed terms that would make it into top max_terms
-        current_vocab_size = len(self._concept_vocabulary)
+        vocab_snapshot = list(self._concept_vocabulary.keys())
+        current_vocab_size = len(vocab_snapshot)
         if current_vocab_size >= max_terms:
             # Vocabulary is full - only add terms with higher freq than lowest in vocab
-            if self._concept_vocabulary:
+            if vocab_snapshot:
                 min_vocab_freq = min(
-                    self._term_counts.get(t, 0)
-                    for t in self._concept_vocabulary
+                    term_counts_snapshot.get(t, 0)
+                    for t in vocab_snapshot
                 )
                 pending_with_counts = [
                     (t, c) for t, c in pending_with_counts if c > min_vocab_freq
@@ -418,7 +432,8 @@ class VectorIndex:
         )
 
         similarities: list[tuple[str, float]] = []
-        for term, term_emb in self._concept_vocabulary.items():
+        vocab_snapshot = list(self._concept_vocabulary.items())
+        for term, term_emb in vocab_snapshot:
             term_vec = np.array(term_emb, dtype=np.float64)
             sim = _cosine_similarity(query_embedding, term_vec)
             if sim >= similarity_threshold:

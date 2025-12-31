@@ -12,6 +12,11 @@ class TestSearchPipelineConfig:
         assert config.max_chunks_per_doc == 0
         assert config.dedup_enabled is True
         assert config.dedup_threshold == 0.85
+        assert config.ngram_dedup_enabled is True
+        assert config.ngram_dedup_threshold == 0.7
+        assert config.mmr_enabled is False
+        assert config.mmr_lambda == 0.7
+        assert config.parent_retrieval_enabled is False
         assert config.rerank_enabled is False
         assert config.rerank_model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
         assert config.rerank_top_n == 10
@@ -22,6 +27,11 @@ class TestSearchPipelineConfig:
             max_chunks_per_doc=3,
             dedup_enabled=False,
             dedup_threshold=0.9,
+            ngram_dedup_enabled=False,
+            ngram_dedup_threshold=0.8,
+            mmr_enabled=True,
+            mmr_lambda=0.5,
+            parent_retrieval_enabled=True,
             rerank_enabled=True,
             rerank_model="custom-model",
             rerank_top_n=5,
@@ -31,6 +41,11 @@ class TestSearchPipelineConfig:
         assert config.max_chunks_per_doc == 3
         assert config.dedup_enabled is False
         assert config.dedup_threshold == 0.9
+        assert config.ngram_dedup_enabled is False
+        assert config.ngram_dedup_threshold == 0.8
+        assert config.mmr_enabled is True
+        assert config.mmr_lambda == 0.5
+        assert config.parent_retrieval_enabled is True
         assert config.rerank_enabled is True
         assert config.rerank_model == "custom-model"
         assert config.rerank_top_n == 5
@@ -38,7 +53,7 @@ class TestSearchPipelineConfig:
 
 class TestSearchPipelineEmptyInput:
     def test_empty_fused_results_returns_empty(self):
-        config = SearchPipelineConfig()
+        config = SearchPipelineConfig(ngram_dedup_enabled=False)
         pipeline = SearchPipeline(config)
 
         def get_embedding(chunk_id: str):
@@ -53,6 +68,7 @@ class TestSearchPipelineEmptyInput:
         assert stats.original_count == 0
         assert stats.after_threshold == 0
         assert stats.after_content_dedup == 0
+        assert stats.after_ngram_dedup == 0
         assert stats.after_dedup == 0
         assert stats.after_doc_limit == 0
         assert stats.clusters_merged == 0
@@ -63,6 +79,7 @@ class TestSearchPipelineThresholdFilter:
         config = SearchPipelineConfig(
             min_confidence=0.5,
             dedup_enabled=False,
+            ngram_dedup_enabled=False,
         )
         pipeline = SearchPipeline(config)
 
@@ -95,6 +112,7 @@ class TestSearchPipelineThresholdFilter:
         config = SearchPipelineConfig(
             min_confidence=0.0,
             dedup_enabled=False,
+            ngram_dedup_enabled=False,
         )
         pipeline = SearchPipeline(config)
 
@@ -108,7 +126,7 @@ class TestSearchPipelineThresholdFilter:
             return None
 
         def get_content(chunk_id: str):
-            return f"content for {chunk_id}"
+            return f"unique content {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
@@ -121,6 +139,7 @@ class TestSearchPipelineDocLimit:
         config = SearchPipelineConfig(
             max_chunks_per_doc=2,
             dedup_enabled=False,
+            ngram_dedup_enabled=False,
         )
         pipeline = SearchPipeline(config)
 
@@ -135,7 +154,7 @@ class TestSearchPipelineDocLimit:
             return None
 
         def get_content(chunk_id: str):
-            return f"content for {chunk_id}"
+            return f"unique content {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
@@ -148,6 +167,7 @@ class TestSearchPipelineDocLimit:
         config = SearchPipelineConfig(
             max_chunks_per_doc=0,
             dedup_enabled=False,
+            ngram_dedup_enabled=False,
         )
         pipeline = SearchPipeline(config)
 
@@ -161,7 +181,7 @@ class TestSearchPipelineDocLimit:
             return None
 
         def get_content(chunk_id: str):
-            return f"content for {chunk_id}"
+            return f"unique content {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
@@ -173,6 +193,7 @@ class TestSearchPipelineDeduplication:
         config = SearchPipelineConfig(
             dedup_enabled=True,
             dedup_threshold=0.9,
+            ngram_dedup_enabled=False,
         )
         pipeline = SearchPipeline(config)
 
@@ -186,7 +207,7 @@ class TestSearchPipelineDeduplication:
             return embeddings.get(chunk_id)
 
         def get_content(chunk_id: str):
-            return f"content for {chunk_id}"
+            return f"unique content {chunk_id}"
 
         fused = [
             ("chunk_a", 0.9),
@@ -206,6 +227,7 @@ class TestSearchPipelineDeduplication:
     def test_dedup_disabled_keeps_all(self):
         config = SearchPipelineConfig(
             dedup_enabled=False,
+            ngram_dedup_enabled=False,
         )
         pipeline = SearchPipeline(config)
 
@@ -218,7 +240,7 @@ class TestSearchPipelineDeduplication:
             return embeddings.get(chunk_id)
 
         def get_content(chunk_id: str):
-            return f"content for {chunk_id}"
+            return f"unique content {chunk_id}"
 
         fused = [
             ("chunk_a", 0.9),
@@ -233,7 +255,7 @@ class TestSearchPipelineDeduplication:
 
 class TestSearchPipelineTopN:
     def test_limits_to_top_n(self):
-        config = SearchPipelineConfig(dedup_enabled=False)
+        config = SearchPipelineConfig(dedup_enabled=False, ngram_dedup_enabled=False)
         pipeline = SearchPipeline(config)
 
         fused = [
@@ -248,7 +270,7 @@ class TestSearchPipelineTopN:
             return None
 
         def get_content(chunk_id: str):
-            return f"content for {chunk_id}"
+            return f"unique content {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=3)
 
@@ -264,6 +286,7 @@ class TestSearchPipelineCompressionStats:
             max_chunks_per_doc=2,
             dedup_enabled=True,
             dedup_threshold=0.99,
+            ngram_dedup_enabled=False,
         )
         pipeline = SearchPipeline(config)
 
@@ -278,7 +301,7 @@ class TestSearchPipelineCompressionStats:
             return embeddings.get(chunk_id)
 
         def get_content(chunk_id: str):
-            return f"content for {chunk_id}"
+            return f"unique content {chunk_id}"
 
         # After normalization: 1.0, 0.67, 0.33, 0.0
         fused = [
@@ -292,14 +315,15 @@ class TestSearchPipelineCompressionStats:
 
         assert isinstance(stats, CompressionStats)
         assert stats.original_count == 4
-        # Check that compression happened (new order: threshold -> content_dedup -> semantic_dedup -> doc_limit)
+        # Check that compression happened (new order: threshold -> content_dedup -> ngram_dedup -> semantic_dedup -> doc_limit)
         assert stats.after_threshold <= stats.original_count
         assert stats.after_content_dedup <= stats.after_threshold
-        assert stats.after_dedup <= stats.after_content_dedup
+        assert stats.after_ngram_dedup <= stats.after_content_dedup
+        assert stats.after_dedup <= stats.after_ngram_dedup
         assert stats.after_doc_limit <= stats.after_dedup
 
     def test_stats_with_normalization(self):
-        config = SearchPipelineConfig(dedup_enabled=False)
+        config = SearchPipelineConfig(dedup_enabled=False, ngram_dedup_enabled=False)
         pipeline = SearchPipeline(config)
 
         fused = [
@@ -311,7 +335,7 @@ class TestSearchPipelineCompressionStats:
             return None
 
         def get_content(chunk_id: str):
-            return f"content for {chunk_id}"
+            return f"unique content {chunk_id}"
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
@@ -321,7 +345,7 @@ class TestSearchPipelineCompressionStats:
 
 class TestSearchPipelineLazyReranker:
     def test_reranker_not_loaded_when_disabled(self):
-        config = SearchPipelineConfig(rerank_enabled=False)
+        config = SearchPipelineConfig(rerank_enabled=False, ngram_dedup_enabled=False)
         pipeline = SearchPipeline(config)
 
         assert pipeline._reranker is None
@@ -332,7 +356,7 @@ class TestSearchPipelineLazyReranker:
             return None
 
         def get_content(chunk_id: str):
-            return f"content for {chunk_id}"
+            return f"unique content {chunk_id}"
 
         pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 

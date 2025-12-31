@@ -8,7 +8,7 @@ import yaml
 from tree_sitter import Language, Parser, Node
 from tree_sitter_markdown import language
 
-from src.models import Document
+from src.models import CodeBlock, Document
 from src.parsers.base import DocumentParser
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class MarkdownParser(DocumentParser):
             except (UnicodeDecodeError, LookupError) as e:
                 last_error = e
                 continue
-        
+
         if content is None:
             raise UnicodeDecodeError(
                 "utf-8", b"", 0, 1,
@@ -198,3 +198,70 @@ class MarkdownParser(DocumentParser):
         tags.update(matches)
 
         return list(tags)
+
+    def extract_code_blocks(self, file_path: str, doc_id: str) -> list[CodeBlock]:
+        if not os.path.exists(file_path):
+            return []
+
+        content = None
+        for encoding in ["utf-8", "latin-1", "cp1252", "iso-8859-1"]:
+            try:
+                with open(file_path, "r", encoding=encoding, errors="strict") as f:
+                    content = f.read()
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+
+        if content is None:
+            return []
+
+        content_bytes = bytes(content, "utf8")
+        tree = self.parser.parse(content_bytes)
+        root_node = tree.root_node
+
+        code_blocks: list[CodeBlock] = []
+        block_index = 0
+
+        self._collect_code_blocks(
+            root_node, content_bytes, doc_id, code_blocks, block_index
+        )
+
+        return code_blocks
+
+    def _collect_code_blocks(
+        self,
+        node: Node,
+        content_bytes: bytes,
+        doc_id: str,
+        code_blocks: list[CodeBlock],
+        block_index: int,
+    ) -> int:
+        if node.type == "fenced_code_block":
+            language = ""
+            code_content = ""
+
+            for child in node.children:
+                if child.type == "info_string":
+                    language = content_bytes[child.start_byte:child.end_byte].decode("utf8").strip()
+                elif child.type == "code_fence_content":
+                    code_content = content_bytes[child.start_byte:child.end_byte].decode("utf8")
+
+            if code_content.strip():
+                block_id = f"{doc_id}_code_{block_index}"
+                chunk_id = f"{doc_id}_chunk_0"
+
+                code_blocks.append(CodeBlock(
+                    id=block_id,
+                    doc_id=doc_id,
+                    chunk_id=chunk_id,
+                    content=code_content.strip(),
+                    language=language,
+                ))
+                block_index += 1
+
+        for child in node.children:
+            block_index = self._collect_code_blocks(
+                child, content_bytes, doc_id, code_blocks, block_index
+            )
+
+        return block_index

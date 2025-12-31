@@ -348,6 +348,7 @@ class TestCompressionStats:
             original_count=20,
             after_threshold=15,
             after_content_dedup=14,
+            after_ngram_dedup=13,
             after_dedup=12,
             after_doc_limit=10,
             clusters_merged=5,

@@ -37,6 +37,9 @@ class HeaderBasedChunker(ChunkingStrategy):
         split_chunks = self._split_large_chunks(merged_chunks)
         final_chunks = self._apply_overlap(split_chunks)
 
+        if self.config.parent_retrieval_enabled:
+            final_chunks = self._create_parent_child_chunks(document, final_chunks)
+
         return final_chunks
 
     def _extract_headers(self, root_node, content_bytes: bytes) -> list[HeaderNode]:
@@ -340,3 +343,105 @@ class HeaderBasedChunker(ChunkingStrategy):
             ))
 
         return chunks
+
+    def _create_parent_child_chunks(
+        self, document: Document, chunks: list[Chunk]
+    ) -> list[Chunk]:
+        if not chunks:
+            return chunks
+
+        parent_min = self.config.parent_chunk_min_chars
+        parent_max = self.config.parent_chunk_max_chars
+
+        parents: list[Chunk] = []
+        children: list[Chunk] = []
+
+        current_parent_chunks: list[Chunk] = []
+        current_parent_content = ""
+        parent_index = 0
+
+        for chunk in chunks:
+            if not current_parent_content:
+                current_parent_chunks = [chunk]
+                current_parent_content = chunk.content
+            elif len(current_parent_content) + len(chunk.content) + 2 <= parent_max:
+                current_parent_chunks.append(chunk)
+                current_parent_content += "\n\n" + chunk.content
+            else:
+                if len(current_parent_content) >= parent_min:
+                    parent_chunk_id = f"{document.id}_parent_{parent_index}"
+                    parent = Chunk(
+                        chunk_id=parent_chunk_id,
+                        doc_id=document.id,
+                        content=current_parent_content,
+                        metadata=current_parent_chunks[0].metadata,
+                        chunk_index=parent_index,
+                        header_path=current_parent_chunks[0].header_path,
+                        start_pos=current_parent_chunks[0].start_pos,
+                        end_pos=current_parent_chunks[-1].end_pos,
+                        file_path=document.file_path,
+                        modified_time=document.modified_time,
+                    )
+                    parents.append(parent)
+
+                    for child_chunk in current_parent_chunks:
+                        child = Chunk(
+                            chunk_id=child_chunk.chunk_id,
+                            doc_id=child_chunk.doc_id,
+                            content=child_chunk.content,
+                            metadata=child_chunk.metadata,
+                            chunk_index=child_chunk.chunk_index,
+                            header_path=child_chunk.header_path,
+                            start_pos=child_chunk.start_pos,
+                            end_pos=child_chunk.end_pos,
+                            file_path=child_chunk.file_path,
+                            modified_time=child_chunk.modified_time,
+                            parent_chunk_id=parent_chunk_id,
+                        )
+                        children.append(child)
+
+                    parent_index += 1
+                else:
+                    for child_chunk in current_parent_chunks:
+                        children.append(child_chunk)
+
+                current_parent_chunks = [chunk]
+                current_parent_content = chunk.content
+
+        if current_parent_chunks:
+            if len(current_parent_content) >= parent_min:
+                parent_chunk_id = f"{document.id}_parent_{parent_index}"
+                parent = Chunk(
+                    chunk_id=parent_chunk_id,
+                    doc_id=document.id,
+                    content=current_parent_content,
+                    metadata=current_parent_chunks[0].metadata,
+                    chunk_index=parent_index,
+                    header_path=current_parent_chunks[0].header_path,
+                    start_pos=current_parent_chunks[0].start_pos,
+                    end_pos=current_parent_chunks[-1].end_pos,
+                    file_path=document.file_path,
+                    modified_time=document.modified_time,
+                )
+                parents.append(parent)
+
+                for child_chunk in current_parent_chunks:
+                    child = Chunk(
+                        chunk_id=child_chunk.chunk_id,
+                        doc_id=child_chunk.doc_id,
+                        content=child_chunk.content,
+                        metadata=child_chunk.metadata,
+                        chunk_index=child_chunk.chunk_index,
+                        header_path=child_chunk.header_path,
+                        start_pos=child_chunk.start_pos,
+                        end_pos=child_chunk.end_pos,
+                        file_path=child_chunk.file_path,
+                        modified_time=child_chunk.modified_time,
+                        parent_chunk_id=parent_chunk_id,
+                    )
+                    children.append(child)
+            else:
+                for child_chunk in current_parent_chunks:
+                    children.append(child_chunk)
+
+        return parents + children

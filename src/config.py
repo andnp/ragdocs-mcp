@@ -70,9 +70,16 @@ class SearchConfig:
     max_chunks_per_doc: int = 2
     dedup_enabled: bool = False
     dedup_similarity_threshold: float = 0.80
+    ngram_dedup_enabled: bool = True
+    ngram_dedup_threshold: float = 0.7
+    mmr_enabled: bool = False
+    mmr_lambda: float = 0.7
     rerank_enabled: bool = False
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_top_n: int = 10
+    adaptive_weights_enabled: bool = False
+    code_search_enabled: bool = False
+    code_search_weight: float = 1.0
 
 
 @dataclass
@@ -88,6 +95,9 @@ class ChunkingConfig:
     max_chunk_chars: int = 2000
     overlap_chars: int = 100
     include_parent_headers: bool = True
+    parent_retrieval_enabled: bool = False
+    parent_chunk_min_chars: int = 1500
+    parent_chunk_max_chars: int = 2000
 
 
 @dataclass
@@ -185,9 +195,16 @@ def load_config():
         max_chunks_per_doc=search_data.get("max_chunks_per_doc", 0),
         dedup_enabled=search_data.get("dedup_enabled", False),
         dedup_similarity_threshold=search_data.get("dedup_similarity_threshold", 0.85),
+        ngram_dedup_enabled=search_data.get("ngram_dedup_enabled", True),
+        ngram_dedup_threshold=search_data.get("ngram_dedup_threshold", 0.7),
+        mmr_enabled=search_data.get("mmr_enabled", False),
+        mmr_lambda=search_data.get("mmr_lambda", 0.7),
         rerank_enabled=search_data.get("rerank_enabled", False),
         rerank_model=search_data.get("rerank_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
         rerank_top_n=search_data.get("rerank_top_n", 10),
+        adaptive_weights_enabled=search_data.get("adaptive_weights_enabled", False),
+        code_search_enabled=search_data.get("code_search_enabled", False),
+        code_search_weight=search_data.get("code_search_weight", 1.0),
     )
 
     llm_data = config_data.get("llm", {})
@@ -203,6 +220,9 @@ def load_config():
         max_chunk_chars=chunking_data.get("max_chunk_chars", 1500),
         overlap_chars=chunking_data.get("overlap_chars", 100),
         include_parent_headers=chunking_data.get("include_parent_headers", True),
+        parent_retrieval_enabled=chunking_data.get("parent_retrieval_enabled", False),
+        parent_chunk_min_chars=chunking_data.get("parent_chunk_min_chars", 1500),
+        parent_chunk_max_chars=chunking_data.get("parent_chunk_max_chars", 2000),
     )
 
     projects_data = config_data.get("projects", [])

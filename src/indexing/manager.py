@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.chunking.factory import get_chunker
 from src.config import Config
+from src.indices.code import CodeIndex
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
@@ -27,11 +28,13 @@ class IndexManager:
         vector: VectorIndex,
         keyword: KeywordIndex,
         graph: GraphStore,
+        code: CodeIndex | None = None,
     ):
         self._config = config
         self.vector = vector
         self.keyword = keyword
         self.graph = graph
+        self.code = code
         self._failed_files: list[FailedFile] = []
         self._chunker = get_chunker(config.chunking)
 
@@ -62,6 +65,13 @@ class IndexManager:
 
             for link in document.links:
                 self.graph.add_edge(document.id, link, edge_type="link")
+
+            if self.code is not None and self._config.search.code_search_enabled:
+                from src.parsers.markdown import MarkdownParser
+                if isinstance(parser, MarkdownParser):
+                    code_blocks = parser.extract_code_blocks(file_path, document.id)
+                    for code_block in code_blocks:
+                        self.code.add_code_block(code_block)
 
             self._failed_files = [
                 f for f in self._failed_files if f.path != file_path
@@ -109,6 +119,8 @@ class IndexManager:
             self.vector.remove(doc_id)
             self.keyword.remove(doc_id)
             self.graph.remove_node(doc_id)
+            if self.code is not None:
+                self.code.remove_by_doc_id(doc_id)
         except Exception as e:
             logger.error(f"Failed to remove document {doc_id}: {e}", exc_info=True)
 
@@ -120,6 +132,8 @@ class IndexManager:
             self.vector.persist(index_path / "vector")
             self.keyword.persist(index_path / "keyword")
             self.graph.persist(index_path / "graph")
+            if self.code is not None:
+                self.code.persist(index_path / "code")
         except Exception as e:
             logger.error(f"Failed to persist indices: {e}", exc_info=True)
             raise
@@ -130,6 +144,8 @@ class IndexManager:
             self.vector.load(index_path / "vector")
             self.keyword.load(index_path / "keyword")
             self.graph.load(index_path / "graph")
+            if self.code is not None:
+                self.code.load(index_path / "code")
         except Exception as e:
             logger.error(f"Failed to load indices: {e}", exc_info=True)
             raise

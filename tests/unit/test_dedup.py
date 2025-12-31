@@ -8,8 +8,201 @@ import pytest
 from src.search.dedup import (
     cosine_similarity,
     deduplicate_by_content_hash,
+    deduplicate_by_ngram,
     deduplicate_by_similarity,
+    get_ngrams,
+    jaccard_similarity,
 )
+
+
+class TestGetNgrams:
+    """Tests for get_ngrams function."""
+
+    def test_basic_ngrams(self):
+        """Extract 3-grams from simple text."""
+        ngrams = get_ngrams("hello", n=3)
+        assert ngrams == {"hel", "ell", "llo"}
+
+    def test_empty_string_returns_empty_set(self):
+        """Empty string returns empty set."""
+        ngrams = get_ngrams("", n=3)
+        assert ngrams == set()
+
+    def test_short_string_returns_whole_string(self):
+        """String shorter than n returns whole string as single ngram."""
+        ngrams = get_ngrams("ab", n=3)
+        assert ngrams == {"ab"}
+
+    def test_string_equal_to_n_returns_single_ngram(self):
+        """String equal to n returns single ngram."""
+        ngrams = get_ngrams("abc", n=3)
+        assert ngrams == {"abc"}
+
+    def test_converts_to_lowercase(self):
+        """Text is converted to lowercase."""
+        ngrams = get_ngrams("HELLO", n=3)
+        assert ngrams == {"hel", "ell", "llo"}
+
+    def test_strips_whitespace(self):
+        """Whitespace is stripped from edges."""
+        ngrams = get_ngrams("  hi  ", n=2)
+        assert ngrams == {"hi"}
+
+    def test_custom_n_value(self):
+        """Works with different n values."""
+        ngrams = get_ngrams("hello", n=2)
+        assert ngrams == {"he", "el", "ll", "lo"}
+
+
+class TestJaccardSimilarity:
+    """Tests for jaccard_similarity function."""
+
+    def test_identical_texts_returns_one(self):
+        """Identical texts have similarity 1.0."""
+        sim = jaccard_similarity("hello world", "hello world")
+        assert sim == pytest.approx(1.0)
+
+    def test_completely_different_returns_zero(self):
+        """Completely different texts have similarity 0.0."""
+        sim = jaccard_similarity("aaa", "bbb", n=3)
+        assert sim == pytest.approx(0.0)
+
+    def test_partial_overlap(self):
+        """Texts with partial overlap have intermediate similarity."""
+        sim = jaccard_similarity("hello", "hella", n=3)
+        # "hel", "ell" overlap; "llo" vs "lla" differ
+        # hello: {hel, ell, llo}, hella: {hel, ell, lla}
+        # intersection = 2, union = 4
+        assert sim == pytest.approx(0.5)
+
+    def test_empty_text_returns_zero(self):
+        """Empty text returns similarity 0.0."""
+        sim = jaccard_similarity("", "hello")
+        assert sim == pytest.approx(0.0)
+
+    def test_both_empty_returns_zero(self):
+        """Both empty texts return 0.0."""
+        sim = jaccard_similarity("", "")
+        assert sim == pytest.approx(0.0)
+
+
+class TestDeduplicateByNgram:
+    """Tests for deduplicate_by_ngram function."""
+
+    def test_empty_list_returns_empty(self):
+        """Empty input returns empty list and 0 removed."""
+        def get_content(chunk_id: str):
+            return None
+
+        result, removed = deduplicate_by_ngram([], get_content)
+
+        assert result == []
+        assert removed == 0
+
+    def test_single_item_returns_unchanged(self):
+        """Single item returns unchanged, 0 removed."""
+        def get_content(chunk_id: str):
+            return "some content"
+
+        results = [("chunk_a", 0.9)]
+        deduped, removed = deduplicate_by_ngram(results, get_content)
+
+        assert deduped == [("chunk_a", 0.9)]
+        assert removed == 0
+
+    def test_removes_similar_content(self):
+        """Removes chunks with high n-gram overlap."""
+        contents = {
+            "chunk_a": "The quick brown fox jumps over the lazy dog",
+            "chunk_b": "The quick brown fox jumps over the lazy cat",  # Very similar
+            "chunk_c": "A completely different text about programming",
+        }
+
+        def get_content(chunk_id: str):
+            return contents.get(chunk_id)
+
+        results = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.8),
+            ("chunk_c", 0.7),
+        ]
+
+        deduped, removed = deduplicate_by_ngram(results, get_content, threshold=0.7)
+
+        # chunk_b should be removed as too similar to chunk_a
+        assert len(deduped) == 2
+        assert ("chunk_a", 0.9) in deduped
+        assert ("chunk_c", 0.7) in deduped
+        assert removed == 1
+
+    def test_keeps_different_content(self):
+        """All unique content chunks are kept."""
+        contents = {
+            "chunk_a": "Content about Python programming",
+            "chunk_b": "Discussion of machine learning",
+            "chunk_c": "Guide to web development",
+        }
+
+        def get_content(chunk_id: str):
+            return contents.get(chunk_id)
+
+        results = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.8),
+            ("chunk_c", 0.7),
+        ]
+
+        deduped, removed = deduplicate_by_ngram(results, get_content, threshold=0.7)
+
+        assert len(deduped) == 3
+        assert removed == 0
+
+    def test_handles_missing_content_gracefully(self):
+        """Chunks with None content are kept."""
+        contents = {
+            "chunk_a": "Hello world",
+            # chunk_b returns None
+            "chunk_c": "Hello world",
+        }
+
+        def get_content(chunk_id: str):
+            return contents.get(chunk_id)
+
+        results = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.8),
+            ("chunk_c", 0.7),
+        ]
+
+        deduped, removed = deduplicate_by_ngram(results, get_content, threshold=0.7)
+
+        # chunk_b kept (None content), chunk_c removed (similar to chunk_a)
+        assert len(deduped) == 2
+        assert ("chunk_a", 0.9) in deduped
+        assert ("chunk_b", 0.8) in deduped
+        assert removed == 1
+
+    def test_default_threshold_is_07(self):
+        """Default threshold is 0.7."""
+        contents = {
+            "chunk_a": "The quick brown fox",
+            "chunk_b": "The quick brown cat",  # Similar but not identical
+        }
+
+        def get_content(chunk_id: str):
+            return contents.get(chunk_id)
+
+        results = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.8),
+        ]
+
+        # Use default threshold
+        deduped, removed = deduplicate_by_ngram(results, get_content)
+
+        # Should be deduplicated at default 0.7 threshold
+        assert len(deduped) == 1
+        assert removed == 1
 
 
 class TestCosineSimilarity:

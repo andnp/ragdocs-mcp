@@ -4,11 +4,13 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from src.config import Config
+from src.indices.code import CodeIndex
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.indexing.manager import IndexManager
 from src.models import ChunkResult, CompressionStats
+from src.search.classifier import classify_query, get_adaptive_weights
 from src.search.fusion import fuse_results
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
 
@@ -21,12 +23,14 @@ class SearchOrchestrator:
         graph_store: GraphStore,
         config: Config,
         index_manager: IndexManager,
+        code_index: CodeIndex | None = None,
     ):
         self._vector = vector_index
         self._keyword = keyword_index
         self._graph = graph_store
         self._config = config
         self._index_manager = index_manager
+        self._code = code_index
         self._synthesizer = None
         self._pipeline: SearchPipeline | None = None
 
@@ -37,6 +41,11 @@ class SearchOrchestrator:
                 max_chunks_per_doc=self._config.search.max_chunks_per_doc,
                 dedup_enabled=self._config.search.dedup_enabled,
                 dedup_threshold=self._config.search.dedup_similarity_threshold,
+                ngram_dedup_enabled=self._config.search.ngram_dedup_enabled,
+                ngram_dedup_threshold=self._config.search.ngram_dedup_threshold,
+                mmr_enabled=self._config.search.mmr_enabled,
+                mmr_lambda=self._config.search.mmr_lambda,
+                parent_retrieval_enabled=self._config.chunking.parent_retrieval_enabled,
                 rerank_enabled=self._config.search.rerank_enabled,
                 rerank_model=self._config.search.rerank_model,
                 rerank_top_n=self._config.search.rerank_top_n,
@@ -56,18 +65,29 @@ class SearchOrchestrator:
                 original_count=0,
                 after_threshold=0,
                 after_content_dedup=0,
+                after_ngram_dedup=0,
                 after_dedup=0,
                 after_doc_limit=0,
                 clusters_merged=0,
             )
 
-        results = await asyncio.gather(
+        search_tasks = [
             self._search_vector(query_text, top_k),
             self._search_keyword(query_text, top_k),
+        ]
+
+        code_search_enabled = (
+            self._config.search.code_search_enabled
+            and self._code is not None
         )
+        if code_search_enabled:
+            search_tasks.append(self._search_code(query_text, top_k))
+
+        results = await asyncio.gather(*search_tasks)
 
         vector_results = results[0]
         keyword_results = results[1]
+        code_results = results[2] if code_search_enabled else []
 
         all_doc_ids = set()
         chunk_id_to_doc_id = {}
@@ -84,6 +104,12 @@ class SearchOrchestrator:
             all_doc_ids.add(doc_id)
             chunk_id_to_doc_id[chunk_id] = doc_id
 
+        for result in code_results:
+            chunk_id = result["chunk_id"]
+            doc_id = result["doc_id"]
+            all_doc_ids.add(doc_id)
+            chunk_id_to_doc_id[chunk_id] = doc_id
+
         graph_neighbors = self._get_graph_neighbors(list(all_doc_ids))
 
         # Convert graph document IDs to chunk IDs
@@ -92,19 +118,39 @@ class SearchOrchestrator:
             chunk_ids_for_doc = self._vector.get_chunk_ids_for_document(doc_id)
             graph_chunk_ids.extend(chunk_ids_for_doc)
 
-        results_dict = {
+        results_dict: dict[str, list[str]] = {
             "semantic": [r["chunk_id"] for r in vector_results],
             "keyword": [r["chunk_id"] for r in keyword_results],
             "graph": graph_chunk_ids,
         }
 
+        if code_search_enabled and code_results:
+            results_dict["code"] = [r["chunk_id"] for r in code_results]
+
         modified_times = self._collect_modified_times(all_doc_ids | set(graph_neighbors))
 
-        weights = {
-            "semantic": self._config.search.semantic_weight,
-            "keyword": self._config.search.keyword_weight,
-            "graph": 1.0,
+        base_semantic = self._config.search.semantic_weight
+        base_keyword = self._config.search.keyword_weight
+        base_graph = 1.0
+
+        if self._config.search.adaptive_weights_enabled:
+            query_type = classify_query(query_text)
+            semantic_w, keyword_w, graph_w = get_adaptive_weights(
+                query_type, base_semantic, base_keyword, base_graph
+            )
+        else:
+            semantic_w = base_semantic
+            keyword_w = base_keyword
+            graph_w = base_graph
+
+        weights: dict[str, float] = {
+            "semantic": semantic_w,
+            "keyword": keyword_w,
+            "graph": graph_w,
         }
+
+        if code_search_enabled:
+            weights["code"] = self._config.search.code_search_weight
 
         fused = fuse_results(
             results_dict,
@@ -118,18 +164,38 @@ class SearchOrchestrator:
         else:
             pipeline = self._get_pipeline()
 
+        query_embedding = None
+        if self._config.search.mmr_enabled or (
+            pipeline_config is not None and pipeline_config.mmr_enabled
+        ):
+            query_embedding = self._vector.get_text_embedding(query_text)
+
         final, compression_stats = pipeline.process(
             fused,
             self._get_chunk_embedding,
             self._get_chunk_content,
             query_text,
             top_n,
+            query_embedding,
         )
+
+        # Parent expansion: if enabled, expand child chunks to parent chunks
+        parent_retrieval_enabled = self._config.chunking.parent_retrieval_enabled
+        if pipeline_config is not None and pipeline_config.parent_retrieval_enabled:
+            parent_retrieval_enabled = True
+
+        if parent_retrieval_enabled:
+            final = self._expand_to_parents(final)
 
         chunk_results = []
         for chunk_id, score in final:
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if chunk_data:
+                parent_chunk_id = chunk_data.get("metadata", {}).get("parent_chunk_id")
+                parent_content = None
+                if parent_chunk_id:
+                    parent_content = self._vector.get_parent_content(parent_chunk_id)
+
                 chunk_results.append(ChunkResult(
                     chunk_id=chunk_id,
                     doc_id=chunk_data.get("doc_id", ""),
@@ -137,6 +203,8 @@ class SearchOrchestrator:
                     header_path=chunk_data.get("header_path", ""),
                     file_path=chunk_data.get("file_path", ""),
                     content=chunk_data.get("content", ""),
+                    parent_chunk_id=parent_chunk_id,
+                    parent_content=parent_content,
                 ))
             else:
                 chunk_results.append(ChunkResult(
@@ -149,6 +217,28 @@ class SearchOrchestrator:
                 ))
 
         return chunk_results, compression_stats
+
+    def _expand_to_parents(
+        self, results: list[tuple[str, float]]
+    ) -> list[tuple[str, float]]:
+        seen_parents: set[str] = set()
+        expanded: list[tuple[str, float]] = []
+
+        for chunk_id, score in results:
+            chunk_data = self._vector.get_chunk_by_id(chunk_id)
+            if not chunk_data:
+                expanded.append((chunk_id, score))
+                continue
+
+            parent_chunk_id = chunk_data.get("metadata", {}).get("parent_chunk_id")
+            if parent_chunk_id:
+                if parent_chunk_id not in seen_parents:
+                    seen_parents.add(parent_chunk_id)
+                    expanded.append((parent_chunk_id, score))
+            else:
+                expanded.append((chunk_id, score))
+
+        return expanded
 
     def _get_chunk_embedding(self, chunk_id: str) -> list[float] | None:
         return self._vector.get_embedding_for_chunk(chunk_id)
@@ -182,6 +272,20 @@ class SearchOrchestrator:
             None, self._keyword.search, query_text, top_k
         )
         logger.info(f"Keyword search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
+        return results
+
+    async def _search_code(self, query_text: str, top_k: int):
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if self._code is None:
+            return []
+
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            None, self._code.search, query_text, top_k
+        )
+        logger.info(f"Code search returned {len(results)} results")
         return results
 
     # REVIEW [LOW] Logging: Same issue - redundant local logger import.
