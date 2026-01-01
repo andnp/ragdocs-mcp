@@ -393,24 +393,24 @@ def detect_project(cwd: Path | None = None, projects: list[ProjectConfig] | None
     if projects is None:
         global_config_path = Path.home() / ".config" / "mcp-markdown-ragdocs" / "config.toml"
         if not global_config_path.exists():
-            return None
+            projects = []
+        else:
+            with open(global_config_path, "rb") as f:
+                config_data = tomllib.load(f)
 
-        with open(global_config_path, "rb") as f:
-            config_data = tomllib.load(f)
-
-        projects_data = config_data.get("projects", [])
-        projects = []
-        for proj_data in projects_data:
-            try:
-                projects.append(ProjectConfig(
-                    name=proj_data["name"],
-                    path=proj_data["path"]
-                ))
-            except (KeyError, ValueError):
-                continue
+            projects_data = config_data.get("projects", [])
+            projects = []
+            for proj_data in projects_data:
+                try:
+                    projects.append(ProjectConfig(
+                        name=proj_data["name"],
+                        path=proj_data["path"]
+                    ))
+                except (KeyError, ValueError):
+                    continue
 
     if not projects:
-        return None
+        projects = []
 
     cwd_resolved = cwd.resolve()
 
@@ -431,6 +431,21 @@ def detect_project(cwd: Path | None = None, projects: list[ProjectConfig] | None
             continue
 
     logger.debug(f"No project match for CWD: {cwd_resolved}")
+
+    if cwd_resolved.exists():
+        logger.info(f"Auto-registering CWD as new project: {cwd_resolved}")
+
+        existing_names = [p.name for p in projects]
+        project_name = _generate_unique_project_name(cwd_resolved.name, existing_names)
+
+        try:
+            persist_project_to_config(project_name, str(cwd_resolved))
+            logger.info(f"Successfully persisted CWD project '{project_name}': {cwd_resolved}")
+            return project_name
+        except Exception as e:
+            logger.warning(f"Failed to persist CWD project to config: {e}")
+            return None
+
     return None
 
 

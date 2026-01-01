@@ -354,3 +354,79 @@ def test_detect_project_persistence_failure_returns_name(tmp_path, temp_config_h
     )
 
     assert result == "test-project"
+
+
+def test_detect_project_cwd_auto_persists_when_not_registered(tmp_path, temp_config_home):
+    """
+    Test that CWD-based detection auto-persists when no registered project matches.
+    """
+    config_path = temp_config_home / "config.toml"
+
+    project_dir = tmp_path / "unregistered-project"
+    project_dir.mkdir()
+
+    result = detect_project(
+        cwd=project_dir,
+        projects=[],
+        project_override=None
+    )
+
+    assert result == "unregistered-project"
+    assert config_path.exists()
+
+    with open(config_path, "rb") as f:
+        data = tomllib.load(f)
+
+    assert len(data["projects"]) == 1
+    assert data["projects"][0]["name"] == "unregistered-project"
+    assert data["projects"][0]["path"] == str(project_dir)
+
+
+def test_detect_project_cwd_no_persist_when_already_registered(tmp_path, temp_config_home):
+    """
+    Test that CWD-based detection does not re-persist when already registered.
+    """
+    config_path = temp_config_home / "config.toml"
+
+    project_dir = tmp_path / "registered"
+    project_dir.mkdir()
+
+    config_path.write_text(f"""
+[[projects]]
+name = "registered"
+path = "{project_dir}"
+""")
+
+    result = detect_project(
+        cwd=project_dir,
+        projects=None,
+        project_override=None
+    )
+
+    assert result == "registered"
+
+    with open(config_path, "rb") as f:
+        data = tomllib.load(f)
+
+    assert len(data["projects"]) == 1
+
+
+def test_detect_project_cwd_auto_persist_failure_returns_none(tmp_path, temp_config_home, monkeypatch):
+    """
+    Test that CWD auto-persist failure logs warning and returns None.
+    """
+    project_dir = tmp_path / "test-project"
+    project_dir.mkdir()
+
+    def failing_persist(name, path):
+        raise OSError("Simulated persistence failure")
+
+    monkeypatch.setattr(src.config, "persist_project_to_config", failing_persist)
+
+    result = detect_project(
+        cwd=project_dir,
+        projects=[],
+        project_override=None
+    )
+
+    assert result is None

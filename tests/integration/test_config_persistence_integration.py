@@ -1,7 +1,10 @@
 import pytest
 import tomllib
+import os
 from pathlib import Path
+from click.testing import CliRunner
 from src.config import detect_project
+from src.cli import cli
 
 
 @pytest.fixture
@@ -155,3 +158,77 @@ keyword_weight = 0.5
     assert data["search"]["semantic_weight"] == 2.0
     assert data["search"]["keyword_weight"] == 0.5
     assert len(data["projects"]) == 2
+
+
+def test_e2e_rebuild_index_cwd_auto_registration(temp_home):
+    """
+    Integration test: rebuild-index auto-registers CWD as new project.
+    """
+    config_dir = temp_home / ".config" / "mcp-markdown-ragdocs"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "config.toml"
+
+    project_dir = temp_home / "auto-registered-project"
+    project_dir.mkdir()
+
+    docs_dir = project_dir / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "test.md").write_text("# Test Document\n\nTest content.")
+
+    config_file = project_dir / ".mcp-markdown-ragdocs" / "config.toml"
+    config_file.parent.mkdir()
+    config_file.write_text(f"""
+[indexing]
+documents_path = "{docs_dir}"
+""")
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(project_dir)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["rebuild-index"])
+
+        assert result.exit_code == 0
+        assert "Successfully rebuilt index" in result.output
+
+        assert config_path.exists()
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert len(data["projects"]) == 1
+        assert data["projects"][0]["name"] == "auto-registered-project"
+        assert data["projects"][0]["path"] == str(project_dir)
+
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_e2e_mcp_cwd_auto_registration(temp_home):
+    """
+    Integration test: mcp command auto-registers CWD as new project.
+
+    Note: This test only verifies config persistence, not actual MCP server startup.
+    """
+    config_dir = temp_home / ".config" / "mcp-markdown-ragdocs"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "config.toml"
+
+    project_dir = temp_home / "mcp-auto-project"
+    project_dir.mkdir()
+
+    result = detect_project(
+        cwd=project_dir,
+        projects=None,
+        project_override=None
+    )
+
+    assert result == "mcp-auto-project"
+    assert config_path.exists()
+
+    with open(config_path, "rb") as f:
+        data = tomllib.load(f)
+
+    assert len(data["projects"]) == 1
+    assert data["projects"][0]["name"] == "mcp-auto-project"
+    assert data["projects"][0]["path"] == str(project_dir)
