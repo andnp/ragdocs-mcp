@@ -57,9 +57,6 @@ class ApplicationContext:
         config.indexing.documents_path = documents_path
 
         embedding_model_name = config.llm.embedding_model
-        # REVIEW [MED] Configuration: Magic string "local" mapped to hardcoded model name.
-        # Consider making the default model configurable in LLMConfig or documenting
-        # this fallback behavior. Current approach makes it hard to change the default.
         if embedding_model_name == "local":
             embedding_model_name = "BAAI/bge-small-en-v1.5"
 
@@ -173,6 +170,7 @@ class ApplicationContext:
         logger.info(f"Initial indexing complete: {len(files_to_index)} documents indexed")
 
     async def _background_index(self) -> None:
+        files_to_index: list[str] = []
         try:
             logger.info("Starting background indexing")
             files_to_index = self.discover_files()
@@ -190,10 +188,10 @@ class ApplicationContext:
             logger.info(f"Background indexing complete: {len(files_to_index)} documents indexed")
             self._ready_event.set()
         except Exception as e:
-            # REVIEW [HIGH] Logging: Error log lacks context about which files were being
-            # indexed and at what stage the failure occurred. Add exc_info=True for
-            # stack trace and include files_to_index count or current file path.
-            logger.error(f"Background indexing failed: {e}")
+            logger.error(
+                f"Background indexing failed after processing some of {len(files_to_index)} files: {e}",
+                exc_info=True
+            )
             self._init_error = e
             self._ready_event.set()  # Unblock waiters so they can see the error
 

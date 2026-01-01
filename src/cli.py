@@ -20,6 +20,9 @@ from src.utils import should_include_file
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+MIN_TOP_N = 1
+MAX_TOP_N = 100
+
 
 def _should_include_file(
     file_path: str,
@@ -238,10 +241,8 @@ def query(query_text: str, output_json: bool, top_n: int, project: str | None):
 
         ctx.index_manager.load()
 
-        # REVIEW [LOW] Configuration: Magic numbers 1 and 100 duplicated here and in
-        # mcp_server.py/server.py. Consider extracting to config constants.
-        if top_n < 1 or top_n > 100:
-            click.echo("Error: --top-n must be between 1 and 100", err=True)
+        if top_n < MIN_TOP_N or top_n > MAX_TOP_N:
+            click.echo(f"Error: --top-n must be between {MIN_TOP_N} and {MAX_TOP_N}", err=True)
             sys.exit(1)
 
         with console.status("[bold green]Searching documents..."):

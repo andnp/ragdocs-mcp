@@ -1,6 +1,5 @@
 import asyncio
-import re
-from collections.abc import AsyncIterator
+import logging
 from pathlib import Path
 
 from src.config import Config
@@ -13,6 +12,8 @@ from src.models import ChunkResult, CompressionStats
 from src.search.classifier import classify_query, get_adaptive_weights
 from src.search.fusion import fuse_results
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
+
+logger = logging.getLogger(__name__)
 
 
 class SearchOrchestrator:
@@ -31,7 +32,6 @@ class SearchOrchestrator:
         self._config = config
         self._index_manager = index_manager
         self._code = code_index
-        self._synthesizer = None
         self._pipeline: SearchPipeline | None = None
 
     def _get_pipeline(self) -> SearchPipeline:
@@ -191,18 +191,19 @@ class SearchOrchestrator:
         for chunk_id, score in final:
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if chunk_data:
-                parent_chunk_id = chunk_data.get("metadata", {}).get("parent_chunk_id")
+                metadata = chunk_data.get("metadata", {})
+                parent_chunk_id = metadata.get("parent_chunk_id") if isinstance(metadata, dict) else None
                 parent_content = None
                 if parent_chunk_id:
                     parent_content = self._vector.get_parent_content(parent_chunk_id)
 
                 chunk_results.append(ChunkResult(
                     chunk_id=chunk_id,
-                    doc_id=chunk_data.get("doc_id", ""),
+                    doc_id=str(chunk_data.get("doc_id", "")),
                     score=score,
-                    header_path=chunk_data.get("header_path", ""),
-                    file_path=chunk_data.get("file_path", ""),
-                    content=chunk_data.get("content", ""),
+                    header_path=str(chunk_data.get("header_path", "")),
+                    file_path=str(chunk_data.get("file_path", "")),
+                    content=str(chunk_data.get("content", "")),
                     parent_chunk_id=parent_chunk_id,
                     parent_content=parent_content,
                 ))
@@ -230,7 +231,8 @@ class SearchOrchestrator:
                 expanded.append((chunk_id, score))
                 continue
 
-            parent_chunk_id = chunk_data.get("metadata", {}).get("parent_chunk_id")
+            metadata = chunk_data.get("metadata", {})
+            parent_chunk_id = metadata.get("parent_chunk_id") if isinstance(metadata, dict) else None
             if parent_chunk_id:
                 if parent_chunk_id not in seen_parents:
                     seen_parents.add(parent_chunk_id)
@@ -246,15 +248,11 @@ class SearchOrchestrator:
     def _get_chunk_content(self, chunk_id: str) -> str | None:
         chunk_data = self._vector.get_chunk_by_id(chunk_id)
         if chunk_data:
-            return chunk_data.get("content")
+            content = chunk_data.get("content")
+            return str(content) if content is not None else None
         return None
 
-    # REVIEW [LOW] Logging: Module-level logger exists but this method creates a local
-    # logger import. Remove the local import and use the module-level logger instead.
     async def _search_vector(self, query_text: str, top_k: int):
-        import logging
-        logger = logging.getLogger(__name__)
-
         expanded_query = self._vector.expand_query(query_text)
 
         loop = asyncio.get_event_loop()
@@ -265,8 +263,6 @@ class SearchOrchestrator:
         return results
 
     async def _search_keyword(self, query_text: str, top_k: int):
-        import logging
-        logger = logging.getLogger(__name__)
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(
             None, self._keyword.search, query_text, top_k
@@ -275,9 +271,6 @@ class SearchOrchestrator:
         return results
 
     async def _search_code(self, query_text: str, top_k: int):
-        import logging
-        logger = logging.getLogger(__name__)
-
         if self._code is None:
             return []
 
@@ -288,10 +281,7 @@ class SearchOrchestrator:
         logger.info(f"Code search returned {len(results)} results")
         return results
 
-    # REVIEW [LOW] Logging: Same issue - redundant local logger import.
     def _get_graph_neighbors(self, doc_ids: list[str]):
-        import logging
-        logger = logging.getLogger(__name__)
         neighbors = set()
         for doc_id in doc_ids:
             doc_neighbors = self._graph.get_neighbors(doc_id, depth=1)
@@ -336,150 +326,7 @@ class SearchOrchestrator:
 
         return documents
 
-    async def synthesize_answer(self, query: str, chunk_ids: list[str]):
-        from llama_index.core import Settings, get_response_synthesizer
-        from llama_index.core.llms import MockLLM
-        from llama_index.core.prompts import PromptTemplate
-        from llama_index.core.schema import NodeWithScore, TextNode
-
-        if not chunk_ids:
-            return "No relevant documents found for your query."
-
-        chunks = self._get_chunks(chunk_ids)
-
-        if not chunks:
-            return "Could not retrieve content for the matched results."
-
-        TEXT_QA_TEMPLATE = PromptTemplate(
-            "Context information is below.\n"
-            "---------------------\n"
-            "{context_str}\n"
-            "---------------------\n"
-            "Answer the question: {query_str}\n"
-        )
-
-        nodes = [
-            NodeWithScore(
-                node=TextNode(
-                    text=chunk["content"],
-                    metadata={
-                        "chunk_id": chunk["chunk_id"],
-                        "doc_id": chunk["doc_id"],
-                        "header_path": chunk.get("header_path", ""),
-                        "file_path": chunk.get("file_path", ""),
-                    },
-                ),
-                score=chunk.get("score", 1.0),
-            )
-            for chunk in chunks
-        ]
-
-        if self._synthesizer is None:
-            Settings.context_window = 32768
-            try:
-                self._synthesizer = get_response_synthesizer(text_qa_template=TEXT_QA_TEMPLATE)
-            except ImportError:
-                self._synthesizer = get_response_synthesizer(llm=MockLLM(), text_qa_template=TEXT_QA_TEMPLATE)
-
-        response = await asyncio.get_event_loop().run_in_executor(
-            None, self._synthesizer.synthesize, query, nodes
-        )
-
-        answer = str(response)
-        answer = self._clean_answer(answer)
-        return answer
-
-    async def synthesize_answer_stream(
-        self,
-        query: str,
-        chunk_ids: list[str]
-    ) -> AsyncIterator[dict[str, str | dict]]:
-        from llama_index.core import Settings, get_response_synthesizer
-        from llama_index.core.llms import MockLLM
-        from llama_index.core.prompts import PromptTemplate
-        from llama_index.core.schema import NodeWithScore, TextNode
-
-        if not chunk_ids:
-            yield {
-                "event": "error",
-                "data": {"message": "No relevant documents found for your query."}
-            }
-            return
-
-        chunks = self._get_chunks(chunk_ids)
-
-        if not chunks:
-            yield {
-                "event": "error",
-                "data": {"message": "Could not retrieve content for the matched results."}
-            }
-            return
-
-        yield {
-            "event": "start",
-            "data": {"chunk_count": len(chunks)}
-        }
-
-        TEXT_QA_TEMPLATE = PromptTemplate(
-            "Context information is below.\n"
-            "---------------------\n"
-            "{context_str}\n"
-            "---------------------\n"
-            "Answer the question: {query_str}\n"
-        )
-
-        nodes = [
-            NodeWithScore(
-                node=TextNode(
-                    text=chunk["content"],
-                    metadata={
-                        "chunk_id": chunk["chunk_id"],
-                        "doc_id": chunk["doc_id"],
-                        "header_path": chunk.get("header_path", ""),
-                        "file_path": chunk.get("file_path", ""),
-                    },
-                ),
-                score=chunk.get("score", 1.0),
-            )
-            for chunk in chunks
-        ]
-
-        if self._synthesizer is None:
-            Settings.context_window = 32768
-            try:
-                self._synthesizer = get_response_synthesizer(text_qa_template=TEXT_QA_TEMPLATE)
-            except ImportError:
-                self._synthesizer = get_response_synthesizer(llm=MockLLM(), text_qa_template=TEXT_QA_TEMPLATE)
-
-        try:
-            response = await asyncio.get_event_loop().run_in_executor(
-                None, self._synthesizer.synthesize, query, nodes
-            )
-
-            answer_text = str(response)
-            answer_text = self._clean_answer(answer_text)
-
-            yield {
-                "event": "chunk",
-                "data": {"text": answer_text}
-            }
-
-            yield {
-                "event": "done",
-                "data": {"total_length": len(answer_text)}
-            }
-
-        except Exception as e:
-            yield {
-                "event": "error",
-                "data": {"message": f"Synthesis failed: {str(e)}"}
-            }
-
-    # REVIEW [LOW] Logging: Same issue - redundant local logger import.
     def _get_chunks(self, chunk_ids: list[str]) -> list[dict]:
-        import logging
-        logger = logging.getLogger(__name__)
-
         chunks = []
         logger.info(f"_get_chunks called with {len(chunk_ids)} chunk_ids: {chunk_ids[:3] if len(chunk_ids) > 3 else chunk_ids}")
 
@@ -493,20 +340,3 @@ class SearchOrchestrator:
 
         logger.info(f"_get_chunks returning {len(chunks)} chunks")
         return chunks
-
-    def _clean_answer(self, answer: str) -> str:
-        contamination_patterns = [
-            r"given the context information and not prior knowledge[,.]?",
-            r"based on the context[,.]?",
-            r"according to the context[,.]?",
-            r"from the context[,.]?",
-        ]
-
-        cleaned = answer
-        for pattern in contamination_patterns:
-            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
-
-        cleaned = re.sub(r"\s+", " ", cleaned)
-        cleaned = cleaned.strip()
-
-        return cleaned

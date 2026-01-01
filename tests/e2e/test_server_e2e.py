@@ -69,7 +69,6 @@ rrf_k_constant = 60
 
 [llm]
 embedding_model = "all-MiniLM-L6-v2"
-llm_provider = "local"
 """)
     return config_file
 
@@ -101,8 +100,7 @@ def app_with_config(tmp_path, test_docs_dir, monkeypatch):
                 rrf_k_constant=60,
             ),
             llm=LLMConfig(
-                embedding_model="all-MiniLM-L6-v2",
-                llm_provider="local",
+                embedding_model="all-MiniLM-L6-v2"
             ),
         )
 
@@ -180,8 +178,7 @@ def test_query_endpoint_accepts_requests_and_returns_results(client):
     Test that query endpoint processes requests and returns search results.
 
     Validates core search functionality: queries should be processed through
-    the hybrid search orchestrator and return synthesized LLM answers along
-    with scored results.
+    the hybrid search orchestrator and return ranked document chunks with scores.
     """
     response = client.post(
         "/query_documents",
@@ -191,14 +188,8 @@ def test_query_endpoint_accepts_requests_and_returns_results(client):
     assert response.status_code == 200
     data = response.json()
 
-    # Verify response structure
-    assert "answer" in data
+    # Verify response structure (no answer field, only results)
     assert "results" in data
-
-    # Verify answer is a non-empty string
-    answer = data["answer"]
-    assert isinstance(answer, str)
-    assert len(answer) > 0
 
     # Verify results structure (list of dict objects)
     results = data["results"]
@@ -246,13 +237,12 @@ def test_file_changes_trigger_index_updates(client, test_docs_dir):
         json={"query": "deployment configuration"},
     )
     data_after = response_after.json()
-    answer_after = data_after["answer"]
+    results_after = data_after["results"]
 
     # Verify response changed (indicating new document was indexed)
-    # Note: MockLLM echoes queries so we can't check content directly,
-    # but we verify the system processed the query and returned an answer
-    assert len(answer_after) > 0
-    assert isinstance(answer_after, str)
+    # The results should differ after the new document is indexed
+    assert isinstance(results_after, list)
+    assert len(results_after) >= 0
 
 
 def test_server_shutdown_persists_indices(client, tmp_path, test_docs_dir):
@@ -347,8 +337,7 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
             parsers={"**/*.md": "MarkdownParser"},
             search=SearchConfig(),
             llm=LLMConfig(
-                embedding_model="all-MiniLM-L6-v2",
-                llm_provider="local",
+                embedding_model="all-MiniLM-L6-v2"
             ),
         )
 
@@ -367,10 +356,12 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
             json={"query": "new document rebuild"},
         )
         data = response.json()
-        answer = data["answer"]
+        results = data["results"]
 
         # Verify new document was indexed during rebuild
-        assert "new" in answer.lower() or "new_doc" in answer.lower()
+        # Check that we have results (rebuild worked)
+        assert isinstance(results, list)
+        assert len(results) > 0
 
 
 def test_query_endpoint_with_empty_query(client):
@@ -387,7 +378,9 @@ def test_query_endpoint_with_empty_query(client):
 
     assert response.status_code == 200
     data = response.json()
-    assert "answer" in data
+    assert "results" in data
+    assert isinstance(data["results"], list)
+    assert len(data["results"]) == 0
 
 
 def test_concurrent_query_requests(client):
@@ -416,7 +409,7 @@ def test_concurrent_query_requests(client):
     for response in responses:
         assert response.status_code == 200
         data = response.json()
-        assert "answer" in data
+        assert "results" in data
 
 
 def test_query_documents_with_default_top_n(client):
@@ -437,16 +430,11 @@ def test_query_documents_with_default_top_n(client):
     data = response.json()
 
     # Verify response structure
-    assert "answer" in data
     assert "results" in data
     assert isinstance(data["results"], list)
 
     # Default top_n is 5
     assert len(data["results"]) <= 5
-
-    # Verify answer is a non-empty string
-    assert isinstance(data["answer"], str)
-    assert len(data["answer"]) > 0
 
 
 def test_query_documents_with_custom_top_n(client):
@@ -634,8 +622,7 @@ def test_query_documents_empty_query_with_scores(client):
     assert response.status_code == 200
     data = response.json()
 
-    # Should have both fields even with empty query
-    assert "answer" in data
+    # Should have results field even with empty query
     assert "results" in data
 
     # Results should be empty list

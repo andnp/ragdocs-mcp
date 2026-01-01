@@ -15,7 +15,7 @@ The query orchestrator combines eight distinct retrieval and enhancement strateg
 7. **Recency Bias**: Temporal relevance via file modification time
 8. **Cross-Encoder Re-Ranking**: Joint query-document relevance scoring (optional)
 
-Results from retrieval strategies are fused using Reciprocal Rank Fusion (RRF), then filtered, deduplicated (n-gram and semantic), diversified (MMR), and optionally re-ranked to produce a final list for synthesis.
+Results from retrieval strategies are fused using Reciprocal Rank Fusion (RRF), then filtered, deduplicated (n-gram and semantic), diversified (MMR), and optionally re-ranked to produce a final ranked list of document chunks.
 
 ## Search Strategies
 

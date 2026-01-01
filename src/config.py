@@ -85,7 +85,6 @@ class SearchConfig:
 @dataclass
 class LLMConfig:
     embedding_model: str = "local"
-    llm_provider: str | None = None
 
 
 @dataclass
@@ -209,8 +208,7 @@ def load_config():
 
     llm_data = config_data.get("llm", {})
     llm = LLMConfig(
-        embedding_model=llm_data.get("embedding_model", "local"),
-        llm_provider=llm_data.get("llm_provider")
+        embedding_model=llm_data.get("embedding_model", "local")
     )
 
     chunking_data = config_data.get("chunking", {})
@@ -235,9 +233,7 @@ def load_config():
                     path=proj_data["path"]
                 ))
             except (KeyError, ValueError) as e:
-                # REVIEW [MED] Logging: Warning log doesn't identify which project entry
-                # failed (index in array or partial data). Include proj_data in log.
-                logger.warning(f"Skipping invalid project config: {e}")
+                logger.warning(f"Skipping invalid project config: {e}. Project data: {proj_data}")
 
     _validate_projects(projects)
 
@@ -292,8 +288,6 @@ def persist_project_to_config(project_name: str, project_path: str):
 
     global_config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # REVIEW [LOW] Type Safety: Any used for tomlkit document. tomlkit.TOMLDocument
-    # could be used but lacks good type stubs. Acceptable for dynamic TOML manipulation.
     doc: Any
     if global_config_path.exists():
         with open(global_config_path, "r") as f:

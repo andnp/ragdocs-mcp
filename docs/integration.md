@@ -124,7 +124,7 @@ Or let Copilot automatically invoke the tool based on context:
 I need to implement OAuth2 authentication according to our project docs
 ```
 
-Copilot will call `query_documents` when it determines documentation search is needed.
+The tool returns ranked document chunks. Use the file paths and sections to locate and read the full documentation.
 
 ## Integration with Claude Desktop
 
@@ -195,7 +195,7 @@ Claude will implicitly use the tool based on conversation context:
 What does the authentication guide say about OAuth tokens?
 ```
 
-Claude decides when to search your documentation without explicit tool invocation.
+The tool returns ranked document chunks. Review the results to identify relevant sections, then use file reading capabilities to access full context.
 
 ## HTTP API Integration (Alternative)
 
@@ -242,7 +242,16 @@ Response:
 
 ```json
 {
-  "answer": "To configure search weights, edit the [search] section in config.toml..."
+  \"results\": [
+    {
+      \"chunk_id\": \"configuration_search_0\",
+      \"content\": \"To configure search weights, edit the [search] section in config.toml...\",
+      \"file_path\": \"docs/configuration.md\",
+      \"header_path\": [\"Configuration Sections\", \"search\"],
+      \"score\": 0.92
+    }
+  ]
+}
 }
 ```
 
@@ -600,7 +609,8 @@ Query the documentation index.
 
 ```json
 {
-  "query": "How do I configure the server?"
+  "query": "How do I configure the server?",
+  "top_n": 5
 }
 ```
 
@@ -608,7 +618,15 @@ Query the documentation index.
 
 ```json
 {
-  "answer": "To configure the server, create a config.toml file..."
+  "results": [
+    {
+      "chunk_id": "configuration_0",
+      "content": "To configure the server, create a config.toml file...",
+      "file_path": "docs/configuration.md",
+      "header_path": ["Configuration Reference"],
+      "score": 0.95
+    }
+  ]
 }
 ```
 

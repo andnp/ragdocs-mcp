@@ -2,7 +2,7 @@ import atexit
 import shutil
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 
 from whoosh import index as whoosh_index
 from whoosh.analysis import StemmingAnalyzer
@@ -13,8 +13,6 @@ from whoosh.scoring import BM25F
 from src.models import Chunk, Document
 
 
-# REVIEW [LOW] Type Safety: STOPWORDS typed as Any but should be frozenset[str].
-# The Any annotation is unnecessary here.
 _temp_dirs: set[Path] = set()
 
 
@@ -30,7 +28,7 @@ def _cleanup_temp_dirs() -> None:
 atexit.register(_cleanup_temp_dirs)
 
 
-STOPWORDS: Any = frozenset([
+STOPWORDS: frozenset[str] = frozenset([
     "a", "an", "and", "are", "as", "at", "be", "but", "by",
     "for", "if", "in", "into", "is", "it", "no", "not", "of",
     "on", "or", "such", "that", "the", "their", "then", "there",
@@ -56,7 +54,7 @@ STOPWORDS: Any = frozenset([
 
 class KeywordIndex:
     def __init__(self):
-        stem_analyzer = StemmingAnalyzer(stoplist=STOPWORDS, minsize=2)
+        stem_analyzer = StemmingAnalyzer(stoplist=cast(Any, STOPWORDS), minsize=2)
 
         self._schema = Schema(
             id=ID(stored=True, unique=True),

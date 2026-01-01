@@ -101,7 +101,7 @@ Both transport modes use the same indexing and query orchestration subsystems.
 ```python
 {
   "name": "query_documents",
-  "description": "Search local Markdown documentation using hybrid search",
+  "description": "Search local Markdown documentation using hybrid search and return ranked document chunks",
   "inputSchema": {
     "query": "string (required)",
     "top_n": "integer (optional, default: 5, max: 100)"
@@ -339,7 +339,7 @@ Rebuild triggered if:
 - Filter by confidence threshold and per-document limits
 - Deduplicate semantically similar chunks
 - Re-rank results using cross-encoder model (optional)
-- Synthesize answer from top-ranked chunks
+- Return ranked document chunks
 
 #### Search Strategies
 
@@ -419,17 +419,9 @@ weighted_rrf_score = semantic_weight * (1/(k+rank_semantic))
 3. Sort by final score descending
 4. Return top-k document IDs
 
-#### Synthesis
+#### Reciprocal Rank Fusion (RRF)
 
-**Current Implementation:** Mock LLM that echoes query (for testing)
-
-**Production Pattern:**
-1. Retrieve top-k document IDs from fusion
-2. Load full content for each document
-3. Pass query + context to LLM
-4. Return synthesized answer
-
-## Data Flow
+**Algorithm:**
 
 ### Indexing Flow
 
@@ -506,9 +498,7 @@ Parent expansion (if parent_retrieval_enabled)
       ↓
 Top-n results
       ↓
-QueryOrchestrator.synthesize_answer(query, chunk_ids)
-      ↓
-Return answer string
+Return list[ChunkResult]
 ```
 
 ## Key Design Decisions

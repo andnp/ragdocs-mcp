@@ -41,4 +41,3 @@ rrf_k_constant = 60
 [llm]
 # Use local embeddings
 embedding_model = "local"
-# llm_provider = null  # No external LLM provider

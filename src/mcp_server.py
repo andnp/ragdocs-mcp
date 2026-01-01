@@ -18,6 +18,9 @@ from src.search.pipeline import SearchPipelineConfig
 
 logger = logging.getLogger(__name__)
 
+MIN_TOP_N = 1
+MAX_TOP_N = 100
+
 
 class MCPServer:
     def __init__(self, project_override: str | None = None, ctx: ApplicationContext | None = None):
@@ -31,7 +34,11 @@ class MCPServer:
             return [
                 Tool(
                     name="query_documents",
-                    description="Search local Markdown documentation using hybrid search (semantic, keyword, graph traversal). Returns relevant document chunks and a synthesized answer.",
+                    description=(
+                        "Search local documentation using hybrid search (semantic + keyword + graph). " +
+                        "Returns ranked document chunks with relevance scores. " +
+                        "Use for discovering relevant documentation sections in a large corpus."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -41,10 +48,10 @@ class MCPServer:
                             },
                             "top_n": {
                                 "type": "integer",
-                                "description": "Maximum number of results to return (default: 5, max: 100)",
+                                "description": f"Maximum number of results to return (default: 5, max: {MAX_TOP_N})",
                                 "default": 5,
-                                "minimum": 1,
-                                "maximum": 100,
+                                "minimum": MIN_TOP_N,
+                                "maximum": MAX_TOP_N,
                             },
                             "min_score": {
                                 "type": "number",
@@ -101,11 +108,9 @@ class MCPServer:
             logger.info("Query received while initializing, waiting for indices...")
             await self._coordinator.wait_ready(timeout=60.0)
 
-        # REVIEW [LOW] Configuration: Bounds 1-100 duplicated in cli.py, server.py.
-        # Extract to shared constant like MAX_TOP_N = 100, MIN_TOP_N = 1.
         top_n = arguments.get("top_n", 5)
-        if not isinstance(top_n, int) or top_n < 1 or top_n > 100:
-            raise ValueError("top_n must be an integer between 1 and 100")
+        if not isinstance(top_n, int) or top_n < MIN_TOP_N or top_n > MAX_TOP_N:
+            raise ValueError(f"top_n must be an integer between {MIN_TOP_N} and {MAX_TOP_N}")
 
         min_score = arguments.get("min_score", 0.3)
         if not isinstance(min_score, (int, float)) or min_score < 0.0 or min_score > 1.0:
@@ -139,9 +144,6 @@ class MCPServer:
             pipeline_config=pipeline_config,
         )
 
-        chunk_ids = [result.chunk_id for result in results]
-        answer = await self.ctx.orchestrator.synthesize_answer(query, chunk_ids)
-
         results_text = "\n\n".join([
             f"**Result {i+1}** (Score: {r.score:.4f})\n"
             f"File: {r.file_path or 'unknown'}\n"
@@ -158,9 +160,9 @@ class MCPServer:
                 f"- After deduplication: {stats.after_dedup}\n"
                 f"- Clusters merged: {stats.clusters_merged}"
             )
-            response = f"# Answer\n\n{answer}\n\n# Compression Stats\n\n{stats_text}\n\n# Source Documents\n\n{results_text}"
+            response = f"# Search Results\n\n{results_text}\n\n# Compression Stats\n\n{stats_text}"
         else:
-            response = f"# Answer\n\n{answer}\n\n# Source Documents\n\n{results_text}"
+            response = f"# Search Results\n\n{results_text}"
 
         return [TextContent(type="text", text=response)]
 

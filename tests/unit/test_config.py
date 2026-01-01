@@ -103,7 +103,6 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         assert config.search.recency_bias == 0.5
         assert config.search.rrf_k_constant == 60
         assert config.llm.embedding_model == "local"
-        assert config.llm.llm_provider is None
         assert config.parsers == {
             "**/*.md": "MarkdownParser",
             "**/*.markdown": "MarkdownParser"
@@ -225,7 +224,6 @@ rrf_k_constant = 50
 
 [llm]
 embedding_model = "custom"
-llm_provider = "openai"
 """)
 
     original_cwd = os.getcwd()
@@ -244,7 +242,6 @@ llm_provider = "openai"
         assert config.search.recency_bias == 0.3
         assert config.search.rrf_k_constant == 50
         assert config.llm.embedding_model == "custom"
-        assert config.llm.llm_provider == "openai"
     finally:
         os.chdir(original_cwd)
 

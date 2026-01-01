@@ -867,17 +867,6 @@ Controls embedding model and LLM provider configuration.
   embedding_model = "local"
   ```
 
-#### `llm_provider`
-
-- **Type:** string or null
-- **Default:** `null`
-- **Description:** LLM provider for answer synthesis. Not currently implemented. Reserved for future use.
-- **Example:**
-  ```toml
-  [llm]
-  llm_provider = null
-  ```
-
 ## Complete Example Configuration
 
 ```toml
@@ -959,9 +948,6 @@ rerank_top_n = 10
 [llm]
 # Use local embedding model
 embedding_model = "local"
-
-# No external LLM provider configured
-llm_provider = null
 ```
 
 ## Environment Variables

@@ -1,12 +1,8 @@
-import json
 import logging
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.context import ApplicationContext
@@ -21,7 +17,6 @@ class QueryRequest(BaseModel):
 
 
 class QueryResponse(BaseModel):
-    answer: str
     results: list[dict[str, str | float]]
 
 
@@ -29,13 +24,21 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class IndexingServiceStatus(BaseModel):
+    pending_queue_size: int
+    last_sync_time: str | None
+    failed_files: list[dict[str, str]]
+
+
+class IndicesStatus(BaseModel):
+    document_count: int
+    index_version: str
+
+
 class StatusResponse(BaseModel):
     server_status: str
-    # REVIEW [MED] Type Safety: dict[str, Any] is overly broad. Consider defining
-    # typed dataclasses for indexing_service (pending_queue_size: int, last_sync_time: str | None,
-    # failed_files: list[dict]) and indices (document_count: int, index_version: str).
-    indexing_service: dict[str, Any]
-    indices: dict[str, Any]
+    indexing_service: IndexingServiceStatus
+    indices: IndicesStatus
 
 
 @asynccontextmanager
@@ -79,42 +82,10 @@ def create_app():
             top_k=top_k,
             top_n=request.top_n
         )
-        chunk_ids = [result.chunk_id for result in results]
-        answer = await orchestrator.synthesize_answer(request.query, chunk_ids)
 
         results_dict = [result.to_dict() for result in results]
 
-        return QueryResponse(answer=answer, results=results_dict)
-
-    @app.post("/query_documents_stream")
-    async def query_documents_stream(request: QueryRequest):
-        orchestrator = app.state.orchestrator
-        top_k = max(20, request.top_n * 4)
-        results, _ = await orchestrator.query(
-            request.query,
-            top_k=top_k,
-            top_n=request.top_n
-        )
-        chunk_ids = [result.chunk_id for result in results]
-
-        async def event_stream() -> AsyncIterator[str]:
-            results_dict = [result.to_dict() for result in results]
-            yield "event: results\n"
-            yield f"data: {json.dumps({'results': results_dict})}\n\n"
-
-            async for event in orchestrator.synthesize_answer_stream(request.query, chunk_ids):
-                yield f"event: {event['event']}\n"
-                yield f"data: {json.dumps(event['data'])}\n\n"
-
-        return StreamingResponse(
-            event_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            }
-        )
+        return QueryResponse(results=results_dict)
 
     @app.get("/health")
     async def health():
@@ -132,15 +103,15 @@ def create_app():
 
         return StatusResponse(
             server_status="running",
-            indexing_service={
-                "pending_queue_size": watcher.get_pending_queue_size(),
-                "last_sync_time": watcher.get_last_sync_time(),
-                "failed_files": watcher.get_failed_files(),
-            },
-            indices={
-                "document_count": manager.get_document_count(),
-                "index_version": index_version,
-            },
+            indexing_service=IndexingServiceStatus(
+                pending_queue_size=watcher.get_pending_queue_size(),
+                last_sync_time=watcher.get_last_sync_time(),
+                failed_files=watcher.get_failed_files(),
+            ),
+            indices=IndicesStatus(
+                document_count=manager.get_document_count(),
+                index_version=index_version,
+            ),
         )
 
     return app

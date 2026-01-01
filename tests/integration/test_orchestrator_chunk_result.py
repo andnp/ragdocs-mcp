@@ -26,7 +26,7 @@ def config(tmp_path):
             recency_bias=0.5,
             rrf_k_constant=60,
         ),
-        llm=LLMConfig(embedding_model="local", llm_provider=None),
+        llm=LLMConfig(embedding_model="local"),
         chunking=ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=200,

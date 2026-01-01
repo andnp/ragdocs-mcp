@@ -188,9 +188,6 @@ class VectorIndex:
 
         return results
 
-    # REVIEW [MED] Logging: Using INFO level for routine operations like chunk retrieval.
-    # These should be DEBUG level - INFO is too verbose for per-chunk logging that
-    # happens many times per query. The warning for index=None is appropriate.
     def get_chunk_by_id(self, chunk_id: str):
         if self._index is None:
             logger.warning(f"get_chunk_by_id({chunk_id}): index is None")

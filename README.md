@@ -4,7 +4,7 @@ A Model Context Protocol server that provides semantic search over local Markdow
 
 ## What it is
 
-This is an MCP server that indexes local Markdown files and exposes a `query_documents` tool for retrieval-augmented generation. The server combines semantic search, keyword matching, and graph traversal to retrieve relevant document chunks.
+This is an MCP server that indexes local Markdown files and exposes a `query_documents` tool for hybrid semantic search. The server identifies relevant document sections using semantic search, keyword matching, and graph traversal, enabling efficient discovery without loading entire documentation collections into LLM context.
 
 ## Why it exists
 
@@ -247,22 +247,30 @@ Configure the MCP server in VS Code user settings or workspace settings.
 
 The server exposes one MCP tool:
 
-- `query_documents(query: string, top_n?: int)`: Search indexed documents using hybrid search and return synthesized answer with source documents.
+**`query_documents`**: Search indexed documents using hybrid search and return ranked document chunks.
 
 **Parameters:**
 - `query` (required): Natural language query or question
 - `top_n` (optional): Maximum results to return (1-100, default: 5)
+- `min_score` (optional): Minimum confidence threshold (0.0-1.0, default: 0.0)
+- `similarity_threshold` (optional): Semantic deduplication threshold (0.5-1.0, default: 0.85)
+
+**Usage Pattern:**
+1. Call `query_documents` to identify relevant sections
+2. Review returned chunks to locate specific files and sections
+3. Use file reading tools to access full document context
 
 **Example query from MCP client:**
 
 ```json
 {
   "query": "How do I configure authentication in the API?",
-  "top_n": 5
+  "top_n": 5,
+  "min_score": 0.3
 }
 ```
 
-The server returns a synthesized answer with source document citations.
+The server returns ranked document chunks with file paths, header hierarchies, and relevance scores.
 
 ### API Endpoints
 
@@ -315,15 +323,16 @@ Example response (standard endpoint):
 
 ```json
 {
-  "answer": "Authentication is configured via the auth.toml file...",
   "results": [
     {
+      "chunk_id": "authentication_0",
       "content": "Authentication is configured in the auth section...",
       "file_path": "docs/authentication.md",
       "header_path": ["Configuration", "Authentication"],
       "score": 1.0
     },
     {
+      "chunk_id": "security_2",
       "content": "Security settings include authentication tokens...",
       "file_path": "docs/security.md",
       "header_path": ["Security", "API Keys"],
@@ -334,6 +343,7 @@ Example response (standard endpoint):
 ```
 
 Each result contains:
+- `chunk_id`: Unique identifier for the document chunk
 - `content`: The text from the matching document chunk
 - `file_path`: Source file path relative to documents directory
 - `header_path`: Document structure showing nested headers (semantic "breadcrumbs")

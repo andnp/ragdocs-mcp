@@ -67,11 +67,7 @@ Controls the behavior of the hybrid search engine.
 
 ### `[llm]`
 
-Controls the LLM used for synthesis. *(Note: For v1, these may not be fully implemented.)*
-- `embedding_model`: string, default `"local"`
-- `llm_provider`: string, default `null`
-
-## 5.3. Example `config.toml`
+Controls embedding model configuration.\n- `embedding_model`: string, default `"local"`\n\n## 5.3. Example `config.toml`
 
 ```toml
 # .mcp-markdown-ragdocs/config.toml

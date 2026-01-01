@@ -399,8 +399,7 @@ def app_with_corpus(tmp_path, docs_corpus, monkeypatch):
                 rrf_k_constant=60,
             ),
             llm=LLMConfig(
-                embedding_model="all-MiniLM-L6-v2",
-                llm_provider="local",
+                embedding_model="all-MiniLM-L6-v2"
             ),
         )
 
@@ -428,9 +427,9 @@ def test_real_world_documentation_site_complete_workflow(client):
 
     Validates:
     - Server starts and indexes 8 documents
-    - Each query returns synthesized answer (>50 chars)
-    - Different queries return different answers
-    - Answers contain relevant terms from expected documents
+    - Each query returns results with scores
+    - Different queries return different or overlapping results
+    - Results contain relevant documents from expected topics
     - Graph traversal works (deployment query includes security concepts)
     - Multi-strategy combination queries work correctly
     """
@@ -453,14 +452,16 @@ def test_real_world_documentation_site_complete_workflow(client):
     )
     assert query1_response.status_code == 200
     query1_data = query1_response.json()
-    answer1 = query1_data["answer"]
+    results1 = query1_data["results"]
 
-    # Verify answer exists and has meaningful content
-    assert len(answer1) > 50, f"Answer too short: {len(answer1)} chars"
-    # Should mention authentication concepts
-    answer1_lower = answer1.lower()
-    assert any(term in answer1_lower for term in ["auth", "api", "key", "token"]), \
-        f"Answer missing authentication terms: {answer1}"
+    # Verify results exist and have meaningful content
+    assert isinstance(results1, list)
+    assert len(results1) > 0, "Expected at least 1 result for authentication query"
+    # Check that results contain authentication-related content
+    result_contents = [r["content"].lower() for r in results1]
+    assert any("auth" in content or "api" in content or "key" in content or "token" in content
+               for content in result_contents), \
+        "Results should contain authentication-related content"
 
     # Query 2: Semantic similarity - security concepts
     query2_response = client.post(
@@ -469,12 +470,15 @@ def test_real_world_documentation_site_complete_workflow(client):
     )
     assert query2_response.status_code == 200
     query2_data = query2_response.json()
-    answer2 = query2_data["answer"]
+    results2 = query2_data["results"]
 
-    assert len(answer2) > 50, f"Answer too short: {len(answer2)} chars"
-    answer2_lower = answer2.lower()
-    assert any(term in answer2_lower for term in ["security", "secure", "https", "tls", "credential"]), \
-        f"Answer missing security terms: {answer2}"
+    assert isinstance(results2, list)
+    assert len(results2) > 0, "Expected at least 1 result for security query"
+    result_contents_2 = [r["content"].lower() for r in results2]
+    assert any("security" in content or "secure" in content or "https" in content
+               or "tls" in content or "credential" in content
+               for content in result_contents_2), \
+        "Results should contain security-related content"
 
     # Query 3: Graph traversal - deployment → auth → security via links
     query3_response = client.post(
@@ -483,15 +487,19 @@ def test_real_world_documentation_site_complete_workflow(client):
     )
     assert query3_response.status_code == 200
     query3_data = query3_response.json()
-    answer3 = query3_data["answer"]
+    results3 = query3_data["results"]
 
-    assert len(answer3) > 50, f"Answer too short: {len(answer3)} chars"
-    answer3_lower = answer3.lower()
+    assert isinstance(results3, list)
+    assert len(results3) > 0, "Expected at least 1 result for deployment security query"
+    result_contents_3 = [r["content"].lower() for r in results3]
     # Should include deployment AND security concepts via graph traversal
-    assert any(term in answer3_lower for term in ["deploy", "deployment", "production"]), \
-        f"Answer missing deployment terms: {answer3}"
-    assert any(term in answer3_lower for term in ["security", "secure", "firewall", "https", "credential"]), \
-        f"Answer missing security terms (graph traversal failed): {answer3}"
+    has_deployment = any("deploy" in content or "deployment" in content or "production" in content
+                         for content in result_contents_3)
+    has_security = any("security" in content or "secure" in content or "firewall" in content
+                       or "https" in content or "credential" in content
+                       for content in result_contents_3)
+    assert has_deployment, "Results should include deployment-related content"
+    assert has_security, "Results should include security-related content (graph traversal)"
 
     # Query 4: Multi-strategy combination - getting started with auth
     query4_response = client.post(
@@ -500,23 +508,35 @@ def test_real_world_documentation_site_complete_workflow(client):
     )
     assert query4_response.status_code == 200
     query4_data = query4_response.json()
-    answer4 = query4_data["answer"]
+    results4 = query4_data["results"]
 
-    assert len(answer4) > 50, f"Answer too short: {len(answer4)} chars"
-    answer4_lower = answer4.lower()
+    assert isinstance(results4, list)
+    assert len(results4) > 0, "Expected at least 1 result for getting started query"
+    result_contents_4 = [r["content"].lower() for r in results4]
     # Should combine getting-started + authentication concepts
-    assert any(term in answer4_lower for term in ["start", "begin", "quick", "first"]), \
-        f"Answer missing getting-started terms: {answer4}"
-    assert any(term in answer4_lower for term in ["auth", "api", "key", "credential"]), \
-        f"Answer missing authentication terms: {answer4}"
+    has_getting_started = any("start" in content or "begin" in content or "quick" in content or "first" in content
+                              for content in result_contents_4)
+    has_auth = any("auth" in content or "api" in content or "key" in content or "credential" in content
+                   for content in result_contents_4)
+    assert has_getting_started, "Results should include getting-started content"
+    assert has_auth, "Results should include authentication content"
 
-    # Verify different queries return different answers
-    answers = [answer1, answer2, answer3, answer4]
-    unique_answers = set(answers)
-    assert len(unique_answers) >= 3, \
-        f"Expected at least 3 unique answers, got {len(unique_answers)}"
+    # Verify results diversity - collect all result chunk_ids
+    all_chunk_ids = set()
+    for results in [results1, results2, results3, results4]:
+        for result in results:
+            all_chunk_ids.add(result["chunk_id"])
 
-    # Verify all answers are non-empty strings
-    for i, answer in enumerate(answers, 1):
-        assert isinstance(answer, str), f"Query {i} answer is not string: {type(answer)}"
-        assert len(answer) > 0, f"Query {i} answer is empty"
+    # We should have retrieved diverse results across queries
+    assert len(all_chunk_ids) >= 4, \
+        f"Expected diverse results across queries, got {len(all_chunk_ids)} unique chunks"
+
+    # Verify all results are non-empty and have correct structure
+    for i, results in enumerate([results1, results2, results3, results4], 1):
+        for result in results:
+            assert isinstance(result, dict), f"Query {i} result is not dict: {type(result)}"
+            assert "chunk_id" in result, f"Query {i} result missing chunk_id"
+            assert "score" in result, f"Query {i} result missing score"
+            assert "content" in result, f"Query {i} result missing content"
+            assert isinstance(result["content"], str), f"Query {i} content is not string"
+            assert len(result["content"]) > 0, f"Query {i} content is empty"

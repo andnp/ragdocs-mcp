@@ -57,7 +57,6 @@ rrf_k_constant = 60
 
 [llm]
 embedding_model = "local"
-llm_provider = "local"
 """)
     return config_path
 
