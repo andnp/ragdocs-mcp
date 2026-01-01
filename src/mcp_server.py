@@ -15,6 +15,7 @@ from mcp.types import Tool, TextContent
 from src.context import ApplicationContext
 from src.lifecycle import LifecycleCoordinator
 from src.search.pipeline import SearchPipelineConfig
+from src.search.utils import classify_query_type, truncate_content
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +77,58 @@ class MCPServer:
                         "required": ["query"],
                     },
                 ),
+                Tool(
+                    name="query_unique_documents",
+                    description=(
+                        "Search local documentation using hybrid search with strict document uniqueness. " +
+                        "Returns at most ONE chunk per document, ensuring results span multiple files. " +
+                        "Use when you want breadth across documentation rather than depth within files."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Natural language query or question about the documentation",
+                            },
+                            "top_n": {
+                                "type": "integer",
+                                "description": f"Maximum number of unique documents to return (default: 5, max: {MAX_TOP_N})",
+                                "default": 5,
+                                "minimum": MIN_TOP_N,
+                                "maximum": MAX_TOP_N,
+                            },
+                            "min_score": {
+                                "type": "number",
+                                "description": "Minimum relevance score threshold (default: 0.3)",
+                                "default": 0.3,
+                                "minimum": 0.0,
+                                "maximum": 1.0,
+                            },
+                            "similarity_threshold": {
+                                "type": "number",
+                                "description": "Cosine similarity threshold for deduplication (default: 0.85)",
+                                "default": 0.85,
+                                "minimum": 0.5,
+                                "maximum": 1.0,
+                            },
+                            "show_stats": {
+                                "type": "boolean",
+                                "description": "Whether to show compression stats in response (default: false)",
+                                "default": False,
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                ),
             ]
 
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if name == "query_documents":
                 return await self._handle_query_documents(arguments)
+            elif name == "query_unique_documents":
+                return await self._handle_query_unique_documents(arguments)
             else:
                 raise ValueError(f"Unknown tool: {name}")
 
@@ -98,7 +145,12 @@ class MCPServer:
         await self.ctx.start(background_index=True)
         logger.info("MCP server initialization complete")
 
-    async def _handle_query_documents(self, arguments: dict):
+    async def _query_documents_impl(
+        self,
+        arguments: dict,
+        max_chunks_per_doc: int,
+        result_header: str,
+    ):
         query = arguments.get("query")
         if not query:
             raise ValueError("Missing required parameter: query")
@@ -131,7 +183,7 @@ class MCPServer:
 
         pipeline_config = SearchPipelineConfig(
             min_confidence=min_score,
-            max_chunks_per_doc=0,
+            max_chunks_per_doc=max_chunks_per_doc,
             dedup_enabled=True,
             dedup_threshold=similarity_threshold,
             rerank_enabled=False,
@@ -144,27 +196,44 @@ class MCPServer:
             pipeline_config=pipeline_config,
         )
 
+        query_type = classify_query_type(query)
+
         results_text = "\n\n".join([
-            f"**Result {i+1}** (Score: {r.score:.4f})\n"
-            f"File: {r.file_path or 'unknown'}\n"
-            f"Section: {r.header_path or '(no section)'}\n\n"
-            f"{r.content}"
+            f"[{i+1}] {r.file_path or 'unknown'} § {r.header_path or '(no section)'} ({r.score:.2f})\n"
+            f"{truncate_content(r.content, 200) if query_type == 'factual' else r.content}"
             for i, r in enumerate(results)
         ])
 
         filtering_occurred = stats.original_count > stats.after_dedup
         if show_stats or filtering_occurred:
-            stats_text = (
-                f"- Original results: {stats.original_count}\n"
-                f"- After score filter (≥{min_score}): {stats.after_threshold}\n"
-                f"- After deduplication: {stats.after_dedup}\n"
-                f"- Clusters merged: {stats.clusters_merged}"
-            )
-            response = f"# Search Results\n\n{results_text}\n\n# Compression Stats\n\n{stats_text}"
+            stats_parts = [
+                f"- Original results: {stats.original_count}",
+                f"- After score filter (≥{min_score}): {stats.after_threshold}",
+                f"- After deduplication: {stats.after_dedup}",
+            ]
+            if max_chunks_per_doc == 1:
+                stats_parts.append(f"- After document limit (1 per doc): {stats.after_doc_limit}")
+            stats_parts.append(f"- Clusters merged: {stats.clusters_merged}")
+            stats_text = "\n".join(stats_parts)
+            response = f"# {result_header}\n\n{results_text}\n\n# Compression Stats\n\n{stats_text}"
         else:
-            response = f"# Search Results\n\n{results_text}"
+            response = f"# {result_header}\n\n{results_text}"
 
         return [TextContent(type="text", text=response)]
+
+    async def _handle_query_documents(self, arguments: dict):
+        return await self._query_documents_impl(
+            arguments,
+            max_chunks_per_doc=0,
+            result_header="Search Results",
+        )
+
+    async def _handle_query_unique_documents(self, arguments: dict):
+        return await self._query_documents_impl(
+            arguments,
+            max_chunks_per_doc=1,
+            result_header="Search Results (Unique Documents)",
+        )
 
     async def shutdown(self) -> None:
         if not self.ctx:

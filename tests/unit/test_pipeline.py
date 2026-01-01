@@ -137,6 +137,7 @@ class TestSearchPipelineThresholdFilter:
 class TestSearchPipelineDocLimit:
     def test_limits_chunks_per_document(self):
         config = SearchPipelineConfig(
+            min_confidence=0.0,
             max_chunks_per_doc=2,
             dedup_enabled=False,
             ngram_dedup_enabled=False,
@@ -165,6 +166,7 @@ class TestSearchPipelineDocLimit:
 
     def test_zero_doc_limit_keeps_all(self):
         config = SearchPipelineConfig(
+            min_confidence=0.0,
             max_chunks_per_doc=0,
             dedup_enabled=False,
             ngram_dedup_enabled=False,
@@ -191,6 +193,7 @@ class TestSearchPipelineDocLimit:
 class TestSearchPipelineDeduplication:
     def test_removes_similar_chunks(self):
         config = SearchPipelineConfig(
+            min_confidence=0.0,
             dedup_enabled=True,
             dedup_threshold=0.9,
             ngram_dedup_enabled=False,
@@ -226,6 +229,7 @@ class TestSearchPipelineDeduplication:
 
     def test_dedup_disabled_keeps_all(self):
         config = SearchPipelineConfig(
+            min_confidence=0.0,
             dedup_enabled=False,
             ngram_dedup_enabled=False,
         )
@@ -323,7 +327,7 @@ class TestSearchPipelineCompressionStats:
         assert stats.after_doc_limit <= stats.after_dedup
 
     def test_stats_with_normalization(self):
-        config = SearchPipelineConfig(dedup_enabled=False, ngram_dedup_enabled=False)
+        config = SearchPipelineConfig(min_confidence=0.0, dedup_enabled=False, ngram_dedup_enabled=False)
         pipeline = SearchPipeline(config)
 
         fused = [

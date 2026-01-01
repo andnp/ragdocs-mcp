@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 from src.context import ApplicationContext
 from src.indexing.manifest import load_manifest
+from src.search.pipeline import SearchPipelineConfig
+from src.search.utils import classify_query_type, truncate_content
 
 logger = logging.getLogger(__name__)
 
@@ -73,18 +75,58 @@ async def lifespan(app: FastAPI):
 def create_app():
     app = FastAPI(lifespan=lifespan)
 
-    @app.post("/query_documents")
-    async def query_documents(request: QueryRequest):
-        orchestrator = app.state.orchestrator
-        top_k = max(20, request.top_n * 4)
-        results, _ = await orchestrator.query(
-            request.query,
-            top_k=top_k,
-            top_n=request.top_n
+    async def _execute_query(
+        orchestrator,
+        query: str,
+        top_n: int,
+        max_chunks_per_doc: int = 0,
+    ):
+        top_k = max(20, top_n * 4)
+
+        pipeline_config = SearchPipelineConfig(
+            min_confidence=0.0,
+            max_chunks_per_doc=max_chunks_per_doc,
+            dedup_enabled=True,
+            dedup_threshold=0.85,
+            rerank_enabled=False,
         )
 
-        results_dict = [result.to_dict() for result in results]
+        results, _ = await orchestrator.query(
+            query,
+            top_k=top_k,
+            top_n=top_n,
+            pipeline_config=pipeline_config,
+        )
 
+        query_type = classify_query_type(query)
+
+        formatted_results = []
+        for i, result in enumerate(results):
+            result_dict = result.to_dict()
+            if query_type == "factual":
+                result_dict["content"] = truncate_content(result_dict["content"], 200)
+            formatted_results.append(result_dict)
+
+        return formatted_results
+
+    @app.post("/query_documents")
+    async def query_documents(request: QueryRequest):
+        results_dict = await _execute_query(
+            app.state.orchestrator,
+            request.query,
+            request.top_n,
+            max_chunks_per_doc=0,
+        )
+        return QueryResponse(results=results_dict)
+
+    @app.post("/query_unique_documents")
+    async def query_unique_documents(request: QueryRequest):
+        results_dict = await _execute_query(
+            app.state.orchestrator,
+            request.query,
+            request.top_n,
+            max_chunks_per_doc=1,
+        )
         return QueryResponse(results=results_dict)
 
     @app.get("/health")
