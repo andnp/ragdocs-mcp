@@ -66,8 +66,8 @@ The `HeaderBasedChunker` uses tree-sitter AST parsing to split documents:
 
 **Parameters:**
 - `min_chunk_chars`: 200 (prevents context-poor fragments)
-- `max_chunk_chars`: 1500 (maintains focus, fits token limits)
-- `overlap_chars`: 50 (preserves context between chunks)
+- `max_chunk_chars`: 2000 (maintains focus, fits token limits)
+- `overlap_chars`: 50 (preserves context between sibling chunks only)
 
 **Merge Logic:**
 - Adjacent chunks below minimum combined until threshold met
@@ -76,7 +76,51 @@ The `HeaderBasedChunker` uses tree-sitter AST parsing to split documents:
 **Split Logic:**
 - Large sections split at paragraph boundaries (double newline)
 - Maintains readability by avoiding mid-paragraph splits
-- Overlap applied between split portions
+- Each sub-chunk tagged with `_sub_N` suffix (e.g., `doc1_chunk_0_sub_0`)
+
+**Overlap Logic:**
+- Applied **only** between sibling sub-chunks (force-split from same parent)
+- NOT applied between header-based chunks (semantically distinct sections)
+- Last `overlap_chars` characters from chunk N prepended to chunk N+1
+
+**Sibling Detection Algorithm:**
+```python
+def _apply_overlap(chunks, overlap_chars):
+    if overlap_chars <= 0:
+        return chunks
+
+    result = []
+    for i, chunk in enumerate(chunks):
+        if i == 0:
+            result.append(chunk)
+            continue
+
+        prev_chunk = chunks[i - 1]
+
+        # Check if current and previous are siblings (same parent, both sub-chunks)
+        current_is_subchunk = "_sub_" in chunk.chunk_id
+        prev_is_subchunk = "_sub_" in prev_chunk.chunk_id
+
+        if current_is_subchunk and prev_is_subchunk:
+            # Extract parent IDs by removing "_sub_N" suffix
+            current_parent = chunk.chunk_id.rsplit("_sub_", 1)[0]
+            prev_parent = prev_chunk.chunk_id.rsplit("_sub_", 1)[0]
+
+            if current_parent == prev_parent:
+                # Siblings: prepend overlap from previous chunk
+                overlap_text = prev_chunk.content[-overlap_chars:]
+                chunk.content = overlap_text + "\n\n" + chunk.content
+
+        result.append(chunk)
+
+    return result
+```
+
+**Rationale:**
+- Header-based chunks represent distinct semantic sections (different topics)
+- Overlap between header sections would pollute semantic boundaries
+- Force-split siblings from same section need context restoration
+- Sibling relationship identified via `_sub_` suffix in chunk_id
 
 ## 8.4. Data Model
 

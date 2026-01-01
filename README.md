@@ -92,9 +92,9 @@ semantic_weight = 1.0      # Weight for semantic search results
 keyword_weight = 1.0       # Weight for keyword search results
 recency_bias = 0.5         # Boost for recently modified documents
 rrf_k_constant = 60        # Reciprocal Rank Fusion constant
-min_confidence = 0.0       # Score threshold (0.0 = disabled)
-max_chunks_per_doc = 0     # Per-document limit (0 = disabled)
-dedup_enabled = false      # Semantic deduplication
+min_confidence = 0.3       # Score threshold (default: 0.3)
+max_chunks_per_doc = 2     # Per-document limit (default: 2)
+dedup_enabled = true       # Semantic deduplication (default: true)
 ```
 
 The server searches for configuration files in this order:
@@ -252,8 +252,11 @@ The server exposes one MCP tool:
 **Parameters:**
 - `query` (required): Natural language query or question
 - `top_n` (optional): Maximum results to return (1-100, default: 5)
-- `min_score` (optional): Minimum confidence threshold (0.0-1.0, default: 0.0)
+- `min_score` (optional): Minimum confidence threshold (0.0-1.0, default: 0.3)
 - `similarity_threshold` (optional): Semantic deduplication threshold (0.5-1.0, default: 0.85)
+- `show_stats` (optional): Show compression statistics (default: false)
+
+**Note:** Compression is enabled by default (`min_score=0.3`, `max_chunks_per_doc=2`, `dedup_enabled=true`) to reduce token overhead by 40-60%. Results use compact format: `[N] file § section (score)\ncontent`
 
 **Usage Pattern:**
 1. Call `query_documents` to identify relevant sections
@@ -340,6 +343,30 @@ Example response (standard endpoint):
     }
   ]
 }
+```
+
+**MCP Stdio Format (Compact):**
+
+For MCP clients (VS Code, Claude Desktop), results use compact format:
+
+```
+[1] docs/authentication.md § Configuration > Authentication (1.00)
+Authentication is configured in the auth section...
+
+[2] docs/security.md § Security > API Keys (0.85)
+Security settings include authentication tokens...
+```
+
+Factual queries (e.g., "getUserById function", "configure auth") truncate content to 200 characters:
+
+```
+[1] docs/api.md § Functions > getUserById (0.92)
+getUserById(id: string): User | null
+
+Retrieves user by ID. Returns null if not found. Example:
+  const user = getUserById("123");
+  if (user) ...
+```
 ```
 
 Each result contains:

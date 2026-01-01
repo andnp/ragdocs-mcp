@@ -212,6 +212,21 @@ path = "/home/andy/Documents/notes"
 
 ### 3.3. Project Detection Algorithm
 
+**Path Normalization:**
+
+All paths normalized before comparison:
+```python
+def normalize_path(path: str | Path) -> Path:
+    """Convert path to absolute, expanded, resolved form."""
+    return Path(path).expanduser().resolve()
+```
+
+**Comparison Rules:**
+- CWD and project paths: `normalize_path()` before matching
+- Deepest match wins (most specific directory)
+- Path depth measured by number of components, not string length
+- Symlinks resolved to actual locations
+
 **Pseudocode:**
 ```python
 def detect_project(
@@ -230,29 +245,36 @@ def detect_project(
     Returns:
         Project keyname if match found, None if no match.
     """
+    # Normalize CWD once
+    cwd_resolved = normalize_path(cwd)
+
     # Priority 1: Manual override from --project flag
     if project_override:
         for project in projects:
             # Match by name
             if project.name == project_override:
                 return project.name
+
             # Match by path (if override is absolute path)
             if Path(project_override).is_absolute():
-                if Path(project.path).resolve() == Path(project_override).resolve():
+                project_resolved = normalize_path(project.path)
+                override_resolved = normalize_path(project_override)
+                if project_resolved == override_resolved:
                     return project.name
+
         # Override not found - log warning but continue with CWD detection
         logger.warning(f"Project override '{project_override}' not found")
 
-- **Manual override not found:** Logs warning and falls back to CWD detection
-- **Manual override with VS Code:** Use `--project` flag in MCP settings to ensure correct project
     # Priority 2: Automatic CWD-based detection
-    cwd_resolved = cwd.resolve()
-
     # Sort by path depth (deepest first) for specificity
-    projects_sorted = sorted(projects, key=lambda p: len(Path(p.path).parts), reverse=True)
+    projects_sorted = sorted(
+        projects,
+        key=lambda p: len(normalize_path(p.path).parts),
+        reverse=True
+    )
 
     for project in projects_sorted:
-        project_path = Path(project.path).resolve()
+        project_path = normalize_path(project.path)
 
         # Check if CWD is subdirectory of project path
         try:
@@ -267,7 +289,11 @@ def detect_project(
 **Edge Cases:**
 - **Nested projects:** Deepest match wins (e.g., `/home/user/monorepo/subproject/` matches `subproject` before `monorepo`)
 - **Symlinks:** Resolved before comparison (both CWD and project paths)
+- **Tilde expansion:** `~/Documents/notes` expanded to `/home/user/Documents/notes`
+- **Relative paths:** Converted to absolute before normalization
 - **No match:** Server uses "default" keyname or project-local `.index_data/`
+- **Manual override not found:** Logs warning and falls back to CWD detection
+- **Manual override with VS Code:** Use `--project` flag in MCP settings to ensure correct project
 
 ### 3.4. Index Path Resolution
 

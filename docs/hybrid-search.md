@@ -538,29 +538,103 @@ Top-N Selection
 authentication.md:
 - Semantic rank 1: 1/(60+1) = 0.0164
 - Keyword rank 2: 1/(60+2) = 0.0161
-- Recency: 1.0x
-- **Final: 0.0325**
+- **RRF Score:** 0.0325
+- Recency: 1.0x (>30 days old)
+- **Final: 0.0325** (0.0325 × 1.0)
 
 api-reference.md:
 - Semantic rank 3: 1/(60+3) = 0.0159
 - Keyword rank 1: 1/(60+1) = 0.0164
-- Recency: 1.0x
-- **Final: 0.0323**
+- **RRF Score:** 0.0323
+- Recency: 1.0x (>30 days old)
+- **Final: 0.0323** (0.0323 × 1.0)
 
 security.md:
 - Semantic rank 2: 1/(60+2) = 0.0161
-- Recency: 1.0x
-- **Final: 0.0161**
+- **RRF Score:** 0.0161
+- Recency: 1.0x (>30 days old)
+- **Final: 0.0161** (0.0161 × 1.0)
 
 oauth-guide.md:
 - Keyword rank 3: 1/(60+3) = 0.0159
-- Recency: 1.1x
-- **Final: 0.0175**
+- **RRF Score:** 0.0159
+- Recency: 1.1x (modified 5 days ago, <7 days tier)
+- **Final: 0.0175** (0.0159 × 1.1)
 
 deployment.md:
 - Graph boost: 0.5 * (1/(60+1)) = 0.0082
-- Recency: 1.0x
-- **Final: 0.0082**
+- **RRF Score:** 0.0082
+- Recency: 1.0x (>30 days old)
+- **Final: 0.0082** (0.0082 × 1.0)
+
+### Recency Boost Algorithm
+
+**Application Timing:** Recency boost applied **after** RRF scoring, not during rank computation.
+
+**Tier Structure:**
+
+| Age Range | Multiplier | Purpose |
+|-----------|------------|----------|
+| ≤7 days | 1.2× | Recent updates highly relevant |
+| ≤30 days | 1.1× | Recent but not brand new |
+| >30 days | 1.0× | No boost for older content |
+
+**Age Calculation:**
+```python
+age_days = (current_timestamp - document_modified_timestamp) / 86400
+```
+
+**Tier Selection Logic:**
+```python
+def get_recency_multiplier(modified_timestamp, current_timestamp):
+    age_days = (current_timestamp - modified_timestamp) / 86400
+
+    # Tiers sorted by age (earliest first)
+    tiers = [(7, 1.2), (30, 1.1)]
+
+    # First tier where age <= tier_days wins
+    for max_days, multiplier in tiers:
+        if age_days <= max_days:
+            return multiplier
+
+    # Default for documents older than all tiers
+    return 1.0
+```
+
+**Complete Fusion Algorithm:**
+```python
+def fuse_results(results, k, weights, modified_times, current_time):
+    # Step 1: RRF scoring
+    scores = {}
+    for strategy, doc_ids in results.items():
+        weight = weights.get(strategy, 1.0)
+        for rank, doc_id in enumerate(doc_ids):
+            rrf_contribution = (1 / (k + rank)) * weight
+            scores[doc_id] = scores.get(doc_id, 0.0) + rrf_contribution
+
+    # Step 2: Recency boosting (applied AFTER RRF)
+    boosted = []
+    for doc_id, rrf_score in scores.items():
+        multiplier = 1.0  # default for >30 days
+        if doc_id in modified_times:
+            age_days = (current_time - modified_times[doc_id]) / 86400
+            if age_days <= 7:
+                multiplier = 1.2
+            elif age_days <= 30:
+                multiplier = 1.1
+
+        final_score = rrf_score * multiplier
+        boosted.append((doc_id, final_score))
+
+    # Step 3: Sort by final score
+    return sorted(boosted, key=lambda x: x[1], reverse=True)
+```
+
+**Why After RRF:**
+- RRF score represents content relevance from multiple strategies
+- Recency acts as secondary signal to surface recent updates
+- Prevents fresh but irrelevant documents from dominating results
+- Preserves semantic/keyword/graph consensus while adding temporal awareness
 
 **Final Ranking:**
 1. authentication.md (0.0325)

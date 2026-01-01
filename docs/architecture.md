@@ -149,21 +149,46 @@ Both transport modes use the same indexing and query orchestration subsystems.
 
 **Responsibilities:**
 - Monitor configured documents_path for file system events
-- Debounce rapid file changes (500ms cooldown)
+- Debounce rapid file changes (500ms timeout)
 - Queue events for batch processing
 - Maintain list of failed files for status reporting
 
 **Event Flow:**
 1. Watchdog detects file creation/modification/deletion
 2. Event placed on `queue.Queue` (thread-safe)
-3. Background thread processes queue with debouncing
+3. Background async task processes queue with debouncing
 4. Unique file paths batched and passed to IndexManager
 5. Failed operations logged and tracked
 
-**Debouncing Strategy:**
-- 500ms cooldown after last event before processing batch
-- Multiple events for same file consolidated into single operation
-- Thread-safe queue enables async coordination
+**Debouncing Algorithm:**
+
+Data structures:
+- Observer (watchdog) runs in separate thread
+- Events passed via thread-safe `queue.Queue[tuple[EventType, str]]`
+- Event aggregation: `dict[file_path, event_type]` where **last event wins**
+
+Processing loop:
+```python
+async def _process_events():
+    events = {}  # file_path -> event_type
+
+    while running:
+        try:
+            # Block for 0.5s waiting for event
+            event_type, file_path = queue.get(timeout=0.5)
+            events[file_path] = event_type  # Last event wins
+        except queue.Empty:
+            # Queue empty for 0.5s: process accumulated events
+            if events:
+                await _batch_process(events)
+                events = {}
+```
+
+Key characteristics:
+- Timeout is on `queue.get()`, not cooldown after last event
+- Multiple events for same file: **last one wins** (not all processed)
+- Batch triggers when queue empty for 0.5s
+- Reduces rapid successive operations (save, save, save) to single reindex
 
 #### IndexManager (src/indexing/manager.py)
 
@@ -220,24 +245,169 @@ Maps glob patterns to parser classes:
 
 #### Manifest System (src/indexing/manifest.py)
 
-**Purpose:** Detect configuration changes that require index rebuild
+**Purpose:** Detect configuration changes that require index rebuild, track indexed files for reconciliation
 
 **IndexManifest Structure:**
 ```python
-spec_version: str        # Index format version (e.g., "1.0.0")
-embedding_model: str     # Embedding model identifier
-parsers: dict[str, str]  # Glob pattern → parser class mapping
+@dataclass
+class IndexManifest:
+    spec_version: str        # Index format version (e.g., "1.0.0")
+    embedding_model: str     # Embedding model identifier
+    parsers: dict[str, str]  # Glob pattern → parser class mapping
+    chunking_config: dict[str, Any]  # Chunking parameters
+    indexed_files: dict[str, str] | None = None  # doc_id → relative_file_path
 ```
+
+**indexed_files Field:**
+- Type: `dict[doc_id, relative_file_path]` (optional for backward compatibility)
+- Purpose: Track which files are currently indexed
+- Enables reconciliation feature to detect:
+  - Deleted files (doc_id in manifest but file missing from filesystem)
+  - Newly excluded files (file matches new exclude pattern)
+- Populated during indexing, persisted with manifest
+- Relative paths stored to support project relocation
 
 **Rebuild Logic:**
 
 Rebuild triggered if:
 - No saved manifest exists (first run or corrupted index)
+- `spec_version` changed (index format incompatible)
+- `embedding_model` changed (embeddings incompatible)
+- `parsers` configuration changed (parsing logic differs)
+- `chunking_config` changed (chunk boundaries differ)
+
+**Reconciliation Logic:**
+
+Reconciliation triggered if:
+- Server startup and `reconciliation_interval_seconds > 0`
+- Periodic background task (every `reconciliation_interval_seconds`)
+
+Reconciliation compares `indexed_files` against current filesystem:
+1. Discover all files matching include/exclude patterns
+2. Identify stale entries (doc_id in manifest but file missing/excluded)
+3. Remove stale documents from indices
+4. Identify new files (file exists but doc_id not in manifest)
+5. Index new documents
+
+**Example Manifest:**
+```json
+{
+  "spec_version": "1.0.0",
+  "embedding_model": "BAAI/bge-small-en-v1.5",
+  "parsers": {
+    "**/*.md": "MarkdownParser"
+  },
+  "chunking_config": {
+    "strategy": "header_based",
+    "min_chunk_chars": 200,
+    "max_chunk_chars": 2000,
+    "overlap_chars": 50
+  },
+  "indexed_files": {
+    "api-reference": "docs/api-reference.md",
+    "configuration": "docs/configuration.md",
+    "getting-started": "README.md"
+  }
+}
+```
+
+**Rebuild Logic (continued):**
+
+Rebuild triggered if:
 - `spec_version` changed
 - `embedding_model` changed
 - `parsers` configuration changed
+- `chunking_config` changed
 
 **Storage:** `{index_path}/index.manifest.json`
+
+### Index Reconciliation
+
+**Purpose:** Maintain index consistency with filesystem state by detecting deleted files and newly excluded files.
+
+**Configuration:**
+```toml
+[indexing]
+reconciliation_interval_seconds = 3600  # 1 hour, 0 to disable
+```
+
+**Reconciliation Algorithm:**
+```python
+def reconcile_index(
+    manifest: IndexManifest,
+    documents_path: str,
+    include: list[str],
+    exclude: list[str]
+) -> tuple[list[str], list[str]]:
+    """Compare manifest against filesystem, return stale and new file lists.
+
+    Returns: (stale_doc_ids, new_file_paths)
+    """
+    # Step 1: Discover all files matching current include/exclude patterns
+    filesystem_files = discover_files(documents_path, include, exclude)
+    filesystem_doc_ids = {compute_doc_id(f) for f in filesystem_files}
+
+    # Step 2: Compare against manifest.indexed_files
+    indexed_doc_ids = set(manifest.indexed_files.keys()) if manifest.indexed_files else set()
+
+    # Step 3: Identify stale entries (indexed but no longer present/included)
+    stale = indexed_doc_ids - filesystem_doc_ids
+
+    # Step 4: Identify new files (present but not indexed)
+    new = filesystem_doc_ids - indexed_doc_ids
+    new_file_paths = [
+        f for f in filesystem_files
+        if compute_doc_id(f) in new
+    ]
+
+    return list(stale), new_file_paths
+```
+
+**Reconciliation Execution:**
+```python
+async def run_reconciliation(index_manager: IndexManager):
+    stale_doc_ids, new_file_paths = reconcile_index(
+        manifest=index_manager.manifest,
+        documents_path=config.indexing.documents_path,
+        include=config.indexing.include,
+        exclude=config.indexing.exclude
+    )
+
+    # Remove stale documents
+    for doc_id in stale_doc_ids:
+        logger.info(f"Reconciliation: Removing deleted document {doc_id}")
+        index_manager.remove_document(doc_id)
+
+    # Index new files
+    for file_path in new_file_paths:
+        logger.info(f"Reconciliation: Indexing new file {file_path}")
+        index_manager.index_document(file_path)
+
+    # Persist updated index and manifest
+    if stale_doc_ids or new_file_paths:
+        index_manager.persist()
+```
+
+**Trigger Conditions:**
+1. **Server Startup:** Runs once after index loaded if `reconciliation_interval_seconds > 0`
+2. **Periodic Background Task:** Runs every `reconciliation_interval_seconds` in async loop
+3. **Manual Trigger:** `IndexManager.reconcile()` method (future CLI command)
+
+**Use Cases:**
+- **Deleted Files:** User deletes `notes/old-draft.md`, reconciliation removes from index
+- **Config Changes:** User adds `**/archive/**` to exclude patterns, reconciliation removes archived docs
+- **External Modifications:** File added by git pull or external script, reconciliation indexes it
+- **Index Corruption Recovery:** Manifest out of sync with index, reconciliation corrects discrepancies
+
+**Behavior:**
+- Disabled by default (`reconciliation_interval_seconds = 0`)
+- Recommended: 1 hour (3600) for active projects, 24 hours (86400) for stable documentation
+- Logs each removal/addition at INFO level for auditability
+- Persists index and manifest after changes
+
+**Manifest Updates:**
+- `indexed_files` updated after each reconciliation cycle
+- Relative paths enable project relocation without reconciliation triggering
 
 ### Storage Layer
 

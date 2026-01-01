@@ -110,44 +110,114 @@
 
 ### P1: Query Expansion via Embeddings
 
-**Impact:** High | **Complexity:** Low
+**Impact:** High | **Complexity:** Low | **Status:** ✅ Implemented
 
 **Description:** Before semantic search, generate 2-3 synthetic query variants by finding nearest neighbors to query embedding in a concept vocabulary extracted during indexing.
 
 **Rationale:** Addresses vocabulary mismatch. Query "auth" expands to include "authentication", "authorization", "login" if those terms appear in indexed documents.
 
-**Implementation Approach:**
+**Vocabulary Build Algorithm:**
 
+**Stopword List (100+ words):**
+```python
+STOPWORDS = frozenset({
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
+    "be", "have", "has", "had", "do", "does", "did", "will", "would",
+    "could", "should", "may", "might", "must", "shall", "can", "need",
+    "this", "that", "these", "those", "it", "its", "they", "them", "their",
+    "he", "she", "him", "her", "his", "hers", "we", "us", "our", "you",
+    "your", "i", "me", "my", "who", "what", "which", "where", "when",
+    "how", "why", "all", "each", "every", "both", "few", "more", "most",
+    "other", "some", "such", "no", "not", "only", "same", "so", "than",
+    "too", "very", "just", "also", "now", "here", "there", "then",
+})
 ```
-Indexing Phase:
-1. Extract unique terms from all chunks (after stopword removal)
-2. Embed each term using same model as documents
-3. Store term→embedding mapping (concept vocabulary)
 
-Query Phase:
-1. Embed user query
-2. Find top-3 nearest term embeddings (cosine similarity)
-3. Append terms to original query for semantic search
-4. Execute expanded query against vector index
+**Term Extraction:**
+```python
+def extract_terms(text):
+    # Lowercase and extract alphanumeric words with hyphens/underscores
+    pattern = r'\b[a-zA-Z][a-zA-Z0-9_-]*\b'
+    terms = re.findall(pattern, text.lower())
+
+    # Filter stopwords and minimum length
+    terms = [t for t in terms if t not in STOPWORDS and len(t) >= 3]
+
+    return terms
+```
+
+**Vocabulary Construction (executed during `persist()`):**
+```python
+def build_concept_vocabulary(all_chunks, embedding_model, top_n=10000):
+    # Step 1: Extract and count term frequencies
+    term_counts = Counter()
+    for chunk in all_chunks:
+        terms = extract_terms(chunk.content)
+        term_counts.update(terms)
+
+    # Step 2: Sort by frequency descending, take top 10,000
+    top_terms = [term for term, count in term_counts.most_common(top_n)]
+
+    # Step 3: Embed each term
+    vocabulary = {}
+    for term in top_terms:
+        embedding = embedding_model.get_text_embedding(term)
+        vocabulary[term] = embedding
+
+    # Step 4: Persist to concept_vocabulary.json
+    with open(vocabulary_path, 'w') as f:
+        json.dump(vocabulary, f)
+
+    return vocabulary
+```
+
+**Timing:**
+- Vocabulary built during `persist()` call, NOT during indexing
+- Incremental updates: track `_pending_terms` for efficiency
+- Full rebuild on first persist or after major reindex
+
+**Query Phase:**
+```python
+def expand_query(query_text, vocabulary, embedding_model, top_k=3):
+    # Embed query
+    query_embedding = embedding_model.get_text_embedding(query_text)
+
+    # Find top-3 nearest term embeddings (cosine similarity)
+    similarities = [
+        (term, cosine_similarity(query_embedding, emb))
+        for term, emb in vocabulary.items()
+    ]
+    similarities.sort(key=lambda x: x[1], reverse=True)
+
+    # Append expansion terms to query
+    expansion_terms = [term for term, score in similarities[:top_k]]
+    expanded_query = f"{query_text} {' '.join(expansion_terms)}"
+
+    return expanded_query
 ```
 
 **File Changes:**
 - [src/indices/vector.py](../src/indices/vector.py): Add `build_concept_vocabulary()`, `expand_query()`
 - [src/search/orchestrator.py](../src/search/orchestrator.py): Call expansion before `_search_vector()`
 
+**Storage:**
+- `concept_vocabulary.json` persisted alongside FAISS index
+- Format: `{"term": [embedding_values], ...}`
+
 **API Changes:** None (internal optimization)
 
 **Testing Strategy:**
-- Unit: `test_concept_vocabulary_extraction`, `test_query_expansion_synonyms`
+- Unit: `test_concept_vocabulary_extraction`, `test_query_expansion_synonyms`, `test_stopword_filtering`
 - Integration: `test_expanded_query_finds_related_documents`
 
-**LOC Estimate:** ~80 lines
+**LOC Estimate:** ~120 lines
 
 ---
 
 ### P2: Heading-Weighted Embeddings
 
-**Impact:** High | **Complexity:** Low
+**Impact:** High | **Complexity:** Low | **Status:** ✅ Implemented
 
 **Description:** Prepend `header_path` breadcrumb to chunk content before generating embedding. Currently `header_path` is only stored as metadata.
 
@@ -164,7 +234,7 @@ llama_doc = LlamaDocument(
 
 **Proposed State:**
 ```python
-# Prepend header context to embedding input
+# Prepend header context to embedding input with double newline separator
 embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
 llama_doc = LlamaDocument(
     text=embedding_text,
@@ -172,13 +242,31 @@ llama_doc = LlamaDocument(
 )
 ```
 
+**Separator Significance:**
+- Double newline (`\n\n`) treated as paragraph boundary by embedding model
+- Without separator: "IntroductionConfiguration" becomes single phrase
+- With separator: Header and content embed as distinct semantic units
+- Preserves hierarchical context while maintaining semantic separation
+
+**Embedding Text Examples:**
+
+Without header_path:
+```
+"Configuration options include semantic_weight, keyword_weight, and rrf_k_constant."
+```
+
+With header_path (correct implementation):
+```
+"Search > Fusion Algorithm\n\nConfiguration options include semantic_weight, keyword_weight, and rrf_k_constant."
+```
+
 **File Changes:**
-- [src/indices/vector.py](../src/indices/vector.py): Modify `add_chunk()` to prepend header_path
+- [src/indices/vector.py](../src/indices/vector.py): Modify `add_chunk()` to prepend header_path with `\n\n` separator
 
 **API Changes:** None (internal optimization)
 
 **Testing Strategy:**
-- Unit: `test_embedding_includes_header_path`
+- Unit: `test_embedding_includes_header_path`, `test_separator_format`
 - Integration: `test_header_context_improves_disambiguation`
 
 **LOC Estimate:** ~10 lines
@@ -384,31 +472,44 @@ class ReRanker:
 
 ### P7: Code Block Index
 
-**Impact:** Medium | **Complexity:** Medium
+**Impact:** Medium | **Complexity:** Medium | **Status:** ✅ Implemented
 
 **Description:** Dedicated index for code snippets with specialized tokenization (preserve syntax, no stemming, camelCase splitting).
 
 **Rationale:** Current StemmingAnalyzer strips punctuation and stems tokens. "getAuthToken" becomes "getauthtoken", "C++" becomes "c". Code requires exact matching.
 
-**Implementation Approach:**
-
+**Whoosh Schema:**
 ```python
-from whoosh.analysis import RegexTokenizer, LowercaseFilter
-
-# Code-aware analyzer: split on camelCase, preserve punctuation in identifiers
-code_analyzer = RegexTokenizer(r'[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+|\S+') | LowercaseFilter()
-
-# Separate schema for code blocks
-code_schema = Schema(
-    id=ID(stored=True, unique=True),
-    doc_id=ID(stored=True),
-    code=TEXT(stored=True, analyzer=code_analyzer),
-    language=KEYWORD(stored=True),  # python, javascript, etc.
+Schema(
+    id=ID(stored=True, unique=True),        # code_block_id
+    doc_id=ID(stored=True),                 # parent document
+    chunk_id=ID(stored=True),               # parent chunk
+    content=TEXT(stored=True, analyzer=code_analyzer),
+    language=KEYWORD(stored=True),          # python, javascript, etc.
 )
 ```
 
+**Code Analyzer:**
+```python
+from whoosh.analysis import RegexTokenizer, LowercaseFilter
+
+# Splits on case changes, preserves symbols
+code_analyzer = RegexTokenizer(r'[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+|\S+') | LowercaseFilter()
+```
+
+**Tokenization Examples:**
+
+| Input | Tokens Generated |
+|-------|------------------|
+| `getUserById` | `["getUserById", "get", "user", "by", "id"]` |
+| `parse_json_data` | `["parse_json_data", "parse", "json", "data"]` |
+| `HTTPResponse` | `["HTTPResponse", "HTTP", "response"]` |
+| `std::vector` | `["std", "::", "vector"]` |
+| `C++` | `["c++"]` (preserved) |
+| `myVar123` | `["myvar123", "my", "var", "123"]` |
+
 **Code Extraction:**
-- During parsing, extract fenced code blocks (```lang ... ```)
+- During parsing, extract fenced code blocks (````lang ... ````)
 - Index each code block as separate entry with language metadata
 - Query both text and code indices in parallel during search
 
@@ -417,11 +518,13 @@ code_schema = Schema(
 - [src/parsers/markdown.py](../src/parsers/markdown.py): Extract code blocks during parsing
 - [src/search/orchestrator.py](../src/search/orchestrator.py): Query code index, include in fusion
 
-**API Changes:** None (internal index)
+**API Changes:**
+- `[search] code_search_enabled: bool = false`
+- `[search] code_search_weight: float = 1.0`
 
 **Testing Strategy:**
-- Unit: `test_code_tokenization_camelcase`, `test_code_preserves_punctuation`
-- Integration: `test_code_search_finds_function_names`
+- Unit: `test_code_tokenization_camelcase`, `test_code_preserves_punctuation`, `test_code_splits_snake_case`
+- Integration: `test_code_search_finds_function_names`, `test_code_search_language_filtering`
 
 **LOC Estimate:** ~150 lines
 
@@ -429,41 +532,100 @@ code_schema = Schema(
 
 ### P8: Result Clustering and Semantic Deduplication
 
-**Impact:** Medium | **Complexity:** Low-Medium
+**Impact:** Medium | **Complexity:** Low-Medium | **Status:** ✅ Implemented
 
-**Description:** After fusion, ensure final top-N contains diverse results via (A) document-level max-per-doc limits and (B) semantic deduplication that clusters similar chunks and returns one representative per cluster.
+**Description:** Three-stage deduplication pipeline ensures diverse, non-redundant results via (1) exact content hash dedup, (2) n-gram near-duplicate detection, (3) semantic embedding similarity clustering. Additionally applies document-level max-per-doc limits.
 
 **Problem:**
-1. Top-5 results may all come from the same document if it contains multiple highly-ranked chunks.
-2. Different documents may contain semantically redundant content (copy-paste, templated sections).
+1. Exact duplicates (copy-paste) waste result slots
+2. Near-duplicates (minor edits, formatting changes) create redundancy
+3. Paraphrases (semantically identical but different wording) reduce diversity
+4. Top-N results may all come from same document if it contains multiple highly-ranked chunks
 
-**Component A: Document-Level Dedup (max K chunks per document)**
+**Three-Stage Deduplication Pipeline:**
+
+**Stage 1: Content Hash Deduplication (Exact Matches)**
 ```python
-def limit_per_document(
+def deduplicate_by_content_hash(
     results: list[tuple[str, float]],
-    max_per_doc: int = 2,
-    top_n: int = 5
-) -> list[tuple[str, float]]:
-    doc_counts: dict[str, int] = {}
-    deduped = []
+    get_content: Callable[[str], str]
+) -> tuple[list[tuple[str, float]], int]:
+    """Remove exact text duplicates via MD5 hash.
+
+    Returns: (deduplicated_results, removed_exact_count)
+    """
+    seen_hashes = set()
+    deduplicated = []
+    removed = 0
+
     for chunk_id, score in results:
-        doc_id = chunk_id.rsplit("_chunk_", 1)[0]
-        if doc_counts.get(doc_id, 0) < max_per_doc:
-            deduped.append((chunk_id, score))
-            doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
-        if len(deduped) >= top_n:
-            break
-    return deduped
+        content = get_content(chunk_id)
+        content_hash = hashlib.md5(content.encode()).hexdigest()
+
+        if content_hash not in seen_hashes:
+            seen_hashes.add(content_hash)
+            deduplicated.append((chunk_id, score))
+        else:
+            removed += 1
+
+    return deduplicated, removed
 ```
 
-**Component B: Semantic Deduplication (cluster similar chunks)**
+**Stage 2: N-gram Deduplication (Near-Exact Matches via Jaccard Similarity)**
 ```python
-def deduplicate_semantic(
+def deduplicate_by_ngram(
     results: list[tuple[str, float]],
-    embeddings: dict[str, np.ndarray],
-    similarity_threshold: float = 0.85
+    get_content: Callable[[str], str],
+    threshold: float = 0.7,
+    n: int = 3
 ) -> tuple[list[tuple[str, float]], int]:
-    """Cluster chunks by cosine similarity, return one representative per cluster.
+    """Remove near-duplicates via Jaccard similarity of trigrams.
+
+    Returns: (deduplicated_results, removed_ngram_count)
+    """
+    def get_ngrams(text: str, n: int) -> set:
+        words = text.lower().split()
+        return set(' '.join(words[i:i+n]) for i in range(len(words)-n+1))
+
+    def jaccard_similarity(set_a: set, set_b: set) -> float:
+        if not set_a or not set_b:
+            return 0.0
+        intersection = len(set_a & set_b)
+        union = len(set_a | set_b)
+        return intersection / union if union > 0 else 0.0
+
+    deduplicated = []
+    removed = 0
+    chunk_ngrams = {}
+
+    for chunk_id, score in results:
+        content = get_content(chunk_id)
+        ngrams = get_ngrams(content, n)
+
+        is_duplicate = False
+        for existing_id in chunk_ngrams:
+            existing_ngrams = chunk_ngrams[existing_id]
+            similarity = jaccard_similarity(ngrams, existing_ngrams)
+            if similarity >= threshold:
+                is_duplicate = True
+                removed += 1
+                break
+
+        if not is_duplicate:
+            chunk_ngrams[chunk_id] = ngrams
+            deduplicated.append((chunk_id, score))
+
+    return deduplicated, removed
+```
+
+**Stage 3: Semantic Deduplication (Paraphrase Detection via Embedding Similarity)**
+```python
+def deduplicate_by_similarity(
+    results: list[tuple[str, float]],
+    get_embedding: Callable[[str], np.ndarray],
+    similarity_threshold: float = 0.80
+) -> tuple[list[tuple[str, float]], int]:
+    """Cluster chunks by embedding cosine similarity.
 
     Returns: (deduplicated_results, clusters_merged_count)
     """
@@ -474,15 +636,14 @@ def deduplicate_semantic(
     merged_count = 0
 
     for chunk_id, score in results:
-        chunk_emb = embeddings.get(chunk_id)
+        chunk_emb = get_embedding(chunk_id)
         if chunk_emb is None:
             selected.append((chunk_id, score))
             continue
 
-        # Check similarity to already-selected chunks
         is_duplicate = False
         for sel_id, _ in selected:
-            sel_emb = embeddings.get(sel_id)
+            sel_emb = get_embedding(sel_id)
             if sel_emb is not None:
                 sim = cosine_similarity(chunk_emb, sel_emb)
                 if sim >= similarity_threshold:
@@ -496,15 +657,89 @@ def deduplicate_semantic(
     return selected, merged_count
 ```
 
-**Processing Order:** Score threshold (P10) → Semantic dedup (P8B) → Document limit (P8A)
+**Why This Order Matters:**
+1. **Content hash (Stage 1) is fastest**: O(n) with constant-time hash lookup, eliminates exact duplicates before more expensive operations
+2. **N-gram (Stage 2) faster than embeddings**: Jaccard similarity on sets faster than embedding lookup + cosine computation, catches near-exact matches
+3. **Semantic (Stage 3) handles remaining paraphrases**: Most expensive, but operates on smallest candidate set after previous stages
 
-**Rationale:** Semantic dedup removes near-identical content across documents before document-level limits are applied. This improves information density without truncating.
+**Component B: Per-Document Limit (Applied After All Dedup Stages)**
+```python
+def limit_per_document(
+    results: list[tuple[str, float]],
+    doc_id_map: dict[str, str],  # chunk_id -> doc_id
+    max_per_doc: int
+) -> list[tuple[str, float]]:
+    """Limit chunks per document, preserving highest-scored chunks.
+
+    Applied after all deduplication stages.
+    """
+    if max_per_doc <= 0:
+        return results
+
+    doc_counts = {}
+    limited = []
+
+    for chunk_id, score in results:
+        doc_id = doc_id_map.get(chunk_id)
+        if doc_id and doc_counts.get(doc_id, 0) >= max_per_doc:
+            continue
+        limited.append((chunk_id, score))
+        if doc_id:
+            doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
+
+    return limited
+```
+
+**Complete Processing Order:**
+```
+RRF Fusion
+  ↓
+Score Normalization [0.0, 1.0]
+  ↓
+Confidence Threshold Filter (P10)
+  ↓
+Stage 1: Content Hash Dedup (MD5)
+  ↓
+Stage 2: N-gram Dedup (Jaccard, threshold=0.7)
+  ↓
+Stage 3: Semantic Dedup (Cosine, threshold=0.80)
+  ↓
+Per-Document Limit (max_chunks_per_doc)
+  ↓
+Cross-Encoder Re-Ranking (P6, if enabled)
+```
+
+**Response Metadata:**
+```python
+@dataclass
+class CompressionStats:
+    original_count: int           # Results before any filtering
+    after_threshold: int          # After confidence filter (P10)
+    after_content_dedup: int      # After Stage 1 (MD5 hash)
+    after_ngram_dedup: int        # After Stage 2 (Jaccard)
+    after_dedup: int              # After Stage 3 (semantic cosine)
+    after_doc_limit: int          # After per-document limit
+    clusters_merged: int          # Count from Stage 3 only
+```
+
+**Rationale:** Sequential deduplication from fast-to-slow optimizes performance. Content hash eliminates obvious duplicates. N-gram catches minor variations. Semantic dedup handles paraphrases. Document limit ensures diversity across sources.
 
 **File Changes:**
-- [src/search/dedup.py](../src/search/dedup.py): New file with `limit_per_document()`, `deduplicate_semantic()`
-- [src/search/orchestrator.py](../src/search/orchestrator.py): Apply deduplication pipeline after normalization
+- [src/search/dedup.py](../src/search/dedup.py): All dedup functions
+- [src/search/orchestrator.py](../src/search/orchestrator.py): Pipeline orchestration
 
 **API Changes:**
+- `[search] max_chunks_per_doc: int = 2`
+- `[search] dedup_enabled: bool = false`
+- `[search] dedup_similarity_threshold: float = 0.80` (semantic stage only)
+- `[search] ngram_dedup_enabled: bool = true`
+- `[search] ngram_dedup_threshold: float = 0.7`
+
+**Testing Strategy:**
+- Unit: `test_content_hash_dedup`, `test_ngram_dedup_threshold`, `test_semantic_dedup_clusters`, `test_doc_limit_preserves_ranking`
+- Integration: `test_three_stage_pipeline_order`, `test_compression_stats_accuracy`
+
+**LOC Estimate:** ~220 lines
 - New config option: `[search] max_chunks_per_doc: int = 0` (0 = disabled)
 - New config option: `[search] dedup_enabled: bool = false`
 - New config option: `[search] dedup_similarity_threshold: float = 0.85`
@@ -863,31 +1098,65 @@ Document → Split into Sections (parent, ~2000 chars)
 
 **Implementation Approach:**
 
-```python
-# During indexing: store parent reference in chunk metadata
-chunk.metadata["parent_chunk_id"] = parent_section.chunk_id
-chunk.metadata["parent_content"] = parent_section.content
+**Parent Expansion Algorithm:**
 
-# During retrieval: expand to parents
-def expand_to_parents(
-    results: list[tuple[str, float]],
-    get_parent_id: Callable[[str], str | None],
-    get_parent_content: Callable[[str], str],
-) -> list[tuple[str, float, str]]:
+```python
+def _expand_to_parents(
+    final_results: list[tuple[str, float]],
+    vector_index: VectorIndex
+) -> list[ChunkResult]:
+    """Expand child chunks to parent sections, deduplicating by parent ID.
+
+    Applied AFTER all filtering stages (threshold, dedup, doc-limit, rerank).
+    Returns parent content instead of child content for better LLM context.
+    """
     seen_parents = set()
     expanded = []
 
-    for chunk_id, score in results:
-        parent_id = get_parent_id(chunk_id)
+    for chunk_id, score in final_results:
+        # Retrieve chunk data including metadata
+        chunk_data = vector_index.get_chunk_by_id(chunk_id)
+        parent_id = chunk_data["metadata"].get("parent_chunk_id")
+
         if parent_id and parent_id not in seen_parents:
+            # Expand to parent: return parent content, ID, metadata
+            parent_content = vector_index.get_parent_content(parent_id)
+            expanded.append(ChunkResult(
+                chunk_id=parent_id,  # Return parent ID
+                doc_id=chunk_data["doc_id"],
+                content=parent_content,  # Return parent content
+                score=score,  # Preserve child's relevance score
+                parent_chunk_id=parent_id,
+                header_path=chunk_data["metadata"]["header_path"],
+                metadata=chunk_data["metadata"]
+            ))
             seen_parents.add(parent_id)
-            parent_content = get_parent_content(parent_id)
-            expanded.append((parent_id, score, parent_content))
+
         elif not parent_id:
-            # Chunk has no parent (is already a section)
-            expanded.append((chunk_id, score, get_content(chunk_id)))
+            # Chunk has no parent (is already section-level)
+            expanded.append(ChunkResult(
+                chunk_id=chunk_id,
+                doc_id=chunk_data["doc_id"],
+                content=chunk_data["content"],
+                score=score,
+                parent_chunk_id=None,
+                header_path=chunk_data["metadata"]["header_path"],
+                metadata=chunk_data["metadata"]
+            ))
 
     return expanded
+```
+
+**Key Points:**
+- Expansion happens **AFTER** all filtering stages (threshold, dedup, doc-limit, rerank)
+- Multiple children from same parent → single parent in results
+- Parent IDs deduplicated via `seen_parents` set
+- Chunks without parents passed through unchanged
+- Preserves child's relevance score (parent inherits it)
+
+**Processing Pipeline Position:**
+```
+... → Per-Document Limit → Re-rank → P13: Parent Expansion → Return
 ```
 
 **Chunking Strategy Change:**

@@ -518,14 +518,14 @@ Controls document chunking strategy for vector indexing.
 #### `max_chunk_chars`
 
 - **Type:** integer
-- **Default:** `1500`
+- **Default:** `2000`
 - **Description:** Maximum chunk size in characters. Chunks larger than this will be split at sentence boundaries.
 - **Range:** 500 to 20000 (typical: 1000 to 4000)
 - **Effect:** Smaller values create more focused chunks; larger values preserve more context.
 - **Example:**
   ```toml
   [chunking]
-  max_chunk_chars = 1500
+  max_chunk_chars = 1500  # Smaller chunks for focused retrieval
   ```
 
 #### `overlap_chars`
@@ -620,13 +620,13 @@ Controls hybrid search behavior and result fusion.
 #### `keyword_weight`
 
 - **Type:** float
-- **Default:** `1.0`
+- **Default:** `0.8`
 - **Description:** Weight multiplier for keyword (BM25) search results in RRF fusion. Higher values increase influence of exact term matches.
 - **Range:** 0.0 to infinity (typical: 0.5 to 2.0)
 - **Example:**
   ```toml
   [search]
-  keyword_weight = 0.8  # De-emphasize keyword matches
+  keyword_weight = 1.0  # Increase keyword match weight
   ```
 
 #### `recency_bias`
@@ -674,14 +674,14 @@ Controls hybrid search behavior and result fusion.
 #### `max_chunks_per_doc`
 
 - **Type:** integer
-- **Default:** `0`
+- **Default:** `2`
 - **Description:** Maximum number of chunks from a single document in results. Prevents result lists dominated by one document with many matching sections. Set to `0` to disable.
 - **Range:** 0 (disabled) to any positive integer (recommended: 2-3)
 - **Effect:** Lower values increase result diversity across documents.
 - **Example:**
   ```toml
   [search]
-  max_chunks_per_doc = 2  # Max 2 chunks per document
+  max_chunks_per_doc = 3  # Max 3 chunks per document
   ```
 
 #### `dedup_enabled`
@@ -698,7 +698,7 @@ Controls hybrid search behavior and result fusion.
 #### `dedup_similarity_threshold`
 
 - **Type:** float
-- **Default:** `0.85`
+- **Default:** `0.80`
 - **Description:** Cosine similarity threshold for clustering chunks during deduplication. Chunks with similarity above this threshold are considered duplicates.
 - **Range:** 0.0 to 1.0 (recommended: 0.80 to 0.90)
 - **Effect:** Lower values cluster more aggressively (fewer results). Higher values preserve more distinct chunks.
@@ -707,7 +707,7 @@ Controls hybrid search behavior and result fusion.
   ```toml
   [search]
   dedup_enabled = true
-  dedup_similarity_threshold = 0.85
+  dedup_similarity_threshold = 0.85  # Stricter deduplication
   ```
 
 #### `rerank_enabled`

@@ -242,17 +242,19 @@ Response:
 
 ```json
 {
-  \"results\": [
+  "results": [
     {
-      \"chunk_id\": \"configuration_search_0\",
-      \"content\": \"To configure search weights, edit the [search] section in config.toml...\",
-      \"file_path\": \"docs/configuration.md\",
-      \"header_path\": [\"Configuration Sections\", \"search\"],
-      \"score\": 0.92
+      "chunk_id": "configuration_search_0",
+      "content": "To configure search weights, edit the [search] section in config.toml...",
+      "file_path": "docs/configuration.md",
+      "header_path": ["Configuration Sections", "search"],
+      "score": 0.92
     }
   ]
 }
-}
+```
+
+**Note:** HTTP endpoint uses full JSON format. MCP stdio transport uses compact text format: `[N] file § section (score)\ncontent`.
 ```
 
 ## Configuration for Different Use Cases
@@ -431,6 +433,77 @@ Response:
   }
 }
 ```
+
+## Response Format Differences
+
+### HTTP vs MCP Stdio
+
+The server uses different response formats for HTTP and MCP stdio transport:
+
+**HTTP JSON (Full Format):**
+```json
+{
+  "results": [
+    {
+      "chunk_id": "auth_0",
+      "content": "Authentication uses JWT tokens...",
+      "file_path": "docs/auth.md",
+      "header_path": ["Authentication", "Tokens"],
+      "score": 0.95
+    }
+  ]
+}
+```
+
+**MCP Stdio (Compact Format, 60% less overhead):**
+```
+[1] docs/auth.md § Authentication > Tokens (0.95)
+Authentication uses JWT tokens...
+```
+
+### Query-Aware Truncation
+
+Factual queries (configuration, commands, syntax) return truncated content to reduce token usage:
+
+**Detection Patterns:**
+- camelCase or snake_case identifiers
+- Backticks or code-like terms
+- Keywords: "what is", "configure", "syntax", "command"
+
+**Example:**
+
+Query: `getUserById function`
+
+Response:
+```
+[1] api.md § Functions (0.92)
+getUserById(id: string): User | null
+
+Retrieves user by ID. Returns null if not found...
+```
+
+Conceptual queries (explanations, guides) return full content:
+
+Query: `why use JWT authentication?`
+
+Response includes complete section content.
+
+### Compression Statistics
+
+Default compression enabled (`min_confidence=0.3`, `max_chunks_per_doc=2`, `dedup_enabled=true`).
+
+Set `show_stats=true` to see filtering results:
+
+```
+Compression Stats:
+- Original results: 47
+- After score filter (≥0.3): 23
+- After deduplication: 12
+- After document limit (2 per doc): 8
+- Clusters merged: 11
+```
+
+**Token Savings:** Compression reduces context usage by 40-60% depending on query and corpus.
 
 ## Troubleshooting
 
