@@ -298,28 +298,34 @@ async def test_hybrid_search_fusion(tmp_path):
 
 ### Adding a New Parser
 
+The server supports pluggable parsers. Two parsers are included out-of-the-box:
+- `MarkdownParser`: Full Markdown support with tree-sitter AST parsing, frontmatter, wikilinks, tags
+- `PlainTextParser`: Plain text (.txt) files with UTF-8 and fallback encoding support
+
+To add a new parser:
+
 1. **Create parser class** in `src/parsers/`:
 
 ```python
-# src/parsers/plaintext.py
+# src/parsers/csv_parser.py
 from pathlib import Path
+from datetime import datetime, timezone
 from src.models import Document
 from src.parsers.base import DocumentParser
 
-class PlainTextParser:
-    """Parser for plain text files."""
-
-    def parse(self, file_path: str) -> Document:
+class CSVParser(DocumentParser):
+    def parse(self, file_path: str):
         path = Path(file_path)
         content = path.read_text(encoding="utf-8")
-        modified_time = path.stat().st_mtime
+        modified_time = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
 
         return Document(
+            id=path.stem,
             content=content,
-            metadata={},
+            metadata={"source": str(path)},
             links=[],
             tags=[],
-            doc_id=path.stem,
+            file_path=str(path),
             modified_time=modified_time,
         )
 ```
@@ -327,30 +333,53 @@ class PlainTextParser:
 2. **Register parser** in `src/parsers/__init__.py`:
 
 ```python
-from src.parsers.plaintext import PlainTextParser
+from src.parsers.csv_parser import CSVParser
 
-__all__ = ["MarkdownParser", "PlainTextParser"]
+__all__ = ["MarkdownParser", "PlainTextParser", "CSVParser"]
 ```
 
-3. **Configure pattern** in `config.toml`:
+3. **Update dispatcher** in `src/parsers/dispatcher.py`:
+
+Add to `_instantiate_parser()` function:
+
+```python
+def _instantiate_parser(parser_name: str, file_path: str):
+    if parser_name == "MarkdownParser":
+        return MarkdownParser()
+    elif parser_name == "PlainTextParser":
+        return PlainTextParser()
+    elif parser_name == "CSVParser":
+        return CSVParser()
+    else:
+        raise ValueError(f"Unknown parser: {parser_name} for {file_path}")
+```
+
+4. **Configure pattern** in `config.toml`:
 
 ```toml
 [parsers]
+"**/*.md" = "MarkdownParser"
 "**/*.txt" = "PlainTextParser"
+"**/*.csv" = "CSVParser"
 ```
 
-4. **Add tests** in `tests/unit/test_parsers.py`:
+5. **Add tests** in `tests/unit/test_csv_parser.py`:
 
 ```python
-def test_plaintext_parser_basic(tmp_path):
-    parser = PlainTextParser()
-    file_path = tmp_path / "test.txt"
-    file_path.write_text("Plain text content")
+def test_csv_parser_basic(tmp_path):
+    parser = CSVParser()
+    file_path = tmp_path / "test.csv"
+    file_path.write_text("col1,col2\nval1,val2")
 
     doc = parser.parse(str(file_path))
-    assert doc.content == "Plain text content"
-    assert doc.doc_id == "test"
+    assert doc.content == "col1,col2\nval1,val2"
+    assert doc.id == "test"
 ```
+
+**Notes:**
+- PlainTextParser handles encoding fallback gracefully (UTF-8 → latin-1 → cp1252 → iso-8859-1)
+- Plain text files use paragraph-based chunking (reuses `HeaderBasedChunker._chunk_plain_text()`)
+- See [specs/13-txt-file-chunking.md](../specs/13-txt-file-chunking.md) for implementation details
 
 ### Adding a New Search Strategy
 

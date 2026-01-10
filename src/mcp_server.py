@@ -73,6 +73,12 @@ class MCPServer:
                                 "description": "Whether to show compression stats in response (default: false)",
                                 "default": False,
                             },
+                            "excluded_files": {
+                                "type": "array",
+                                "description": "List of file paths to exclude from results (supports filename, relative path, or absolute path)",
+                                "items": {"type": "string"},
+                                "default": [],
+                            },
                         },
                         "required": ["query"],
                     },
@@ -116,6 +122,12 @@ class MCPServer:
                                 "type": "boolean",
                                 "description": "Whether to show compression stats in response (default: false)",
                                 "default": False,
+                            },
+                            "excluded_files": {
+                                "type": "array",
+                                "description": "List of file paths to exclude from results (supports filename, relative path, or absolute path)",
+                                "items": {"type": "string"},
+                                "default": [],
                             },
                         },
                         "required": ["query"],
@@ -179,6 +191,14 @@ class MCPServer:
         if not self.ctx:
             raise RuntimeError("Server not initialized")
 
+        excluded_files_raw = arguments.get("excluded_files", [])
+        excluded_files = None
+        if excluded_files_raw:
+            from pathlib import Path
+            from src.search.path_utils import normalize_path
+            docs_root = Path(self.ctx.config.indexing.documents_path)
+            excluded_files = {normalize_path(f, docs_root) for f in excluded_files_raw}
+
         top_k = max(20, top_n * 4)
 
         pipeline_config = SearchPipelineConfig(
@@ -194,6 +214,7 @@ class MCPServer:
             top_k=top_k,
             top_n=top_n,
             pipeline_config=pipeline_config,
+            excluded_files=excluded_files,
         )
 
         query_type = classify_query_type(query)

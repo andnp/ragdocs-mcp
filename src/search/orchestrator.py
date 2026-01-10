@@ -59,6 +59,7 @@ class SearchOrchestrator:
         top_k: int = 10,
         top_n: int = 5,
         pipeline_config: SearchPipelineConfig | None = None,
+        excluded_files: set[str] | None = None,
     ) -> tuple[list[ChunkResult], CompressionStats]:
         if not query_text or not query_text.strip():
             return [], CompressionStats(
@@ -71,9 +72,11 @@ class SearchOrchestrator:
                 clusters_merged=0,
             )
 
+        docs_root = Path(self._config.indexing.documents_path)
+
         search_tasks = [
-            self._search_vector(query_text, top_k),
-            self._search_keyword(query_text, top_k),
+            self._search_vector(query_text, top_k, excluded_files, docs_root),
+            self._search_keyword(query_text, top_k, excluded_files, docs_root),
         ]
 
         code_search_enabled = (
@@ -252,20 +255,23 @@ class SearchOrchestrator:
             return str(content) if content is not None else None
         return None
 
-    async def _search_vector(self, query_text: str, top_k: int):
-        expanded_query = self._vector.expand_query(query_text)
+    async def _search_vector(self, query_text: str, top_k: int, excluded_files: set[str] | None, docs_root: Path):
+        if self._config.search.query_expansion_enabled:
+            expanded_query = self._vector.expand_query(query_text)
+        else:
+            expanded_query = query_text
 
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(
-            None, self._vector.search, expanded_query, top_k
+            None, self._vector.search, expanded_query, top_k, excluded_files, docs_root
         )
         logger.info(f"Vector search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
         return results
 
-    async def _search_keyword(self, query_text: str, top_k: int):
+    async def _search_keyword(self, query_text: str, top_k: int, excluded_files: set[str] | None, docs_root: Path):
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(
-            None, self._keyword.search, query_text, top_k
+            None, self._keyword.search, query_text, top_k, excluded_files, docs_root
         )
         logger.info(f"Keyword search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
         return results

@@ -105,7 +105,8 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         assert config.llm.embedding_model == "local"
         assert config.parsers == {
             "**/*.md": "MarkdownParser",
-            "**/*.markdown": "MarkdownParser"
+            "**/*.markdown": "MarkdownParser",
+            "**/*.txt": "PlainTextParser"
         }
     finally:
         os.chdir(original_cwd)

@@ -302,9 +302,17 @@ class ApplicationContext:
 
     async def _build_initial_vocabulary(self) -> None:
         """Build concept vocabulary from scratch in background."""
+        if not self.config.search.query_expansion_enabled:
+            logger.info("Query expansion disabled, skipping vocabulary build")
+            return
+
         try:
             logger.info("Building concept vocabulary in background...")
-            await asyncio.to_thread(self.index_manager.vector.build_concept_vocabulary)
+            await asyncio.to_thread(
+                self.index_manager.vector.build_concept_vocabulary,
+                max_terms=self.config.search.query_expansion_max_terms,
+                min_frequency=self.config.search.query_expansion_min_frequency,
+            )
             await asyncio.to_thread(self.index_manager.persist)
             logger.info("Concept vocabulary built and persisted")
         except asyncio.CancelledError:

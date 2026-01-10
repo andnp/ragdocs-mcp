@@ -154,7 +154,7 @@ class KeywordIndex:
                 writer.cancel()
                 raise
 
-    def search(self, query: str, top_k: int = 10) -> list[dict]:
+    def search(self, query: str, top_k: int = 10, excluded_files: set[str] | None = None, docs_root: Path | None = None) -> list[dict]:
         with self._lock:
             if self._index is None or not query.strip():
                 return []
@@ -167,15 +167,35 @@ class KeywordIndex:
 
             try:
                 parsed_query = parser.parse(query)
-                results = searcher.search(parsed_query, limit=top_k)
+
+                fetch_k = top_k * 2 if excluded_files else top_k
+                results = searcher.search(parsed_query, limit=fetch_k)
 
                 chunk_results = []
                 for hit in results:
+                    if excluded_files and docs_root:
+                        doc_id = hit.get("doc_id", hit["id"])
+                        from src.search.path_utils import normalize_path
+
+                        normalized_doc_id = normalize_path(doc_id, docs_root)
+
+                        if normalized_doc_id in excluded_files:
+                            continue
+
+                        from pathlib import Path as PathLib
+                        filename = PathLib(normalized_doc_id).name
+                        if filename in excluded_files:
+                            continue
+
                     chunk_results.append({
                         "chunk_id": hit["id"],
                         "doc_id": hit.get("doc_id", hit["id"]),
                         "score": hit.score,
                     })
+
+                    if len(chunk_results) >= top_k:
+                        break
+
                 return chunk_results
             finally:
                 searcher.close()

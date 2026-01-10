@@ -23,7 +23,7 @@ Existing RAG solutions require manual database setup, explicit indexing steps, a
 - Automatic file watching with debounced incremental indexing
 - Zero-configuration operation with sensible defaults
 - Index versioning with automatic rebuild on configuration changes
-- Pluggable parser architecture (Markdown with tree-sitter)
+- **Pluggable parser architecture:** Markdown and plain text (.txt) support out-of-the-box
 - Rich Markdown parsing: frontmatter, wikilinks, tags, transclusions
 - Reciprocal Rank Fusion for multi-strategy result merging
 - Recency bias for recently modified documents
@@ -50,7 +50,7 @@ uv run mcp-markdown-ragdocs mcp
 ```
 
 The server will:
-1. Scan for `*.md` files in the current directory
+1. Scan for `*.md` and `*.txt` files in the current directory
 2. Build vector, keyword, and graph indices
 3. Start file watching for automatic updates
 4. Expose query_documents tool via stdio transport
@@ -86,6 +86,10 @@ port = 8000
 [indexing]
 documents_path = "~/Documents/Notes"  # Path to your Markdown files
 index_path = ".index_data/"           # Where to store indices
+
+[parsers]
+"**/*.md" = "MarkdownParser"          # Markdown files
+"**/*.txt" = "PlainTextParser"        # Plain text files
 
 [search]
 semantic_weight = 1.0      # Weight for semantic search results

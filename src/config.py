@@ -80,7 +80,9 @@ class SearchConfig:
     adaptive_weights_enabled: bool = False
     code_search_enabled: bool = False
     code_search_weight: float = 1.0
-
+    query_expansion_enabled: bool = True
+    query_expansion_max_terms: int = 2000
+    query_expansion_min_frequency: int = 3
 
 @dataclass
 class LLMConfig:
@@ -105,7 +107,8 @@ class Config:
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     parsers: dict[str, str] = field(default_factory=lambda: {
         "**/*.md": "MarkdownParser",
-        "**/*.markdown": "MarkdownParser"
+        "**/*.markdown": "MarkdownParser",
+        "**/*.txt": "PlainTextParser"
     })
     search: SearchConfig = field(default_factory=SearchConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -181,7 +184,8 @@ def load_config():
 
     parsers = config_data.get("parsers", {
         "**/*.md": "MarkdownParser",
-        "**/*.markdown": "MarkdownParser"
+        "**/*.markdown": "MarkdownParser",
+        "**/*.txt": "PlainTextParser"
     })
 
     search_data = config_data.get("search", {})
@@ -204,6 +208,9 @@ def load_config():
         adaptive_weights_enabled=search_data.get("adaptive_weights_enabled", False),
         code_search_enabled=search_data.get("code_search_enabled", False),
         code_search_weight=search_data.get("code_search_weight", 1.0),
+        query_expansion_enabled=search_data.get("query_expansion_enabled", True),
+        query_expansion_max_terms=search_data.get("query_expansion_max_terms", 5000),
+        query_expansion_min_frequency=search_data.get("query_expansion_min_frequency", 2),
     )
 
     llm_data = config_data.get("llm", {})

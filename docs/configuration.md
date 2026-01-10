@@ -475,6 +475,7 @@ Maps file glob patterns to parser class names. Enables extending the server to n
   [parsers]
   "**/*.md" = "MarkdownParser"
   "**/*.markdown" = "MarkdownParser"
+  "**/*.txt" = "PlainTextParser"
   ```
 - **Description:** Keys are glob patterns matched against file paths. Values are parser class names registered in `src/parsers/`.
 - **Behavior:** First matching pattern wins (pattern order matters).
@@ -482,9 +483,12 @@ Maps file glob patterns to parser class names. Enables extending the server to n
   ```toml
   [parsers]
   "**/*.md" = "MarkdownParser"
-  "**/*.txt" = "PlainTextParser"  # Future extension
-  "docs/api/*.md" = "APIDocParser"  # Specific parser for API docs
+  "**/*.txt" = "PlainTextParser"
+  "docs/api/*.md" = "APIDocParser"  # Custom parser for API docs
   ```
+- **Available Parsers:**
+  - `MarkdownParser`: Full markdown support with frontmatter, wikilinks, tags, and tree-sitter AST parsing
+  - `PlainTextParser`: Plain text files with paragraph-based chunking (UTF-8 with fallback encoding support)
 
 ### [chunking]
 
@@ -795,6 +799,51 @@ Controls hybrid search behavior and result fusion.
   code_search_weight = 1.2
   ```
 
+#### `query_expansion_enabled`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** Enable query expansion via concept vocabulary. When enabled, queries are expanded with semantically similar terms from a pre-built vocabulary to improve recall. Disabling this feature skips vocabulary building and reduces startup time significantly for large document collections.
+- **Effect:** Improves search recall by finding documents with related but different terminology. Vocabulary building embeds unique terms from corpus, which can be expensive for large collections.
+- **Performance:** Vocabulary building time scales with corpus size (up to 10,000 terms by default). For large notebases (10,000+ documents), building can take several minutes.
+- **Example:**
+  ```toml
+  [search]
+  query_expansion_enabled = false  # Disable for faster startup on large corpora
+  ```
+
+#### `query_expansion_max_terms`
+
+- **Type:** integer
+- **Default:** `5000`
+- **Description:** Maximum number of unique terms to include in the concept vocabulary. Reducing this value significantly decreases vocabulary building time at the cost of query expansion coverage.
+- **Range:** 100 to 10000 (recommended: 1000-3000 for large corpora, 5000-10000 for small corpora)
+- **Effect:** Lower values = faster build time, less comprehensive expansion. Higher values = slower build time, more comprehensive expansion.
+- **Performance:** Each term requires one embedding forward pass (~5-10ms on CPU). 5000 terms ≈ 25-50 seconds, 2000 terms ≈ 10-20 seconds.
+- **Requires:** `query_expansion_enabled = true`
+- **Example:**
+  ```toml
+  [search]
+  query_expansion_enabled = true
+  query_expansion_max_terms = 2000  # Reduce from 5000 for faster builds
+  ```
+
+#### `query_expansion_min_frequency`
+
+- **Type:** integer
+- **Default:** `2`
+- **Description:** Minimum number of occurrences required for a term to be included in the concept vocabulary. Terms appearing fewer times are filtered out as noise. Higher values reduce vocabulary size and build time.
+- **Range:** 1 to any positive integer (recommended: 2-5)
+- **Effect:** Higher values filter more terms, reducing vocabulary size and build time at the cost of coverage for rare but meaningful terms.
+- **Performance:** Filtering by frequency happens before embedding, so this provides computational savings proportional to filtered terms.
+- **Requires:** `query_expansion_enabled = true`
+- **Example:**
+  ```toml
+  [search]
+  query_expansion_enabled = true
+  query_expansion_min_frequency = 3  # Only embed terms appearing 3+ times
+  ```
+
 #### `mmr_enabled`
 
 - **Type:** boolean
@@ -939,6 +988,11 @@ adaptive_weights_enabled = false
 # Code search
 code_search_enabled = false
 code_search_weight = 1.0
+
+# Query expansion optimization
+query_expansion_enabled = true         # Disable for faster startup on very large corpora
+query_expansion_max_terms = 5000       # Reduce (e.g., 2000) for faster vocabulary builds
+query_expansion_min_frequency = 2      # Increase (e.g., 3-5) to filter low-frequency terms
 
 # Re-ranking (adds ~50ms latency)
 rerank_enabled = true

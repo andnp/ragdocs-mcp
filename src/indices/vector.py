@@ -149,16 +149,25 @@ class VectorIndex:
 
         del self._doc_id_to_node_ids[document_id]
 
-    def search(self, query: str, top_k: int = 10) -> list[dict]:
+    def search(self, query: str, top_k: int = 10, excluded_files: set[str] | None = None, docs_root: Path | None = None) -> list[dict]:
         if self._index is None or not query.strip():
             return []
 
         self._ensure_model_loaded()
-        retriever = self._index.as_retriever(similarity_top_k=top_k)
+
+        fetch_k = top_k * 2 if excluded_files else top_k
+        retriever = self._index.as_retriever(similarity_top_k=fetch_k)
         nodes = retriever.retrieve(query)
 
         results = []
         for node in nodes:
+            if excluded_files and docs_root:
+                file_path = node.metadata.get("file_path", "")
+                if file_path:
+                    from src.search.path_utils import matches_any_excluded
+                    if matches_any_excluded(file_path, excluded_files, docs_root):
+                        continue
+
             chunk_id = node.metadata.get("chunk_id")
 
             node_text = node.node.get_content() if hasattr(node.node, "get_content") else getattr(node.node, "text", "")
@@ -185,6 +194,9 @@ class VectorIndex:
                         "content": node_text,
                         "metadata": node.metadata,
                     })
+
+            if len(results) >= top_k:
+                break
 
         return results
 
@@ -254,7 +266,8 @@ class VectorIndex:
     def build_concept_vocabulary(
         self,
         min_term_length: int = 3,
-        max_terms: int = 10000,
+        max_terms: int = 5000,
+        min_frequency: int = 2,
     ) -> None:
         """Build concept vocabulary from scratch. Prefer update_vocabulary_incremental() for efficiency."""
         if self._index is None:
@@ -281,8 +294,9 @@ class VectorIndex:
         # Store term counts for future incremental updates
         self._term_counts = term_counts
 
+        # Filter by minimum frequency to reduce vocabulary size
         sorted_terms = sorted(term_counts.items(), key=lambda x: x[1], reverse=True)
-        top_terms = [term for term, _ in sorted_terms[:max_terms]]
+        top_terms = [term for term, count in sorted_terms if count >= min_frequency][:max_terms]
 
         self._ensure_model_loaded()
         self._concept_vocabulary = {}
@@ -512,29 +526,49 @@ class VectorIndex:
 
         mapping_file = path / "doc_id_mapping.json"
         if mapping_file.exists():
-            with open(mapping_file, "r") as f:
-                self._doc_id_to_node_ids = json.load(f)
+            try:
+                with open(mapping_file, "r") as f:
+                    self._doc_id_to_node_ids = json.load(f)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to load doc_id mapping (corrupted JSON): {e}")
+                logger.info("Rebuilding doc_id mapping from index")
+                self._doc_id_to_node_ids = {}
         else:
             self._doc_id_to_node_ids = {}
 
         chunk_mapping_file = path / "chunk_id_mapping.json"
         if chunk_mapping_file.exists():
-            with open(chunk_mapping_file, "r") as f:
-                self._chunk_id_to_node_id = json.load(f)
+            try:
+                with open(chunk_mapping_file, "r") as f:
+                    self._chunk_id_to_node_id = json.load(f)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to load chunk_id mapping (corrupted JSON): {e}")
+                logger.info("Rebuilding chunk_id mapping from index")
+                self._chunk_id_to_node_id = {}
         else:
             self._chunk_id_to_node_id = {}
 
         vocab_file = path / "concept_vocabulary.json"
         if vocab_file.exists():
-            with open(vocab_file, "r") as f:
-                self._concept_vocabulary = json.load(f)
+            try:
+                with open(vocab_file, "r") as f:
+                    self._concept_vocabulary = json.load(f)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to load concept vocabulary (corrupted JSON): {e}")
+                logger.info("Rebuilding concept vocabulary from scratch")
+                self._concept_vocabulary = {}
         else:
             self._concept_vocabulary = {}
 
         term_counts_file = path / "term_counts.json"
         if term_counts_file.exists():
-            with open(term_counts_file, "r") as f:
-                self._term_counts = json.load(f)
+            try:
+                with open(term_counts_file, "r") as f:
+                    self._term_counts = json.load(f)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to load term counts (corrupted JSON): {e}")
+                logger.info("Rebuilding term counts from scratch")
+                self._term_counts = {}
         else:
             self._term_counts = {}
 
