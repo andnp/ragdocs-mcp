@@ -40,7 +40,7 @@ def search_git_history(
 ) -> GitSearchResponse:
     """
     Search git commit history with optional filters.
-    
+
     Args:
         commit_indexer: CommitIndexer instance
         query: Natural language query
@@ -48,13 +48,13 @@ def search_git_history(
         files_glob: Optional glob pattern (e.g., 'src/**/*.py')
         after_timestamp: Optional Unix timestamp (commits after)
         before_timestamp: Optional Unix timestamp (commits before)
-    
+
     Returns:
         GitSearchResponse with ranked commits
     """
     # Generate query embedding
     query_embedding = commit_indexer._embedding_model.get_text_embedding(query)
-    
+
     # Query index (over-fetch for filtering)
     candidates = commit_indexer.query_by_embedding(
         query_embedding,
@@ -62,11 +62,11 @@ def search_git_history(
         after_timestamp=after_timestamp,
         before_timestamp=before_timestamp,
     )
-    
+
     # Apply glob filtering if specified
     if files_glob:
         candidates = filter_by_glob(candidates, files_glob)
-    
+
     # Convert top N to CommitResult objects
     results = [
         CommitResult(
@@ -83,9 +83,9 @@ def search_git_history(
         )
         for c in candidates[:top_n]
     ]
-    
+
     total = commit_indexer.get_total_commits()
-    
+
     return GitSearchResponse(
         results=results,
         query=query,
@@ -96,11 +96,11 @@ def search_git_history(
 def filter_by_glob(commits: list[dict], glob_pattern: str) -> list[dict]:
     """
     Filter commits by glob pattern matching any changed file.
-    
+
     Args:
         commits: List of commit dicts with 'files_changed' key
         glob_pattern: Glob pattern (e.g., 'src/**/*.py')
-    
+
     Returns:
         Filtered list of commits
     """

@@ -12,6 +12,8 @@ from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, T
 from rich.table import Table
 
 from src.config import load_config
+from src.git.repository import discover_git_repositories, get_commits_after_timestamp, is_git_available
+from src.git.commit_parser import parse_commit, build_commit_document
 from src.context import ApplicationContext
 from src.indexing.manifest import IndexManifest, save_manifest
 from src.indexing.reconciler import build_indexed_files_map
@@ -147,6 +149,99 @@ def rebuild_index_cmd(project: str | None):
         save_manifest(ctx.index_path, current_manifest)
 
         click.echo(f"✅ Successfully rebuilt index: {total_files} documents indexed")
+
+        # Git commit indexing phase
+        if ctx.config.git_indexing.enabled and ctx.commit_indexer is not None:
+            if not is_git_available():
+                logger.warning("Git binary not available, skipping git commit indexing")
+                click.echo("⚠️  Git binary not available, skipping git commit indexing")
+            else:
+                try:
+                    repos = discover_git_repositories(
+                        docs_path,
+                        ctx.config.indexing.exclude,
+                        ctx.config.indexing.exclude_hidden_dirs,
+                    )
+
+                    if repos:
+                        # Count total commits across all repos
+                        total_commits = 0
+                        repo_commits_map: dict[Path, list[str]] = {}
+                        for repo_path in repos:
+                            try:
+                                last_timestamp = ctx.commit_indexer.get_last_indexed_timestamp(str(repo_path))
+                                commit_hashes = get_commits_after_timestamp(repo_path, last_timestamp)
+                                repo_commits_map[repo_path] = commit_hashes
+                                total_commits += len(commit_hashes)
+                            except Exception as e:
+                                logger.error(f"Failed to get commits from {repo_path}: {e}")
+                                continue
+
+                        if total_commits > 0:
+                            with Progress(
+                                TextColumn("[bold blue]{task.description}"),
+                                BarColumn(),
+                                TaskProgressColumn(),
+                                TimeRemainingColumn(),
+                            ) as progress:
+                                task = progress.add_task("Indexing git commits...", total=total_commits)
+
+                                indexed_count = 0
+                                for repo_path, commit_hashes in repo_commits_map.items():
+                                    try:
+                                        for commit_hash in commit_hashes:
+                                            try:
+                                                commit_data = parse_commit(
+                                                    repo_path,
+                                                    commit_hash,
+                                                    ctx.config.git_indexing.delta_max_lines,
+                                                )
+                                                commit_doc = build_commit_document(commit_data)
+                                                ctx.commit_indexer.add_commit(
+                                                    hash=commit_data.hash,
+                                                    timestamp=commit_data.timestamp,
+                                                    author=commit_data.author,
+                                                    committer=commit_data.committer,
+                                                    title=commit_data.title,
+                                                    message=commit_data.message,
+                                                    files_changed=commit_data.files_changed,
+                                                    delta_truncated=commit_data.delta_truncated,
+                                                    commit_document=commit_doc,
+                                                    repo_path=str(repo_path.parent),
+                                                )
+                                                indexed_count += 1
+                                                progress.advance(task)
+                                            except Exception as e:
+                                                logger.error(f"Failed to index commit {commit_hash}: {e}")
+                                                progress.advance(task)
+                                                continue
+                                    except Exception as e:
+                                        logger.error(f"Failed to process repository {repo_path}: {e}")
+                                        continue
+
+                            click.echo(f"✅ Successfully indexed {indexed_count} git commits from {len(repos)} repositories")
+                        else:
+                            click.echo("ℹ️  No new git commits to index")
+                    else:
+                        click.echo("ℹ️  No git repositories found")
+                except Exception as e:
+                    logger.error(f"Git indexing failed: {e}")
+                    click.echo(f"⚠️  Git indexing failed: {e}", err=True)
+
+        # Concept vocabulary building phase
+        if ctx.config.search.query_expansion_enabled:
+            try:
+                click.echo("Building concept vocabulary...")
+                ctx.index_manager.vector.build_concept_vocabulary(
+                    max_terms=ctx.config.search.query_expansion_max_terms,
+                    min_frequency=ctx.config.search.query_expansion_min_frequency,
+                )
+                ctx.index_manager.persist()
+                vocab_size = len(ctx.index_manager.vector._concept_vocabulary)
+                click.echo(f"✅ Successfully built concept vocabulary: {vocab_size} terms")
+            except Exception as e:
+                logger.error(f"Concept vocabulary building failed: {e}")
+                click.echo(f"⚠️  Concept vocabulary building failed: {e}", err=True)
 
     except Exception as e:
         logger.error(f"Failed to rebuild index: {e}")

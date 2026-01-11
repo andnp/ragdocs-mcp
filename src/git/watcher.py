@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class GitWatcher:
     """Watches .git directories for changes and triggers incremental indexing."""
-    
+
     def __init__(
         self,
         git_repos: list[Path],
@@ -28,7 +28,7 @@ class GitWatcher:
     ):
         """
         Initialize git watcher.
-        
+
         Args:
             git_repos: List of .git directory paths to watch
             commit_indexer: CommitIndexer instance
@@ -43,21 +43,21 @@ class GitWatcher:
         self._event_queue = queue.Queue()
         self._running = False
         self._task = None
-    
+
     def start(self) -> None:
         """Start watching git directories."""
         if self._running:
             return
-        
+
         self._running = True
-        
+
         for git_dir in self._git_repos:
             # Watch specific paths: HEAD and refs/
             watch_paths = [
                 git_dir / "HEAD",
                 git_dir / "refs",
             ]
-            
+
             for watch_path in watch_paths:
                 if watch_path.exists():
                     event_handler = _GitEventHandler(self._event_queue, git_dir)
@@ -69,17 +69,17 @@ class GitWatcher:
                     )
                     observer.start()
                     self._observers.append(observer)
-        
+
         self._task = asyncio.create_task(self._process_events())
         logger.info(f"Git watcher started for {len(self._git_repos)} repositories")
-    
+
     async def stop(self) -> None:
         """Stop watching git directories."""
         if not self._running:
             return
-        
+
         self._running = False
-        
+
         # Stop all observers
         for observer in self._observers:
             observer.stop()
@@ -90,9 +90,9 @@ class GitWatcher:
                 )
             except TimeoutError:
                 logger.warning("Observer thread did not stop within timeout")
-        
+
         self._observers.clear()
-        
+
         # Cancel processing task
         if self._task:
             self._task.cancel()
@@ -101,13 +101,13 @@ class GitWatcher:
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 pass
             self._task = None
-        
+
         logger.info("Git watcher stopped")
-    
+
     async def _process_events(self) -> None:
         """Process queued git directory changes with debouncing."""
         pending_repos: set[Path] = set()
-        
+
         while self._running:
             try:
                 try:
@@ -124,7 +124,7 @@ class GitWatcher:
                 break
             except Exception as e:
                 logger.error(f"Error in git event processing: {e}")
-        
+
         # Process remaining
         if pending_repos:
             try:
@@ -134,12 +134,12 @@ class GitWatcher:
                 )
             except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Failed to process final git events: {e}")
-    
+
     async def _batch_process(self, git_dirs: set[Path]) -> None:
         """Incrementally index commits for changed repositories."""
         from src.git.repository import get_commits_after_timestamp
         from src.git.commit_parser import parse_commit, build_commit_document
-        
+
         for git_dir in git_dirs:
             try:
                 # Get last indexed timestamp
@@ -147,20 +147,20 @@ class GitWatcher:
                     self._commit_indexer.get_last_indexed_timestamp,
                     str(git_dir),
                 )
-                
+
                 # Get new commits
                 commit_hashes = await asyncio.to_thread(
                     get_commits_after_timestamp,
                     git_dir,
                     last_timestamp,
                 )
-                
+
                 if not commit_hashes:
                     logger.debug(f"No new commits in {git_dir.parent}")
                     continue
-                
+
                 logger.info(f"Indexing {len(commit_hashes)} new commits from {git_dir.parent}")
-                
+
                 # Index new commits
                 for hash in commit_hashes:
                     try:
@@ -171,7 +171,7 @@ class GitWatcher:
                             self._config.git_indexing.delta_max_lines,
                         )
                         doc = build_commit_document(commit)
-                        
+
                         await asyncio.to_thread(
                             self._commit_indexer.add_commit,
                             hash=commit.hash,
@@ -187,35 +187,35 @@ class GitWatcher:
                         )
                     except Exception as e:
                         logger.error(f"Failed to index commit {hash}: {e}")
-                
+
                 logger.info(f"Updated commit index for {git_dir.parent.name}")
-            
+
             except Exception as e:
                 logger.error(f"Failed to update commits for {git_dir}: {e}")
 
 
 class _GitEventHandler(FileSystemEventHandler):
     """Event handler for git directory changes."""
-    
+
     def __init__(self, queue: queue.Queue[Path], git_dir: Path):
         super().__init__()
         self._queue = queue
         self._git_dir = git_dir
-    
+
     def on_modified(self, event: FileSystemEvent) -> None:
         """Detect commits via refs/ or HEAD changes."""
         if event.is_directory:
             return
-        
+
         path = Path(str(event.src_path))
-        
+
         # Trigger on HEAD or refs/* changes
         if path.name == "HEAD" or "refs" in path.parts:
             try:
                 self._queue.put_nowait(self._git_dir)
             except queue.Full:
                 pass
-    
+
     def on_created(self, event: FileSystemEvent) -> None:
         """Detect new branches/tags."""
         if not event.is_directory and "refs" in Path(str(event.src_path)).parts:

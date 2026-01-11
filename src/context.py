@@ -88,10 +88,10 @@ class ApplicationContext:
         commit_indexer = None
         if config.git_indexing.enabled:
             from src.git.repository import is_git_available
-            
+
             if is_git_available():
                 from src.git.commit_indexer import CommitIndexer
-                
+
                 db_path = index_path / "git_commits.db"
                 commit_indexer = CommitIndexer(
                     db_path=db_path,
@@ -127,10 +127,18 @@ class ApplicationContext:
 
     def discover_files(self) -> list[str]:
         docs_path = Path(self.config.indexing.documents_path)
-        pattern = str(docs_path / "**" / "*.md")
-        all_files = glob.glob(pattern, recursive=self.config.indexing.recursive)
+        
+        # Collect all files matching parser patterns
+        all_files = set()
+        for pattern in self.config.parsers.keys():
+            # Keep the full pattern including ** for recursive matching
+            glob_pattern = str(docs_path / pattern)
+            
+            files = glob.glob(glob_pattern, recursive=self.config.indexing.recursive)
+            all_files.update(files)
+        
         return [
-            f for f in all_files
+            f for f in sorted(all_files)
             if should_include_file(
                 f,
                 self.config.indexing.include,
@@ -404,33 +412,33 @@ class ApplicationContext:
         """Index all commits in discovered repositories (synchronous)."""
         if self.commit_indexer is None:
             return
-        
+
         from src.git.repository import discover_git_repositories, get_commits_after_timestamp
         from src.git.commit_parser import parse_commit, build_commit_document
-        
+
         logger.info("Starting initial git commit indexing")
-        
+
         repos = discover_git_repositories(
             Path(self.config.indexing.documents_path),
             self.config.indexing.exclude,
             self.config.indexing.exclude_hidden_dirs,
         )
-        
+
         total_indexed = 0
         for repo_path in repos:
             try:
                 # Get last indexed timestamp for this repo
                 last_timestamp = self.commit_indexer.get_last_indexed_timestamp(str(repo_path))
-                
+
                 # Get new commits
                 commit_hashes = get_commits_after_timestamp(repo_path, last_timestamp)
-                
+
                 logger.info(f"Indexing {len(commit_hashes)} commits from {repo_path.parent}")
-                
+
                 # Batch process
                 for i in range(0, len(commit_hashes), self.config.git_indexing.batch_size):
                     batch = commit_hashes[i:i + self.config.git_indexing.batch_size]
-                    
+
                     for hash in batch:
                         try:
                             commit = parse_commit(
@@ -439,7 +447,7 @@ class ApplicationContext:
                                 self.config.git_indexing.delta_max_lines,
                             )
                             doc = build_commit_document(commit)
-                            
+
                             self.commit_indexer.add_commit(
                                 hash=commit.hash,
                                 timestamp=commit.timestamp,
@@ -455,10 +463,10 @@ class ApplicationContext:
                             total_indexed += 1
                         except Exception as e:
                             logger.error(f"Failed to index commit {hash}: {e}")
-            
+
             except Exception as e:
                 logger.error(f"Failed to index repository {repo_path}: {e}")
-        
+
         logger.info(f"Initial git commit indexing complete: {total_indexed} commits")
 
     async def _index_git_commits_initial(self) -> None:

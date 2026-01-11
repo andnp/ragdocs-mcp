@@ -54,20 +54,20 @@ class LifecycleCoordinator:
 
         try:
             await ctx.start(background_index=background_index)
-            
+
             # Start git watcher if enabled
             if ctx.config.git_indexing.enabled and ctx.config.git_indexing.watch_enabled:
                 if ctx.commit_indexer is not None:
                     from pathlib import Path
                     from src.git.repository import discover_git_repositories
                     from src.git.watcher import GitWatcher
-                    
+
                     repos = discover_git_repositories(
                         Path(ctx.config.indexing.documents_path),
                         ctx.config.indexing.exclude,
                         ctx.config.indexing.exclude_hidden_dirs,
                     )
-                    
+
                     if repos:
                         self._git_watcher = GitWatcher(
                             git_repos=repos,
@@ -77,7 +77,7 @@ class LifecycleCoordinator:
                         )
                         self._git_watcher.start()
                         logger.info(f"Git watcher started for {len(repos)} repositories")
-            
+
             if background_index:
                 self._state = LifecycleState.INITIALIZING
                 logger.info("Lifecycle: INITIALIZING (indices loading in background)")

@@ -177,7 +177,7 @@ uv run mcp-markdown-ragdocs rebuild-index
 | `run` | HTTP API server | Development, testing, or HTTP-based integrations |
 | `query` | CLI query | Scripting or quick document searches |
 | `check-config` | Validate config | Debugging configuration issues |
-| `rebuild-index` | Force reindex | Config changes or corrupted indices |
+| `rebuild-index` | Force reindex (documents, git commits, vocabulary) | Config changes, corrupted indices, or force rebuild |
 
 ### MCP Integration
 

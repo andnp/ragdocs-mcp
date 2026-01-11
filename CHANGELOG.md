@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Processing pipeline order: normalize → threshold → doc limit → dedup → re-rank → top_n
 - Graph index enhanced with `related` frontmatter field edges
 - Vocabulary built during `persist()` after indexing completes
+- `rebuild-index` CLI command now includes three phases:
+  1. Document indexing with progress bar
+  2. Git commit indexing (if enabled) with repository discovery and progress tracking
+  3. Concept vocabulary building (if enabled) with term count display
+- All phases non-fatal: failures logged but do not prevent subsequent phases
+- Enhanced progress output with emoji indicators and detailed phase summaries
 
 ### Migration
 - **Reindexing required** to build concept vocabulary. Run: `uv run mcp-markdown-ragdocs rebuild-index`

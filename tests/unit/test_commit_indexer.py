@@ -6,11 +6,11 @@ from src.git.commit_indexer import CommitIndexer
 
 class MockEmbeddingModel:
     """Mock embedding model for testing."""
-    
+
     def __init__(self, dimension: int = 384):
         self.dimension = dimension
         self._counter = 0
-    
+
     def get_text_embedding(self, text: str) -> list[float]:
         """Generate deterministic embedding based on text hash."""
         # Use text hash to generate consistent embedding
@@ -37,13 +37,13 @@ def indexer(tmp_path, mock_model):
 def test_schema_creation(indexer):
     """Test that schema is created on initialization."""
     conn = indexer._get_connection()
-    
+
     # Check table exists
     cursor = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='git_commits'"
     )
     assert cursor.fetchone() is not None
-    
+
     # Check indexes exist
     cursor = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_timestamp'"
@@ -65,12 +65,12 @@ def test_add_commit(indexer):
         commit_document="Fix bug\n\nDetailed description",
         repo_path="/test/repo",
     )
-    
+
     # Verify stored
     conn = indexer._get_connection()
     cursor = conn.execute("SELECT * FROM git_commits WHERE hash = ?", ("abc123",))
     row = cursor.fetchone()
-    
+
     assert row is not None
     assert row["hash"] == "abc123"
     assert row["timestamp"] == 1234567890
@@ -93,7 +93,7 @@ def test_update_commit_idempotent(indexer):
         commit_document="doc 1",
         repo_path="/repo",
     )
-    
+
     # Update same commit
     indexer.add_commit(
         hash="def456",
@@ -107,13 +107,13 @@ def test_update_commit_idempotent(indexer):
         commit_document="doc 2",
         repo_path="/repo",
     )
-    
+
     # Verify only one commit exists with updated values
     conn = indexer._get_connection()
     cursor = conn.execute("SELECT COUNT(*) as count FROM git_commits WHERE hash = ?", ("def456",))
     row = cursor.fetchone()
     assert row["count"] == 1
-    
+
     cursor = conn.execute("SELECT * FROM git_commits WHERE hash = ?", ("def456",))
     row = cursor.fetchone()
     assert row["title"] == "Title 2"
@@ -134,15 +134,15 @@ def test_remove_commit(indexer):
         commit_document="doc",
         repo_path="/repo",
     )
-    
+
     # Verify exists
     conn = indexer._get_connection()
     cursor = conn.execute("SELECT COUNT(*) as count FROM git_commits WHERE hash = ?", ("ghi789",))
     assert cursor.fetchone()["count"] == 1
-    
+
     # Remove
     indexer.remove_commit("ghi789")
-    
+
     # Verify deleted
     cursor = conn.execute("SELECT COUNT(*) as count FROM git_commits WHERE hash = ?", ("ghi789",))
     assert cursor.fetchone()["count"] == 0
@@ -164,18 +164,18 @@ def test_query_by_embedding(indexer):
             commit_document=f"Document {i}",
             repo_path="/repo",
         )
-    
+
     # Query with a document that should match "Document 2"
     query_embedding = indexer._embedding_model.get_text_embedding("Document 2")
     results = indexer.query_by_embedding(query_embedding, top_k=3)
-    
+
     # Should get results
     assert len(results) <= 3
     assert len(results) > 0
     assert all(isinstance(r["score"], float) for r in results)
     # Cosine similarity should be in valid range, with some tolerance for floating point
     assert all(-1.01 <= r["score"] <= 1.01 for r in results)
-    
+
     # Results should be sorted by score descending
     scores = [r["score"] for r in results]
     assert scores == sorted(scores, reverse=True)
@@ -197,14 +197,14 @@ def test_timestamp_filter_after(indexer):
             commit_document=f"doc {i}",
             repo_path="/repo",
         )
-    
+
     query_embedding = indexer._embedding_model.get_text_embedding("doc")
     results = indexer.query_by_embedding(
         query_embedding,
         top_k=10,
         after_timestamp=1200,
     )
-    
+
     # Should only get commits with timestamp > 1200 (i >= 3)
     assert all(r["timestamp"] > 1200 for r in results)
     assert len(results) <= 2  # commits 3 and 4
@@ -226,14 +226,14 @@ def test_timestamp_filter_before(indexer):
             commit_document=f"doc {i}",
             repo_path="/repo",
         )
-    
+
     query_embedding = indexer._embedding_model.get_text_embedding("doc")
     results = indexer.query_by_embedding(
         query_embedding,
         top_k=10,
         before_timestamp=1200,
     )
-    
+
     # Should only get commits with timestamp < 1200 (i < 3)
     assert all(r["timestamp"] < 1200 for r in results)
     assert len(results) <= 3  # commits 0, 1, 2
@@ -243,7 +243,7 @@ def test_empty_index_query(indexer):
     """Test querying an empty index."""
     query_embedding = indexer._embedding_model.get_text_embedding("test")
     results = indexer.query_by_embedding(query_embedding, top_k=10)
-    
+
     assert len(results) == 0
 
 
@@ -252,7 +252,7 @@ def test_embedding_roundtrip(indexer):
     original = [1.0, 2.0, 3.0, 4.0]
     serialized = indexer._serialize_embedding(original)
     deserialized = indexer._deserialize_embedding(serialized)
-    
+
     np.testing.assert_array_almost_equal(original, deserialized, decimal=5)
 
 
@@ -271,7 +271,7 @@ def test_malformed_json_files(indexer):
         commit_document="doc",
         repo_path="/repo",
     )
-    
+
     # Manually corrupt the JSON
     conn = indexer._get_connection()
     conn.execute(
@@ -279,11 +279,11 @@ def test_malformed_json_files(indexer):
         ("{invalid json}", "valid"),
     )
     conn.commit()
-    
+
     # Query should handle gracefully
     query_embedding = indexer._embedding_model.get_text_embedding("doc")
     results = indexer.query_by_embedding(query_embedding, top_k=10)
-    
+
     assert len(results) == 1
     # Should fallback to empty list
     assert results[0]["files_changed"] == []
@@ -304,7 +304,7 @@ def test_get_last_indexed_timestamp(indexer):
         commit_document="doc",
         repo_path="/repo1",
     )
-    
+
     indexer.add_commit(
         hash="commit2",
         timestamp=2000,
@@ -317,7 +317,7 @@ def test_get_last_indexed_timestamp(indexer):
         commit_document="doc",
         repo_path="/repo1",
     )
-    
+
     indexer.add_commit(
         hash="commit3",
         timestamp=1500,
@@ -330,15 +330,15 @@ def test_get_last_indexed_timestamp(indexer):
         commit_document="doc",
         repo_path="/repo2",
     )
-    
+
     # Get last timestamp for repo1
     last_ts = indexer.get_last_indexed_timestamp("/repo1")
     assert last_ts == 2000
-    
+
     # Get last timestamp for repo2
     last_ts = indexer.get_last_indexed_timestamp("/repo2")
     assert last_ts == 1500
-    
+
     # Non-existent repo
     last_ts = indexer.get_last_indexed_timestamp("/repo3")
     assert last_ts is None
@@ -347,7 +347,7 @@ def test_get_last_indexed_timestamp(indexer):
 def test_get_total_commits(indexer):
     """Test counting total commits."""
     assert indexer.get_total_commits() == 0
-    
+
     # Add commits
     for i in range(3):
         indexer.add_commit(
@@ -362,5 +362,5 @@ def test_get_total_commits(indexer):
             commit_document="doc",
             repo_path="/repo",
         )
-    
+
     assert indexer.get_total_commits() == 3

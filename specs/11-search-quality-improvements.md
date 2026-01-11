@@ -201,6 +201,10 @@ def expand_query(query_text, vocabulary, embedding_model, top_k=3):
 - [src/indices/vector.py](../src/indices/vector.py): Add `build_concept_vocabulary()`, `expand_query()`
 - [src/search/orchestrator.py](../src/search/orchestrator.py): Call expansion before `_search_vector()`
 
+**CLI Integration:**
+
+The `rebuild-index` CLI command builds the concept vocabulary when `search.query_expansion_enabled = true`. This ensures the vocabulary is up-to-date with the indexed corpus. The command displays progress and vocabulary size on completion.
+
 **Storage:**
 - `concept_vocabulary.json` persisted alongside FAISS index
 - Format: `{"term": [embedding_values], ...}`

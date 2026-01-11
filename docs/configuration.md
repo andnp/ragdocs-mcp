@@ -249,7 +249,7 @@ uv run mcp-markdown-ragdocs rebuild-index [OPTIONS]
 
 **Usage:**
 
-Forces a complete reindex of all documents. Deletes existing indices and rebuilds from scratch.
+Forces a complete reindex of all documents. Deletes existing indices and rebuilds from scratch. If enabled via configuration, also indexes git commit history and builds concept vocabulary for query expansion.
 
 **Examples:**
 
@@ -265,8 +265,12 @@ uv run mcp-markdown-ragdocs rebuild-index --project monorepo
 
 ```
 Indexing documents... ████████████████████ 147/147 00:00:45
-
 ✅ Successfully rebuilt index: 147 documents indexed
+Found 2 git repository(ies)
+Indexing git commits... ████████████████████ 523/523 00:01:32
+✅ Successfully indexed 523 git commits from 2 repositories
+Building concept vocabulary...
+✅ Successfully built concept vocabulary: 1847 terms
 ```
 
 **When to Use:**
@@ -274,12 +278,46 @@ Indexing documents... ███████████████████�
 - Corrupted or missing index
 - After bulk document changes
 - Testing indexing behavior
+- Force rebuild of git commit index or concept vocabulary
 
 **Behavior:**
-- Discovers all matching files based on `include`/`exclude` patterns
-- Displays progress bar during indexing
-- Persists new index and manifest
-- Overwrites existing index files
+
+1. **Document Indexing Phase:**
+   - Discovers all matching files based on `include`/`exclude` patterns
+   - Displays progress bar during indexing
+   - Persists new index and manifest
+   - Overwrites existing index files
+
+2. **Git Commit Indexing Phase (if `git_indexing.enabled = true`):**
+   - Discovers git repositories respecting exclusion patterns
+   - Counts total commits across all repositories
+   - Displays progress bar showing commit indexing progress
+   - Indexes commit metadata, message, and truncated diffs
+   - Non-fatal: continues if git binary unavailable or indexing fails
+   - Outputs commit count and repository count on success
+
+3. **Concept Vocabulary Building Phase (if `search.query_expansion_enabled = true`):**
+   - Extracts unique terms from indexed documents
+   - Filters by minimum frequency threshold
+   - Embeds terms for query expansion
+   - Displays vocabulary size on completion
+   - Non-fatal: continues if vocabulary building fails
+
+**Edge Cases:**
+
+- **Git binary unavailable:** Displays warning and skips git commit indexing
+- **No repositories found:** Displays informational message
+- **No new commits:** Displays message indicating no commits to index
+- **Git indexing disabled:** Skips git commit indexing phase silently
+- **Query expansion disabled:** Skips concept vocabulary building phase silently
+- **Indexing failures:** Logs error and continues with remaining phases
+
+**Performance Notes:**
+
+- Document indexing: Depends on document count and size
+- Git commit indexing: ~60 commits/sec on average
+- Concept vocabulary: Scales with corpus size and term count (5000 terms default)
+- Large repositories (10k+ commits): May take several minutes for full rebuild
 
 ## Configuration File Discovery
 

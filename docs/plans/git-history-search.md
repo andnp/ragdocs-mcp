@@ -1,8 +1,8 @@
 # Implementation Plan: Git History Search Feature
 
-**Document Version:** 1.0  
-**Created:** 2026-01-10  
-**Target Completion:** 6 phases, ~15-20 hours total  
+**Document Version:** 1.0
+**Created:** 2026-01-10
+**Target Completion:** 6 phases, ~15-20 hours total
 **Design Reference:** [docs/specs/15-git-history-search.md](../specs/15-git-history-search.md)
 
 ---
@@ -97,12 +97,12 @@ def discover_git_repositories(
 ) -> list[Path]:
     """
     Recursively discover .git directories.
-    
+
     Args:
         documents_path: Root path to search
         exclude_patterns: Glob patterns to exclude (e.g., '**/.venv/**')
         exclude_hidden_dirs: Skip hidden directories except .git
-    
+
     Returns:
         List of absolute paths to .git directories
     """
@@ -116,11 +116,11 @@ def get_commits_after_timestamp(
 ) -> list[str]:
     """
     Get commit hashes after a timestamp.
-    
+
     Args:
         git_dir: Path to .git directory
         after_timestamp: Unix timestamp (None = all commits)
-    
+
     Returns:
         List of commit SHAs (newest first)
     """
@@ -180,12 +180,12 @@ class CommitData:
 def parse_commit(git_dir: Path, commit_hash: str, max_delta_lines: int = 200) -> CommitData:
     """
     Extract commit metadata and truncated delta.
-    
+
     Args:
         git_dir: Path to .git directory
         commit_hash: Full commit SHA
         max_delta_lines: Maximum diff lines to keep
-    
+
     Returns:
         CommitData with all fields populated
     """
@@ -196,21 +196,21 @@ def parse_commit(git_dir: Path, commit_hash: str, max_delta_lines: int = 200) ->
 def build_commit_document(commit: CommitData) -> str:
     """
     Build searchable text document from commit data.
-    
+
     Format (from spec section 3.2):
     {title}
-    
+
     {message}
-    
+
     Author: {author}
     Committer: {committer}
-    
+
     Files changed:
     {file_1}
     {file_2}
-    
+
     {delta_truncated}
-    
+
     Returns:
         Formatted text for embedding
     """
@@ -222,7 +222,7 @@ def truncate_delta(diff_output: str, max_lines: int = 200) -> str:
     lines = diff_output.splitlines()
     if len(lines) <= max_lines:
         return diff_output
-    
+
     truncated = '\n'.join(lines[:max_lines])
     remaining = len(lines) - max_lines
     return f"{truncated}\n\n... ({remaining} lines omitted)"
@@ -291,7 +291,7 @@ logger = logging.getLogger(__name__)
 
 class CommitIndexer:
     """Manages git commit index with embeddings."""
-    
+
     def __init__(
         self,
         db_path: Path,
@@ -299,7 +299,7 @@ class CommitIndexer:
     ):
         """
         Initialize commit indexer.
-        
+
         Args:
             db_path: Path to SQLite database file
             embedding_model: VectorIndex for embedding generation
@@ -308,12 +308,12 @@ class CommitIndexer:
         self._embedding_model = embedding_model
         self._conn: Optional[sqlite3.Connection] = None
         self._ensure_schema()
-    
+
     def _ensure_schema(self) -> None:
         """Create git_commits table if not exists."""
         # SQL schema from spec section 3.1
         pass
-    
+
     def add_commit(
         self,
         hash: str,
@@ -328,7 +328,7 @@ class CommitIndexer:
     ) -> None:
         """
         Add or update commit in index.
-        
+
         Args:
             hash: Commit SHA
             timestamp: Unix timestamp
@@ -343,14 +343,14 @@ class CommitIndexer:
         # Generate embedding
         embedding = self._embedding_model.get_text_embedding(commit_document)
         embedding_bytes = self._serialize_embedding(embedding)
-        
+
         # SQLite INSERT OR REPLACE
         pass
-    
+
     def remove_commit(self, commit_hash: str) -> None:
         """Remove commit from index by hash."""
         pass
-    
+
     def query_by_embedding(
         self,
         query_embedding: list[float],
@@ -360,31 +360,31 @@ class CommitIndexer:
     ) -> list[dict]:
         """
         Query commits by embedding similarity.
-        
+
         Returns:
             List of dicts with keys: hash, score, timestamp, etc.
         """
         # Load all embeddings, compute cosine similarity, sort
         pass
-    
+
     def get_last_indexed_timestamp(self, repo_path: str) -> Optional[int]:
         """Get most recent indexed_at timestamp for a repository."""
         pass
-    
+
     def get_total_commits(self) -> int:
         """Count total commits in index."""
         pass
-    
+
     @staticmethod
     def _serialize_embedding(embedding: list[float]) -> bytes:
         """Convert embedding to bytes for BLOB storage."""
         return np.array(embedding, dtype=np.float32).tobytes()
-    
+
     @staticmethod
     def _deserialize_embedding(blob: bytes) -> NDArray[np.float32]:
         """Convert BLOB to numpy array."""
         return np.frombuffer(blob, dtype=np.float32)
-    
+
     def close(self) -> None:
         """Close database connection."""
         if self._conn:
@@ -459,7 +459,7 @@ Update `load_config()` function:
 ```python
 def load_config():
     # ... existing code ...
-    
+
     git_indexing_data = config_data.get("git_indexing", {})
     git_indexing = GitIndexingConfig(
         enabled=git_indexing_data.get("enabled", True),
@@ -468,7 +468,7 @@ def load_config():
         watch_enabled=git_indexing_data.get("watch_enabled", True),
         watch_cooldown=git_indexing_data.get("watch_cooldown", 5.0),
     )
-    
+
     return Config(
         server=server,
         indexing=indexing,
@@ -516,11 +516,11 @@ class ApplicationContext:
         self.file_watcher = file_watcher
         self.code_index = code_index
         self.commit_indexer = commit_indexer  # NEW
-    
+
     @staticmethod
     def create(project_override: str | None = None) -> "ApplicationContext":
         # ... existing code ...
-        
+
         # NEW: Initialize commit indexer
         commit_indexer = None
         if config.git_indexing.enabled and is_git_available():
@@ -533,7 +533,7 @@ class ApplicationContext:
         else:
             if not is_git_available():
                 logger.warning("Git binary not found - git history search disabled")
-        
+
         return ApplicationContext(
             config=config,
             vector_index=vector_index,
@@ -560,33 +560,33 @@ def index_git_commits_initial(self) -> None:
     """Index all commits in discovered repositories (startup only)."""
     if self.commit_indexer is None:
         return
-    
+
     from src.git.repository import discover_git_repositories, get_commits_after_timestamp
     from src.git.commit_parser import parse_commit, build_commit_document
-    
+
     logger.info("Starting initial git commit indexing")
-    
+
     repos = discover_git_repositories(
         Path(self.config.indexing.documents_path),
         self.config.indexing.exclude,
         self.config.indexing.exclude_hidden_dirs,
     )
-    
+
     total_indexed = 0
     for repo_path in repos:
         try:
             # Get last indexed timestamp for this repo
             last_timestamp = self.commit_indexer.get_last_indexed_timestamp(str(repo_path))
-            
+
             # Get new commits
             commit_hashes = get_commits_after_timestamp(repo_path, last_timestamp)
-            
+
             logger.info(f"Indexing {len(commit_hashes)} commits from {repo_path.parent}")
-            
+
             # Batch process
             for i in range(0, len(commit_hashes), self.config.git_indexing.batch_size):
                 batch = commit_hashes[i:i + self.config.git_indexing.batch_size]
-                
+
                 for hash in batch:
                     try:
                         commit = parse_commit(
@@ -595,7 +595,7 @@ def index_git_commits_initial(self) -> None:
                             self.config.git_indexing.delta_max_lines,
                         )
                         doc = build_commit_document(commit)
-                        
+
                         self.commit_indexer.add_commit(
                             hash=commit.hash,
                             timestamp=commit.timestamp,
@@ -610,10 +610,10 @@ def index_git_commits_initial(self) -> None:
                         total_indexed += 1
                     except Exception as e:
                         logger.error(f"Failed to index commit {hash}: {e}")
-        
+
         except Exception as e:
             logger.error(f"Failed to index repository {repo_path}: {e}")
-    
+
     logger.info(f"Initial git commit indexing complete: {total_indexed} commits")
 ```
 
@@ -677,7 +677,7 @@ def search_git_history(
 ) -> GitSearchResponse:
     """
     Search git commit history with optional filters.
-    
+
     Args:
         commit_indexer: CommitIndexer instance
         query: Natural language query
@@ -685,13 +685,13 @@ def search_git_history(
         files_glob: Optional glob pattern (e.g., 'src/**/*.py')
         after_timestamp: Optional Unix timestamp (commits after)
         before_timestamp: Optional Unix timestamp (commits before)
-    
+
     Returns:
         GitSearchResponse with ranked commits
     """
     # Generate query embedding
     query_embedding = commit_indexer._embedding_model.get_text_embedding(query)
-    
+
     # Query index
     candidates = commit_indexer.query_by_embedding(
         query_embedding,
@@ -699,11 +699,11 @@ def search_git_history(
         after_timestamp=after_timestamp,
         before_timestamp=before_timestamp,
     )
-    
+
     # Apply glob filtering
     if files_glob:
         candidates = filter_by_glob(candidates, files_glob)
-    
+
     # Take top N
     results = []
     for commit_dict in candidates[:top_n]:
@@ -719,9 +719,9 @@ def search_git_history(
             score=commit_dict["score"],
             repo_path=commit_dict.get("repo_path", ""),
         ))
-    
+
     total = commit_indexer.get_total_commits()
-    
+
     return GitSearchResponse(
         results=results,
         query=query,
@@ -732,23 +732,23 @@ def search_git_history(
 def filter_by_glob(commits: list[dict], glob_pattern: str) -> list[dict]:
     """
     Filter commits by glob pattern matching any changed file.
-    
+
     Args:
         commits: List of commit dicts with 'files_changed' key
         glob_pattern: Glob pattern (e.g., 'src/**/*.py')
-    
+
     Returns:
         Filtered list of commits
     """
     filtered = []
     for commit in commits:
         files_changed = commit.get("files_changed", [])
-        
+
         for file_path in files_changed:
             if Path(file_path).match(glob_pattern):
                 filtered.append(commit)
                 break  # Match found, include commit
-    
+
     return filtered
 ```
 
@@ -842,18 +842,18 @@ async def _handle_search_git_history(self, arguments: dict) -> list[TextContent]
             type="text",
             text="Git history search is not available (git binary not found or disabled in config)"
         )]
-    
+
     from src.git.commit_search import search_git_history
-    
+
     query = arguments["query"]
     top_n = arguments.get("top_n", 5)
     files_glob = arguments.get("files_glob")
     after_timestamp = arguments.get("after_timestamp")
     before_timestamp = arguments.get("before_timestamp")
-    
+
     # Validate top_n
     top_n = max(MIN_TOP_N, min(top_n, MAX_TOP_N))
-    
+
     # Execute search
     response = await asyncio.to_thread(
         search_git_history,
@@ -864,7 +864,7 @@ async def _handle_search_git_history(self, arguments: dict) -> list[TextContent]
         after_timestamp,
         before_timestamp,
     )
-    
+
     # Format response
     output_lines = [
         f"# Git History Search Results",
@@ -874,7 +874,7 @@ async def _handle_search_git_history(self, arguments: dict) -> list[TextContent]
         f"**Results Returned:** {len(response.results)}",
         f"",
     ]
-    
+
     for i, commit in enumerate(response.results, 1):
         output_lines.extend([
             f"## {i}. {commit.title}",
@@ -891,13 +891,13 @@ async def _handle_search_git_history(self, arguments: dict) -> list[TextContent]
             f"### Files Changed ({len(commit.files_changed)})",
             f"",
         ])
-        
+
         for file_path in commit.files_changed[:10]:  # Limit to 10 files
             output_lines.append(f"- `{file_path}`")
-        
+
         if len(commit.files_changed) > 10:
             output_lines.append(f"- ... and {len(commit.files_changed) - 10} more")
-        
+
         output_lines.extend([
             f"",
             f"### Delta (truncated)",
@@ -909,7 +909,7 @@ async def _handle_search_git_history(self, arguments: dict) -> list[TextContent]
             "---",
             "",
         ])
-    
+
     return [TextContent(type="text", text="\n".join(output_lines))]
 ```
 
@@ -958,7 +958,7 @@ logger = logging.getLogger(__name__)
 
 class GitWatcher:
     """Watches .git directories for changes and triggers incremental indexing."""
-    
+
     def __init__(
         self,
         git_repos: list[Path],
@@ -968,7 +968,7 @@ class GitWatcher:
     ):
         """
         Initialize git watcher.
-        
+
         Args:
             git_repos: List of .git directory paths to watch
             commit_indexer: CommitIndexer instance
@@ -983,21 +983,21 @@ class GitWatcher:
         self._event_queue = queue.Queue[Path]()
         self._running = False
         self._task: asyncio.Task | None = None
-    
+
     def start(self) -> None:
         """Start watching git directories."""
         if self._running:
             return
-        
+
         self._running = True
-        
+
         for git_dir in self._git_repos:
             # Watch specific paths: HEAD, refs/, objects/
             watch_paths = [
                 git_dir / "HEAD",
                 git_dir / "refs",
             ]
-            
+
             for watch_path in watch_paths:
                 if watch_path.exists():
                     event_handler = _GitEventHandler(self._event_queue, git_dir)
@@ -1009,17 +1009,17 @@ class GitWatcher:
                     )
                     observer.start()
                     self._observers.append(observer)
-        
+
         self._task = asyncio.create_task(self._process_events())
         logger.info(f"Git watcher started for {len(self._git_repos)} repositories")
-    
+
     async def stop(self) -> None:
         """Stop watching git directories."""
         if not self._running:
             return
-        
+
         self._running = False
-        
+
         # Stop all observers
         for observer in self._observers:
             observer.stop()
@@ -1030,9 +1030,9 @@ class GitWatcher:
                 )
             except asyncio.TimeoutError:
                 logger.warning("Observer thread did not stop within timeout")
-        
+
         self._observers.clear()
-        
+
         # Cancel processing task
         if self._task:
             self._task.cancel()
@@ -1041,13 +1041,13 @@ class GitWatcher:
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 pass
             self._task = None
-        
+
         logger.info("Git watcher stopped")
-    
+
     async def _process_events(self) -> None:
         """Process queued git directory changes with debouncing."""
         pending_repos: set[Path] = set()
-        
+
         while self._running:
             try:
                 try:
@@ -1064,7 +1064,7 @@ class GitWatcher:
                 break
             except Exception as e:
                 logger.error(f"Error in git event processing: {e}")
-        
+
         # Process remaining
         if pending_repos:
             try:
@@ -1074,32 +1074,32 @@ class GitWatcher:
                 )
             except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Failed to process final git events: {e}")
-    
+
     async def _batch_process(self, git_dirs: set[Path]) -> None:
         """Incrementally index commits for changed repositories."""
         from src.git.repository import get_commits_after_timestamp
         from src.git.commit_parser import parse_commit, build_commit_document
-        
+
         for git_dir in git_dirs:
             try:
                 # Get last indexed timestamp
                 last_timestamp = self._commit_indexer.get_last_indexed_timestamp(
                     str(git_dir)
                 )
-                
+
                 # Get new commits
                 commit_hashes = await asyncio.to_thread(
                     get_commits_after_timestamp,
                     git_dir,
                     last_timestamp,
                 )
-                
+
                 if not commit_hashes:
                     logger.debug(f"No new commits in {git_dir.parent}")
                     continue
-                
+
                 logger.info(f"Indexing {len(commit_hashes)} new commits from {git_dir.parent}")
-                
+
                 # Index new commits
                 for hash in commit_hashes:
                     try:
@@ -1110,7 +1110,7 @@ class GitWatcher:
                             self._config.git_indexing.delta_max_lines,
                         )
                         doc = build_commit_document(commit)
-                        
+
                         await asyncio.to_thread(
                             self._commit_indexer.add_commit,
                             hash=commit.hash,
@@ -1125,32 +1125,32 @@ class GitWatcher:
                         )
                     except Exception as e:
                         logger.error(f"Failed to index commit {hash}: {e}")
-                
+
                 logger.info(f"Updated commit index for {git_dir.parent.name}")
-            
+
             except Exception as e:
                 logger.error(f"Failed to update commits for {git_dir}: {e}")
 
 
 class _GitEventHandler(FileSystemEventHandler):
     """Event handler for git directory changes."""
-    
+
     def __init__(self, queue: queue.Queue[Path], git_dir: Path):
         super().__init__()
         self._queue = queue
         self._git_dir = git_dir
-    
+
     def on_modified(self, event: FileSystemEvent) -> None:
         """Detect commits via refs/ or HEAD changes."""
         if event.is_directory:
             return
-        
+
         path = Path(event.src_path)
-        
+
         # Trigger on HEAD or refs/* changes
         if path.name == "HEAD" or "refs" in path.parts:
             self._queue.put_nowait(self._git_dir)
-    
+
     def on_created(self, event: FileSystemEvent) -> None:
         """Detect new branches/tags."""
         if not event.is_directory and "refs" in Path(event.src_path).parts:
@@ -1172,21 +1172,21 @@ class LifecycleCoordinator:
     def __init__(self):
         # ... existing fields ...
         self._git_watcher: GitWatcher | None = None
-    
+
     async def start(self, ctx: ApplicationContext) -> None:
         # ... existing startup logic ...
-        
+
         # Start git watcher if enabled
         if ctx.config.git_indexing.enabled and ctx.config.git_indexing.watch_enabled:
             if ctx.commit_indexer is not None:
                 from src.git.repository import discover_git_repositories
-                
+
                 repos = discover_git_repositories(
                     Path(ctx.config.indexing.documents_path),
                     ctx.config.indexing.exclude,
                     ctx.config.indexing.exclude_hidden_dirs,
                 )
-                
+
                 self._git_watcher = GitWatcher(
                     git_repos=repos,
                     commit_indexer=ctx.commit_indexer,
@@ -1195,10 +1195,10 @@ class LifecycleCoordinator:
                 )
                 self._git_watcher.start()
                 logger.info("Git watcher started")
-    
+
     async def shutdown(self, ctx: ApplicationContext) -> None:
         # ... existing shutdown logic ...
-        
+
         # Stop git watcher
         if self._git_watcher:
             await self._git_watcher.stop()
@@ -1233,12 +1233,12 @@ def test_repo(tmp_path):
     """Create a test git repository with commits."""
     repo_path = tmp_path / "test_repo"
     repo_path.mkdir()
-    
+
     # Initialize git repo
     subprocess.run(["git", "init"], cwd=repo_path, check=True)
     subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_path, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_path, check=True)
-    
+
     # Create test commits
     for i in range(5):
         file_path = repo_path / f"file_{i}.txt"
@@ -1249,7 +1249,7 @@ def test_repo(tmp_path):
             cwd=repo_path,
             check=True,
         )
-    
+
     return repo_path
 
 
@@ -1296,7 +1296,7 @@ async def test_search_git_history_tool(mcp_server, test_repo):
         "search_git_history",
         {"query": "Add file", "top_n": 5}
     )
-    
+
     assert len(response) == 1
     assert "Git History Search Results" in response[0].text
     # More assertions
@@ -1436,7 +1436,7 @@ graph TD
     C --> D[Phase 4: Search Tool]
     D --> E[Phase 5: File Watcher]
     E --> F[Phase 6: Testing & Docs]
-    
+
     style A fill:#e1f5e1
     style B fill:#e1f5e1
     style C fill:#fff4e1

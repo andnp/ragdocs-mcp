@@ -283,39 +283,39 @@ def discover_git_repositories(
 ) -> list[Path]:
     """
     Recursively find .git directories.
-    
+
     Returns:
         List of absolute paths to .git directories
     """
     git_dirs = []
-    
+
     for root, dirs, files in os.walk(documents_path):
         # Filter directories in-place to prevent descending
         if exclude_hidden_dirs:
             dirs[:] = [d for d in dirs if not d.startswith('.') or d == '.git']
-        
+
         # Apply glob exclusions
         root_path = Path(root)
         rel_path = root_path.relative_to(documents_path)
-        
+
         # Check if current directory matches any exclude pattern
         excluded = False
         for pattern in exclude:
             if rel_path.match(pattern):
                 excluded = True
                 break
-        
+
         if excluded:
             dirs.clear()  # Don't descend into excluded directories
             continue
-        
+
         # Check if .git exists in current directory
         git_path = root_path / '.git'
         if git_path.is_dir():
             git_dirs.append(git_path)
             # Don't descend into .git contents
             dirs[:] = [d for d in dirs if d != '.git']
-    
+
     return git_dirs
 ```
 
@@ -345,13 +345,13 @@ exclude = [
 def truncate_delta(commit_hash: str, max_lines: int = 200) -> str:
     """
     Get truncated diff for commit.
-    
+
     Uses `git show --format="" {hash}` to get raw diff only.
-    
+
     Args:
         commit_hash: Full commit SHA
         max_lines: Maximum lines to keep (default: 200)
-    
+
     Returns:
         Truncated diff string with indicator if truncated
     """
@@ -361,20 +361,20 @@ def truncate_delta(commit_hash: str, max_lines: int = 200) -> str:
         text=True,
         cwd=repo_path
     )
-    
+
     if result.returncode != 0:
         return f"Error retrieving delta: {result.stderr}"
-    
+
     lines = result.stdout.splitlines()
-    
+
     if len(lines) <= max_lines:
         return result.stdout
-    
+
     # Keep first max_lines and add truncation marker
     truncated = '\n'.join(lines[:max_lines])
     remaining = len(lines) - max_lines
     truncated += f"\n\n... ({remaining} lines omitted)"
-    
+
     return truncated
 ```
 
@@ -402,25 +402,25 @@ def filter_by_glob(
 ) -> list[dict]:
     """
     Filter commits by glob pattern matching any changed file.
-    
+
     Args:
         commits: List of commit dicts with 'files_changed' key
         glob_pattern: Glob pattern (e.g., 'src/**/*.py')
-    
+
     Returns:
         Filtered list of commits
     """
     from pathlib import Path
-    
+
     filtered = []
     for commit in commits:
         files_changed = json.loads(commit['files_changed'])
-        
+
         for file_path in files_changed:
             if Path(file_path).match(glob_pattern):
                 filtered.append(commit)
                 break  # Match found, include commit
-    
+
     return filtered
 ```
 
@@ -451,11 +451,11 @@ def get_new_commits(
 ) -> list[str]:
     """
     Get commit hashes added since last indexing.
-    
+
     Args:
         repo_path: Path to .git directory
         last_indexed_timestamp: Unix timestamp of last index update (None = all commits)
-    
+
     Returns:
         List of commit hashes (newest first)
     """
@@ -471,17 +471,17 @@ def get_new_commits(
         # Incremental: get commits after timestamp
         after_date = datetime.fromtimestamp(last_indexed_timestamp, timezone.utc)
         after_str = after_date.strftime('%Y-%m-%d %H:%M:%S')
-        
+
         result = subprocess.run(
             ['git', 'log', '--all', f'--after={after_str}', '--format=%H'],
             capture_output=True,
             text=True,
             cwd=repo_path.parent
         )
-    
+
     if result.returncode != 0:
         raise RuntimeError(f"git log failed: {result.stderr}")
-    
+
     return result.stdout.strip().split('\n') if result.stdout.strip() else []
 ```
 
@@ -935,6 +935,10 @@ response = await mcp_tool.search_git_history(
 - No crashes on malformed repositories
 - Configuration options documented and tested
 - Index rebuild command functional
+
+**CLI Integration:**
+
+The `rebuild-index` CLI command triggers git commit indexing when `git_indexing.enabled = true`. This provides a convenient way to rebuild both document and commit indices in a single operation. The command displays progress bars for both phases and handles failures gracefully.
 
 **Files:**
 

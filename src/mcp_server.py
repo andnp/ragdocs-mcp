@@ -299,25 +299,25 @@ class MCPServer:
         """Handle search_git_history tool call."""
         if not self.ctx:
             raise RuntimeError("Server not initialized")
-        
+
         if self.ctx.commit_indexer is None:
             return [TextContent(
                 type="text",
                 text="Git history search is not available (git binary not found or disabled in config)"
             )]
-        
+
         from datetime import datetime, timezone
         from src.git.commit_search import search_git_history
-        
+
         query = arguments["query"]
         top_n = arguments.get("top_n", 5)
         files_glob = arguments.get("files_glob")
         after_timestamp = arguments.get("after_timestamp")
         before_timestamp = arguments.get("before_timestamp")
-        
+
         # Validate top_n
         top_n = max(MIN_TOP_N, min(top_n, MAX_TOP_N))
-        
+
         # Execute search
         response = await asyncio.to_thread(
             search_git_history,
@@ -328,7 +328,7 @@ class MCPServer:
             after_timestamp,
             before_timestamp,
         )
-        
+
         # Format response
         output_lines = [
             "# Git History Search Results",
@@ -338,10 +338,10 @@ class MCPServer:
             f"**Results Returned:** {len(response.results)}",
             "",
         ]
-        
+
         for i, commit in enumerate(response.results, 1):
             commit_date = datetime.fromtimestamp(commit.timestamp, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-            
+
             output_lines.extend([
                 f"## {i}. {commit.title}",
                 "",
@@ -351,7 +351,7 @@ class MCPServer:
                 f"**Score:** {commit.score:.3f}",
                 "",
             ])
-            
+
             if commit.message:
                 output_lines.extend([
                     "### Message",
@@ -359,27 +359,27 @@ class MCPServer:
                     commit.message,
                     "",
                 ])
-            
+
             if commit.files_changed:
                 output_lines.extend([
                     f"### Files Changed ({len(commit.files_changed)})",
                     "",
                 ])
-                
+
                 for file_path in commit.files_changed[:10]:
                     output_lines.append(f"- `{file_path}`")
-                
+
                 if len(commit.files_changed) > 10:
                     output_lines.append(f"- ... and {len(commit.files_changed) - 10} more")
-                
+
                 output_lines.append("")
-            
+
             if commit.delta_truncated:
                 # Truncate delta for display
                 delta_display = commit.delta_truncated[:1000]
                 if len(commit.delta_truncated) > 1000:
                     delta_display += "\n... (truncated for display)"
-                
+
                 output_lines.extend([
                     "### Delta (truncated)",
                     "",
@@ -388,9 +388,9 @@ class MCPServer:
                     "```",
                     "",
                 ])
-            
+
             output_lines.extend(["---", ""])
-        
+
         return [TextContent(type="text", text="\n".join(output_lines))]
 
     async def shutdown(self) -> None:

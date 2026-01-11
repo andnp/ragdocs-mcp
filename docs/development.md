@@ -619,7 +619,7 @@ def discover_git_repositories(
 ) -> list[Path]:
     """
     Recursively find .git directories.
-    
+
     - Uses os.walk() with in-place directory filtering
     - Applies glob pattern matching
     - Stops descent at .git (no nested repos)
@@ -632,12 +632,12 @@ def discover_git_repositories(
 def parse_commit(git_dir: Path, commit_hash: str, max_delta_lines: int = 200) -> CommitData:
     """
     Extract commit metadata and truncated delta.
-    
+
     Uses:
     - git show --format="%H%n%ct%n%an..." for metadata
     - git diff-tree --name-only for files changed
     - git show --format="" for delta
-    
+
     Truncates delta to max_delta_lines with indicator.
     """
 ```
@@ -653,7 +653,7 @@ def add_commit(
 ):
     """
     Generate embedding and store in SQLite.
-    
+
     - Embedding shared with VectorIndex model
     - Serialized as BLOB (numpy.float32.tobytes())
     - Files changed stored as JSON array
@@ -669,7 +669,7 @@ def get_commits_after_timestamp(
 ) -> list[str]:
     """
     Query new commits since last index.
-    
+
     Uses: git log --all --after={timestamp} --format="%H"
     """
 ```

@@ -43,7 +43,7 @@ def _create_commit(
         check=True,
         capture_output=True,
     )
-    
+
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=repo_path,
@@ -60,17 +60,17 @@ def test_parse_standard_commit():
         repo_path = Path(tmpdir) / "repo"
         repo_path.mkdir()
         _init_git_repo(repo_path)
-        
+
         commit_hash = _create_commit(
             repo_path,
             "test.txt",
             "Hello world",
             "Add test file",
         )
-        
+
         git_dir = repo_path / ".git"
         commit_data = parse_commit(git_dir, commit_hash, max_delta_lines=200)
-        
+
         assert commit_data.hash == commit_hash
         assert commit_data.timestamp > 0
         assert "Test User" in commit_data.author
@@ -86,10 +86,10 @@ def test_parse_merge_commit():
         repo_path = Path(tmpdir) / "repo"
         repo_path.mkdir()
         _init_git_repo(repo_path)
-        
+
         # Create initial commit
         _create_commit(repo_path, "initial.txt", "initial", "Initial commit")
-        
+
         # Get the current branch name
         result = subprocess.run(
             ["git", "branch", "--show-current"],
@@ -102,7 +102,7 @@ def test_parse_merge_commit():
         if not main_branch:
             # Fallback for older git versions
             main_branch = "master"
-        
+
         # Create a branch
         subprocess.run(
             ["git", "checkout", "-b", "feature"],
@@ -111,7 +111,7 @@ def test_parse_merge_commit():
             capture_output=True,
         )
         _create_commit(repo_path, "feature.txt", "feature content", "Feature commit")
-        
+
         # Switch back to main and create another commit
         subprocess.run(
             ["git", "checkout", main_branch],
@@ -120,7 +120,7 @@ def test_parse_merge_commit():
             capture_output=True,
         )
         _create_commit(repo_path, "main.txt", "main content", "Main commit")
-        
+
         # Merge feature branch
         subprocess.run(
             ["git", "merge", "feature", "--no-edit"],
@@ -128,7 +128,7 @@ def test_parse_merge_commit():
             check=True,
             capture_output=True,
         )
-        
+
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=repo_path,
@@ -137,10 +137,10 @@ def test_parse_merge_commit():
             check=True,
         )
         merge_commit_hash = result.stdout.strip()
-        
+
         git_dir = repo_path / ".git"
         commit_data = parse_commit(git_dir, merge_commit_hash, max_delta_lines=200)
-        
+
         assert commit_data.hash == merge_commit_hash
         assert commit_data.timestamp > 0
 
@@ -151,11 +151,11 @@ def test_multiline_message():
         repo_path = Path(tmpdir) / "repo"
         repo_path.mkdir()
         _init_git_repo(repo_path)
-        
+
         file_path = repo_path / "test.txt"
         file_path.write_text("content")
         subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
-        
+
         # Create commit with multi-line message
         message = "Short title\n\nDetailed description\nwith multiple lines"
         subprocess.run(
@@ -164,7 +164,7 @@ def test_multiline_message():
             check=True,
             capture_output=True,
         )
-        
+
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=repo_path,
@@ -173,10 +173,10 @@ def test_multiline_message():
             check=True,
         )
         commit_hash = result.stdout.strip()
-        
+
         git_dir = repo_path / ".git"
         commit_data = parse_commit(git_dir, commit_hash, max_delta_lines=200)
-        
+
         assert commit_data.title == "Short title"
         assert "Detailed description" in commit_data.message
         assert "multiple lines" in commit_data.message
@@ -188,7 +188,7 @@ def test_delta_truncation():
         repo_path = Path(tmpdir) / "repo"
         repo_path.mkdir()
         _init_git_repo(repo_path)
-        
+
         # Create a file with many lines
         large_content = "\n".join([f"Line {i}" for i in range(300)])
         commit_hash = _create_commit(
@@ -197,10 +197,10 @@ def test_delta_truncation():
             large_content,
             "Add large file",
         )
-        
+
         git_dir = repo_path / ".git"
         commit_data = parse_commit(git_dir, commit_hash, max_delta_lines=200)
-        
+
         # Delta should be truncated
         assert "lines omitted" in commit_data.delta_truncated
         lines_in_delta = len(commit_data.delta_truncated.splitlines())
@@ -213,7 +213,7 @@ def test_delta_no_truncation():
         repo_path = Path(tmpdir) / "repo"
         repo_path.mkdir()
         _init_git_repo(repo_path)
-        
+
         # Create a small file
         small_content = "\n".join([f"Line {i}" for i in range(10)])
         commit_hash = _create_commit(
@@ -222,10 +222,10 @@ def test_delta_no_truncation():
             small_content,
             "Add small file",
         )
-        
+
         git_dir = repo_path / ".git"
         commit_data = parse_commit(git_dir, commit_hash, max_delta_lines=200)
-        
+
         # Delta should not be truncated
         assert "lines omitted" not in commit_data.delta_truncated
 
@@ -242,9 +242,9 @@ def test_build_commit_document():
         files_changed=["src/auth.py", "tests/test_auth.py"],
         delta_truncated="@@ -1,3 +1,3 @@\n-old line\n+new line",
     )
-    
+
     doc = build_commit_document(commit)
-    
+
     assert "Fix authentication bug" in doc
     assert "Detailed description" in doc
     assert "Author: John Doe" in doc
@@ -263,7 +263,7 @@ def test_truncate_delta_function():
     result = truncate_delta(short_diff, max_lines=200)
     assert result == short_diff
     assert "omitted" not in result
-    
+
     # Test with long input
     long_diff = "\n".join([f"line {i}" for i in range(300)])
     result = truncate_delta(long_diff, max_lines=200)
@@ -279,7 +279,7 @@ def test_utf8_encoding():
         repo_path = Path(tmpdir) / "repo"
         repo_path.mkdir()
         _init_git_repo(repo_path)
-        
+
         # Create file with UTF-8 content
         utf8_content = "Hello 世界 🌍"
         commit_hash = _create_commit(
@@ -288,10 +288,10 @@ def test_utf8_encoding():
             utf8_content,
             "Add UTF-8 content",
         )
-        
+
         git_dir = repo_path / ".git"
         commit_data = parse_commit(git_dir, commit_hash, max_delta_lines=200)
-        
+
         # Should handle UTF-8 correctly
         assert commit_data.title == "Add UTF-8 content"
         # Delta should contain the UTF-8 content (or fallback gracefully)
