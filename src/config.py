@@ -102,9 +102,19 @@ class ChunkingConfig:
 
 
 @dataclass
+class GitIndexingConfig:
+    enabled: bool = True
+    delta_max_lines: int = 200
+    batch_size: int = 100
+    watch_enabled: bool = True
+    watch_cooldown: float = 5.0
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
+    git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
     parsers: dict[str, str] = field(default_factory=lambda: {
         "**/*.md": "MarkdownParser",
         "**/*.markdown": "MarkdownParser",
@@ -230,6 +240,15 @@ def load_config():
         parent_chunk_max_chars=chunking_data.get("parent_chunk_max_chars", 2000),
     )
 
+    git_indexing_data = config_data.get("git_indexing", {})
+    git_indexing = GitIndexingConfig(
+        enabled=git_indexing_data.get("enabled", True),
+        delta_max_lines=git_indexing_data.get("delta_max_lines", 200),
+        batch_size=git_indexing_data.get("batch_size", 100),
+        watch_enabled=git_indexing_data.get("watch_enabled", True),
+        watch_cooldown=git_indexing_data.get("watch_cooldown", 5.0),
+    )
+
     projects_data = config_data.get("projects", [])
     projects = []
     if projects_data:
@@ -247,6 +266,7 @@ def load_config():
     return Config(
         server=server,
         indexing=indexing,
+        git_indexing=git_indexing,
         parsers=parsers,
         search=search,
         llm=llm,

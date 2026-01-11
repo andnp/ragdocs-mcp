@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.context import ApplicationContext
+    from src.git.watcher import GitWatcher
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class LifecycleState(StrEnum):
 class LifecycleCoordinator:
     _state: LifecycleState = field(default=LifecycleState.UNINITIALIZED)
     _ctx: ApplicationContext | None = field(default=None)
+    _git_watcher: GitWatcher | None = field(default=None, repr=False)
     _emergency_timer: threading.Timer | None = field(default=None, repr=False)
     _shutdown_count: int = field(default=0, repr=False)
     _graceful_timeout: float = field(default=2.0, repr=False)
@@ -52,6 +54,30 @@ class LifecycleCoordinator:
 
         try:
             await ctx.start(background_index=background_index)
+            
+            # Start git watcher if enabled
+            if ctx.config.git_indexing.enabled and ctx.config.git_indexing.watch_enabled:
+                if ctx.commit_indexer is not None:
+                    from pathlib import Path
+                    from src.git.repository import discover_git_repositories
+                    from src.git.watcher import GitWatcher
+                    
+                    repos = discover_git_repositories(
+                        Path(ctx.config.indexing.documents_path),
+                        ctx.config.indexing.exclude,
+                        ctx.config.indexing.exclude_hidden_dirs,
+                    )
+                    
+                    if repos:
+                        self._git_watcher = GitWatcher(
+                            git_repos=repos,
+                            commit_indexer=ctx.commit_indexer,
+                            config=ctx.config,
+                            cooldown=ctx.config.git_indexing.watch_cooldown,
+                        )
+                        self._git_watcher.start()
+                        logger.info(f"Git watcher started for {len(repos)} repositories")
+            
             if background_index:
                 self._state = LifecycleState.INITIALIZING
                 logger.info("Lifecycle: INITIALIZING (indices loading in background)")
@@ -127,6 +153,14 @@ class LifecycleCoordinator:
             return
 
         self._state = LifecycleState.SHUTTING_DOWN
+
+        # Stop git watcher first
+        if self._git_watcher:
+            try:
+                await self._git_watcher.stop()
+            except Exception as e:
+                logger.error(f"Error stopping git watcher: {e}")
+            self._git_watcher = None
 
         if self._ctx:
             try:

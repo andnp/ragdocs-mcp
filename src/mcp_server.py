@@ -133,6 +133,43 @@ class MCPServer:
                         "required": ["query"],
                     },
                 ),
+                Tool(
+                    name="search_git_history",
+                    description=(
+                        "Search git commit history using natural language queries. " +
+                        "Returns relevant commits with metadata, message, and diff context. " +
+                        "Supports filtering by file glob patterns and timestamp ranges."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Natural language query describing commits to find",
+                            },
+                            "top_n": {
+                                "type": "integer",
+                                "description": f"Maximum number of commits to return (default: 5, max: {MAX_TOP_N})",
+                                "default": 5,
+                                "minimum": MIN_TOP_N,
+                                "maximum": MAX_TOP_N,
+                            },
+                            "files_glob": {
+                                "type": "string",
+                                "description": "Optional glob pattern to filter by changed files (e.g., 'src/**/*.py')",
+                            },
+                            "after_timestamp": {
+                                "type": "integer",
+                                "description": "Optional Unix timestamp to filter commits after this date",
+                            },
+                            "before_timestamp": {
+                                "type": "integer",
+                                "description": "Optional Unix timestamp to filter commits before this date",
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                ),
             ]
 
         @self.server.call_tool()
@@ -141,6 +178,8 @@ class MCPServer:
                 return await self._handle_query_documents(arguments)
             elif name == "query_unique_documents":
                 return await self._handle_query_unique_documents(arguments)
+            elif name == "search_git_history":
+                return await self._handle_search_git_history(arguments)
             else:
                 raise ValueError(f"Unknown tool: {name}")
 
@@ -255,6 +294,104 @@ class MCPServer:
             max_chunks_per_doc=1,
             result_header="Search Results (Unique Documents)",
         )
+
+    async def _handle_search_git_history(self, arguments: dict) -> list[TextContent]:
+        """Handle search_git_history tool call."""
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+        
+        if self.ctx.commit_indexer is None:
+            return [TextContent(
+                type="text",
+                text="Git history search is not available (git binary not found or disabled in config)"
+            )]
+        
+        from datetime import datetime, timezone
+        from src.git.commit_search import search_git_history
+        
+        query = arguments["query"]
+        top_n = arguments.get("top_n", 5)
+        files_glob = arguments.get("files_glob")
+        after_timestamp = arguments.get("after_timestamp")
+        before_timestamp = arguments.get("before_timestamp")
+        
+        # Validate top_n
+        top_n = max(MIN_TOP_N, min(top_n, MAX_TOP_N))
+        
+        # Execute search
+        response = await asyncio.to_thread(
+            search_git_history,
+            self.ctx.commit_indexer,
+            query,
+            top_n,
+            files_glob,
+            after_timestamp,
+            before_timestamp,
+        )
+        
+        # Format response
+        output_lines = [
+            "# Git History Search Results",
+            "",
+            f"**Query:** {response.query}",
+            f"**Total Commits Indexed:** {response.total_commits_indexed}",
+            f"**Results Returned:** {len(response.results)}",
+            "",
+        ]
+        
+        for i, commit in enumerate(response.results, 1):
+            commit_date = datetime.fromtimestamp(commit.timestamp, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            
+            output_lines.extend([
+                f"## {i}. {commit.title}",
+                "",
+                f"**Commit:** `{commit.hash[:8]}`",
+                f"**Author:** {commit.author}",
+                f"**Date:** {commit_date}",
+                f"**Score:** {commit.score:.3f}",
+                "",
+            ])
+            
+            if commit.message:
+                output_lines.extend([
+                    "### Message",
+                    "",
+                    commit.message,
+                    "",
+                ])
+            
+            if commit.files_changed:
+                output_lines.extend([
+                    f"### Files Changed ({len(commit.files_changed)})",
+                    "",
+                ])
+                
+                for file_path in commit.files_changed[:10]:
+                    output_lines.append(f"- `{file_path}`")
+                
+                if len(commit.files_changed) > 10:
+                    output_lines.append(f"- ... and {len(commit.files_changed) - 10} more")
+                
+                output_lines.append("")
+            
+            if commit.delta_truncated:
+                # Truncate delta for display
+                delta_display = commit.delta_truncated[:1000]
+                if len(commit.delta_truncated) > 1000:
+                    delta_display += "\n... (truncated for display)"
+                
+                output_lines.extend([
+                    "### Delta (truncated)",
+                    "",
+                    "```diff",
+                    delta_display,
+                    "```",
+                    "",
+                ])
+            
+            output_lines.extend(["---", ""])
+        
+        return [TextContent(type="text", text="\n".join(output_lines))]
 
     async def shutdown(self) -> None:
         if not self.ctx:

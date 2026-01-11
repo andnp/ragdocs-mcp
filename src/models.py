@@ -85,3 +85,26 @@ class Document:
     file_path: str
     modified_time: datetime
     chunks: list[Chunk] | None = None
+
+
+@dataclass
+class CommitResult:
+    """Git commit search result."""
+    hash: str
+    title: str
+    author: str
+    committer: str
+    timestamp: int
+    message: str
+    files_changed: list[str]
+    delta_truncated: str
+    score: float
+    repo_path: str
+
+
+@dataclass
+class GitSearchResponse:
+    """Response from git history search."""
+    results: list[CommitResult]
+    query: str
+    total_commits_indexed: int

@@ -605,6 +605,69 @@ Controls document chunking strategy for vector indexing.
 | `max_chunk_chars` | Focused results, less context | Broader context, may dilute relevance |
 | `overlap_chars` | Less storage, less context | Better boundary matching, more storage |
 
+### [git_indexing]
+
+Controls git commit history indexing and search.
+
+#### `enabled`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** Enable git commit history indexing and search. When enabled, the server discovers `.git` directories and indexes commit history for semantic search.
+- **Requirements:** Git binary must be in PATH
+- **Example:**
+  ```toml
+  [git_indexing]
+  enabled = true
+  ```
+
+#### `exclude_patterns`
+
+- **Type:** list[string]
+- **Default:** `[".venv", "venv", "node_modules", "build", "dist", ".git", "__pycache__", ".pytest_cache", ".stversions"]`
+- **Description:** Directory names (not globs) to exclude when discovering git repositories. Matches against directory basename only. Uses same list as document indexing by default.
+- **Example:**
+  ```toml
+  [git_indexing]
+  exclude_patterns = [".venv", "archive", "vendor"]
+  ```
+
+#### `max_delta_lines`
+
+- **Type:** integer
+- **Default:** `200`
+- **Description:** Maximum number of diff lines to store per commit. Diffs exceeding this limit are truncated with indicator showing omitted line count. Prevents embedding explosion for large commits.
+- **Range:** 50 to 1000 (typical: 100 to 300)
+- **Effect:** Smaller values reduce storage and embedding size; larger values preserve more diff context.
+- **Example:**
+  ```toml
+  [git_indexing]
+  max_delta_lines = 200
+  ```
+
+**Complete Example:**
+
+```toml
+[git_indexing]
+enabled = true
+exclude_patterns = [".venv", "node_modules", "build"]
+max_delta_lines = 200
+```
+
+**Behavior:**
+
+- Repository discovery respects `indexing.exclude` patterns
+- Commits indexed from all branches (`git log --all`)
+- Delta truncation applied per commit (early lines prioritized)
+- Embedding model shared with document indexing (BAAI/bge-small-en-v1.5)
+- Incremental updates via GitWatcher monitoring `.git/HEAD` and `.git/refs/`
+
+**Performance:**
+
+- Indexing: 60 commits/sec (includes git operations, parsing, embedding)
+- Query: 5ms average for 10k commits
+- Storage: ~2KB per commit (metadata + embedding + truncated delta)
+
 ### [search]
 
 Controls hybrid search behavior and result fusion.

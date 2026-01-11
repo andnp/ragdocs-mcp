@@ -131,6 +131,7 @@ src/
 ├── config.py           # Configuration loading and dataclasses
 ├── models.py           # Shared data models (Document)
 ├── server.py           # FastAPI application and endpoints
+├── mcp_server.py       # MCP protocol stdio server
 ├── indexing/
 │   ├── manager.py      # IndexManager (coordinates all indices)
 │   ├── manifest.py     # Index versioning and rebuild logic
@@ -138,14 +139,21 @@ src/
 ├── indices/
 │   ├── graph.py        # NetworkX graph store
 │   ├── keyword.py      # Whoosh keyword index
+│   ├── code.py         # Code block search index
 │   └── vector.py       # FAISS vector index
+├── git/
+│   ├── repository.py   # Repository discovery and git operations
+│   ├── commit_parser.py # Commit metadata extraction
+│   ├── commit_indexer.py # SQLite storage and embedding
+│   ├── commit_search.py # Search logic and glob filtering
+│   └── watcher.py      # Git directory file watching
 ├── parsers/
 │   ├── base.py         # DocumentParser protocol
 │   ├── dispatcher.py   # ParserRegistry and dispatch logic
 │   └── markdown.py     # MarkdownParser with tree-sitter
 └── search/
     ├── fusion.py       # RRF fusion algorithm
-    └── orchestrator.py # Query orchestration and synthesis
+    └── orchestrator.py # Query orchestration
 ```
 
 ### Key Components
@@ -571,6 +579,117 @@ cat .index_data/index.manifest.json | jq
 ls -lh .index_data/
 ls -lh .index_data/vector/
 ls -lh .index_data/keyword/
+ls -lh .index_data/commits.db  # Git history index
+```
+
+## Git History Implementation
+
+### Module Structure
+
+The git history feature is organized under `src/git/`:
+
+- **repository.py**: Repository discovery and git operations
+- **commit_parser.py**: Commit metadata extraction and delta truncation
+- **commit_indexer.py**: SQLite storage with embedding management
+- **commit_search.py**: Search logic with glob filtering
+- **watcher.py**: Git directory file watching (`.git/HEAD`, `.git/refs/`)
+
+### Running Git-Specific Tests
+
+```zsh
+# Unit tests for git module
+uv run pytest tests/unit/test_repository.py tests/unit/test_commit_parser.py tests/unit/test_commit_indexer.py
+
+# Integration tests
+uv run pytest tests/integration/test_git_search.py
+
+# E2E tests
+uv run pytest tests/e2e/test_git_mcp.py
+```
+
+### How Commit Indexing Works
+
+**1. Repository Discovery:**
+
+```python
+def discover_git_repositories(
+    documents_path: Path,
+    exclude_patterns: list[str],
+    exclude_hidden_dirs: bool = True
+) -> list[Path]:
+    """
+    Recursively find .git directories.
+    
+    - Uses os.walk() with in-place directory filtering
+    - Applies glob pattern matching
+    - Stops descent at .git (no nested repos)
+    """
+```
+
+**2. Commit Parsing:**
+
+```python
+def parse_commit(git_dir: Path, commit_hash: str, max_delta_lines: int = 200) -> CommitData:
+    """
+    Extract commit metadata and truncated delta.
+    
+    Uses:
+    - git show --format="%H%n%ct%n%an..." for metadata
+    - git diff-tree --name-only for files changed
+    - git show --format="" for delta
+    
+    Truncates delta to max_delta_lines with indicator.
+    """
+```
+
+**3. Embedding and Storage:**
+
+```python
+def add_commit(
+    hash: str,
+    metadata: dict,
+    delta: str,
+    commit_document: str,
+):
+    """
+    Generate embedding and store in SQLite.
+    
+    - Embedding shared with VectorIndex model
+    - Serialized as BLOB (numpy.float32.tobytes())
+    - Files changed stored as JSON array
+    """
+```
+
+**4. Incremental Updates:**
+
+```python
+def get_commits_after_timestamp(
+    git_dir: Path,
+    after_timestamp: int | None = None
+) -> list[str]:
+    """
+    Query new commits since last index.
+    
+    Uses: git log --all --after={timestamp} --format="%H"
+    """
+```
+
+**5. GitWatcher:**
+
+Monitors `.git/HEAD` and `.git/refs/` with 5-second cooldown. On changes, queries `get_commits_after_timestamp()` and indexes incrementally.
+
+### Performance Benchmarks
+
+Located in `tests/performance/test_git_performance.py`:
+
+- **Indexing Speed:** 60 commits/sec target
+- **Query Latency:** 5ms p50, 15ms p95 for 10k commits
+- **Storage Efficiency:** ~2KB per commit
+
+Run benchmarks:
+
+```zsh
+uv run pytest tests/performance/test_git_performance.py -v
 ```
 
 ## Contributing Guidelines

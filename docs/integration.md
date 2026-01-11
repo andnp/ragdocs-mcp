@@ -672,6 +672,154 @@ No built-in resource limits. Consider:
 - Docker resource constraints (--memory, --cpus)
 - Rate limiting via reverse proxy
 
+## Git History Search
+
+The `search_git_history` tool provides semantic search over git commit history.
+
+### From VS Code
+
+Configure in settings (same as `query_documents` tool).
+
+Query from Copilot Chat:
+
+```
+@markdown-docs show me commits that fixed authentication bugs in the last month
+```
+
+The tool automatically discovers `.git` directories in your `documents_path` and indexes commit history.
+
+### From Claude Desktop
+
+Configure in claude_desktop_config.json (same as above).
+
+Query from conversation:
+
+```
+Search the git history for commits related to the JWT authentication refactor
+```
+
+Claude automatically invokes `search_git_history` when commit history context is useful.
+
+### MCP Tool Parameters
+
+**`search_git_history`:**
+
+```typescript
+{
+  query: string;              // Required: Natural language query
+  top_n?: number;             // Optional: Max results (default: 5, max: 100)
+  min_score?: number;         // Optional: Relevance threshold (default: 0.0)
+  file_pattern?: string;      // Optional: Glob filter (e.g., "src/**/*.py")
+  author?: string;            // Optional: Filter by author name/email
+  after?: number;             // Optional: Unix timestamp (commits after)
+  before?: number;            // Optional: Unix timestamp (commits before)
+}
+```
+
+### Example Queries
+
+**Basic semantic search:**
+
+```json
+{
+  "query": "authentication improvements",
+  "top_n": 10
+}
+```
+
+Returns commits with "authentication" in title/message/delta, ranked by semantic similarity.
+
+**Filter by files changed:**
+
+```json
+{
+  "query": "API changes",
+  "file_pattern": "src/api/**/*.py",
+  "top_n": 5
+}
+```
+
+Returns commits matching query where changed files match glob pattern.
+
+**Filter by author:**
+
+```json
+{
+  "query": "performance optimization",
+  "author": "alice@example.com",
+  "top_n": 5
+}
+```
+
+Returns commits from specific author.
+
+**Temporal filtering:**
+
+```json
+{
+  "query": "security fixes",
+  "after": 1704067200,
+  "before": 1706745600,
+  "top_n": 10
+}
+```
+
+Returns commits within date range (Jan 1 - Feb 1, 2024).
+
+**Combined filters:**
+
+```json
+{
+  "query": "refactor database layer",
+  "file_pattern": "src/db/**",
+  "author": "bob",
+  "after": 1704067200,
+  "min_score": 0.3,
+  "top_n": 5
+}
+```
+
+All filters applied: query match, file pattern, author contains "bob", after date, score threshold.
+
+### Configuration
+
+Enable/disable git indexing in config.toml:
+
+```toml
+[git_indexing]
+enabled = true
+exclude_patterns = [".venv", "node_modules", "build"]
+max_delta_lines = 200
+```
+
+See [Configuration Reference](configuration.md#git_indexing) for all options.
+
+### Performance
+
+- **Indexing:** 60 commits/sec (includes git operations, parsing, embedding)
+- **Query:** 5ms average for 10k commits
+- **Storage:** ~2KB per commit (metadata + embedding + truncated delta)
+
+### Troubleshooting
+
+**No commits indexed:**
+
+Check git binary availability:
+
+```zsh
+which git
+```
+
+If git not found, install or add to PATH.
+
+**Slow initial indexing:**
+
+Large repositories (10k+ commits) take several minutes. Progress logged at INFO level. Consider excluding archived branches.
+
+**High memory usage:**
+
+Delta truncation limits embedding size. Reduce `max_delta_lines` if memory constrained.
+
 ## API Reference
 
 ### POST /query_documents

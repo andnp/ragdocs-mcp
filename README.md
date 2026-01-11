@@ -17,6 +17,7 @@ Existing RAG solutions require manual database setup, explicit indexing steps, a
 - Hybrid search combining semantic embeddings (FAISS), keyword search (Whoosh), and graph traversal (NetworkX)
 - Cross-encoder re-ranking for improved precision (optional, ~50ms latency)
 - Query expansion via concept vocabulary for better recall
+- **Git history search:** Semantic search over commit history with metadata and delta context
 - **Multi-project support:** Manage isolated indices for multiple projects on one machine with automatic project detection
 - Server-Sent Events (SSE) streaming for real-time response delivery
 - CLI query command with rich formatted output
@@ -249,9 +250,11 @@ Configure the MCP server in VS Code user settings or workspace settings.
 
 #### Available Tools
 
-The server exposes one MCP tool:
+The server exposes two MCP tools:
 
 **`query_documents`**: Search indexed documents using hybrid search and return ranked document chunks.
+
+**`search_git_history`**: Search git commit history using natural language queries. Returns relevant commits with metadata, message, and diff context.
 
 **Parameters:**
 - `query` (required): Natural language query or question
@@ -278,6 +281,32 @@ The server exposes one MCP tool:
 ```
 
 The server returns ranked document chunks with file paths, header hierarchies, and relevance scores.
+
+**`search_git_history`**: Search git commit history using natural language queries.
+
+**Parameters:**
+- `query` (required): Natural language query describing commits to find
+- `top_n` (optional): Maximum commits to return (1-100, default: 5)
+- `min_score` (optional): Minimum relevance threshold (0.0-1.0, default: 0.0)
+- `file_pattern` (optional): Glob pattern to filter by changed files (e.g., `src/**/*.py`)
+- `author` (optional): Filter commits by author name or email
+- `after` (optional): Unix timestamp to filter commits after this date
+- `before` (optional): Unix timestamp to filter commits before this date
+
+**Note:** Git history search indexes up to 200 lines of diff per commit. Indexing processes 60 commits/sec on average. Search latency averages 5ms for 10k commits.
+
+**Example query:**
+
+```json
+{
+  "query": "fix authentication bug",
+  "top_n": 5,
+  "file_pattern": "src/auth/**",
+  "after": 1704067200
+}
+```
+
+The server returns ranked commits with hash, title, author, timestamp, message, files changed, and truncated diff.
 
 ### API Endpoints
 

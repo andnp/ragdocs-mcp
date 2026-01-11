@@ -5,6 +5,7 @@ import glob
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from src.config import Config, load_config, detect_project, resolve_index_path, resolve_documents_path
 from src.indexing.manager import IndexManager
@@ -17,6 +18,9 @@ from src.indices.vector import VectorIndex
 from src.search.orchestrator import SearchOrchestrator
 from src.utils import should_include_file
 
+if TYPE_CHECKING:
+    from src.git.commit_indexer import CommitIndexer
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,6 +30,7 @@ class ApplicationContext:
     index_manager: IndexManager
     orchestrator: SearchOrchestrator
     watcher: FileWatcher | None = None
+    commit_indexer: CommitIndexer | None = None
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
     current_manifest: IndexManifest | None = None
     reconciliation_task: asyncio.Task | None = field(default=None, repr=False)
@@ -79,11 +84,29 @@ class ApplicationContext:
                 index_manager=manager,
             )
 
+        # Initialize commit indexer if enabled and git available
+        commit_indexer = None
+        if config.git_indexing.enabled:
+            from src.git.repository import is_git_available
+            
+            if is_git_available():
+                from src.git.commit_indexer import CommitIndexer
+                
+                db_path = index_path / "git_commits.db"
+                commit_indexer = CommitIndexer(
+                    db_path=db_path,
+                    embedding_model=vector,
+                )
+                logger.info(f"Git commit indexer initialized: {db_path}")
+            else:
+                logger.warning("Git binary not found - git history search disabled")
+
         return cls(
             config=config,
             index_manager=manager,
             orchestrator=orchestrator,
             watcher=watcher,
+            commit_indexer=commit_indexer,
             index_path=index_path,
             current_manifest=None,
             reconciliation_task=None,
@@ -146,6 +169,13 @@ class ApplicationContext:
         if self.watcher:
             self.watcher.start()
             logger.info("File watcher started")
+
+        # Index git commits after document indexing
+        if self.commit_indexer is not None:
+            if background_index:
+                asyncio.create_task(self._index_git_commits_initial())
+            else:
+                self._index_git_commits_initial_sync()
 
         if self.config.indexing.reconciliation_interval_seconds > 0:
             self.reconciliation_task = asyncio.create_task(self._periodic_reconciliation())
@@ -362,4 +392,75 @@ class ApplicationContext:
         except Exception as e:
             logger.error(f"Failed to persist indices during stop: {e}")
 
+        if self.commit_indexer:
+            try:
+                await asyncio.to_thread(self.commit_indexer.close)
+            except Exception as e:
+                logger.error(f"Failed to close commit indexer: {e}")
+
         logger.info("ApplicationContext stopped")
+
+    def _index_git_commits_initial_sync(self) -> None:
+        """Index all commits in discovered repositories (synchronous)."""
+        if self.commit_indexer is None:
+            return
+        
+        from src.git.repository import discover_git_repositories, get_commits_after_timestamp
+        from src.git.commit_parser import parse_commit, build_commit_document
+        
+        logger.info("Starting initial git commit indexing")
+        
+        repos = discover_git_repositories(
+            Path(self.config.indexing.documents_path),
+            self.config.indexing.exclude,
+            self.config.indexing.exclude_hidden_dirs,
+        )
+        
+        total_indexed = 0
+        for repo_path in repos:
+            try:
+                # Get last indexed timestamp for this repo
+                last_timestamp = self.commit_indexer.get_last_indexed_timestamp(str(repo_path))
+                
+                # Get new commits
+                commit_hashes = get_commits_after_timestamp(repo_path, last_timestamp)
+                
+                logger.info(f"Indexing {len(commit_hashes)} commits from {repo_path.parent}")
+                
+                # Batch process
+                for i in range(0, len(commit_hashes), self.config.git_indexing.batch_size):
+                    batch = commit_hashes[i:i + self.config.git_indexing.batch_size]
+                    
+                    for hash in batch:
+                        try:
+                            commit = parse_commit(
+                                repo_path,
+                                hash,
+                                self.config.git_indexing.delta_max_lines,
+                            )
+                            doc = build_commit_document(commit)
+                            
+                            self.commit_indexer.add_commit(
+                                hash=commit.hash,
+                                timestamp=commit.timestamp,
+                                author=commit.author,
+                                committer=commit.committer,
+                                title=commit.title,
+                                message=commit.message,
+                                files_changed=commit.files_changed,
+                                delta_truncated=commit.delta_truncated,
+                                commit_document=doc,
+                                repo_path=str(repo_path),
+                            )
+                            total_indexed += 1
+                        except Exception as e:
+                            logger.error(f"Failed to index commit {hash}: {e}")
+            
+            except Exception as e:
+                logger.error(f"Failed to index repository {repo_path}: {e}")
+        
+        logger.info(f"Initial git commit indexing complete: {total_indexed} commits")
+
+    async def _index_git_commits_initial(self) -> None:
+        """Index all commits in discovered repositories (async wrapper)."""
+        await asyncio.to_thread(self._index_git_commits_initial_sync)

@@ -1,0 +1,1 @@
+"""Git history search module."""
