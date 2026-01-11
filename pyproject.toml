@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mcp-markdown-ragdocs"
 version = "0.1.0"
-description = "Add your description here"
+description = "A Model Context Protocol (MCP) server for semantic search over Markdown documentation."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -27,6 +27,12 @@ dependencies = [
     "tomlkit>=0.13.0",
     "sentence-transformers>=3.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/mcp-markdown-ragdocs"
+Documentation = "https://github.com/yourusername/mcp-markdown-ragdocs/tree/main/docs"
+Repository = "https://github.com/yourusername/mcp-markdown-ragdocs.git"
+Issues = "https://github.com/yourusername/mcp-markdown-ragdocs/issues"
 
 [project.scripts]
 mcp-markdown-ragdocs = "src.cli:main"

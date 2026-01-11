@@ -5,7 +5,6 @@ Tests the command-line interface using Click's CliRunner for isolated
 testing. Covers check-config, rebuild-index, run commands, and error handling.
 """
 
-import json
 import os
 from unittest import mock
 

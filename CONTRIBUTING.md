@@ -1,5 +1,8 @@
 # Contributing Guide
 
+## For AI Agents
+> **🤖 AI Assistants:** Please refer to [AGENTS.md](AGENTS.md) for architectural context, mental models, and coding standards before attempting changes.
+
 This guide covers everything needed to contribute to mcp-markdown-ragdocs.
 
 ## Quick Start

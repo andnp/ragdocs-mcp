@@ -87,18 +87,18 @@ def test_discover_files_excludes_hidden_dirs(context_with_config):
 def test_discover_files_finds_nested_subdirectories(context_with_config):
     """
     Regression test: Verify discover_files() finds files in nested subdirectories.
-    
+
     BUG CONTEXT:
     Previously, discover_files() incorrectly stripped '**/' from patterns like
     '**/*.md', causing glob.glob() to only search the root directory. This resulted
     in 0 files discovered instead of hundreds when files existed in subdirectories.
-    
+
     This test creates a realistic nested directory structure and verifies that:
     1. Files in the root directory are discovered
-    2. Files in immediate subdirectories are discovered  
+    2. Files in immediate subdirectories are discovered
     3. Files in deeply nested subdirectories are discovered
     4. Both .md and .txt file types are found recursively
-    
+
     The test would have failed with the bug (files in subdirs not found).
     """
     ctx = context_with_config
@@ -107,12 +107,12 @@ def test_discover_files_finds_nested_subdirectories(context_with_config):
     # Create nested directory structure
     (docs_path / "root.md").write_text("# Root Document")
     (docs_path / "root.txt").write_text("Root text file")
-    
+
     subdir = docs_path / "subdir"
     subdir.mkdir()
     (subdir / "nested.md").write_text("# Nested Document")
     (subdir / "nested.txt").write_text("Nested text file")
-    
+
     deep_dir = docs_path / "deeply" / "nested"
     deep_dir.mkdir(parents=True)
     (deep_dir / "deep.md").write_text("# Deeply Nested Document")
@@ -122,7 +122,7 @@ def test_discover_files_finds_nested_subdirectories(context_with_config):
 
     # Verify all 5 files are discovered
     assert len(files) == 5, f"Expected 5 files, found {len(files)}: {files}"
-    
+
     # Verify each file is present
     file_names = [Path(f).name for f in files]
     assert "root.md" in file_names
@@ -130,7 +130,7 @@ def test_discover_files_finds_nested_subdirectories(context_with_config):
     assert "nested.md" in file_names
     assert "nested.txt" in file_names
     assert "deep.md" in file_names
-    
+
     # Verify files from subdirectories are included (not just root)
     assert any("subdir" in f for f in files), "No files from subdir/ found"
     assert any("deeply" in f for f in files), "No files from deeply/nested/ found"

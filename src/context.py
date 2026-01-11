@@ -127,16 +127,16 @@ class ApplicationContext:
 
     def discover_files(self) -> list[str]:
         docs_path = Path(self.config.indexing.documents_path)
-        
+
         # Collect all files matching parser patterns
         all_files = set()
         for pattern in self.config.parsers.keys():
             # Keep the full pattern including ** for recursive matching
             glob_pattern = str(docs_path / pattern)
-            
+
             files = glob.glob(glob_pattern, recursive=self.config.indexing.recursive)
             all_files.update(files)
-        
+
         return [
             f for f in sorted(all_files)
             if should_include_file(
