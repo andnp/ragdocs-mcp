@@ -1,0 +1,320 @@
+import logging
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+import yaml
+
+from src.chunking.factory import get_chunker
+from src.config import Config
+from src.indices.graph import GraphStore
+from src.indices.keyword import KeywordIndex
+from src.indices.vector import VectorIndex
+from src.memory.link_parser import extract_links
+from src.memory.models import ExtractedLink, MemoryDocument, MemoryFrontmatter
+from src.memory.storage import (
+    compute_memory_id,
+    ensure_memory_dirs,
+    get_indices_path,
+    list_memory_files,
+)
+from src.models import Document
+
+logger = logging.getLogger(__name__)
+
+
+FRONTMATTER_PATTERN = re.compile(r'^---\s*\n(.*?)\n---\s*\n', re.DOTALL)
+
+
+@dataclass
+class FailedMemory:
+    path: str
+    error: str
+    timestamp: str
+
+
+class MemoryIndexManager:
+    def __init__(
+        self,
+        config: Config,
+        memory_path: Path,
+        vector: VectorIndex,
+        keyword: KeywordIndex,
+        graph: GraphStore,
+    ):
+        self._config = config
+        self._memory_path = memory_path
+        self._vector = vector
+        self._keyword = keyword
+        self._graph = graph
+        self._failed_files: list[FailedMemory] = []
+        self._chunker = get_chunker(config.chunking)
+
+        ensure_memory_dirs(memory_path)
+
+    @property
+    def memory_path(self) -> Path:
+        return self._memory_path
+
+    @property
+    def vector(self) -> VectorIndex:
+        return self._vector
+
+    @property
+    def keyword(self) -> KeywordIndex:
+        return self._keyword
+
+    @property
+    def graph(self) -> GraphStore:
+        return self._graph
+
+    def _parse_frontmatter(self, content: str) -> tuple[MemoryFrontmatter, str]:
+        match = FRONTMATTER_PATTERN.match(content)
+        if not match:
+            return MemoryFrontmatter(), content
+
+        try:
+            yaml_content = match.group(1)
+            data = yaml.safe_load(yaml_content) or {}
+
+            created_at = data.get("created_at")
+            if isinstance(created_at, str):
+                try:
+                    created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                except ValueError:
+                    created_at = None
+            elif isinstance(created_at, datetime):
+                pass
+            else:
+                created_at = None
+
+            tags = data.get("tags", [])
+            if isinstance(tags, str):
+                tags = [t.strip() for t in tags.split(",") if t.strip()]
+
+            frontmatter = MemoryFrontmatter(
+                type=data.get("type", "journal"),
+                status=data.get("status", "active"),
+                tags=tags,
+                created_at=created_at,
+            )
+
+            body = content[match.end():]
+            return frontmatter, body
+
+        except yaml.YAMLError as e:
+            logger.warning(f"Failed to parse frontmatter: {e}")
+            return MemoryFrontmatter(), content
+
+    def _parse_memory_file(self, file_path: Path) -> MemoryDocument:
+        content = file_path.read_text(encoding="utf-8")
+        frontmatter, body = self._parse_frontmatter(content)
+        links = extract_links(body)
+        memory_id = compute_memory_id(self._memory_path, file_path)
+        stat = file_path.stat()
+        modified_time = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+
+        return MemoryDocument(
+            id=memory_id,
+            content=body,
+            frontmatter=frontmatter,
+            links=links,
+            file_path=str(file_path),
+            modified_time=modified_time,
+        )
+
+    def _memory_to_document(self, memory: MemoryDocument) -> Document:
+        metadata: dict[str, str | list[str] | int | float | bool] = {
+            "memory_type": memory.frontmatter.type,
+            "memory_status": memory.frontmatter.status,
+        }
+
+        if memory.frontmatter.created_at:
+            metadata["created_at"] = memory.frontmatter.created_at.isoformat()
+
+        link_targets = [link.target for link in memory.links]
+
+        return Document(
+            id=memory.id,
+            content=memory.content,
+            metadata=metadata,
+            links=link_targets,
+            tags=memory.frontmatter.tags,
+            file_path=memory.file_path,
+            modified_time=memory.modified_time,
+        )
+
+    def _add_tag_nodes_and_edges(self, memory_id: str, tags: list[str]) -> None:
+        from src.memory.link_parser import normalize_tag
+
+        for tag in tags:
+            normalized_tag = normalize_tag(tag)
+            tag_id = f"tag:{normalized_tag}"
+
+            if not self._graph.has_node(tag_id):
+                self._graph.add_node(tag_id, {"is_tag": True, "tag_name": normalized_tag})
+
+            self._graph.add_edge(
+                source=memory_id,
+                target=tag_id,
+                edge_type="HAS_TAG",
+                edge_context="",
+            )
+
+    def _add_ghost_nodes_and_edges(
+        self, memory_id: str, links: list[ExtractedLink]
+    ) -> None:
+        for link in links:
+            if link.is_memory_link:
+                target_id = link.target
+            else:
+                target_id = f"ghost:{link.target}"
+
+            if not self._graph.has_node(target_id):
+                if link.is_memory_link:
+                    self._graph.add_node(target_id, {"is_memory_ghost": True})
+                else:
+                    self._graph.add_node(target_id, {"is_ghost": True, "target": link.target})
+
+            self._graph.add_edge(
+                source=memory_id,
+                target=target_id,
+                edge_type=link.edge_type,
+                edge_context=link.anchor_context,
+            )
+
+    def index_memory(self, file_path: str) -> None:
+        path = Path(file_path)
+        try:
+            memory = self._parse_memory_file(path)
+            document = self._memory_to_document(memory)
+
+            chunks = self._chunker.chunk_document(document)
+
+            for chunk in chunks:
+                chunk.metadata["memory_type"] = memory.frontmatter.type
+                chunk.metadata["memory_status"] = memory.frontmatter.status
+                chunk.metadata["memory_tags"] = memory.frontmatter.tags
+                if memory.frontmatter.created_at:
+                    chunk.metadata["memory_created_at"] = memory.frontmatter.created_at.isoformat()
+
+                self._vector.add_chunk(chunk)
+                self._keyword.add_chunk(chunk)
+
+            self._graph.add_node(memory.id, {
+                "type": memory.frontmatter.type,
+                "status": memory.frontmatter.status,
+                "tags": memory.frontmatter.tags,
+            })
+
+            self._add_tag_nodes_and_edges(memory.id, memory.frontmatter.tags)
+            self._add_ghost_nodes_and_edges(memory.id, memory.links)
+
+            self._failed_files = [
+                f for f in self._failed_files if f.path != file_path
+            ]
+
+            logger.info(f"Indexed memory: {memory.id} with {len(chunks)} chunks")
+
+        except Exception as e:
+            logger.error(f"Failed to index memory {file_path}: {e}", exc_info=True)
+            failed = FailedMemory(
+                path=file_path,
+                error=str(e),
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            )
+            self._failed_files = [
+                f for f in self._failed_files if f.path != file_path
+            ] + [failed]
+            raise
+
+    def remove_memory(self, memory_id: str) -> None:
+        try:
+            self._vector.remove(memory_id)
+            self._keyword.remove(memory_id)
+            self._graph.remove_node(memory_id)
+            logger.info(f"Removed memory: {memory_id}")
+        except Exception as e:
+            logger.error(f"Failed to remove memory {memory_id}: {e}", exc_info=True)
+
+    def reindex_all(self) -> int:
+        memory_files = list_memory_files(self._memory_path)
+        indexed_count = 0
+
+        for file_path in memory_files:
+            try:
+                self.index_memory(str(file_path))
+                indexed_count += 1
+            except Exception as e:
+                logger.error(f"Failed to index {file_path}: {e}")
+
+        return indexed_count
+
+    def persist(self) -> None:
+        indices_path = get_indices_path(self._memory_path)
+        try:
+            self._vector.persist(indices_path / "vector")
+            self._keyword.persist(indices_path / "keyword")
+            self._graph.persist(indices_path / "graph")
+            logger.info(f"Persisted memory indices to {indices_path}")
+        except Exception as e:
+            logger.error(f"Failed to persist memory indices: {e}", exc_info=True)
+            raise
+
+    def load(self) -> None:
+        indices_path = get_indices_path(self._memory_path)
+        try:
+            self._vector.load(indices_path / "vector")
+            self._keyword.load(indices_path / "keyword")
+            self._graph.load(indices_path / "graph")
+            logger.info(f"Loaded memory indices from {indices_path}")
+        except Exception as e:
+            logger.error(f"Failed to load memory indices: {e}", exc_info=True)
+            raise
+
+    def get_memory_count(self) -> int:
+        return len(self._vector.get_document_ids())
+
+    def get_failed_files(self) -> list[dict[str, str]]:
+        return [
+            {"path": f.path, "error": f.error, "timestamp": f.timestamp}
+            for f in self._failed_files
+        ]
+
+    def get_all_tags(self) -> dict[str, int]:
+        tag_counts: dict[str, int] = {}
+
+        for memory_file in list_memory_files(self._memory_path):
+            try:
+                content = memory_file.read_text(encoding="utf-8")
+                frontmatter, _ = self._parse_frontmatter(content)
+                for tag in frontmatter.tags:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+            except Exception:
+                continue
+
+        return tag_counts
+
+    def get_all_types(self) -> dict[str, int]:
+        type_counts: dict[str, int] = {}
+
+        for memory_file in list_memory_files(self._memory_path):
+            try:
+                content = memory_file.read_text(encoding="utf-8")
+                frontmatter, _ = self._parse_frontmatter(content)
+                mem_type = frontmatter.type
+                type_counts[mem_type] = type_counts.get(mem_type, 0) + 1
+            except Exception:
+                continue
+
+        return type_counts
+
+    def get_total_size_bytes(self) -> int:
+        total = 0
+        for memory_file in list_memory_files(self._memory_path):
+            try:
+                total += memory_file.stat().st_size
+            except Exception:
+                continue
+        return total

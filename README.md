@@ -15,6 +15,9 @@ Existing RAG solutions require manual database setup, explicit indexing steps, a
 ## Features
 
 - Hybrid search combining semantic embeddings (FAISS), keyword search (Whoosh), and graph traversal (NetworkX)
+- **Community-based boosting**: Louvain clustering detects document communities; co-community results receive score boost
+- **Score-aware dynamic fusion**: Adjusts vector/keyword weights based on score variance per query
+- **HyDE (Hypothetical Document Embeddings)**: `search_with_hypothesis` tool for vague queries
 - Cross-encoder re-ranking for improved precision (optional, ~50ms latency)
 - Query expansion via concept vocabulary for better recall
 - **Git history search:** Semantic search over commit history with metadata and delta context
@@ -28,6 +31,7 @@ Existing RAG solutions require manual database setup, explicit indexing steps, a
 - Rich Markdown parsing: frontmatter, wikilinks, tags, transclusions
 - Reciprocal Rank Fusion for multi-strategy result merging
 - Recency bias for recently modified documents
+- **Memory Management System:** Persistent AI memory bank with cross-corpus linking, recency boost, and ghost node graph traversal
 - Local-first architecture with no external dependencies
 
 ## Installation
@@ -256,6 +260,8 @@ The server exposes two MCP tools:
 
 **`search_git_history`**: Search git commit history using natural language queries. Returns relevant commits with metadata, message, and diff context.
 
+**`search_with_hypothesis`**: Search using a hypothesis about expected documentation content. Embeds the hypothesis directly for semantic search (HyDE technique). Useful for vague queries where describing expected content yields better results than the query itself.
+
 **Parameters:**
 - `query` (required): Natural language query or question
 - `top_n` (optional): Maximum results to return (1-100, default: 5)
@@ -307,6 +313,29 @@ The server returns ranked document chunks with file paths, header hierarchies, a
 ```
 
 The server returns ranked commits with hash, title, author, timestamp, message, files changed, and truncated diff.
+
+### Memory Management
+
+The server supports an AI memory bank for persistent cross-session knowledge storage.
+
+**Enable in configuration:**
+
+```toml
+[memory]
+enabled = true
+storage_strategy = "project"  # "project" or "user"
+recency_boost_days = 7
+recency_boost_factor = 1.2
+```
+
+**Available tools:**
+- `create_memory`, `read_memory`, `update_memory`, `append_memory`, `delete_memory`: CRUD operations (system auto-generates frontmatter for `create_memory`)
+- `search_memories`: Hybrid search with recency boost and tag/type filtering
+- `search_linked_memories`: Find memories linking to a specific document via ghost nodes
+- `get_memory_stats`: Memory bank statistics
+- `merge_memories`: Consolidate multiple memories into one
+
+See [Memory Management](docs/memory.md) for complete documentation.
 
 ### API Endpoints
 
@@ -419,6 +448,7 @@ See [docs/configuration.md](docs/configuration.md) for exhaustive configuration 
 - [Configuration](docs/configuration.md) - Complete configuration reference
 - [Hybrid Search](docs/hybrid-search.md) - Search strategies and RRF fusion algorithm
 - [Integration](docs/integration.md) - VS Code MCP setup and client integration
+- [Memory Management](docs/memory.md) - AI memory bank, CRUD tools, ghost nodes
 - [Development](docs/development.md) - Development setup, testing, contributing
 
 ## License

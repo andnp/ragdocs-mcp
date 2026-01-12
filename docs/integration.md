@@ -820,6 +820,200 @@ Large repositories (10k+ commits) take several minutes. Progress logged at INFO 
 
 Delta truncation limits embedding size. Reduce `max_delta_lines` if memory constrained.
 
+## HyDE Search (Hypothesis-Driven)
+
+The `search_with_hypothesis` tool enables hypothesis-driven document embeddings for vague queries.
+
+### Concept
+
+Standard search requires well-formed queries with specific terms. HyDE inverts this: instead of searching with a question, search with a hypothesis describing what the answer documentation looks like. The hypothesis is embedded directly and matched against document embeddings.
+
+### When to Use
+
+- Vague queries where exact terminology is unknown
+- AI assistants that can describe expected documentation content
+- Exploratory searches where the answer format is known but content is not
+
+### MCP Tool Parameters
+
+**`search_with_hypothesis`:**
+
+```typescript
+{
+  hypothesis: string;         // Required: Description of expected documentation
+  top_n?: number;             // Optional: Max results (default: 5, max: 100)
+  excluded_files?: string[];  // Optional: Files to exclude from results
+}
+```
+
+### Usage Example
+
+**Problem:** User asks "How do I add a new feature to the server?"
+
+**Standard Search:** The query "add new feature server" may not match documentation that uses different terminology.
+
+**HyDE Approach:**
+
+AI generates hypothesis:
+```
+To add a new feature, I would modify src/mcp_server.py and add a Tool
+definition in the list_tools() method. The Tool should include name,
+description, and inputSchema with parameter definitions.
+```
+
+**Example Call:**
+
+```json
+{
+  "hypothesis": "To add a new MCP tool, modify src/mcp_server.py. Add a Tool instance in list_tools() with name, description, and inputSchema. Implement a handler method _handle_<tool_name>() and register it in call_tool().",
+  "top_n": 5
+}
+```
+
+**Response:**
+
+```
+# HyDE Search Results
+
+[1] src/mcp_server.py § Tool Registration (0.89)
+The server exposes tools via list_tools()...
+
+[2] docs/development.md § Adding Tools (0.82)
+To add a new tool, create a Tool definition...
+```
+
+### From VS Code
+
+Query using Copilot Chat with a hypothesis:
+
+```
+I think the configuration documentation describes a TOML file with
+[server], [indexing], and [search] sections. It probably includes
+host, port, documents_path, and search weight settings.
+```
+
+Copilot invokes `search_with_hypothesis` with this hypothesis.
+
+### Configuration
+
+Enable/disable HyDE in config.toml:
+
+```toml
+[search.advanced]
+hyde_enabled = true
+```
+
+When disabled, `search_with_hypothesis` falls back to standard `query_documents`.
+
+## Memory Management Tools
+
+The server exposes tools for managing persistent AI memories when `memory.enabled = true`.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `create_memory` | Create a new memory file with frontmatter |
+| `read_memory` | Read full content of a memory file |
+| `update_memory` | Replace memory content |
+| `append_memory` | Append content to existing memory |
+| `delete_memory` | Move memory to trash (soft delete) |
+| `search_memories` | Hybrid search with recency boost |
+| `search_linked_memories` | Find memories linking to a document |
+| `get_memory_stats` | Memory bank statistics |
+| `merge_memories` | Consolidate multiple memories |
+
+### Tool Parameters
+
+**`create_memory`:**
+```typescript
+{
+  filename: string;           // Required: Filename (e.g., "project-notes.md")
+  content: string;            // Required: Memory body content (NO frontmatter - auto-generated)
+  tags: string[];             // Required: List of tags (added to auto-generated frontmatter)
+  memory_type?: string;       // Optional: "journal" | "plan" | "fact" | "observation" | "reflection"
+}
+```
+
+**IMPORTANT:** The system automatically generates YAML frontmatter with `type`, `status`, `tags`, and `created_at`. The `content` parameter should contain ONLY the body text - do NOT include frontmatter.
+
+**`search_memories`:**
+```typescript
+{
+  query: string;              // Required: Natural language query
+  limit?: number;             // Optional: Max results (default: 5)
+  filter_tags?: string[];     // Optional: Filter by tags (OR logic)
+  filter_type?: string;       // Optional: Filter by memory type
+}
+```
+
+**`search_linked_memories`:**
+```typescript
+{
+  query: string;              // Required: Query to rank results
+  target_document: string;    // Required: Document path (e.g., "src/auth.py")
+  limit?: number;             // Optional: Max results (default: 5)
+}
+```
+
+### Usage Examples
+
+**Create a memory:**
+
+```json
+{
+  "filename": "auth-refactor-plan.md",
+  "content": "Plan to refactor [[src/auth.py]] to use JWT tokens.\n\n## Goals\n- Remove session-based auth\n- Add token refresh",
+  "tags": ["refactor", "auth"],
+  "memory_type": "plan"
+}
+```
+
+The system will automatically generate frontmatter:
+```yaml
+---
+type: "plan"
+status: "active"
+tags: ["refactor", "auth"]
+created_at: "2025-01-11T12:00:00.000000+00:00"
+---
+```
+
+**Search with tag filter:**
+
+```json
+{
+  "query": "authentication improvements",
+  "filter_tags": ["auth", "security"],
+  "limit": 10
+}
+```
+
+**Find memories linking to a file:**
+
+```json
+{
+  "query": "refactor plans",
+  "target_document": "src/auth.py"
+}
+```
+
+Returns memories containing `[[src/auth.py]]` with anchor context showing the surrounding text.
+
+### Configuration
+
+Enable memory management in config.toml:
+
+```toml
+[memory]
+enabled = true
+storage_strategy = "project"  # or "user" for shared memory
+recency_boost_days = 7
+recency_boost_factor = 1.2
+```
+
+See [Memory Management Guide](memory.md) for complete documentation.
+
 ## API Reference
 
 ### POST /query_documents

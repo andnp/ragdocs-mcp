@@ -4,14 +4,12 @@ import asyncio
 import logging
 import queue
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
-if TYPE_CHECKING:
-    from src.config import Config
-    from src.git.commit_indexer import CommitIndexer
+from src.config import Config
+from src.git.commit_indexer import CommitIndexer
 
 logger = logging.getLogger(__name__)
 

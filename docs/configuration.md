@@ -1001,6 +1001,98 @@ Controls hybrid search behavior and result fusion.
   ngram_dedup_threshold = 0.7
   ```
 
+### [search.advanced]
+
+Advanced search features including community detection, score-aware fusion, and hypothesis-driven search.
+
+#### `community_detection_enabled`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** Enable community detection using the Louvain algorithm. When enabled, documents are clustered into communities based on wikilink connectivity. Results in the same community as highly-ranked documents receive a score boost.
+- **Effect:** Improves retrieval for queries touching related documentation sections.
+- **Example:**
+  ```toml
+  [search.advanced]
+  community_detection_enabled = true
+  ```
+
+#### `community_boost_factor`
+
+- **Type:** float
+- **Default:** `1.1`
+- **Description:** Score multiplier applied to results sharing a community with top-ranked documents. A value of 1.1 gives co-community results a 10% score boost.
+- **Range:** 1.0 to 2.0 (recommended: 1.05 to 1.2)
+- **Requires:** `community_detection_enabled = true`
+- **Example:**
+  ```toml
+  [search.advanced]
+  community_detection_enabled = true
+  community_boost_factor = 1.15
+  ```
+
+#### `dynamic_weights_enabled`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** Enable score-aware dynamic fusion weights. When enabled, the system analyzes score variance from vector and keyword searches per query. Low variance (flat scores) indicates uncertain matches, reducing that strategy's weight.
+- **Effect:** Improves fusion by down-weighting unreliable signals automatically.
+- **Example:**
+  ```toml
+  [search.advanced]
+  dynamic_weights_enabled = true
+  ```
+
+#### `variance_threshold`
+
+- **Type:** float
+- **Default:** `0.1`
+- **Description:** Variance threshold for dynamic weight adjustment. Strategies with score variance below this threshold have their weights reduced proportionally.
+- **Range:** 0.0 to 1.0 (recommended: 0.05 to 0.2)
+- **Requires:** `dynamic_weights_enabled = true`
+- **Example:**
+  ```toml
+  [search.advanced]
+  dynamic_weights_enabled = true
+  variance_threshold = 0.1
+  ```
+
+#### `hyde_enabled`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** Enable Hypothetical Document Embeddings (HyDE) search. When enabled, the `search_with_hypothesis` tool accepts a hypothesis describing expected documentation content and searches using that embedding directly.
+- **Effect:** Improves retrieval for vague or abstract queries where the user can describe what they expect to find.
+- **Example:**
+  ```toml
+  [search.advanced]
+  hyde_enabled = true
+  ```
+
+#### `default_edge_type`
+
+- **Type:** string
+- **Default:** `"links_to"`
+- **Description:** Default edge type for graph relationships when no explicit type is inferred from document context.
+- **Allowed values:** `"links_to"`, `"implements"`, `"tests"`, `"related"`
+- **Example:**
+  ```toml
+  [search.advanced]
+  default_edge_type = "links_to"
+  ```
+
+**Complete Example:**
+
+```toml
+[search.advanced]
+community_detection_enabled = true
+community_boost_factor = 1.1
+dynamic_weights_enabled = true
+variance_threshold = 0.1
+hyde_enabled = true
+default_edge_type = "links_to"
+```
+
 ### [llm]
 
 Controls embedding model and LLM provider configuration.
@@ -1015,6 +1107,59 @@ Controls embedding model and LLM provider configuration.
   ```toml
   [llm]
   embedding_model = "local"
+  ```
+
+### [memory]
+
+Controls the AI Memory Management System for persistent cross-session storage.
+
+#### `enabled`
+
+- **Type:** boolean
+- **Default:** `false`
+- **Description:** Enable the Memory Management System. When enabled, the server exposes memory CRUD tools and maintains a separate memory corpus with its own indices.
+- **Example:**
+  ```toml
+  [memory]
+  enabled = true
+  ```
+
+#### `storage_strategy`
+
+- **Type:** string (enum)
+- **Default:** `"project"`
+- **Allowed values:** `"project"`, `"user"`
+- **Description:** Storage location for memory files:
+  - `"project"`: Store in `.memories/` within project directory (project-isolated)
+  - `"user"`: Store in `~/.local/share/mcp-markdown-ragdocs/memories/` (shared across projects)
+- **Example:**
+  ```toml
+  [memory]
+  storage_strategy = "user"  # Shared memory bank
+  ```
+
+#### `recency_boost_days`
+
+- **Type:** integer
+- **Default:** `7`
+- **Description:** Number of days within which memories receive a recency score boost. Memories created within this window are considered "recent" and have their search scores multiplied by `recency_boost_factor`.
+- **Range:** 1 to 365 (typical: 7 to 30)
+- **Example:**
+  ```toml
+  [memory]
+  recency_boost_days = 14  # 2-week recency window
+  ```
+
+#### `recency_boost_factor`
+
+- **Type:** float
+- **Default:** `1.2`
+- **Description:** Score multiplier applied to memories within the recency window. A value of 1.2 means recent memories score 20% higher.
+- **Range:** 1.0 (no boost) to 2.0 (double score)
+- **Example:**
+  ```toml
+  [memory]
+  recency_boost_factor = 1.3  # 30% boost for recent memories
   ```
 
 ## Complete Example Configuration
@@ -1103,6 +1248,13 @@ rerank_top_n = 10
 [llm]
 # Use local embedding model
 embedding_model = "local"
+
+[memory]
+# Enable AI memory bank
+enabled = false
+storage_strategy = "project"  # "project" (local) or "user" (shared)
+recency_boost_days = 7
+recency_boost_factor = 1.2
 ```
 
 ## Environment Variables

@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Search Infrastructure Overhaul (Spec 17):**
+  - **Community Detection:** Louvain algorithm clusters documents by wikilink connectivity; co-community results receive configurable score boost (default 1.1×)
+  - **Score-Aware Fusion:** Dynamic weight adjustment based on per-query score variance; low-variance strategies automatically down-weighted
+  - **HyDE Search:** `search_with_hypothesis` MCP tool for hypothesis-driven document embeddings; improves retrieval for vague queries
+  - **Edge Types:** Graph edges now carry semantic types (`links_to`, `implements`, `tests`, `related`)
+  - New config section: `[search.advanced]` with `community_detection_enabled`, `community_boost_factor`, `dynamic_weights_enabled`, `variance_threshold`, `hyde_enabled`, `default_edge_type`
+- **Memory Management System:** Persistent AI memory bank with CRUD operations, hybrid search, and cross-corpus linking
+  - 9 MCP tools: `create_memory`, `read_memory`, `update_memory`, `append_memory`, `delete_memory`, `search_memories`, `search_linked_memories`, `get_memory_stats`, `merge_memories`
+  - Ghost node pattern for cross-corpus graph traversal (`[[doc.md]]` creates `ghost:doc.md` node)
+  - Memory-specific recency boost (configurable days/factor)
+  - Dual storage strategies: `"project"` (`.memories/`) or `"user"` (`~/.local/share/`)
+  - New config section: `[memory]` with `enabled`, `storage_strategy`, `recency_boost_days`, `recency_boost_factor`
 - Query expansion via embeddings: `build_concept_vocabulary()` extracts terms during indexing, `expand_query()` finds top-3 nearest terms to query embedding for improved recall
 - Cross-encoder re-ranking with lazy model loading (loaded on first `rerank()` call)
   - Default model: `cross-encoder/ms-marco-MiniLM-L-6-v2` (22MB, ~50ms/10 docs)

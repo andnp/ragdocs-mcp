@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +19,12 @@ INDEXED_FRONTMATTER_FIELDS = [
     "title", "description", "summary", "keywords",
     "author", "category", "type", "related"
 ]
+
+
+@dataclass
+class LinkWithContext:
+    target: str
+    header_context: str
 
 
 class MarkdownParser(DocumentParser):
@@ -178,6 +185,68 @@ class MarkdownParser(DocumentParser):
         wikilinks.update(matches)
 
         return list(wikilinks)
+
+    def extract_links_with_context(self, file_path: str) -> list[LinkWithContext]:
+        if not os.path.exists(file_path):
+            return []
+
+        content = None
+        for encoding in ["utf-8", "latin-1", "cp1252", "iso-8859-1"]:
+            try:
+                with open(file_path, "r", encoding=encoding, errors="strict") as f:
+                    content = f.read()
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+
+        if content is None:
+            return []
+
+        content_bytes = bytes(content, "utf8")
+        tree = self.parser.parse(content_bytes)
+        root_node = tree.root_node
+
+        headers = self._extract_header_positions(root_node, content_bytes)
+        wikilink_pattern = re.compile(r"(?<!!)\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
+
+        text = self._get_text_excluding_code(root_node, content_bytes)
+
+        links_with_context: list[LinkWithContext] = []
+        for match in wikilink_pattern.finditer(text):
+            target = match.group(1)
+            position = match.start()
+            header_context = self._find_header_context_at_position(headers, position)
+            links_with_context.append(LinkWithContext(target=target, header_context=header_context))
+
+        return links_with_context
+
+    def _extract_header_positions(self, root_node: Node, content_bytes: bytes) -> list[tuple[int, int, str]]:
+        headers: list[tuple[int, int, str]] = []
+
+        def visit(node: Node) -> None:
+            if node.type in ("atx_heading", "setext_heading"):
+                text = ""
+                for child in node.children:
+                    if child.type == "inline":
+                        text = content_bytes[child.start_byte:child.end_byte].decode("utf8").strip()
+                        break
+
+                headers.append((node.start_byte, node.end_byte, text))
+
+            for child in node.children:
+                visit(child)
+
+        visit(root_node)
+        return sorted(headers, key=lambda x: x[0])
+
+    def _find_header_context_at_position(self, headers: list[tuple[int, int, str]], position: int) -> str:
+        current_header = ""
+        for start, end, text in headers:
+            if start <= position:
+                current_header = text
+            else:
+                break
+        return current_header
 
     def _extract_transclusions(self, root_node: Node, content_bytes: bytes):
         transclusions = set()

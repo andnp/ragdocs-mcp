@@ -347,7 +347,7 @@ class TestVocabularyPersistence:
             modified_time=datetime.now(),
         )
         index1.add_chunk(chunk)
-        index1.build_concept_vocabulary()
+        index1.build_concept_vocabulary(min_frequency=1)
 
         persist_path = tmp_path / "index"
         index1.persist(persist_path)

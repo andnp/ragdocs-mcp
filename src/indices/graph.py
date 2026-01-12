@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -6,20 +7,75 @@ from typing import Any
 import networkx as nx
 
 from src.indices.protocol import SearchResult
+from src.search.community import get_community_detector, compute_community_boost, get_community_members
+
+logger = logging.getLogger(__name__)
 
 
 class GraphStore:
     def __init__(self):
         self._graph: nx.DiGraph = nx.DiGraph()
         self._lock = Lock()
+        self._communities: dict[str, int] = {}
+        self._community_detection_enabled = True
 
     def add_node(self, doc_id: str, metadata: dict) -> None:
         with self._lock:
             self._graph.add_node(doc_id, **metadata)
 
-    def add_edge(self, source: str, target: str, edge_type: str) -> None:
+    def add_edge(
+        self,
+        source: str,
+        target: str,
+        edge_type: str,
+        edge_context: str = "",
+    ) -> None:
         with self._lock:
-            self._graph.add_edge(source, target, edge_type=edge_type)
+            self._graph.add_edge(
+                source,
+                target,
+                edge_type=edge_type,
+                edge_context=edge_context,
+            )
+
+    def get_edges_to(self, target: str) -> list[dict[str, str]]:
+        with self._lock:
+            if target not in self._graph:
+                return []
+
+            edges = []
+            for source in self._graph.predecessors(target):
+                edge_data = self._graph.edges[source, target]
+                edges.append({
+                    "source": source,
+                    "target": target,
+                    "edge_type": edge_data.get("edge_type", "related_to"),
+                    "edge_context": edge_data.get("edge_context", ""),
+                })
+
+            return edges
+
+    def get_edges_from(self, source: str) -> list[dict[str, str]]:
+        """Get all edges originating from the given node."""
+        with self._lock:
+            if source not in self._graph:
+                return []
+
+            edges = []
+            for target in self._graph.successors(source):
+                edge_data = self._graph.edges[source, target]
+                edges.append({
+                    "source": source,
+                    "target": target,
+                    "edge_type": edge_data.get("edge_type", "related_to"),
+                    "edge_context": edge_data.get("edge_context", ""),
+                })
+
+            return edges
+
+    def has_node(self, doc_id: str) -> bool:
+        with self._lock:
+            return doc_id in self._graph
 
     def remove_node(self, doc_id: str) -> None:
         with self._lock:
@@ -47,6 +103,39 @@ class GraphStore:
             neighbors.discard(doc_id)
             return list(neighbors)
 
+    def detect_communities(self, algorithm: str = "louvain") -> dict[str, int]:
+        with self._lock:
+            if self._graph.number_of_nodes() == 0:
+                self._communities = {}
+                return {}
+
+            detector = get_community_detector(algorithm)
+            self._communities = detector.detect(self._graph)
+            logger.info(f"Detected {len(set(self._communities.values()))} communities across {len(self._communities)} nodes")
+            return self._communities
+
+    def get_community(self, doc_id: str) -> int | None:
+        with self._lock:
+            return self._communities.get(doc_id)
+
+    def get_community_members(self, community_id: int) -> list[str]:
+        with self._lock:
+            return get_community_members(self._communities, community_id)
+
+    def boost_by_community(
+        self,
+        doc_ids: list[str],
+        seed_doc_ids: set[str],
+        boost_factor: float = 1.1,
+    ) -> dict[str, float]:
+        with self._lock:
+            return compute_community_boost(
+                doc_ids, self._communities, seed_doc_ids, boost_factor
+            )
+
+    def set_community_detection_enabled(self, enabled: bool) -> None:
+        self._community_detection_enabled = enabled
+
     def persist(self, path: Path) -> None:
         with self._lock:
             path.mkdir(parents=True, exist_ok=True)
@@ -57,18 +146,37 @@ class GraphStore:
             with open(graph_file, "w") as f:
                 json.dump(graph_data, f, indent=2)
 
+            if self._community_detection_enabled and self._graph.number_of_nodes() > 0:
+                detector = get_community_detector("louvain")
+                self._communities = detector.detect(self._graph)
+                logger.info(f"Persisting {len(set(self._communities.values()))} communities")
+
+            if self._communities:
+                communities_file = path / "communities.json"
+                with open(communities_file, "w") as f:
+                    json.dump(self._communities, f, indent=2)
+
     def load(self, path: Path) -> None:
         with self._lock:
             graph_file = path / "graph.json"
 
             if not graph_file.exists():
                 self._graph = nx.DiGraph()
+                self._communities = {}
                 return
 
             with open(graph_file, "r") as f:
                 graph_data = json.load(f)
 
             self._graph = nx.node_link_graph(graph_data, directed=True)
+
+            communities_file = path / "communities.json"
+            if communities_file.exists():
+                with open(communities_file, "r") as f:
+                    self._communities = json.load(f)
+                logger.info(f"Loaded {len(set(self._communities.values()))} communities")
+            else:
+                self._communities = {}
 
     # IndexProtocol methods
 

@@ -9,6 +9,7 @@ The system consists of three primary subsystems with two transport modes:
 1. **Indexing Service**: Monitors file changes and updates three distinct indices
 2. **Query Orchestrator**: Executes parallel searches and fuses results
 3. **Server Layer**: Exposes interfaces via stdio (MCP) or HTTP (REST API)
+4. **Memory Management** (optional): Parallel "Memory Lane" with separate indices for AI memory persistence
 
 **Transport Modes:**
 
@@ -617,6 +618,92 @@ GitWatcher monitors `.git/HEAD` and `.git/refs/` directories with 5-second coold
 - Query: 5ms average for 10k commits (cosine similarity in-memory)
 - Storage: ~2KB per commit (metadata + embedding)
 
+### Memory Management Subsystem
+
+#### Dual-Lane Architecture
+
+The Memory Management System implements a "Dual-Lane" pattern: a parallel corpus with its own indices that mirrors the main document pipeline.
+
+| Component | Main Corpus | Memory Corpus |
+|:--|:--|:--|
+| **Source** | `docs/**/*.md` | `.memories/` or `~/.local/share/.../memories/` |
+| **IndexStorage** | `indices/` | `memories/indices/` |
+| **Orchestrator** | `SearchOrchestrator` | `MemorySearchOrchestrator` |
+| **Graph** | Document nodes | Memory nodes + Ghost nodes |
+
+#### Ghost Nodes and Typed Edges
+
+To support cross-corpus linking ("What memories reference document X?"):
+
+1. **Memory Graph**: Contains nodes for memory files
+2. **Ghost Nodes**: When a memory contains `[[src/server.py]]`, a node `ghost:src/server.py` is created in the Memory Graph
+3. **Typed Edges**: Edges carry `type` (e.g., `mentions`, `refactors`, `plans`) derived from context
+4. **Anchor Context**: Edges store ~100 characters surrounding the link for relevance scoring
+
+**Graph Structure:**
+
+```
+memory:project-notes  ──[mentions]──▶  ghost:src/auth.py
+         │
+         └──[plans]──▶  ghost:docs/roadmap.md
+```
+
+**Query:** `search_linked_memories(query, target_document)` performs graph traversal from `ghost:{target}`, filtering edges by context relevance.
+
+#### MemoryIndexManager (src/memory/manager.py)
+
+**Responsibilities:**
+- Parse memory files (YAML frontmatter + Markdown body)
+- Extract wikilinks and create ghost nodes
+- Chunk memories using HeaderChunker
+- Coordinate updates across vector, keyword, and graph indices
+- Track memory metadata (type, status, tags, created_at)
+
+**Memory Document Format:**
+
+```yaml
+---
+type: "plan"       # plan | journal | fact | observation | reflection
+status: "active"   # active | archived
+tags: ["refactor", "auth"]
+created_at: "2025-01-10T10:00:00Z"
+---
+
+Memory content with [[wikilinks]] to documents.
+```
+
+#### MemorySearchOrchestrator (src/memory/search.py)
+
+**Responsibilities:**
+- Execute parallel vector + keyword search on memory corpus
+- Apply memory-specific recency boost (configurable days/factor)
+- Filter results by tags and type
+- Perform linked memory search via ghost node traversal
+
+**Recency Boost Algorithm:**
+
+```python
+if (now - created_at).days <= recency_boost_days:
+    score *= recency_boost_factor  # Default: 1.2x within 7 days
+```
+
+#### Storage Layout
+
+```
+{memory_path}/
+├── *.md                    # Memory files
+├── .trash/                 # Soft-deleted memories
+└── indices/
+    ├── vector/
+    ├── keyword/
+    └── graph/
+        └── graph.json      # Includes ghost nodes
+```
+
+**Storage Strategy:**
+- `"project"`: `{project_root}/.memories/`
+- `"user"`: `~/.local/share/mcp-markdown-ragdocs/memories/`
+
 ### Git History Module
 
 #### GitWatcher (src/git/watcher.py)
@@ -691,6 +778,76 @@ Git operations often modify multiple refs in rapid succession (e.g., `git pull` 
 - Computes query-document relevance jointly for higher precision
 - Model loaded lazily on first rerank call
 - Adds ~50ms latency for 10 candidates on CPU
+
+### Search Infrastructure (Spec 17)
+
+Advanced search features implemented in [src/search/](../src/search/).
+
+#### Edge Types
+
+Graph edges carry semantic relationship types inferred from document context:
+
+| Edge Type | Trigger | Description |
+|-----------|---------|-------------|
+| `links_to` | Default | Standard wikilink `[[Target]]` |
+| `implements` | Link under "Implementation" header | Code references |
+| `tests` | Link in test files | Test coverage links |
+| `related` | Link under "See Also" header | Topical relationship |
+
+Edge types are stored as attributes on NetworkX graph edges and used during traversal scoring.
+
+#### Community Detection
+
+Documents are clustered into communities using the Louvain algorithm (via NetworkX):
+
+1. **Detection:** Runs during `GraphStore.persist()` on undirected graph conversion
+2. **Storage:** `community_id` stored per document in `communities.json`
+3. **Boosting:** During search, results sharing a community with top-ranked documents receive a score multiplier (default 1.1×)
+
+```python
+# Community boost applied in orchestrator
+boosts = graph.boost_by_community(doc_ids, seed_doc_ids, boost_factor=1.1)
+```
+
+**Configuration:**
+- `community_detection_enabled`: Toggle community detection (default: true)
+- `community_boost_factor`: Score multiplier (default: 1.1)
+
+**Note:** The spec originally proposed Leiden algorithm. Implementation uses Louvain (available in NetworkX without additional dependencies). Both produce comparable community structures.
+
+#### Score-Aware Fusion
+
+Dynamic weight adjustment based on per-query score variance:
+
+1. **Variance Calculation:** Compute variance of scores from each strategy
+2. **Weight Adjustment:** Low variance indicates "muddy" matches; reduce that strategy's contribution
+3. **Normalization:** Weights renormalized to maintain original sum
+
+```python
+# src/search/variance.py
+if vector_variance < variance_threshold:
+    vector_factor = max(min_weight_factor, vector_variance / variance_threshold)
+```
+
+**Configuration:**
+- `dynamic_weights_enabled`: Toggle dynamic weights (default: true)
+- `variance_threshold`: Threshold below which weights are reduced (default: 0.1)
+
+#### HyDE (Hypothetical Document Embeddings)
+
+Hypothesis-driven search for vague queries:
+
+1. **Input:** User provides hypothesis describing expected documentation content
+2. **Embedding:** Hypothesis text is embedded directly (no query expansion)
+3. **Search:** Vector similarity search using hypothesis embedding
+4. **Result:** Returns documents matching the hypothetical description
+
+**Tool:** `search_with_hypothesis(hypothesis: str, top_n: int)`
+
+**Use Case:** For queries like "How do I add a tool?", the AI generates a hypothesis: *"To add a tool, modify src/mcp_server.py and register in list_tools method..."* This finds relevant documentation even when the original query lacks specific terms.
+
+**Configuration:**
+- `hyde_enabled`: Toggle HyDE search (default: true)
 
 #### Reciprocal Rank Fusion (RRF)
 

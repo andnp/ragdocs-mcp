@@ -58,6 +58,8 @@ class IndexingConfig:
     ])
     exclude_hidden_dirs: bool = True
     reconciliation_interval_seconds: int = 3600  # 1 hour, 0 to disable
+    coordination_mode: str = "file_lock"
+    lock_timeout_seconds: float = 5.0
 
 
 @dataclass
@@ -68,7 +70,7 @@ class SearchConfig:
     rrf_k_constant: int = 60
     min_confidence: float = 0.0
     max_chunks_per_doc: int = 2
-    dedup_enabled: bool = False
+    dedup_enabled: bool = True
     dedup_similarity_threshold: float = 0.80
     ngram_dedup_enabled: bool = True
     ngram_dedup_threshold: float = 0.7
@@ -77,12 +79,21 @@ class SearchConfig:
     rerank_enabled: bool = False
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_top_n: int = 10
-    adaptive_weights_enabled: bool = False
+    adaptive_weights_enabled: bool = True
     code_search_enabled: bool = False
     code_search_weight: float = 1.0
     query_expansion_enabled: bool = True
     query_expansion_max_terms: int = 2000
     query_expansion_min_frequency: int = 3
+    community_detection_enabled: bool = True
+    community_boost_factor: float = 1.1
+    dynamic_weights_enabled: bool = True
+    variance_threshold: float = 0.1
+    min_weight_factor: float = 0.5
+    hyde_enabled: bool = True
+    tag_expansion_enabled: bool = True
+    tag_expansion_max_tags: int = 5
+    tag_expansion_depth: int = 2
 
 @dataclass
 class LLMConfig:
@@ -96,7 +107,7 @@ class ChunkingConfig:
     max_chunk_chars: int = 2000
     overlap_chars: int = 100
     include_parent_headers: bool = True
-    parent_retrieval_enabled: bool = False
+    parent_retrieval_enabled: bool = True
     parent_chunk_min_chars: int = 1500
     parent_chunk_max_chars: int = 2000
 
@@ -111,10 +122,30 @@ class GitIndexingConfig:
 
 
 @dataclass
+class MemoryConfig:
+    enabled: bool = True
+    storage_strategy: str = "user"
+    recency_boost_days: int = 7
+    recency_boost_factor: float = 1.2
+
+    def __post_init__(self):
+        if self.storage_strategy not in ("project", "user"):
+            raise ValueError(
+                f"Invalid storage_strategy '{self.storage_strategy}': "
+                "must be 'project' or 'user'"
+            )
+        if self.recency_boost_days < 0:
+            raise ValueError("recency_boost_days must be non-negative")
+        if self.recency_boost_factor < 1.0:
+            raise ValueError("recency_boost_factor must be >= 1.0")
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
     parsers: dict[str, str] = field(default_factory=lambda: {
         "**/*.md": "MarkdownParser",
         "**/*.markdown": "MarkdownParser",
@@ -189,7 +220,9 @@ def load_config():
             "**/.pytest_cache/**"
         ]),
         exclude_hidden_dirs=indexing_data.get("exclude_hidden_dirs", True),
-        reconciliation_interval_seconds=indexing_data.get("reconciliation_interval_seconds", 3600)
+        reconciliation_interval_seconds=indexing_data.get("reconciliation_interval_seconds", 3600),
+        coordination_mode=indexing_data.get("coordination_mode", "file_lock"),
+        lock_timeout_seconds=indexing_data.get("lock_timeout_seconds", 5.0),
     )
 
     parsers = config_data.get("parsers", {
@@ -221,6 +254,12 @@ def load_config():
         query_expansion_enabled=search_data.get("query_expansion_enabled", True),
         query_expansion_max_terms=search_data.get("query_expansion_max_terms", 5000),
         query_expansion_min_frequency=search_data.get("query_expansion_min_frequency", 2),
+        community_detection_enabled=search_data.get("community_detection_enabled", True),
+        community_boost_factor=search_data.get("community_boost_factor", 1.1),
+        dynamic_weights_enabled=search_data.get("dynamic_weights_enabled", True),
+        variance_threshold=search_data.get("variance_threshold", 0.1),
+        min_weight_factor=search_data.get("min_weight_factor", 0.5),
+        hyde_enabled=search_data.get("hyde_enabled", True),
     )
 
     llm_data = config_data.get("llm", {})
@@ -249,6 +288,14 @@ def load_config():
         watch_cooldown=git_indexing_data.get("watch_cooldown", 5.0),
     )
 
+    memory_data = config_data.get("memory", {})
+    memory = MemoryConfig(
+        enabled=memory_data.get("enabled", True),
+        storage_strategy=memory_data.get("storage_strategy", "user"),
+        recency_boost_days=memory_data.get("recency_boost_days", 7),
+        recency_boost_factor=memory_data.get("recency_boost_factor", 1.2),
+    )
+
     projects_data = config_data.get("projects", [])
     projects = []
     if projects_data:
@@ -267,6 +314,7 @@ def load_config():
         server=server,
         indexing=indexing,
         git_indexing=git_indexing,
+        memory=memory,
         parsers=parsers,
         search=search,
         llm=llm,
@@ -536,3 +584,44 @@ def resolve_documents_path(config: Config, detected_project: str | None = None, 
     resolved_path = documents_path.resolve()
     logger.info(f"Using documents path relative to CWD: {resolved_path}")
     return str(resolved_path)
+
+
+def resolve_memory_path(
+    config: Config,
+    detected_project: str | None = None,
+    projects: list[ProjectConfig] | None = None,
+) -> Path:
+    strategy = config.memory.storage_strategy
+
+    if strategy == "project":
+        if detected_project and projects:
+            for project in projects:
+                if project.name == detected_project:
+                    memory_path = Path(project.path) / ".memories"
+                    logger.info(f"Using project memory path for '{detected_project}': {memory_path}")
+                    return memory_path
+
+        cwd = Path.cwd()
+        memory_path = cwd / ".memories"
+        logger.info(f"Using CWD memory path: {memory_path}")
+        return memory_path
+
+    data_home = os.getenv("XDG_DATA_HOME")
+    if data_home:
+        base_dir = Path(data_home)
+    else:
+        base_dir = Path.home() / ".local" / "share"
+
+    if detected_project:
+        safe_project_name = detected_project.replace("/", "_").replace("\\", "_")
+        memory_path = base_dir / "mcp-markdown-ragdocs" / safe_project_name / "memories"
+        logger.info(f"Using user memory path for project '{detected_project}': {memory_path}")
+        return memory_path
+
+    cwd = Path.cwd()
+    sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '-', cwd.name)
+    sanitized_name = re.sub(r'-+', '-', sanitized_name).strip('-') or "default"
+
+    memory_path = base_dir / "mcp-markdown-ragdocs" / f"local-{sanitized_name}" / "memories"
+    logger.info(f"Using fallback user memory path: {memory_path}")
+    return memory_path

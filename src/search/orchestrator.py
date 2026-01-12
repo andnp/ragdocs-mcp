@@ -10,8 +10,9 @@ from src.indices.vector import VectorIndex
 from src.indexing.manager import IndexManager
 from src.models import ChunkResult, CompressionStats
 from src.search.classifier import classify_query, get_adaptive_weights
-from src.search.fusion import fuse_results
+from src.search.fusion import fuse_results, fuse_results_v2, normalize_final_scores
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
+from src.search.tag_expansion import expand_query_with_tags
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,27 @@ class SearchOrchestrator:
             all_doc_ids.add(doc_id)
             chunk_id_to_doc_id[chunk_id] = doc_id
 
+        # Tag-based query expansion: Find related documents via tag graph traversal
+        if self._config.search.tag_expansion_enabled:
+            combined_initial_results = vector_results + keyword_results + code_results
+            tag_expanded_results = expand_query_with_tags(
+                initial_results=combined_initial_results,
+                graph=self._graph,
+                vector=self._vector,
+                top_k=top_k,
+                max_related_tags=self._config.search.tag_expansion_max_tags,
+                max_depth=self._config.search.tag_expansion_depth,
+            )
+
+            # Merge tag-expanded results into existing result sets
+            for result in tag_expanded_results:
+                chunk_id = result["chunk_id"]
+                doc_id = result["doc_id"]
+                if chunk_id not in chunk_id_to_doc_id:
+                    all_doc_ids.add(doc_id)
+                    chunk_id_to_doc_id[chunk_id] = doc_id
+                    vector_results.append(result)  # Add to semantic results for fusion
+
         graph_neighbors = self._get_graph_neighbors(list(all_doc_ids))
 
         # Convert graph document IDs to chunk IDs
@@ -155,12 +177,35 @@ class SearchOrchestrator:
         if code_search_enabled:
             weights["code"] = self._config.search.code_search_weight
 
-        fused = fuse_results(
-            results_dict,
-            self._config.search.rrf_k_constant,
-            weights,
-            modified_times,
-        )
+        use_dynamic = self._config.search.dynamic_weights_enabled
+        if use_dynamic:
+            results_with_scores: dict[str, list[tuple[str, float]]] = {
+                "semantic": [(r["chunk_id"], r.get("score", 0.0)) for r in vector_results],
+                "keyword": [(r["chunk_id"], r.get("score", 0.0)) for r in keyword_results],
+                "graph": [(cid, 1.0) for cid in graph_chunk_ids],
+            }
+            if code_search_enabled and code_results:
+                results_with_scores["code"] = [(r["chunk_id"], r.get("score", 0.0)) for r in code_results]
+
+            fused = fuse_results_v2(
+                results_with_scores,
+                self._config.search.rrf_k_constant,
+                weights,
+                modified_times,
+                use_dynamic_weights=True,
+                variance_threshold=self._config.search.variance_threshold,
+                min_weight_factor=self._config.search.min_weight_factor,
+            )
+        else:
+            fused = fuse_results(
+                results_dict,
+                self._config.search.rrf_k_constant,
+                weights,
+                modified_times,
+            )
+
+        if self._config.search.community_detection_enabled:
+            fused = self._apply_community_boost(fused, all_doc_ids, chunk_id_to_doc_id)
 
         if pipeline_config is not None:
             pipeline = SearchPipeline(pipeline_config)
@@ -295,6 +340,32 @@ class SearchOrchestrator:
         logger.info(f"Graph traversal for {doc_ids[:3]} returned {len(neighbors)} neighbors: {list(neighbors)[:5]}")
         return list(neighbors)
 
+    def _apply_community_boost(
+        self,
+        fused: list[tuple[str, float]],
+        seed_doc_ids: set[str],
+        chunk_id_to_doc_id: dict[str, str],
+    ) -> list[tuple[str, float]]:
+        chunk_doc_ids = []
+        for chunk_id, _ in fused:
+            doc_id = chunk_id_to_doc_id.get(chunk_id)
+            if doc_id is None:
+                doc_id = chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else chunk_id
+            chunk_doc_ids.append(doc_id)
+
+        boosts = self._graph.boost_by_community(
+            chunk_doc_ids,
+            seed_doc_ids,
+            self._config.search.community_boost_factor,
+        )
+
+        boosted = []
+        for (chunk_id, score), doc_id in zip(fused, chunk_doc_ids):
+            boost = boosts.get(doc_id, 1.0)
+            boosted.append((chunk_id, score * boost))
+
+        return sorted(boosted, key=lambda x: x[1], reverse=True)
+
     def _collect_modified_times(self, doc_ids: set[str]):
         modified_times = {}
         docs_path = Path(self._config.indexing.documents_path)
@@ -346,3 +417,109 @@ class SearchOrchestrator:
 
         logger.info(f"_get_chunks returning {len(chunks)} chunks")
         return chunks
+
+    async def query_with_hypothesis(
+        self,
+        hypothesis: str,
+        top_k: int = 10,
+        top_n: int = 5,
+        excluded_files: set[str] | None = None,
+    ) -> tuple[list[ChunkResult], CompressionStats]:
+        if not hypothesis or not hypothesis.strip():
+            return [], CompressionStats(
+                original_count=0,
+                after_threshold=0,
+                after_content_dedup=0,
+                after_ngram_dedup=0,
+                after_dedup=0,
+                after_doc_limit=0,
+                clusters_merged=0,
+            )
+
+        if not self._config.search.hyde_enabled:
+            logger.warning("HyDE search disabled in config, falling back to regular query")
+            return await self.query(hypothesis, top_k, top_n, excluded_files=excluded_files)
+
+        docs_root = Path(self._config.indexing.documents_path)
+
+        from src.search.hyde import search_with_hypothesis
+        loop = asyncio.get_event_loop()
+        vector_results = await loop.run_in_executor(
+            None,
+            search_with_hypothesis,
+            self._vector,
+            hypothesis,
+            top_k,
+            excluded_files,
+            docs_root,
+        )
+
+        all_doc_ids = set()
+        chunk_id_to_doc_id = {}
+
+        for result in vector_results:
+            chunk_id = result["chunk_id"]
+            doc_id = result["doc_id"]
+            all_doc_ids.add(doc_id)
+            chunk_id_to_doc_id[chunk_id] = doc_id
+
+        results_with_scores: dict[str, list[tuple[str, float]]] = {
+            "semantic": [(r["chunk_id"], r.get("score", 0.0)) for r in vector_results],
+        }
+
+        modified_times = self._collect_modified_times(all_doc_ids)
+
+        weights: dict[str, float] = {"semantic": 1.0}
+
+        fused = fuse_results_v2(
+            results_with_scores,
+            self._config.search.rrf_k_constant,
+            weights,
+            modified_times,
+            use_dynamic_weights=False,
+        )
+
+        fused = normalize_final_scores(fused)
+
+        pipeline = self._get_pipeline()
+
+        final, compression_stats = pipeline.process(
+            fused,
+            self._get_chunk_embedding,
+            self._get_chunk_content,
+            hypothesis,
+            top_n,
+            None,
+        )
+
+        chunk_results = []
+        for chunk_id, score in final:
+            chunk_data = self._vector.get_chunk_by_id(chunk_id)
+            if chunk_data:
+                metadata = chunk_data.get("metadata", {})
+                parent_chunk_id = metadata.get("parent_chunk_id") if isinstance(metadata, dict) else None
+                parent_content = None
+                if parent_chunk_id:
+                    parent_content = self._vector.get_parent_content(parent_chunk_id)
+
+                chunk_results.append(ChunkResult(
+                    chunk_id=chunk_id,
+                    doc_id=str(chunk_data.get("doc_id", "")),
+                    score=score,
+                    header_path=str(chunk_data.get("header_path", "")),
+                    file_path=str(chunk_data.get("file_path", "")),
+                    content=str(chunk_data.get("content", "")),
+                    parent_chunk_id=parent_chunk_id,
+                    parent_content=parent_content,
+                ))
+            else:
+                chunk_results.append(ChunkResult(
+                    chunk_id=chunk_id,
+                    doc_id=chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else "",
+                    score=score,
+                    header_path="",
+                    file_path="",
+                    content="",
+                ))
+
+        return chunk_results, compression_stats

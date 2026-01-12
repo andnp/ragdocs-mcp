@@ -5,11 +5,13 @@ from pathlib import Path
 
 from src.chunking.factory import get_chunker
 from src.config import Config
+from src.coordination import IndexLock
 from src.indices.code import CodeIndex
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.parsers.dispatcher import dispatch_parser
+from src.search.edge_types import infer_edge_type
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +65,20 @@ class IndexManager:
 
             self.graph.add_node(document.id, document.metadata)
 
-            for link in document.links:
-                self.graph.add_edge(document.id, link, edge_type="link")
+            from src.parsers.markdown import MarkdownParser
+            if isinstance(parser, MarkdownParser):
+                links_with_context = parser.extract_links_with_context(file_path)
+                for link_info in links_with_context:
+                    edge_type = infer_edge_type(link_info.header_context, link_info.target)
+                    self.graph.add_edge(
+                        document.id,
+                        link_info.target,
+                        edge_type=edge_type.value,
+                        edge_context=link_info.header_context,
+                    )
+            else:
+                for link in document.links:
+                    self.graph.add_edge(document.id, link, edge_type="links_to")
 
             if self.code is not None and self._config.search.code_search_enabled:
                 from src.parsers.markdown import MarkdownParser
@@ -126,9 +140,21 @@ class IndexManager:
 
     def persist(self):
         index_path = Path(self._config.indexing.index_path)
+
+        coordination_mode_str = self._config.indexing.coordination_mode.lower()
+
+        if coordination_mode_str == "file_lock":
+            lock = IndexLock(index_path, self._config.indexing.lock_timeout_seconds)
+            lock.acquire_exclusive()
+            try:
+                self._persist_indices(index_path)
+            finally:
+                lock.release()
+        else:
+            self._persist_indices(index_path)
+
+    def _persist_indices(self, index_path: Path):
         try:
-            # Note: vocabulary is built incrementally in background task
-            # See ApplicationContext._update_vocabulary_incremental()
             self.vector.persist(index_path / "vector")
             self.keyword.persist(index_path / "keyword")
             self.graph.persist(index_path / "graph")
@@ -140,6 +166,20 @@ class IndexManager:
 
     def load(self):
         index_path = Path(self._config.indexing.index_path)
+
+        coordination_mode_str = self._config.indexing.coordination_mode.lower()
+
+        if coordination_mode_str == "file_lock":
+            lock = IndexLock(index_path, self._config.indexing.lock_timeout_seconds)
+            lock.acquire_shared()
+            try:
+                self._load_indices(index_path)
+            finally:
+                lock.release()
+        else:
+            self._load_indices(index_path)
+
+    def _load_indices(self, index_path: Path):
         try:
             self.vector.load(index_path / "vector")
             self.keyword.load(index_path / "keyword")

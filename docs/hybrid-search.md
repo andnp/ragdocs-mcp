@@ -4,7 +4,7 @@ This document explains the hybrid search system, including each search strategy,
 
 ## Overview
 
-The query orchestrator combines eight distinct retrieval and enhancement strategies:
+The query orchestrator combines eleven distinct retrieval and enhancement strategies:
 
 1. **Query Type Classification**: Adaptive weight adjustment based on query intent (optional)
 2. **Query Expansion**: Vocabulary-based expansion for improved recall
@@ -12,8 +12,11 @@ The query orchestrator combines eight distinct retrieval and enhancement strateg
 4. **Keyword Search**: Exact term matching via BM25F scoring with field boosts
 5. **Code Search**: Specialized code block retrieval with identifier-aware tokenization (optional)
 6. **Graph Traversal**: Structural relationships via wikilinks
-7. **Recency Bias**: Temporal relevance via file modification time
-8. **Cross-Encoder Re-Ranking**: Joint query-document relevance scoring (optional)
+7. **Community Detection**: Louvain clustering with co-community score boosting
+8. **Recency Bias**: Temporal relevance via file modification time
+9. **Score-Aware Fusion**: Dynamic weight adjustment based on score variance
+10. **Cross-Encoder Re-Ranking**: Joint query-document relevance scoring (optional)
+11. **HyDE**: Hypothesis-driven embedding search (optional)
 
 Results from retrieval strategies are fused using Reciprocal Rank Fusion (RRF), then filtered, deduplicated (n-gram and semantic), diversified (MMR), and optionally re-ranked to produce a final ranked list of document chunks.
 
@@ -372,6 +375,129 @@ rerank_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 rerank_top_n = 10
 ```
 
+### 7. Community Detection
+
+**Purpose:** Boost results that belong to the same document cluster as highly-ranked documents.
+
+**Technology:**
+- Louvain algorithm (NetworkX `louvain_communities`)
+- Runs on undirected graph conversion
+- No external dependencies
+
+**Process:**
+1. During `GraphStore.persist()`, detect communities across all document nodes
+2. Store community assignments in `communities.json`
+3. During search, identify communities of top-ranked seed documents
+4. Boost scores of other results in the same communities
+
+**When Most Effective:**
+- Queries touching well-connected documentation sections
+- Discovering related documents not explicitly linked
+- Knowledge bases with dense wikilink structures
+
+**Example:**
+
+If "auth.md" (community 3) ranks highest, other documents in community 3 (e.g., "login.md", "sessions.md") receive a 1.1× score boost even without explicit query match.
+
+**Configuration:**
+
+```toml
+[search.advanced]
+community_detection_enabled = true
+community_boost_factor = 1.1
+```
+
+**Code Reference:** [src/search/community.py](../src/search/community.py)
+
+### 8. Score-Aware Fusion
+
+**Purpose:** Dynamically adjust strategy weights based on score variance per query.
+
+**Technology:**
+- Variance calculation on score distributions
+- Weight reduction for low-variance (uncertain) results
+- Implemented in `src/search/variance.py`
+
+**How It Works:**
+
+1. Compute variance of vector scores and keyword scores separately
+2. If variance < threshold, the strategy produces "muddy" matches (all scores similar)
+3. Reduce weight proportionally: `factor = max(min_factor, variance / threshold)`
+4. Renormalize weights to maintain original sum
+
+**Formula:**
+
+$$
+W_{adjusted} = W_{base} \times \max\left(W_{min}, \frac{\sigma^2}{\sigma^2_{threshold}}\right)
+$$
+
+**When Most Effective:**
+- Queries where one strategy produces uniformly low scores
+- Ambiguous queries that confuse one search strategy
+- Balancing semantic vs keyword when confidence differs
+
+**Configuration:**
+
+```toml
+[search.advanced]
+dynamic_weights_enabled = true
+variance_threshold = 0.1
+```
+
+**Code Reference:** [src/search/variance.py](../src/search/variance.py)
+
+### 9. HyDE (Hypothetical Document Embeddings)
+
+**Purpose:** Improve retrieval for vague queries by searching with a hypothetical answer.
+
+**Technology:**
+- Direct embedding of hypothesis text
+- Same embedding model as document indexing (BAAI/bge-small-en-v1.5)
+- Implemented in `src/search/hyde.py`
+
+**Process:**
+1. User (or AI) generates hypothesis describing expected documentation
+2. Hypothesis is embedded directly (no query expansion)
+3. Vector similarity search using hypothesis embedding
+4. Returns documents matching the hypothetical description
+
+**When Most Effective:**
+- Vague queries like "How do I add a feature?"
+- Queries where describing the answer is easier than forming the question
+- AI assistants that can generate plausible documentation descriptions
+
+**Example:**
+
+User query: "How do I add a new tool?"
+
+AI generates hypothesis: *"To add a new tool, modify src/mcp_server.py and add a Tool definition in list_tools(). Include name, description, and inputSchema..."*
+
+HyDE search embeds this hypothesis and finds:
+- `src/mcp_server.py` code documentation
+- Tool registration examples
+- MCP protocol documentation
+
+**MCP Tool:**
+
+```json
+{
+  "name": "search_with_hypothesis",
+  "inputSchema": {
+    "hypothesis": "string (required)",
+    "top_n": "integer (optional, default: 5)"
+  }
+}
+```
+
+**Configuration:**
+
+```toml
+[search.advanced]
+hyde_enabled = true
+```
+
+**Code Reference:** [src/search/hyde.py](../src/search/hyde.py)
+
 ## Reciprocal Rank Fusion (RRF)
 
 ### Algorithm
@@ -469,7 +595,9 @@ Semantic Search + Keyword Search + Code Search (parallel)
         ↓
 Graph Neighbor Boosting (1-hop)
         ↓
-RRF Fusion (weighted by strategy)
+Community Boosting (if community_detection_enabled)
+        ↓
+Score-Aware RRF Fusion (with dynamic weights if dynamic_weights_enabled)
         ↓
 Recency Bias (tier-based multiplier)
         ↓

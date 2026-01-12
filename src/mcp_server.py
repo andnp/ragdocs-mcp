@@ -170,6 +170,345 @@ class MCPServer:
                         "required": ["query"],
                     },
                 ),
+                Tool(
+                    name="create_memory",
+                    description=(
+                        "Create a new memory file in the Memory Bank. " +
+                        "Memories are persistent notes that AI assistants can use for long-term storage. " +
+                        "Fails if the file already exists. " +
+                        "IMPORTANT: The system automatically generates YAML frontmatter with type, status, tags, and created_at. " +
+                        "DO NOT include frontmatter in the content parameter - provide only the body text."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "Name of the memory file (without .md extension)",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "The body content of the memory in markdown format (NO frontmatter - system auto-generates it)",
+                            },
+                            "tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Tags for categorizing the memory (will be added to auto-generated frontmatter)",
+                                "default": [],
+                            },
+                            "memory_type": {
+                                "type": "string",
+                                "enum": ["plan", "journal", "fact", "observation", "reflection"],
+                                "description": "Type of memory (default: journal)",
+                                "default": "journal",
+                            },
+                        },
+                        "required": ["filename", "content"],
+                    },
+                ),
+                Tool(
+                    name="append_memory",
+                    description="Append content to an existing memory file.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "Name of the memory file",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Content to append",
+                            },
+                        },
+                        "required": ["filename", "content"],
+                    },
+                ),
+                Tool(
+                    name="read_memory",
+                    description="Read the full content of a memory file.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "Name of the memory file",
+                            },
+                        },
+                        "required": ["filename"],
+                    },
+                ),
+                Tool(
+                    name="update_memory",
+                    description="Replace the entire content of a memory file.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "Name of the memory file",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "New content to replace the file with",
+                            },
+                        },
+                        "required": ["filename", "content"],
+                    },
+                ),
+                Tool(
+                    name="delete_memory",
+                    description="Delete a memory file (moves to .trash/ for safety).",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "Name of the memory file to delete",
+                            },
+                        },
+                        "required": ["filename"],
+                    },
+                ),
+                Tool(
+                    name="search_memories",
+                    description=(
+                        "Search the Memory Bank using hybrid search (semantic + keyword). " +
+                        "Returns memories ranked by relevance with recency boost applied."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Natural language query",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of results (default: 5)",
+                                "default": 5,
+                            },
+                            "filter_tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Only return memories with these tags",
+                            },
+                            "filter_type": {
+                                "type": "string",
+                                "enum": ["plan", "journal", "fact", "observation", "reflection"],
+                                "description": "Only return memories of this type",
+                            },
+                            "load_full_memory": {
+                                "type": "boolean",
+                                "description": "Load complete memory file content instead of just matching chunks (default: true)",
+                                "default": True,
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                ),
+                Tool(
+                    name="search_linked_memories",
+                    description=(
+                        "Find memories that link to a specific document. " +
+                        "Uses graph traversal to find memories containing [[target_document]] links. " +
+                        "Returns the anchor context explaining why each memory links to the target."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Optional query to filter/rank linked memories",
+                            },
+                            "target_document": {
+                                "type": "string",
+                                "description": "Document path to find links to (e.g., 'src/server.py')",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of results (default: 5)",
+                                "default": 5,
+                            },
+                        },
+                        "required": ["query", "target_document"],
+                    },
+                ),
+                Tool(
+                    name="get_memory_stats",
+                    description="Get statistics about the Memory Bank (count, size, tags, types).",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                ),
+                Tool(
+                    name="merge_memories",
+                    description=(
+                        "Merge multiple memory files into a new summary file. " +
+                        "Source files are moved to .trash/ after merge."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "source_files": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of memory filenames to merge",
+                            },
+                            "target_file": {
+                                "type": "string",
+                                "description": "Name of the new merged memory file",
+                            },
+                            "summary_content": {
+                                "type": "string",
+                                "description": "Content for the merged file (including frontmatter)",
+                            },
+                        },
+                        "required": ["source_files", "target_file", "summary_content"],
+                    },
+                ),
+                Tool(
+                    name="search_with_hypothesis",
+                    description=(
+                        "Search documentation using a hypothesis about what the answer might look like. " +
+                        "Useful for vague queries where you can describe the expected documentation content. " +
+                        "The hypothesis is embedded and used directly for semantic search (HyDE technique)."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "hypothesis": {
+                                "type": "string",
+                                "description": "A hypothesis describing what the expected documentation content looks like",
+                            },
+                            "top_n": {
+                                "type": "integer",
+                                "description": f"Maximum number of results to return (default: 5, max: {MAX_TOP_N})",
+                                "default": 5,
+                                "minimum": MIN_TOP_N,
+                                "maximum": MAX_TOP_N,
+                            },
+                            "excluded_files": {
+                                "type": "array",
+                                "description": "List of file paths to exclude from results",
+                                "items": {"type": "string"},
+                                "default": [],
+                            },
+                        },
+                        "required": ["hypothesis"],
+                    },
+                ),
+                Tool(
+                    name="search_by_tag_cluster",
+                    description=(
+                        "Find memories via tag traversal with configurable depth. " +
+                        "Discovers memories that share tags or are connected through tag relationships."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "tag": {
+                                "type": "string",
+                                "description": "Tag to start cluster search from",
+                            },
+                            "depth": {
+                                "type": "integer",
+                                "description": "Traversal depth (default: 2, max: 3)",
+                                "default": 2,
+                                "minimum": 1,
+                                "maximum": 3,
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of memories to return (default: 10)",
+                                "default": 10,
+                            },
+                        },
+                        "required": ["tag"],
+                    },
+                ),
+                Tool(
+                    name="get_tag_graph",
+                    description=(
+                        "Return tag nodes and co-occurrence counts across all memories. " +
+                        "Useful for understanding tag relationships and clusters."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                ),
+                Tool(
+                    name="suggest_related_tags",
+                    description=(
+                        "Suggest related tags based on co-occurrence patterns. " +
+                        "Finds tags that frequently appear together with the specified tag."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "tag": {
+                                "type": "string",
+                                "description": "Tag to find related tags for",
+                            },
+                        },
+                        "required": ["tag"],
+                    },
+                ),
+                Tool(
+                    name="get_memory_versions",
+                    description=(
+                        "Show version history by following SUPERSEDES chain. " +
+                        "Use [[memory:filename]] with 'supersedes' in context to create version links."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "Memory filename to get version history for",
+                            },
+                        },
+                        "required": ["filename"],
+                    },
+                ),
+                Tool(
+                    name="get_memory_dependencies",
+                    description=(
+                        "Show dependencies by finding DEPENDS_ON links. " +
+                        "Use [[memory:filename]] with 'depends on' in context to create dependency links."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "Memory filename to get dependencies for",
+                            },
+                        },
+                        "required": ["filename"],
+                    },
+                ),
+                Tool(
+                    name="detect_contradictions",
+                    description=(
+                        "Find conflicting memories by detecting CONTRADICTS links. " +
+                        "Use [[memory:filename]] with 'contradicts' in context to mark conflicts."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "Memory filename to detect contradictions for",
+                            },
+                        },
+                        "required": ["filename"],
+                    },
+                ),
             ]
 
         @self.server.call_tool()
@@ -180,6 +519,38 @@ class MCPServer:
                 return await self._handle_query_unique_documents(arguments)
             elif name == "search_git_history":
                 return await self._handle_search_git_history(arguments)
+            elif name == "search_with_hypothesis":
+                return await self._handle_search_with_hypothesis(arguments)
+            elif name == "create_memory":
+                return await self._handle_create_memory(arguments)
+            elif name == "append_memory":
+                return await self._handle_append_memory(arguments)
+            elif name == "read_memory":
+                return await self._handle_read_memory(arguments)
+            elif name == "update_memory":
+                return await self._handle_update_memory(arguments)
+            elif name == "delete_memory":
+                return await self._handle_delete_memory(arguments)
+            elif name == "search_memories":
+                return await self._handle_search_memories(arguments)
+            elif name == "search_linked_memories":
+                return await self._handle_search_linked_memories(arguments)
+            elif name == "get_memory_stats":
+                return await self._handle_get_memory_stats(arguments)
+            elif name == "merge_memories":
+                return await self._handle_merge_memories(arguments)
+            elif name == "search_by_tag_cluster":
+                return await self._handle_search_by_tag_cluster(arguments)
+            elif name == "get_tag_graph":
+                return await self._handle_get_tag_graph(arguments)
+            elif name == "suggest_related_tags":
+                return await self._handle_suggest_related_tags(arguments)
+            elif name == "get_memory_versions":
+                return await self._handle_get_memory_versions(arguments)
+            elif name == "get_memory_dependencies":
+                return await self._handle_get_memory_dependencies(arguments)
+            elif name == "detect_contradictions":
+                return await self._handle_detect_contradictions(arguments)
             else:
                 raise ValueError(f"Unknown tool: {name}")
 
@@ -295,6 +666,47 @@ class MCPServer:
             result_header="Search Results (Unique Documents)",
         )
 
+    async def _handle_search_with_hypothesis(self, arguments: dict) -> list[TextContent]:
+        hypothesis = arguments.get("hypothesis")
+        if not hypothesis:
+            raise ValueError("Missing required parameter: hypothesis")
+
+        if self.ctx and not self.ctx.is_ready():
+            logger.info("HyDE query received while initializing, waiting for indices...")
+            await self._coordinator.wait_ready(timeout=60.0)
+
+        top_n = arguments.get("top_n", 5)
+        if not isinstance(top_n, int) or top_n < MIN_TOP_N or top_n > MAX_TOP_N:
+            raise ValueError(f"top_n must be an integer between {MIN_TOP_N} and {MAX_TOP_N}")
+
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        excluded_files_raw = arguments.get("excluded_files", [])
+        excluded_files = None
+        if excluded_files_raw:
+            from pathlib import Path
+            from src.search.path_utils import normalize_path
+            docs_root = Path(self.ctx.config.indexing.documents_path)
+            excluded_files = {normalize_path(f, docs_root) for f in excluded_files_raw}
+
+        top_k = max(20, top_n * 4)
+
+        results, stats = await self.ctx.orchestrator.query_with_hypothesis(
+            hypothesis,
+            top_k=top_k,
+            top_n=top_n,
+            excluded_files=excluded_files,
+        )
+
+        results_text = "\n\n".join([
+            f"[{i+1}] {r.file_path or 'unknown'} § {r.header_path or '(no section)'} ({r.score:.2f})\n{r.content}"
+            for i, r in enumerate(results)
+        ])
+
+        response = f"# HyDE Search Results\n\n{results_text}"
+        return [TextContent(type="text", text=response)]
+
     async def _handle_search_git_history(self, arguments: dict) -> list[TextContent]:
         """Handle search_git_history tool call."""
         if not self.ctx:
@@ -390,6 +802,349 @@ class MCPServer:
                 ])
 
             output_lines.extend(["---", ""])
+
+        return [TextContent(type="text", text="\n".join(output_lines))]
+
+    async def _handle_create_memory(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        filename = arguments.get("filename", "")
+        content = arguments.get("content", "")
+        tags = arguments.get("tags", [])
+        memory_type = arguments.get("memory_type", "journal")
+
+        result = await memory_tools.create_memory(
+            self.ctx, filename, content, tags, memory_type
+        )
+
+        return [TextContent(type="text", text=str(result))]
+
+    async def _handle_append_memory(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        filename = arguments.get("filename", "")
+        content = arguments.get("content", "")
+
+        result = await memory_tools.append_memory(self.ctx, filename, content)
+        return [TextContent(type="text", text=str(result))]
+
+    async def _handle_read_memory(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        filename = arguments.get("filename", "")
+        result = await memory_tools.read_memory(self.ctx, filename)
+
+        if "error" in result:
+            return [TextContent(type="text", text=str(result))]
+
+        return [TextContent(type="text", text=result.get("content", ""))]
+
+    async def _handle_update_memory(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        filename = arguments.get("filename", "")
+        content = arguments.get("content", "")
+
+        result = await memory_tools.update_memory(self.ctx, filename, content)
+        return [TextContent(type="text", text=str(result))]
+
+    async def _handle_delete_memory(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        filename = arguments.get("filename", "")
+        result = await memory_tools.delete_memory(self.ctx, filename)
+        return [TextContent(type="text", text=str(result))]
+
+    async def _handle_search_memories(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        query = arguments.get("query", "")
+        limit = arguments.get("limit", 5)
+        filter_tags = arguments.get("filter_tags")
+        filter_type = arguments.get("filter_type")
+        load_full_memory = arguments.get("load_full_memory", False)
+
+        results = await memory_tools.search_memories(
+            self.ctx, query, limit, filter_tags, filter_type, load_full_memory
+        )
+
+        if results and "error" in results[0]:
+            return [TextContent(type="text", text=str(results[0]))]
+
+        output_lines = ["# Memory Search Results", ""]
+
+        for i, r in enumerate(results, 1):
+            output_lines.extend([
+                f"## {i}. {r.get('memory_id', 'unknown')} (score: {r.get('score', 0):.3f})",
+                f"**Type:** {r.get('type', 'unknown')} | **Tags:** {', '.join(r.get('tags', []))}",
+                "",
+                r.get("content", "")[:500],
+                "",
+                "---",
+                "",
+            ])
+
+        return [TextContent(type="text", text="\n".join(output_lines))]
+
+    async def _handle_search_linked_memories(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        query = arguments.get("query", "")
+        target_document = arguments.get("target_document", "")
+        limit = arguments.get("limit", 5)
+
+        results = await memory_tools.search_linked_memories(
+            self.ctx, query, target_document, limit
+        )
+
+        if results and "error" in results[0]:
+            return [TextContent(type="text", text=str(results[0]))]
+
+        output_lines = [
+            f"# Memories Linked to `{target_document}`",
+            "",
+        ]
+
+        for i, r in enumerate(results, 1):
+            output_lines.extend([
+                f"## {i}. {r.get('memory_id', 'unknown')} (score: {r.get('score', 0):.3f})",
+                f"**Edge Type:** {r.get('edge_type', 'unknown')}",
+                f"**Anchor Context:** {r.get('anchor_context', '')}",
+                "",
+                r.get("content", "")[:500],
+                "",
+                "---",
+                "",
+            ])
+
+        return [TextContent(type="text", text="\n".join(output_lines))]
+
+    async def _handle_get_memory_stats(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        stats = await memory_tools.get_memory_stats(self.ctx)
+
+        if "error" in stats:
+            return [TextContent(type="text", text=str(stats))]
+
+        output_lines = [
+            "# Memory Bank Statistics",
+            "",
+            f"**Total Memories:** {stats.get('count', 0)}",
+            f"**Total Size:** {stats.get('total_size', '0B')}",
+            f"**Storage Path:** `{stats.get('memory_path', '')}`",
+            "",
+            "## Tags",
+            "",
+        ]
+
+        tags = stats.get("tags", {})
+        for tag, count in sorted(tags.items(), key=lambda x: -x[1]):
+            output_lines.append(f"- `{tag}`: {count}")
+
+        output_lines.extend(["", "## Types", ""])
+
+        types = stats.get("types", {})
+        for mem_type, count in sorted(types.items(), key=lambda x: -x[1]):
+            output_lines.append(f"- `{mem_type}`: {count}")
+
+        return [TextContent(type="text", text="\n".join(output_lines))]
+
+    async def _handle_merge_memories(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        source_files = arguments.get("source_files", [])
+        target_file = arguments.get("target_file", "")
+        summary_content = arguments.get("summary_content", "")
+
+        result = await memory_tools.merge_memories(
+            self.ctx, source_files, target_file, summary_content
+        )
+
+        return [TextContent(type="text", text=str(result))]
+
+    async def _handle_search_by_tag_cluster(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        tag = arguments.get("tag", "")
+        depth = arguments.get("depth", 2)
+        limit = arguments.get("limit", 10)
+
+        results = await memory_tools.search_by_tag_cluster(
+            self.ctx, tag, depth, limit
+        )
+
+        if results and "error" in results[0]:
+            return [TextContent(type="text", text=str(results[0]))]
+
+        output_lines = [f"# Tag Cluster Search: {tag}", ""]
+
+        for i, r in enumerate(results, 1):
+            output_lines.extend([
+                f"## {i}. {r.get('memory_id', 'unknown')}",
+                f"**Type:** {r.get('type', 'unknown')} | **Tags:** {', '.join(r.get('tags', []))}",
+                "",
+                r.get("content", "")[:500],
+                "",
+                "---",
+                "",
+            ])
+
+        return [TextContent(type="text", text="\n".join(output_lines))]
+
+    async def _handle_get_tag_graph(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        result = await memory_tools.get_tag_graph(self.ctx)
+
+        if "error" in result:
+            return [TextContent(type="text", text=str(result))]
+
+        output_lines = ["# Tag Graph", "", "## Tag Frequencies", ""]
+
+        frequencies = result.get("tag_frequencies", {})
+        for tag, count in sorted(frequencies.items(), key=lambda x: -x[1]):
+            output_lines.append(f"- `{tag}`: {count}")
+
+        output_lines.extend(["", "## Tag Co-occurrences", ""])
+
+        co_occurrences = result.get("co_occurrences", [])
+        for co in co_occurrences[:20]:
+            output_lines.append(
+                f"- `{co['tag']}` ↔ `{co['related_tag']}`: {co['count']}"
+            )
+
+        return [TextContent(type="text", text="\n".join(output_lines))]
+
+    async def _handle_suggest_related_tags(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        tag = arguments.get("tag", "")
+
+        result = await memory_tools.suggest_related_tags(self.ctx, tag)
+
+        if "error" in result:
+            return [TextContent(type="text", text=str(result))]
+
+        output_lines = [f"# Related Tags for `{tag}`", ""]
+
+        related = result.get("related_tags", [])
+        for item in related:
+            output_lines.append(f"- `{item['tag']}`: {item['count']}")
+
+        return [TextContent(type="text", text="\n".join(output_lines))]
+
+    async def _handle_get_memory_versions(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        filename = arguments.get("filename", "")
+
+        result = await memory_tools.get_memory_versions(self.ctx, filename)
+
+        if "error" in result:
+            return [TextContent(type="text", text=str(result))]
+
+        output_lines = [f"# Version History for `{filename}`", ""]
+
+        chain = result.get("version_chain", [])
+        for i, version in enumerate(chain, 1):
+            output_lines.extend([
+                f"{i}. `{version['memory_id']}`",
+                f"   Path: {version['file_path']}",
+                "",
+            ])
+
+        return [TextContent(type="text", text="\n".join(output_lines))]
+
+    async def _handle_get_memory_dependencies(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        filename = arguments.get("filename", "")
+
+        results = await memory_tools.get_memory_dependencies(self.ctx, filename)
+
+        if results and "error" in results[0]:
+            return [TextContent(type="text", text=str(results[0]))]
+
+        output_lines = [f"# Dependencies for `{filename}`", ""]
+
+        for i, dep in enumerate(results, 1):
+            output_lines.extend([
+                f"{i}. `{dep['memory_id']}`",
+                f"   Path: {dep['file_path']}",
+                f"   Context: {dep['context'][:100]}",
+                "",
+            ])
+
+        return [TextContent(type="text", text="\n".join(output_lines))]
+
+    async def _handle_detect_contradictions(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory import tools as memory_tools
+
+        filename = arguments.get("filename", "")
+
+        results = await memory_tools.detect_contradictions(self.ctx, filename)
+
+        if results and "error" in results[0]:
+            return [TextContent(type="text", text=str(results[0]))]
+
+        output_lines = [f"# Contradictions for `{filename}`", ""]
+
+        if not results:
+            output_lines.append("No contradictions detected.")
+        else:
+            for i, contradiction in enumerate(results, 1):
+                output_lines.extend([
+                    f"{i}. `{contradiction['memory_id']}`",
+                    f"   Path: {contradiction['file_path']}",
+                    f"   Context: {contradiction['context'][:100]}",
+                    "",
+                ])
 
         return [TextContent(type="text", text="\n".join(output_lines))]
 

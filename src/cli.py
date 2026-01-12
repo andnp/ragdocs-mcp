@@ -330,7 +330,9 @@ def query(query_text: str, output_json: bool, top_n: int, project: str | None):
             lazy_embeddings=False,
         )
 
-        if not ctx.index_path.exists():
+        # Check if manifest exists (indicates a valid index)
+        manifest_path = ctx.index_path / "index.manifest.json"
+        if not manifest_path.exists():
             click.echo("Error: No index found. Run 'rebuild-index' first.", err=True)
             sys.exit(1)
 

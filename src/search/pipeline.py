@@ -5,7 +5,7 @@ from src.models import CompressionStats
 from src.search.dedup import deduplicate_by_content_hash, deduplicate_by_ngram, deduplicate_by_similarity
 from src.search.diversity import select_mmr
 from src.search.filters import filter_by_confidence, limit_per_document
-from src.search.fusion import normalize_scores
+from src.search.fusion import normalize_result_scores
 from src.search.reranker import ReRanker
 
 
@@ -50,7 +50,7 @@ class SearchPipeline:
                 clusters_merged=0,
             )
 
-        normalized = normalize_scores(fused_results)
+        normalized = normalize_result_scores(fused_results)
         original_count = len(normalized)
 
         filtered = filter_by_confidence(normalized, self._config.min_confidence)

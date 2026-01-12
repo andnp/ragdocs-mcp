@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.config import Config, load_config, detect_project, resolve_index_path, resolve_documents_path
+from src.config import Config, load_config, detect_project, resolve_index_path, resolve_documents_path, resolve_memory_path
+from src.coordination import SingletonGuard
 from src.indexing.manager import IndexManager
 from src.indexing.manifest import IndexManifest, load_manifest, save_manifest, should_rebuild
 from src.indexing.reconciler import build_indexed_files_map, reconcile_indices
@@ -20,6 +21,8 @@ from src.utils import should_include_file
 
 if TYPE_CHECKING:
     from src.git.commit_indexer import CommitIndexer
+    from src.memory.manager import MemoryIndexManager
+    from src.memory.search import MemorySearchOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +34,15 @@ class ApplicationContext:
     orchestrator: SearchOrchestrator
     watcher: FileWatcher | None = None
     commit_indexer: CommitIndexer | None = None
+    memory_manager: MemoryIndexManager | None = None
+    memory_search: MemorySearchOrchestrator | None = None
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
     current_manifest: IndexManifest | None = None
     reconciliation_task: asyncio.Task | None = field(default=None, repr=False)
     _background_index_task: asyncio.Task | None = field(default=None, repr=False)
     _ready_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _init_error: Exception | None = field(default=None, repr=False)
+    _singleton_guard: SingletonGuard | None = field(default=None, repr=False)
 
     @classmethod
     def create(
@@ -101,12 +107,44 @@ class ApplicationContext:
             else:
                 logger.warning("Git binary not found - git history search disabled")
 
+        memory_manager = None
+        memory_search = None
+        if config.memory.enabled:
+            from src.memory.manager import MemoryIndexManager
+            from src.memory.search import MemorySearchOrchestrator
+
+            memory_path = resolve_memory_path(config, detected_project, config.projects)
+
+            memory_vector = VectorIndex(embedding_model_name=embedding_model_name)
+            memory_keyword = KeywordIndex()
+            memory_graph = GraphStore()
+
+            memory_manager = MemoryIndexManager(
+                config=config,
+                memory_path=memory_path,
+                vector=memory_vector,
+                keyword=memory_keyword,
+                graph=memory_graph,
+            )
+
+            memory_search = MemorySearchOrchestrator(
+                vector=memory_vector,
+                keyword=memory_keyword,
+                graph=memory_graph,
+                config=config,
+                manager=memory_manager,
+            )
+
+            logger.info(f"Memory system initialized: {memory_path}")
+
         return cls(
             config=config,
             index_manager=manager,
             orchestrator=orchestrator,
             watcher=watcher,
             commit_indexer=commit_indexer,
+            memory_manager=memory_manager,
+            memory_search=memory_search,
             index_path=index_path,
             current_manifest=None,
             reconciliation_task=None,
@@ -154,6 +192,20 @@ class ApplicationContext:
         return should_rebuild(self.current_manifest, saved_manifest)
 
     async def start(self, background_index: bool = False) -> None:
+        coordination_mode_str = self.config.indexing.coordination_mode.lower()
+
+        if coordination_mode_str == "singleton":
+            self._singleton_guard = SingletonGuard(self.index_path)
+            try:
+                self._singleton_guard.acquire()
+            except RuntimeError as e:
+                logger.error(f"Failed to acquire singleton lock: {e}")
+                raise
+            logger.warning(
+                "Using singleton mode - only one instance can run at a time. "
+                "For multi-instance support, set coordination_mode='file_lock' in config."
+            )
+
         needs_rebuild = self._check_and_rebuild_if_needed()
 
         if needs_rebuild:
@@ -191,6 +243,15 @@ class ApplicationContext:
                 f"Periodic reconciliation enabled (interval: "
                 f"{self.config.indexing.reconciliation_interval_seconds}s)"
             )
+
+        if self.memory_manager is not None:
+            try:
+                self.memory_manager.load()
+                indexed = self.memory_manager.reindex_all()
+                self.memory_manager.persist()
+                logger.info(f"Memory system loaded with {indexed} memories")
+            except Exception as e:
+                logger.warning(f"Failed to load memory indices: {e}")
 
     def _full_index(self) -> None:
         files_to_index = self.discover_files()
@@ -375,6 +436,12 @@ class ApplicationContext:
     async def stop(self) -> None:
         logger.info("Stopping ApplicationContext")
 
+        if self._singleton_guard is not None:
+            try:
+                self._singleton_guard.release()
+            except Exception as e:
+                logger.error(f"Failed to release singleton lock: {e}")
+
         tasks_to_cancel: list[asyncio.Task] = []
         if self._background_index_task and not self._background_index_task.done():
             self._background_index_task.cancel()
@@ -405,6 +472,12 @@ class ApplicationContext:
                 await asyncio.to_thread(self.commit_indexer.close)
             except Exception as e:
                 logger.error(f"Failed to close commit indexer: {e}")
+
+        if self.memory_manager:
+            try:
+                await asyncio.to_thread(self.memory_manager.persist)
+            except Exception as e:
+                logger.error(f"Failed to persist memory indices: {e}")
 
         logger.info("ApplicationContext stopped")
 
