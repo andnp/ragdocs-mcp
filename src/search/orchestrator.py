@@ -207,6 +207,12 @@ class SearchOrchestrator:
         if self._config.search.community_detection_enabled:
             fused = self._apply_community_boost(fused, all_doc_ids, chunk_id_to_doc_id)
 
+        fused = normalize_final_scores(
+            fused,
+            self._config.search.score_calibration_threshold,
+            self._config.search.score_calibration_steepness,
+        )
+
         if pipeline_config is not None:
             pipeline = SearchPipeline(pipeline_config)
         else:
@@ -479,7 +485,11 @@ class SearchOrchestrator:
             use_dynamic_weights=False,
         )
 
-        fused = normalize_final_scores(fused)
+        fused = normalize_final_scores(
+            fused,
+            self._config.search.score_calibration_threshold,
+            self._config.search.score_calibration_steepness,
+        )
 
         pipeline = self._get_pipeline()
 

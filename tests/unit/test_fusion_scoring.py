@@ -1,66 +1,62 @@
 """
-Unit tests for Score Normalization (normalize_scores).
+Unit tests for Score Calibration (normalize_scores).
 
-Tests the min-max score normalization function that converts raw RRF+recency
-scores into the [0, 1] range for user-facing result presentation.
+Tests the sigmoid calibration function that converts raw RRF+recency
+scores into absolute confidence scores [0, 1].
 """
 
-import pytest
 
-from src.search.fusion import normalize_scores
+from src.search.calibration import calibrate_results as normalize_scores
 
 
 class TestNormalizeScores:
-    """Tests for min-max score normalization."""
+    """Tests for sigmoid score calibration."""
 
-    def test_normalize_scores_min_max_scaling(self):
+    def test_normalize_scores_calibration(self):
         """
-        Verify correct min-max normalization formula application.
+        Verify correct sigmoid calibration.
 
-        Given a list of scores, the highest should become 1.0,
-        the lowest should become 0.0, and intermediate values
-        should be linearly interpolated.
-
-        Formula: (score - min) / (max - min)
+        High scores map to high confidence, low scores to low confidence,
+        and threshold score maps to ~0.5.
         """
         fused = [("doc1", 0.05), ("doc2", 0.03), ("doc3", 0.01)]
         normalized = normalize_scores(fused)
 
-        # Highest score (0.05) becomes 1.0
+        # Highest score (0.05) should have high confidence
         assert normalized[0][0] == "doc1"
-        assert normalized[0][1] == pytest.approx(1.0)
+        assert 0.75 < normalized[0][1] <= 1.0
 
-        # Middle score (0.03) becomes 0.5
-        # (0.03 - 0.01) / (0.05 - 0.01) = 0.02 / 0.04 = 0.5
+        # Middle score (0.03) below threshold should have low-moderate confidence
         assert normalized[1][0] == "doc2"
-        assert normalized[1][1] == pytest.approx(0.5)
+        assert 0.1 < normalized[1][1] < 0.5
 
-        # Lowest score (0.01) becomes 0.0
+        # Lowest score (0.01) should have very low confidence
         assert normalized[2][0] == "doc3"
-        assert normalized[2][1] == pytest.approx(0.0)
+        assert 0.0 <= normalized[2][1] < 0.05
 
     def test_normalize_scores_single_result(self):
         """
-        Test that single result always gets perfect score of 1.0.
+        Test that single result gets calibrated based on absolute score.
 
-        Edge case: When there's only one result, there's no relative
-        comparison possible, so it should be treated as a perfect match.
+        Calibration provides absolute confidence, not relative ranking.
         """
         fused = [("doc1", 0.0391)]
         normalized = normalize_scores(fused)
 
         assert len(normalized) == 1
         assert normalized[0][0] == "doc1"
-        assert normalized[0][1] == 1.0
+        # 0.0391 is just above threshold (0.035), so ~0.5-0.65
+        assert 0.5 < normalized[0][1] < 0.7
 
-        # Test with different score values
-        fused_high = [("doc_high", 100.5)]
+        # Test with high score
+        fused_high = [("doc_high", 0.100)]
         normalized_high = normalize_scores(fused_high)
-        assert normalized_high[0][1] == 1.0
+        assert normalized_high[0][1] > 0.95
 
+        # Test with low score
         fused_low = [("doc_low", 0.001)]
         normalized_low = normalize_scores(fused_low)
-        assert normalized_low[0][1] == 1.0
+        assert normalized_low[0][1] < 0.01
 
     def test_normalize_scores_empty_results(self):
         """
@@ -74,25 +70,24 @@ class TestNormalizeScores:
 
     def test_normalize_scores_identical_scores(self):
         """
-        Test that identical scores all become 1.0.
+        Test that identical scores get identical calibrated values.
 
-        Edge case: When all scores are the same, there's no way to
-        differentiate them, so all should be treated as perfect matches.
-        This prevents division by zero: (max - min) = 0.
+        All identical scores map to the same confidence level.
         """
         fused = [("doc1", 0.05), ("doc2", 0.05), ("doc3", 0.05)]
         normalized = normalize_scores(fused)
 
         assert len(normalized) == 3
-        assert all(score == 1.0 for _, score in normalized)
-        assert normalized[0] == ("doc1", 1.0)
-        assert normalized[1] == ("doc2", 1.0)
-        assert normalized[2] == ("doc3", 1.0)
+        # All should have same high confidence
+        first_score = normalized[0][1]
+        assert all(abs(score - first_score) < 0.001 for _, score in normalized)
+        assert 0.75 < first_score <= 1.0
 
-        # Test with different identical values
-        fused_zeros = [("a", 0.0), ("b", 0.0)]
-        normalized_zeros = normalize_scores(fused_zeros)
-        assert all(score == 1.0 for _, score in normalized_zeros)
+        # Test with low identical values
+        fused_low = [("a", 0.01), ("b", 0.01)]
+        normalized_low = normalize_scores(fused_low)
+        assert abs(normalized_low[0][1] - normalized_low[1][1]) < 0.001
+        assert normalized_low[0][1] < 0.05
 
     def test_normalize_scores_preserves_order(self):
         """
@@ -121,7 +116,7 @@ class TestNormalizeScores:
 
     def test_normalize_scores_range_invariant(self):
         """
-        Test that all normalized scores fall within [0, 1] range.
+        Test that all calibrated scores fall within [0, 1] range.
 
         Regardless of input score magnitude, output must be bounded.
         Tests with various input ranges to verify invariant holds.
@@ -131,87 +126,76 @@ class TestNormalizeScores:
         normalized_large = normalize_scores(fused_large)
 
         assert all(0.0 <= score <= 1.0 for _, score in normalized_large)
-        assert normalized_large[0][1] == 1.0  # Highest becomes 1.0
-        assert normalized_large[-1][1] == 0.0  # Lowest becomes 0.0
+        assert abs(normalized_large[0][1] - 1.0) < 0.01  # Very high score saturates at 1.0
+        assert abs(normalized_large[-1][1] - 1.0) < 0.01  # Still well above threshold
 
         # Small scores
         fused_small = [("doc1", 0.003), ("doc2", 0.002), ("doc3", 0.001)]
         normalized_small = normalize_scores(fused_small)
 
         assert all(0.0 <= score <= 1.0 for _, score in normalized_small)
-        assert normalized_small[0][1] == 1.0
-        assert normalized_small[-1][1] == 0.0
+        # All very low, should be near 0
+        assert all(score < 0.01 for _, score in normalized_small)
 
-        # Mixed positive/negative (shouldn't happen in practice, but defensive)
-        fused_mixed = [("doc1", 10.0), ("doc2", 0.0), ("doc3", -5.0)]
-        normalized_mixed = normalize_scores(fused_mixed)
+        # Negative scores (defensive - shouldn't happen)
+        fused_negative = [("doc1", 0.05), ("doc2", 0.0), ("doc3", -0.05)]
+        normalized_negative = normalize_scores(fused_negative)
 
-        assert all(0.0 <= score <= 1.0 for _, score in normalized_mixed)
-        assert normalized_mixed[0][1] == 1.0
-        assert normalized_mixed[-1][1] == 0.0
+        assert all(0.0 <= score <= 1.0 for _, score in normalized_negative)
+        assert abs(normalized_negative[2][1]) < 0.001  # Negative very close to 0
 
-    def test_normalize_scores_linear_interpolation(self):
+    def test_normalize_scores_monotonic_increasing(self):
         """
-        Test that intermediate scores are correctly interpolated.
+        Test that calibration preserves monotonic order.
 
-        Verifies the linearity of the normalization: evenly spaced
-        input scores should produce evenly spaced output scores.
+        Higher input scores always produce higher output scores.
         """
-        # Evenly spaced input: 0.1, 0.2, 0.3
-        fused = [("doc1", 0.3), ("doc2", 0.2), ("doc3", 0.1)]
+        # Realistic RRF score range
+        fused = [
+            ("doc1", 0.08),
+            ("doc2", 0.06),
+            ("doc3", 0.04),
+            ("doc4", 0.03),
+            ("doc5", 0.02),
+        ]
         normalized = normalize_scores(fused)
 
-        # Expected: doc1=1.0, doc2=0.5, doc3=0.0
-        assert normalized[0][1] == pytest.approx(1.0)
-        assert normalized[1][1] == pytest.approx(0.5)
-        assert normalized[2][1] == pytest.approx(0.0)
+        # Verify monotonic decreasing (since sorted descending)
+        scores = [score for _, score in normalized]
+        assert scores == sorted(scores, reverse=True)
 
-        # Test with more gradations
-        fused_many = [
-            ("a", 1.0),
-            ("b", 0.75),
-            ("c", 0.5),
-            ("d", 0.25),
-            ("e", 0.0),
-        ]
-        normalized_many = normalize_scores(fused_many)
-
-        # (1.0 - 0.0) / (1.0 - 0.0) = 1.0
-        assert normalized_many[0][1] == pytest.approx(1.0)
-        # (0.75 - 0.0) / (1.0 - 0.0) = 0.75
-        assert normalized_many[1][1] == pytest.approx(0.75)
-        # (0.5 - 0.0) / (1.0 - 0.0) = 0.5
-        assert normalized_many[2][1] == pytest.approx(0.5)
-        # (0.25 - 0.0) / (1.0 - 0.0) = 0.25
-        assert normalized_many[3][1] == pytest.approx(0.25)
-        # (0.0 - 0.0) / (1.0 - 0.0) = 0.0
-        assert normalized_many[4][1] == pytest.approx(0.0)
+        # Verify each score is lower than previous
+        for i in range(len(scores) - 1):
+            assert scores[i] > scores[i + 1]
 
     def test_normalize_scores_two_results(self):
         """
-        Test normalization with exactly two results.
+        Test calibration with exactly two results.
 
-        Edge case between single result (always 1.0) and
-        multiple results (full range [0, 1]). Should produce
-        scores of 1.0 and 0.0.
+        Both should be calibrated independently based on absolute values.
         """
         fused = [("doc1", 0.05), ("doc2", 0.03)]
         normalized = normalize_scores(fused)
 
         assert len(normalized) == 2
-        assert normalized[0] == ("doc1", 1.0)
-        assert normalized[1] == ("doc2", 0.0)
+        # 0.05 should have high confidence
+        assert 0.75 < normalized[0][1] <= 1.0
+        # 0.03 below threshold should have low confidence
+        assert 0.1 < normalized[1][1] < 0.5
 
-        # Test with very close scores
-        fused_close = [("high", 0.1001), ("low", 0.1000)]
+        # Test with very close scores - both get similar calibration
+        fused_close = [("high", 0.0501), ("low", 0.0500)]
         normalized_close = normalize_scores(fused_close)
 
-        assert normalized_close[0][1] == 1.0
-        assert normalized_close[1][1] == 0.0
+        # Both should be very close in calibrated value
+        assert abs(normalized_close[0][1] - normalized_close[1][1]) < 0.01
+        # Both should be high confidence
+        assert normalized_close[0][1] > 0.75
+        assert normalized_close[1][1] > 0.75
 
     def test_normalize_scores_with_real_rrf_scores(self):
         """
-        Test normalization with realistic RRF+recency scores.
+        Test calibration with realistic RRF+recency scores.
 
         Integration test using score ranges typical of actual
         RRF fusion output (around 0.01-0.05 range).
@@ -220,11 +204,12 @@ class TestNormalizeScores:
         # RRF(0) with k=60 = 1/60 ≈ 0.0167
         # RRF(1) with k=60 = 1/61 ≈ 0.0164
         fused_realistic = [
-            ("doc1", 0.0331),  # Appears in 2 strategies
-            ("doc2", 0.0325),  # Appears in 2 strategies
-            ("doc3", 0.0197),  # Single strategy, recency boost
-            ("doc4", 0.0167),  # Single strategy, rank 0
-            ("doc5", 0.0164),  # Single strategy, rank 1
+            ("doc1", 0.0831),  # High multi-strategy + boost
+            ("doc2", 0.0667),  # High multi-strategy
+            ("doc3", 0.0450),  # Above threshold
+            ("doc4", 0.0350),  # At threshold
+            ("doc5", 0.0250),  # Below threshold
+            ("doc6", 0.0167),  # Low single strategy
         ]
 
         normalized = normalize_scores(fused_realistic)
@@ -232,21 +217,16 @@ class TestNormalizeScores:
         # Verify all scores in [0, 1]
         assert all(0.0 <= score <= 1.0 for _, score in normalized)
 
-        # Highest score is 1.0
-        assert normalized[0][1] == 1.0
-        assert normalized[0][0] == "doc1"
-
-        # Lowest score is 0.0
-        assert normalized[-1][1] == 0.0
-        assert normalized[-1][0] == "doc5"
-
         # Scores decrease monotonically
         scores = [score for _, score in normalized]
         assert scores == sorted(scores, reverse=True)
 
-        # Verify approximate relative positions
-        # doc2 should be very close to doc1 (0.0325 vs 0.0331)
-        assert normalized[1][1] > 0.9  # Close to top
+        # Verify calibration ranges
+        # doc1 (very high) should have very high confidence
+        assert normalized[0][1] > 0.95
 
-        # doc3 should be roughly in the middle
-        assert 0.1 < normalized[2][1] < 0.9
+        # doc4 (at threshold) should be around 0.5
+        assert 0.4 < normalized[3][1] < 0.6
+
+        # doc6 (low) should have low confidence
+        assert normalized[5][1] < 0.07  # Adjusted threshold

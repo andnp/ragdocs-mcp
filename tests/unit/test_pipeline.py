@@ -1,4 +1,3 @@
-import pytest
 
 from src.models import CompressionStats
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
@@ -343,8 +342,10 @@ class TestSearchPipelineCompressionStats:
 
         results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
 
-        assert results[0][1] == pytest.approx(1.0)
-        assert results[1][1] == pytest.approx(0.0)
+        # After calibration, both high scores should have very high confidence
+        # (scores are so high they saturate near 1.0)
+        assert results[0][1] > 0.99, "Very high score should have confidence ~1.0"
+        assert results[1][1] > 0.99, "High score should also have high confidence"
 
 
 class TestSearchPipelineLazyReranker:

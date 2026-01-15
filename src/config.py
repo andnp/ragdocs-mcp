@@ -94,6 +94,8 @@ class SearchConfig:
     tag_expansion_enabled: bool = True
     tag_expansion_max_tags: int = 5
     tag_expansion_depth: int = 2
+    score_calibration_threshold: float = 0.035
+    score_calibration_steepness: float = 150.0
 
 @dataclass
 class LLMConfig:

@@ -601,7 +601,7 @@ Score-Aware RRF Fusion (with dynamic weights if dynamic_weights_enabled)
         ↓
 Recency Bias (tier-based multiplier)
         ↓
-Score Normalization [0.0, 1.0]
+Score Calibration (sigmoid, [0.0, 1.0])
         ↓
 Confidence Threshold (min_confidence)
         ↓
@@ -770,6 +770,80 @@ def fuse_results(results, k, weights, modified_times, current_time):
 3. oauth-guide.md (0.0175)
 4. security.md (0.0161)
 5. deployment.md (0.0082)
+
+### Score Calibration
+
+**Purpose:** Convert raw RRF+recency scores to absolute confidence scores representing match quality independent of result set size.
+
+**Method:** Sigmoid calibration applied after RRF fusion and recency boosting.
+
+**Formula:**
+
+$$
+\text{calibrated\_score} = \frac{1}{1 + e^{-s \cdot (r - t)}}
+$$
+
+Where:
+- $r$ = raw RRF+recency score
+- $t$ = threshold (default: 0.035)
+- $s$ = steepness (default: 150.0)
+
+**Threshold Parameter:** RRF score corresponding to 50% confidence. Raw scores above threshold map to >0.5 confidence, scores below map to <0.5 confidence.
+
+**Steepness Parameter:** Controls sigmoid curve steepness. Higher values create sharper transitions between low and high confidence.
+
+**Score Interpretation:**
+
+| Calibrated Score | Interpretation | Raw RRF Range | Typical Conditions |
+|-----------------|----------------|---------------|---------------------|
+| >0.9 | Excellent match | >0.050 | Top rank, multiple strategies agree |
+| 0.7-0.9 | Good match | 0.038-0.050 | Top-3 rank, 2+ strategies |
+| 0.5-0.7 | Moderate match | 0.030-0.038 | Near threshold, single strategy |
+| 0.3-0.5 | Weak match | 0.020-0.030 | Low rank, peripheral relevance |
+| <0.3 | Noise | <0.020 | Should be filtered |
+
+**Properties:**
+
+1. **Absolute Confidence:** Same raw score produces same calibrated score across queries
+2. **Asymptotic Bounds:** Approaches 1.0 for high scores (~0.98 max), approaches 0.0 for low scores
+3. **No Artificial Inflation:** Single-result queries scored by absolute confidence, not always 1.0
+4. **Stable Semantics:** Score thresholds remain consistent across different result set sizes
+
+**Example Calibration:**
+
+Raw RRF+recency scores:
+- authentication.md: 0.0325 → **0.42** (moderate)
+- api-reference.md: 0.0323 → **0.41** (moderate)
+- oauth-guide.md: 0.0175 → **0.09** (noise, filtered)
+- security.md: 0.0161 → **0.07** (noise, filtered)
+- deployment.md: 0.0082 → **0.01** (noise, filtered)
+
+With `min_confidence = 0.3`, only authentication.md and api-reference.md pass filtering.
+
+**Configuration:**
+
+```toml
+[search]
+score_calibration_threshold = 0.035  # RRF score for 50% confidence
+score_calibration_steepness = 150.0  # Sigmoid curve steepness
+min_confidence = 0.3                  # Filter results below 30% confidence
+```
+
+**Tuning Guidelines:**
+
+- **Lower threshold (0.025):** More lenient, higher confidence for same raw score
+- **Higher threshold (0.045):** Stricter, lower confidence for same raw score
+- **Lower steepness (100.0):** Gentler transitions, less separation
+- **Higher steepness (200.0):** Sharper transitions, more separation
+
+**Code Reference:** [src/search/calibration.py](../src/search/calibration.py)
+
+**Breaking Changes from v1.5 Min-Max Normalization:**
+
+- Top result no longer always 1.0 (typically 0.8-0.98)
+- Single-result queries no longer automatically 1.0
+- Scores are absolute confidence, not relative to result set
+- Set `min_confidence = 0.3` to filter low-quality results
 
 ## Performance Characteristics
 

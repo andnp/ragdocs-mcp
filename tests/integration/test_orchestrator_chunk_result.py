@@ -200,8 +200,8 @@ async def test_chunk_result_scores_normalized(config, manager, orchestrator):
     # Extract scores
     scores = [result.score for result in results]
 
-    # Verify first result has score 1.0
-    assert results[0].score == 1.0, "Highest score should be normalized to 1.0"
+    # Verify first result has high confidence (calibrated score)
+    assert results[0].score > 0.95, "Highest score should be > 0.95 (high confidence)"
 
     # Verify scores are descending
     for i in range(len(scores) - 1):

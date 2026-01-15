@@ -776,6 +776,34 @@ Controls hybrid search behavior and result fusion.
   min_confidence = 0.3  # Filter results below 30% confidence
   ```
 
+#### `score_calibration_threshold`
+
+- **Type:** float
+- **Default:** `0.035`
+- **Description:** RRF score corresponding to 50% confidence in sigmoid calibration. Controls the midpoint of the calibration curve. Raw RRF scores above this threshold map to >0.5 confidence, scores below map to <0.5 confidence.
+- **Range:** 0.01 to 0.10 (typical: 0.03 to 0.05)
+- **Effect:** Lower values shift the curve left (higher confidence for same raw score). Higher values shift right (lower confidence for same raw score).
+- **Tuning:** Adjust based on corpus characteristics. Use higher values for stricter confidence requirements.
+- **Example:**
+  ```toml
+  [search]
+  score_calibration_threshold = 0.035  # Balanced threshold
+  ```
+
+#### `score_calibration_steepness`
+
+- **Type:** float
+- **Default:** `150.0`
+- **Description:** Controls steepness of the sigmoid calibration curve. Higher values create sharper transitions between low and high confidence. Lower values create gentler transitions.
+- **Range:** 50.0 to 300.0 (typical: 100.0 to 200.0)
+- **Effect:** Higher values emphasize score differences near the threshold, creating more separation. Lower values compress score differences, reducing separation.
+- **Tuning:** Increase for clearer distinction between good and weak matches. Decrease for smoother confidence gradation.
+- **Example:**
+  ```toml
+  [search]
+  score_calibration_steepness = 150.0  # Standard steepness
+  ```
+
 #### `max_chunks_per_doc`
 
 - **Type:** integer

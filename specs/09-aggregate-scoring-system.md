@@ -123,25 +123,65 @@ class QueryResponse(BaseModel):
 
 ### 3.1. Score Normalization Strategy
 
-**Normalization Method:** Min-Max Scaling
+**Normalization Method:** Sigmoid Calibration (as of v1.6)
+
+### 3.1.1. Calibrated Scoring System
 
 **Formula:**
 ```python
-normalized_score = (score - min_score) / (max_score - min_score)
+calibrated_score = 1 / (1 + exp(-steepness * (raw_score - threshold)))
 ```
+
+**Parameters:**
+- `threshold` (default: 0.035): RRF score corresponding to 50% confidence
+- `steepness` (default: 150.0): Controls sigmoid curve steepness
 
 **Application Point:** After RRF+recency fusion, before top-k filtering
 
 **Rationale:**
-1. **Interpretability:** 1.0 always means "best match in this result set", 0.0 means "worst match in this result set"
-2. **Simplicity:** Single-pass linear transformation, no hyperparameters
-3. **Stability:** Robust to RRF parameter changes (k constant, weights)
-4. **Bounded:** Guarantees [0, 1] range without clipping
+1. **Absolute Confidence:** Scores represent match quality independent of result set size
+2. **No Artificial Inflation:** Single-result queries no longer receive 1.0 automatically
+3. **Stable Semantics:** Same raw RRF score produces same calibrated score across queries
+4. **Interpretable Thresholds:** ≥0.9 = excellent, 0.7-0.9 = good, 0.5-0.7 = moderate, 0.3-0.5 = weak, <0.3 = noise
+
+**Score Semantics:**
+
+| Calibrated Score | Interpretation | Typical Conditions |
+|-----------------|----------------|---------------------|
+| >0.9 | Excellent match | Top rank, multiple strategies agree |
+| 0.7-0.9 | Good match | Top-3 rank, 2+ strategies |
+| 0.5-0.7 | Moderate match | Near threshold, single strategy |
+| 0.3-0.5 | Weak match | Low rank, peripheral relevance |
+| <0.3 | Noise | Should be filtered |
+
+**Configuration:**
+
+```toml
+[search]
+# Sigmoid calibration parameters
+score_calibration_threshold = 0.035  # RRF score for 50% confidence
+score_calibration_steepness = 150.0  # Sigmoid curve steepness
+min_confidence = 0.3                  # Filter results below 30% confidence
+```
 
 **Edge Cases:**
-- **Single result:** If `min_score == max_score`, assign score 1.0 (only result is trivially the best)
+- **Single result:** Scored by absolute confidence, typically 0.8-0.95 (not always 1.0)
 - **Empty results:** Return empty list (no normalization needed)
-- **Negative scores:** Impossible with RRF (all scores positive), but formula handles correctly
+- **Very high scores:** Sigmoid asymptotically approaches 1.0, typically max 0.98
+- **Very low scores:** Sigmoid approaches 0.0, filtered by `min_confidence`
+
+**Migration Notes (Breaking Changes):**
+
+1. **Score Range Changed:** Highest score now typically 0.8-0.98 instead of always 1.0
+2. **No Relative Scaling:** Scores are absolute confidence, not relative to result set
+3. **Single-Result Behavior:** Single result no longer automatically 1.0
+4. **Filtering Recommended:** Set `min_confidence = 0.3` to filter low-quality results
+
+**Alternative Considered: Min-Max Normalization (v1.5, deprecated)**
+- **Formula:** `(score - min_score) / (max_score - min_score)`
+- **Pros:** Guaranteed [0, 1] bounds, simple linear transform
+- **Cons:** Top result always 1.0 regardless of quality, scores relative to result set, unstable across queries
+- **Rejected:** Provides relative not absolute confidence, artificial score inflation
 
 **Alternative Considered: Softmax Normalization**
 - **Formula:** `softmax_score = exp(score) / Σ exp(scores)`
@@ -652,27 +692,40 @@ class QueryResponse(BaseModel):
 
 ## 9. Architecture Decision Records
 
-### ADR-1: Min-Max Normalization for Score Aggregation
+### ADR-1: Sigmoid Calibration for Absolute Confidence Scores
 
-**Status:** Accepted
+**Status:** Accepted (v1.6, replaces ADR-1 v1.5)
 
-**Context:** RRF fusion produces unbounded scores (typically 0.01–0.10) that lack semantic meaning for clients. Users cannot interpret whether 0.0391 represents a "good" match without context. A normalization strategy was required to produce interpretable [0, 1] scores.
+**Context:** RRF fusion produces unbounded scores (typically 0.01–0.10) that lack semantic meaning for clients. Previous min-max normalization (v1.5) provided relative [0, 1] scores where the top result always scored 1.0 regardless of match quality. This created artificial score inflation and unstable semantics across queries. A calibration strategy was required to produce absolute confidence scores.
 
-**Decision:** Apply min-max normalization after RRF+recency fusion.
+**Decision:** Apply sigmoid calibration after RRF+recency fusion.
+
+**Formula:** `calibrated_score = 1 / (1 + exp(-steepness * (raw_score - threshold)))`
+
+**Parameters:**
+- `threshold = 0.035`: Empirically determined from corpus analysis, represents median "good match" RRF score
+- `steepness = 150.0`: Produces 0.9-0.99 confidence for top matches, 0.1-0.3 for weak matches
 
 **Alternatives Considered:**
 
 | Option | Pros | Cons |
 |--------|------|------|
-| **Min-Max (selected)** | Single linear transform, guaranteed [0,1] bounds, preserves ranking order, O(n) | Relative to result set only (not absolute confidence) |
+| **Sigmoid Calibration (selected)** | Absolute confidence, stable across queries, interpretable thresholds, no artificial inflation | Requires threshold tuning, asymptotic bounds (max ~0.98) |
+| Min-Max Normalization (v1.5) | Guaranteed [0,1] bounds, simple linear transform | Top result always 1.0 (artificial), relative not absolute, unstable across queries |
 | Percentile Normalization | Distribution-aware, handles outliers | Requires sorting, loses magnitude info, more complex |
 | Softmax | Probability distribution (sums to 1.0), differentiable | Sensitive to outliers, requires temperature tuning, less intuitive |
 | Raw Score Fusion | Zero compute overhead | Opaque scores, clients cannot threshold or interpret |
 | Z-Score | Centers distribution, preserves relative distances | Unbounded output requires clipping, undefined for n=1 |
 
-**Rationale:** Min-max provides bounded, interpretable scores with minimal overhead. The "best result = 1.0" semantic is intuitive. More complex approaches (softmax, percentile) add tuning parameters without clear benefit for ranking use cases.
+**Rationale:** Sigmoid calibration provides absolute confidence scores that remain stable across queries. The same RRF score always produces the same calibrated score, enabling reliable filtering and interpretation. Min-max normalization (v1.5) was rejected because it provided relative rather than absolute confidence, artificially inflating the top result to 1.0 even for poor matches.
 
-**Implementation:** [src/search/fusion.py](../src/search/fusion.py) `normalize_scores()` function.
+**Breaking Changes from v1.5:**
+- Highest score now typically 0.8-0.98 instead of always 1.0
+- Single-result queries no longer automatically score 1.0
+- Scores represent absolute confidence independent of result set
+- Recommended: set `min_confidence = 0.3` to filter noise
+
+**Implementation:** [src/search/calibration.py](../src/search/calibration.py) `calibrate_score()` function, [src/search/fusion.py](../src/search/fusion.py) integration.
 
 ---
 

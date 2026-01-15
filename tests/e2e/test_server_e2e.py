@@ -205,8 +205,8 @@ def test_query_endpoint_accepts_requests_and_returns_results(client):
             assert isinstance(chunk_id, str)
             assert isinstance(score, (int, float))
             assert 0.0 <= score <= 1.0
-        # Highest score should be 1.0
-        assert results[0]["score"] == 1.0
+        # Highest score should be high confidence (calibrated)
+        assert results[0]["score"] > 0.95
 
 
 def test_file_changes_trigger_index_updates(client, test_docs_dir):
@@ -541,12 +541,13 @@ def test_query_documents_scores_descending(client):
                 f"Score at position {i} ({scores[i]}) should be >= score at {i+1} ({scores[i+1]})"
 
 
-def test_query_documents_top_score_is_1_0(client):
+def test_query_documents_top_score_is_high_confidence(client):
     """
-    Test that the highest score in results is always 1.0.
+    Test that the highest score in results represents high confidence.
 
-    Validates normalization invariant: the best match should always
-    have a normalized score of 1.0.
+    Validates calibration: high-quality matches should have confidence > 0.95.
+    With sigmoid calibration, scores represent absolute confidence, not
+    relative ranking, so top score won't always be exactly 1.0.
     """
     response = client.post(
         "/query_documents",
@@ -559,8 +560,8 @@ def test_query_documents_top_score_is_1_0(client):
 
     if results:
         top_score = results[0]["score"]
-        assert top_score == 1.0, \
-            f"Top score should be 1.0, got {top_score}"
+        assert top_score > 0.95, \
+            f"Top score should be > 0.95 (high confidence), got {top_score}"
 
 
 def test_query_documents_validates_top_n_range(client):

@@ -394,14 +394,14 @@ Example response (standard endpoint):
       "content": "Authentication is configured in the auth section...",
       "file_path": "docs/authentication.md",
       "header_path": ["Configuration", "Authentication"],
-      "score": 1.0
+      "score": 0.92
     },
     {
       "chunk_id": "security_2",
       "content": "Security settings include authentication tokens...",
       "file_path": "docs/security.md",
       "header_path": ["Security", "API Keys"],
-      "score": 0.85
+      "score": 0.78
     }
   ]
 }
@@ -412,10 +412,10 @@ Example response (standard endpoint):
 For MCP clients (VS Code, Claude Desktop), results use compact format:
 
 ```
-[1] docs/authentication.md § Configuration > Authentication (1.00)
+[1] docs/authentication.md § Configuration > Authentication (0.92)
 Authentication is configured in the auth section...
 
-[2] docs/security.md § Security > API Keys (0.85)
+[2] docs/security.md § Security > API Keys (0.78)
 Security settings include authentication tokens...
 ```
 
@@ -436,7 +436,7 @@ Each result contains:
 - `content`: The text from the matching document chunk
 - `file_path`: Source file path relative to documents directory
 - `header_path`: Document structure showing nested headers (semantic "breadcrumbs")
-- `score`: Normalized similarity score [0, 1] where 1.0 is the best match
+- `score`: Calibrated confidence score [0, 1] representing absolute match quality (>0.9 = excellent, 0.7-0.9 = good, 0.5-0.7 = moderate, <0.3 = noise)
 
 ## Configuration Details
 
