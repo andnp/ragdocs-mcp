@@ -474,7 +474,7 @@ class VectorIndex:
         if self._vector_store is not None:
             import faiss
             faiss_path = path / "faiss_index.bin"
-            faiss.write_index(self._vector_store._faiss_index, str(faiss_path))
+            faiss.write_index(self._vector_store._faiss_index, str(faiss_path))  # type: ignore[attr-defined]
 
         mapping_file = path / "doc_id_mapping.json"
         with open(mapping_file, "w") as f:
@@ -510,10 +510,10 @@ class VectorIndex:
 
         faiss_path = path / "faiss_index.bin"
         if faiss_path.exists():
-            faiss_index = faiss.read_index(str(faiss_path))
+            faiss_index = faiss.read_index(str(faiss_path))  # type: ignore[attr-defined]
         else:
             dimension = 384
-            faiss_index = faiss.IndexFlatL2(dimension)
+            faiss_index = faiss.IndexFlatL2(dimension)  # type: ignore[attr-defined]
 
         self._vector_store = FaissVectorStore(faiss_index=faiss_index)
 
@@ -583,7 +583,7 @@ class VectorIndex:
         import faiss
 
         dimension = 384
-        faiss_index = faiss.IndexFlatL2(dimension)
+        faiss_index = faiss.IndexFlatL2(dimension)  # type: ignore[attr-defined]
         self._vector_store = FaissVectorStore(faiss_index=faiss_index)
 
         storage_context = StorageContext.from_defaults(

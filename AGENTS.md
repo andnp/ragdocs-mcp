@@ -72,7 +72,69 @@ The system is composed of four distinct layers:
 - `src/git/commit_indexer.py`: **Start here** for git history features.
 - `pyproject.toml`: Dependency and build management (uv/hatch).
 
-## 6. Common Tasks (for AI)
+## 6. Tool Usage Guidelines
+
+### Document Search vs. Memory Management
+
+**CRITICAL DISTINCTION**: This system provides TWO separate tool sets with different purposes:
+
+#### A. Document Search Tools (Query the indexed documentation)
+Use these to **search and read** existing project documentation:
+
+- `query_documents`: Search documentation using hybrid search
+- `query_unique_documents`: Search with one result per document
+- `search_git_history`: Search commit history
+- `search_with_hypothesis`: Search using HyDE technique
+
+**Purpose**: Finding and retrieving information from the project's documentation corpus (README, specs, guides, etc.)
+**When to use**: When you need to understand existing documentation, find API references, locate implementation details
+
+#### B. Memory Management Tools (AI persistent storage)
+Use these to **create, modify, and search AI memories** (persistent notes that survive across sessions):
+
+- `create_memory`: Create a new memory file in the Memory Bank
+- `read_memory`: Read a specific memory file
+- `update_memory`: Replace memory content
+- `append_memory`: Append to a memory file
+- `delete_memory`: Delete a memory (moves to trash)
+- `search_memories`: Search the Memory Bank
+- `search_linked_memories`: Find memories linking to a document
+- `get_memory_stats`: Get memory statistics
+- `merge_memories`: Consolidate multiple memories
+
+**Purpose**: Storing AI decisions, plans, observations, and cross-session knowledge
+**When to use**: When recording decisions, creating plans, noting observations for future reference
+
+**Storage locations:**
+- Memories: `.memories/` (project) or `~/.local/share/mcp-markdown-ragdocs/memories/` (user)
+- Documentation: Anywhere under the configured `documents_path` (typically project root)
+
+### File System Operations
+
+For **editing regular project files** (code, documentation, configuration):
+- Use standard file system tools provided by your environment
+- **DO NOT** use memory tools for editing project documentation files
+- **DO NOT** use `create_memory` when asked to create/edit markdown documentation files
+
+**Example scenarios:**
+- "Add a section to README.md" → Use file editor, NOT `create_memory`
+- "Create a new spec document" → Use file editor, NOT `create_memory`
+- "Record this architectural decision" → Use `create_memory` with type="reflection"
+- "Remember this plan for later" → Use `create_memory` with type="plan"
+
+### Query vs. Content Distinction
+
+**Query tools** (`query_documents`, `search_memories`) are for **finding existing content**:
+- Returns search results with relevance scores
+- Does not modify content
+- Use when you need to locate information
+
+**CRUD tools** (`create_memory`, `update_memory`) are for **managing content**:
+- Create, read, update, delete operations
+- Modify the file system
+- Use when you need to persist information
+
+## 7. Common Tasks (for AI)
 
 **Task**: Add a new tool to the MCP server.
 **Action**:

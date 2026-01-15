@@ -9,7 +9,7 @@ Tests the search_with_hypothesis MCP tool end-to-end:
 - Integration with search infrastructure
 """
 
-from typing import Any
+from typing import cast
 
 import pytest
 
@@ -21,6 +21,7 @@ from src.config import (
     SearchConfig,
     ServerConfig,
 )
+from src.context import ApplicationContext
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -155,8 +156,8 @@ def _create_mcp_server(config: Config, docs_dir) -> MCPServer:
         def is_ready(self):
             return True
 
-    mock_ctx: Any = MockContext()
-    return MCPServer(ctx=mock_ctx)
+    mock_ctx = MockContext()
+    return MCPServer(ctx=cast(ApplicationContext, mock_ctx))
 
 
 # ============================================================================

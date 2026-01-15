@@ -20,7 +20,7 @@ Use ephemeral fixtures (tmp_path) when:
 """
 
 from pathlib import Path
-from typing import Generator
+from typing import Any, Generator
 
 import pytest
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -43,7 +43,7 @@ def make_test_config(tmp_path: Path, **overrides):
     index_path = tmp_path / "index"
     index_path.mkdir(exist_ok=True)
 
-    defaults = {
+    defaults: dict[str, Any] = {
         "server": ServerConfig(host="localhost", port=8080),
         "indexing": IndexingConfig(
             documents_path=str(docs_path),

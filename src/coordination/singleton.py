@@ -183,7 +183,7 @@ class SingletonGuard:
             if sys.platform == "win32":
                 import msvcrt
                 try:
-                    msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+                    msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
                 except Exception as e:
                     logger.warning(f"Failed to unlock file descriptor: {e}")
 

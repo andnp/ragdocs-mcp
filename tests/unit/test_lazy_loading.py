@@ -48,12 +48,12 @@ class TestVectorIndexLazyLoading:
         call_count = 0
         original_ensure = index._ensure_model_loaded
 
-        def counting_ensure():
+        def counting_ensure() -> None:
             nonlocal call_count
             call_count += 1
             original_ensure()
 
-        index._ensure_model_loaded = counting_ensure
+        index._ensure_model_loaded = counting_ensure  # type: ignore[method-assign]
 
         threads = [threading.Thread(target=index._ensure_model_loaded) for _ in range(10)]
         for t in threads:

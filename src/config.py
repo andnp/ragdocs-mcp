@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 import os
 import re
 import logging
@@ -374,7 +374,16 @@ def persist_project_to_config(project_name: str, project_path: str):
         doc["projects"] = tomlkit.aot()
 
     projects_array: Any = doc["projects"]
-    for proj in projects_array:
+    if not isinstance(projects_array, list):
+        from tomlkit.items import AoT
+        projects_array = AoT([])
+        doc["projects"] = projects_array
+
+    # Cast to avoid type checker issues with tomlkit types
+    projects_list = cast(list[Any], projects_array)
+
+    for proj_item in projects_list:
+        proj = cast(dict[str, Any], proj_item)
         if proj.get("name") == project_name:
             logger.debug(f"Project '{project_name}' already exists in config")
             return
@@ -385,7 +394,7 @@ def persist_project_to_config(project_name: str, project_path: str):
     new_project: Any = tomlkit.table()
     new_project["name"] = project_name
     new_project["path"] = project_path
-    projects_array.append(new_project)
+    projects_list.append(new_project)
 
     with tempfile.NamedTemporaryFile(
         mode="w",
