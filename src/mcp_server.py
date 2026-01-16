@@ -1148,6 +1148,46 @@ class MCPServer:
 
         return [TextContent(type="text", text="\n".join(output_lines))]
 
+    async def _handle_suggest_memory_merges(self, arguments: dict) -> list[TextContent]:
+        if not self.ctx:
+            raise RuntimeError("Server not initialized")
+
+        from src.memory.maintenance import suggest_memory_merges
+
+        threshold = arguments.get("threshold", 0.85)
+        limit = arguments.get("limit", 5)
+        filter_type = arguments.get("filter_type", "journal")
+
+        results = await suggest_memory_merges(
+            self.ctx, threshold, limit, filter_type
+        )
+
+        if results and "error" in results[0]:
+            return [TextContent(type="text", text=str(results[0]))]
+
+        output_lines = ["# Suggested Memory Merges", ""]
+
+        if not results:
+            output_lines.append("No merge candidates found matching criteria.")
+        else:
+            for i, cluster in enumerate(results, 1):
+                output_lines.extend([
+                    f"## Cluster {i} (Score: {cluster['score']})",
+                    f"**Reason:** {cluster['reason']}",
+                    f"**Memories:** {cluster['memory_count']}",
+                    "",
+                    "### Candidates:",
+                ])
+                
+                for mem in cluster.get("memories", []):
+                    path_str = mem.get('file_path') or 'unknown'
+                    preview = mem.get('preview', '').replace('\n', ' ')
+                    output_lines.append(f"- `{path_str}`: {preview}")
+                
+                output_lines.extend(["", "---", ""])
+
+        return [TextContent(type="text", text="\n".join(output_lines))]
+
     async def shutdown(self) -> None:
         if not self.ctx:
             return

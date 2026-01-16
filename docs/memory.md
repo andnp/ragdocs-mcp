@@ -322,6 +322,44 @@ Consolidate multiple memories into one.
 2. Moves source files to `.trash/` (timestamped)
 3. Re-indexes target, removes sources from index
 
+#### `suggest_memory_merges`
+
+Suggest groups of memories that could be merged based on content similarity.
+
+**Parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `threshold` | float | No | 0.85 | Similarity threshold (0.0 to 1.0) |
+| `limit` | int | No | 5 | Max clusters to return |
+| `filter_type` | string | No | `"journal"` | Only cluster memories of this type |
+
+**Example:**
+
+```json
+{
+  "threshold": 0.85,
+  "filter_type": "journal"
+}
+```
+
+**Response:**
+
+```json
+[
+  {
+    "cluster_id": 0,
+    "score": 0.92,
+    "reason": "High vector similarity (> 0.85)",
+    "memory_count": 3,
+    "memories": [
+      { "id": "chunk_id_1", "file_path": "/memories/journal-1.md", "preview": "..." },
+      { "id": "chunk_id_2", "file_path": "/memories/journal-2.md", "preview": "..." }
+    ]
+  }
+]
+```
+
 ## Architecture
 
 ### Dual-Lane Pattern
