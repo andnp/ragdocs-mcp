@@ -5,8 +5,8 @@ Tests the complete CRUD operations and search tools exposed via MCP,
 including create, read, append, update, delete, search, and merge.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -38,6 +38,12 @@ from src.memory.tools import (
 )
 
 
+@dataclass
+class FakeApplicationContext:
+    memory_manager: MemoryIndexManager | None
+    memory_search: MemorySearchOrchestrator | None
+
+
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -60,6 +66,7 @@ def memory_config(tmp_path: Path):
         memory=MemoryConfig(
             enabled=True,
             storage_strategy="project",
+            score_threshold=0.001,
             recency_boost_days=7,
             recency_boost_factor=1.2,
         ),
@@ -111,26 +118,26 @@ def memory_search(memory_config: Config, memory_indices, memory_manager: MemoryI
 @pytest.fixture
 def app_context(memory_manager: MemoryIndexManager, memory_search: MemorySearchOrchestrator):
     """
-    Create a mock ApplicationContext with memory components.
+    Create a FakeApplicationContext with memory components.
 
-    Uses a simple object instead of the full ApplicationContext to avoid
+    Uses a simple dataclass instead of the full ApplicationContext to avoid
     complex dependencies.
     """
-    ctx = MagicMock()
-    ctx.memory_manager = memory_manager
-    ctx.memory_search = memory_search
-    return ctx
+    return FakeApplicationContext(
+        memory_manager=memory_manager,
+        memory_search=memory_search,
+    )
 
 
 @pytest.fixture
 def disabled_context():
     """
-    Create a mock ApplicationContext with memory disabled.
+    Create a FakeApplicationContext with memory disabled.
     """
-    ctx = MagicMock()
-    ctx.memory_manager = None
-    ctx.memory_search = None
-    return ctx
+    return FakeApplicationContext(
+        memory_manager=None,
+        memory_search=None,
+    )
 
 
 # ============================================================================
@@ -420,7 +427,7 @@ class TestSearchMemories:
         await create_memory(
             app_context,
             filename="plan-note",
-            content="# Implementation Plan\n\nSteps for new feature.",
+            content="# Implementation Plan\n\nSteps for implementing authentication.",
             tags=["feature"],
             memory_type="plan",
         )
@@ -434,14 +441,15 @@ class TestSearchMemories:
 
         results = await search_memories(
             app_context,
-            query="feature",
+            query="implementation authentication",
             limit=10,
             filter_type="plan",
         )
 
+        assert len(results) > 0
         for result in results:
-            if "error" not in result:
-                assert result.get("type") == "plan" or len(results) >= 0
+            assert "error" not in result
+            assert result.get("type") == "plan"
 
     @pytest.mark.asyncio
     async def test_search_memories_disabled_returns_error(self, disabled_context):

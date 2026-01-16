@@ -13,10 +13,50 @@ from src.memory.models import (
     MemoryFrontmatter,
     MemorySearchResult,
 )
-from src.search.fusion import fuse_results
+from src.search.fusion import fuse_results, normalize_final_scores
 from src.search.tag_expansion import expand_query_with_tags
+from src.utils.similarity import cosine_similarity_lists
 
 logger = logging.getLogger(__name__)
+
+
+def apply_memory_decay(
+    score: float,
+    created_at: datetime | None,
+    decay_rate: float,
+    floor_multiplier: float,
+) -> float:
+    """
+    Apply exponential decay to memory score based on age.
+
+    Formula: adjusted_score = original_score × max(floor_multiplier, decay_rate^days_old)
+
+    Args:
+        score: Original search score
+        created_at: Memory creation timestamp
+        decay_rate: Daily decay rate (0.0 < rate <= 1.0)
+        floor_multiplier: Minimum multiplier to prevent zero scores
+
+    Returns:
+        Score with decay applied
+    """
+    if created_at is None:
+        # No created_at: treat as very old, apply floor
+        return score * floor_multiplier
+
+    now = datetime.now(timezone.utc)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+
+    age_days = (now - created_at).days
+
+    # Calculate decay multiplier
+    decay_multiplier = decay_rate ** age_days
+
+    # Apply floor to prevent scores from reaching zero
+    final_multiplier = max(floor_multiplier, decay_multiplier)
+
+    return score * final_multiplier
 
 
 def apply_memory_recency_boost(
@@ -25,19 +65,25 @@ def apply_memory_recency_boost(
     boost_days: int,
     boost_factor: float,
 ) -> float:
-    if created_at is None:
+    """
+    DEPRECATED: Use apply_memory_decay() instead.
+
+    Backward compatibility wrapper for old recency boost API.
+    Approximates old behavior using decay system.
+    """
+    # Convert old boost parameters to decay parameters
+    # boost_factor=1.2 for 7 days ~ decay_rate=0.90
+    # This is an approximation for backward compatibility
+    if boost_days <= 0:
         return score
 
-    now = datetime.now(timezone.utc)
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
+    # Map boost factor to approximate decay rate
+    # boost_factor 1.2 -> decay_rate 0.90 (10% daily decay within boost window)
+    # boost_factor 1.5 -> decay_rate 0.85 (15% daily decay within boost window)
+    decay_rate = 2.0 - boost_factor  # Rough approximation
+    decay_rate = max(0.5, min(0.99, decay_rate))  # Clamp to reasonable range
 
-    age_days = (now - created_at).days
-
-    if age_days <= boost_days:
-        return score * boost_factor
-
-    return score
+    return apply_memory_decay(score, created_at, decay_rate, 0.1)
 
 
 class MemorySearchOrchestrator:
@@ -117,6 +163,13 @@ class MemorySearchOrchestrator:
             modified_times,
         )
 
+        # Apply score calibration to prevent RRF compression (0.01-0.03 → 0-1 range)
+        fused = normalize_final_scores(
+            fused,
+            self._config.search.score_calibration_threshold,
+            self._config.search.score_calibration_steepness,
+        )
+
         memory_results: list[MemorySearchResult] = []
 
         for chunk_id, score in fused:
@@ -146,15 +199,22 @@ class MemorySearchOrchestrator:
                 except ValueError:
                     pass
 
-            boosted_score = apply_memory_recency_boost(
+            memory_type = metadata.get("memory_type", "journal")
+            decay_config = self._config.memory.get_decay_config(memory_type)
+
+            decayed_score = apply_memory_decay(
                 score,
                 created_at,
-                self._config.memory.recency_boost_days,
-                self._config.memory.recency_boost_factor,
+                decay_config.decay_rate,
+                decay_config.floor_multiplier,
             )
 
+            # Apply threshold filtering (post-calibration)
+            if decayed_score < self._config.memory.score_threshold:
+                continue
+
             frontmatter = MemoryFrontmatter(
-                type=metadata.get("memory_type", "journal"),
+                type=memory_type,
                 status=metadata.get("memory_status", "active"),
                 tags=metadata.get("memory_tags", []),
                 created_at=created_at,
@@ -172,7 +232,7 @@ class MemorySearchOrchestrator:
 
             memory_results.append(MemorySearchResult(
                 memory_id=str(chunk_data.get("doc_id", chunk_id)),
-                score=boosted_score,
+                score=decayed_score,
                 content=content,
                 frontmatter=frontmatter,
                 file_path=str(chunk_data.get("file_path", "")),
@@ -221,7 +281,7 @@ class MemorySearchOrchestrator:
                 for memory_id, chunk_id, base_score in memory_chunks:
                     chunk_embedding = self._vector.get_embedding_for_chunk(chunk_id)
                     if chunk_embedding:
-                        similarity = self._cosine_similarity(query_embedding, chunk_embedding)
+                        similarity = cosine_similarity_lists(query_embedding, chunk_embedding)
                         scored_chunks.append((memory_id, chunk_id, similarity))
                     else:
                         scored_chunks.append((memory_id, chunk_id, base_score))
@@ -258,19 +318,6 @@ class MemorySearchOrchestrator:
                 break
 
         return results
-
-    def _cosine_similarity(self, vec_a: list[float], vec_b: list[float]) -> float:
-        if len(vec_a) != len(vec_b):
-            return 0.0
-
-        dot_product = sum(a * b for a, b in zip(vec_a, vec_b))
-        norm_a = sum(a * a for a in vec_a) ** 0.5
-        norm_b = sum(b * b for b in vec_b) ** 0.5
-
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-
-        return dot_product / (norm_a * norm_b)
 
     async def _search_vector(self, query: str, top_k: int) -> list[dict]:
         loop = asyncio.get_event_loop()

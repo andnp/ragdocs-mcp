@@ -3,7 +3,7 @@ import math
 
 def calibrate_score(
     rrf_score: float,
-    threshold: float = 0.035,
+    threshold: float = 0.04,
     steepness: float = 150.0
 ):
     """Convert RRF score to calibrated confidence [0,1]."""
@@ -15,7 +15,7 @@ def calibrate_score(
 
 def calibrate_results(
     fused_results: list[tuple[str, float]],
-    threshold: float = 0.035,
+    threshold: float = 0.04,
     steepness: float = 150.0
 ):
     """Calibrate all RRF scores in result list."""

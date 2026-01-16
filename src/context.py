@@ -247,9 +247,10 @@ class ApplicationContext:
         if self.memory_manager is not None:
             try:
                 self.memory_manager.load()
-                indexed = self.memory_manager.reindex_all()
-                self.memory_manager.persist()
-                logger.info(f"Memory system loaded with {indexed} memories")
+                # Memory system relies on persistence - no full reindex on startup
+                # indexed = self.memory_manager.reindex_all()
+                # self.memory_manager.persist()
+                logger.info("Memory system loaded")
             except Exception as e:
                 logger.warning(f"Failed to load memory indices: {e}")
 
@@ -501,12 +502,23 @@ class ApplicationContext:
         for repo_path in repos:
             try:
                 # Get last indexed timestamp for this repo
-                last_timestamp = self.commit_indexer.get_last_indexed_timestamp(str(repo_path))
+                last_timestamp = self.commit_indexer.get_last_indexed_timestamp(str(repo_path.parent))
 
                 # Get new commits
                 commit_hashes = get_commits_after_timestamp(repo_path, last_timestamp)
 
-                logger.info(f"Indexing {len(commit_hashes)} commits from {repo_path.parent}")
+                # Log indexing status
+                if last_timestamp is not None:
+                    from datetime import datetime
+                    last_indexed_dt = datetime.fromtimestamp(last_timestamp).isoformat()
+                    logger.info(f"Repository {repo_path.parent}: Last indexed at {last_indexed_dt}, found {len(commit_hashes)} new commits")
+                else:
+                    logger.info(f"Repository {repo_path.parent}: First-time indexing, found {len(commit_hashes)} commits")
+
+                # Skip if no new commits
+                if len(commit_hashes) == 0:
+                    logger.debug(f"No new commits to index for {repo_path.parent}")
+                    continue
 
                 # Batch process
                 for i in range(0, len(commit_hashes), self.config.git_indexing.batch_size):
@@ -531,7 +543,7 @@ class ApplicationContext:
                                 files_changed=commit.files_changed,
                                 delta_truncated=commit.delta_truncated,
                                 commit_document=doc,
-                                repo_path=str(repo_path),
+                                repo_path=str(repo_path.parent),
                             )
                             total_indexed += 1
                         except Exception as e:

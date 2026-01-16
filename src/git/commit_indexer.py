@@ -34,6 +34,33 @@ class CommitIndexer:
         self._conn: sqlite3.Connection | None = None
         self._ensure_schema()
 
+    @staticmethod
+    def _normalize_repo_path(repo_path: str) -> str:
+        """
+        Normalize repository path for consistent storage and querying.
+
+        Ensures:
+        - Absolute path
+        - No trailing slashes
+        - No .git suffix
+
+        Args:
+            repo_path: Raw repository path
+
+        Returns:
+            Normalized absolute path string
+        """
+        path = Path(repo_path)
+
+        # Strip .git suffix if present
+        if path.name == ".git":
+            path = path.parent
+
+        # Resolve to absolute path and remove trailing slashes
+        normalized = str(path.resolve())
+
+        return normalized
+
     def _get_connection(self) -> sqlite3.Connection:
         """Get or create database connection."""
         if self._conn is None:
@@ -115,9 +142,10 @@ class CommitIndexer:
         embedding = self._embedding_model.get_text_embedding(commit_document)
         embedding_bytes = self._serialize_embedding(embedding)
 
-        # Store in SQLite
+        # Store in SQLite with normalized path
         conn = self._get_connection()
         indexed_at = int(time.time())
+        normalized_path = self._normalize_repo_path(repo_path)
 
         conn.execute(
             """
@@ -137,7 +165,7 @@ class CommitIndexer:
                 delta_truncated,
                 embedding_bytes,
                 indexed_at,
-                repo_path,
+                normalized_path,
             ),
         )
         conn.commit()
@@ -149,6 +177,13 @@ class CommitIndexer:
         conn.execute("DELETE FROM git_commits WHERE hash = ?", (commit_hash,))
         conn.commit()
         logger.debug(f"Removed commit {commit_hash[:8]}")
+
+    def clear(self) -> None:
+        """Remove all commits from index."""
+        conn = self._get_connection()
+        conn.execute("DELETE FROM git_commits")
+        conn.commit()
+        logger.info("Cleared all commits from index")
 
     def query_by_embedding(
         self,
@@ -223,9 +258,10 @@ class CommitIndexer:
     def get_last_indexed_timestamp(self, repo_path: str) -> int | None:
         """Get most recent commit timestamp for a repository."""
         conn = self._get_connection()
+        normalized_path = self._normalize_repo_path(repo_path)
         cursor = conn.execute(
             "SELECT MAX(timestamp) as max_ts FROM git_commits WHERE repo_path = ?",
-            (repo_path,),
+            (normalized_path,),
         )
         row = cursor.fetchone()
 

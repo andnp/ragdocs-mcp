@@ -190,7 +190,8 @@ def test_end_to_end_discover_index_search(git_test_repo, commit_indexer, tmp_pat
         assert result.timestamp > 0
         assert result.author
         assert result.title
-        assert result.repo_path == str(git_dir)
+        # repo_path is normalized (without .git suffix)
+        assert result.repo_path == str(git_dir.parent)
 
 
 def test_glob_filtering_python_files(git_test_repo, commit_indexer):

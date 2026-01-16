@@ -280,6 +280,18 @@ Building concept vocabulary...
 - Testing indexing behavior
 - Force rebuild of git commit index or concept vocabulary
 
+**Normal Indexing vs. Rebuild:**
+
+By default, the system uses **incremental indexing**:
+- Documents: Only modified files reindexed via file watcher
+- Git commits: Only new commits indexed on startup
+- State persisted: Last indexed timestamp stored per repository
+
+Use `rebuild-index` to force a **full rebuild**:
+- Documents: All files reindexed from scratch
+- Git commits: Database cleared, all commits reindexed
+- State reset: Incremental indexing resumes after rebuild
+
 **Behavior:**
 
 1. **Document Indexing Phase:**
@@ -289,12 +301,14 @@ Building concept vocabulary...
    - Overwrites existing index files
 
 2. **Git Commit Indexing Phase (if `git_indexing.enabled = true`):**
+   - **Clears existing commit index** (forces full rebuild)
    - Discovers git repositories respecting exclusion patterns
    - Counts total commits across all repositories
    - Displays progress bar showing commit indexing progress
    - Indexes commit metadata, message, and truncated diffs
    - Non-fatal: continues if git binary unavailable or indexing fails
    - Outputs commit count and repository count on success
+   - **Note:** Path normalization ensures consistent state tracking
 
 3. **Concept Vocabulary Building Phase (if `search.query_expansion_enabled = true`):**
    - Extracts unique terms from indexed documents
@@ -307,17 +321,34 @@ Building concept vocabulary...
 
 - **Git binary unavailable:** Displays warning and skips git commit indexing
 - **No repositories found:** Displays informational message
-- **No new commits:** Displays message indicating no commits to index
+- **No new commits:** Displays message indicating no commits to index (during normal startup)
 - **Git indexing disabled:** Skips git commit indexing phase silently
 - **Query expansion disabled:** Skips concept vocabulary building phase silently
 - **Indexing failures:** Logs error and continues with remaining phases
+
+**Incremental Indexing After Rebuild:**
+
+After running `rebuild-index`, subsequent server startups use incremental indexing:
+- Git commits: Only commits added after last rebuild are indexed
+- Documents: File watcher detects changes and indexes modified files
+- State persistence: Repository paths normalized for consistent timestamp tracking
 
 **Performance Notes:**
 
 - Document indexing: Depends on document count and size
 - Git commit indexing: ~60 commits/sec on average
+- Incremental git indexing: Near-instant when no new commits (zero-commit optimization)
 - Concept vocabulary: Scales with corpus size and term count (5000 terms default)
 - Large repositories (10k+ commits): May take several minutes for full rebuild
+- Subsequent startups: Incremental indexing fetches only new commits since last index
+
+**Technical Implementation:**
+
+Git commit incremental indexing relies on:
+- Per-repository timestamp tracking in SQLite
+- Path normalization (absolute, no `.git` suffix, no trailing slashes)
+- Zero-commit optimization skips repositories with no new commits
+- Logging distinguishes incremental vs first-time indexing for observability
 
 ## Configuration File Discovery
 
@@ -1166,29 +1197,99 @@ Controls the AI Memory Management System for persistent cross-session storage.
   storage_strategy = "user"  # Shared memory bank
   ```
 
-#### `recency_boost_days`
-
-- **Type:** integer
-- **Default:** `7`
-- **Description:** Number of days within which memories receive a recency score boost. Memories created within this window are considered "recent" and have their search scores multiplied by `recency_boost_factor`.
-- **Range:** 1 to 365 (typical: 7 to 30)
-- **Example:**
-  ```toml
-  [memory]
-  recency_boost_days = 14  # 2-week recency window
-  ```
-
-#### `recency_boost_factor`
+#### `score_threshold`
 
 - **Type:** float
-- **Default:** `1.2`
-- **Description:** Score multiplier applied to memories within the recency window. A value of 1.2 means recent memories score 20% higher.
-- **Range:** 1.0 (no boost) to 2.0 (double score)
+- **Default:** `0.2`
+- **Range:** `[0.0, 1.0]`
+- **Description:** Minimum score threshold after calibration and decay. Memories scoring below this value are filtered from search results. The threshold applies to calibrated scores (0-1 range) after sigmoid expansion and exponential decay.
+- **Purpose:** Controls precision/recall trade-off by filtering low-confidence results
+- **Recommendations:**
+  - **Default (0.2)**: Balanced precision/recall for general use
+  - **Lower (0.15 or 0.1)**: Prioritize recall, explore broadly, useful for older memory banks
+  - **Higher (0.25 or 0.3)**: Prioritize precision, reduce noise, strict filtering
+- **Tuning Guide:**
+  - Too few results? Lower to 0.15 or 0.1
+  - Too many irrelevant results? Raise to 0.25 or 0.3
+  - Check decay configuration if scores seem compressed despite tuning
 - **Example:**
   ```toml
   [memory]
-  recency_boost_factor = 1.3  # 30% boost for recent memories
+  score_threshold = 0.2  # Default: filter results < 20% confidence
+
+  # For high-precision retrieval
+  score_threshold = 0.3
+
+  # For exploratory search
+  score_threshold = 0.15
   ```
+- **Technical Details:**
+  - Threshold applies after: RRF fusion → Calibration → Decay
+  - Calibration uses sigmoid: `1 / (1 + exp(-steepness * (rrf_score - threshold)))`
+  - Decay formula: `calibrated_score × max(floor, decay_rate^days_old)`
+  - See [Memory Search Scoring](memory.md#search-scoring--calibration) for details
+
+### [memory.decay_*]
+
+Per-memory-type exponential decay configuration. Memory search applies exponential decay to scores based on age: `adjusted_score = original_score × max(floor_multiplier, decay_rate^days_old)`.
+
+**Available types:** `decay_journal`, `decay_plan`, `decay_fact`, `decay_observation`, `decay_reflection`
+
+#### `decay_rate`
+
+- **Type:** float
+- **Default:** Type-dependent (see table below)
+- **Description:** Exponential decay rate per day. Lower values = faster decay.
+- **Range:** 0.5 to 1.0 (typical: 0.85 to 0.98)
+- **Formula:** Score is multiplied by `decay_rate^days_old` each day
+- **Example:**
+  ```toml
+  [memory.decay_journal]
+  decay_rate = 0.90  # 7-day half-life
+  ```
+
+#### `floor_multiplier`
+
+- **Type:** float
+- **Default:** Type-dependent (see table below)
+- **Description:** Minimum score multiplier. Prevents scores from decaying to zero, ensuring old memories remain discoverable.
+- **Range:** 0.05 to 0.3 (typical: 0.1 to 0.2)
+- **Example:**
+  ```toml
+  [memory.decay_journal]
+  floor_multiplier = 0.1  # Never decay below 10% of original
+  ```
+
+**Default Decay Configurations:**
+
+| Memory Type | Decay Rate | Half-Life | Floor | Section |
+|------------|------------|-----------|-------|----------|
+| `journal` | 0.90 | 7 days | 0.1 | `[memory.decay_journal]` |
+| `plan` | 0.85 | 4.5 days | 0.1 | `[memory.decay_plan]` |
+| `fact` | 0.98 | 35 days | 0.2 | `[memory.decay_fact]` |
+| `observation` | 0.92 | 8.3 days | 0.15 | `[memory.decay_observation]` |
+| `reflection` | 0.95 | 14 days | 0.2 | `[memory.decay_reflection]` |
+
+**Example configuration:**
+
+```toml
+[memory]
+enabled = true
+storage_strategy = "project"
+score_threshold = 0.2  # Filter results below 20% confidence
+
+# Fast decay for ephemeral journals
+[memory.decay_journal]
+decay_rate = 0.85  # 4.5-day half-life (faster than default)
+floor_multiplier = 0.05  # Lower floor for aggressive filtering
+
+# Slow decay for evergreen facts
+[memory.decay_fact]
+decay_rate = 0.99  # 70-day half-life (slower than default)
+floor_multiplier = 0.3  # Higher floor for long-term preservation
+```
+
+**Deprecated fields:** `recency_boost_days` and `recency_boost_factor` are deprecated and ignored if present. Use per-type decay configs instead. Deprecation warnings logged at startup.
 
 ## Complete Example Configuration
 
@@ -1281,8 +1382,19 @@ embedding_model = "local"
 # Enable AI memory bank
 enabled = false
 storage_strategy = "project"  # "project" (local) or "user" (shared)
-recency_boost_days = 7
-recency_boost_factor = 1.2
+
+# Per-type decay (defaults shown)
+[memory.decay_journal]
+decay_rate = 0.90
+floor_multiplier = 0.1
+
+[memory.decay_plan]
+decay_rate = 0.85
+floor_multiplier = 0.1
+
+[memory.decay_fact]
+decay_rate = 0.98
+floor_multiplier = 0.2
 ```
 
 ## Environment Variables

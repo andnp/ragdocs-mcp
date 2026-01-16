@@ -31,7 +31,7 @@ Existing RAG solutions require manual database setup, explicit indexing steps, a
 - Rich Markdown parsing: frontmatter, wikilinks, tags, transclusions
 - Reciprocal Rank Fusion for multi-strategy result merging
 - Recency bias for recently modified documents
-- **Memory Management System:** Persistent AI memory bank with cross-corpus linking, recency boost, and ghost node graph traversal
+- **Memory Management System:** Persistent AI memory bank with cross-corpus linking, **calibrated scoring** (sigmoid expansion for interpretable 0-1 range), exponential decay, and ghost node graph traversal
 - Local-first architecture with no external dependencies
 
 ## Installation
@@ -181,7 +181,7 @@ uv run mcp-markdown-ragdocs rebuild-index
 | `run` | HTTP API server | Development, testing, or HTTP-based integrations |
 | `query` | CLI query | Scripting or quick document searches |
 | `check-config` | Validate config | Debugging configuration issues |
-| `rebuild-index` | Force reindex (documents, git commits, vocabulary) | Config changes, corrupted indices, or force rebuild |
+| `rebuild-index` | Force full reindex (documents, git commits, vocabulary) | Config changes, corrupted indices, or force rebuild |
 
 ### MCP Integration
 
@@ -324,16 +324,22 @@ The server supports an AI memory bank for persistent cross-session knowledge sto
 [memory]
 enabled = true
 storage_strategy = "project"  # "project" or "user"
-recency_boost_days = 7
-recency_boost_factor = 1.2
+score_threshold = 0.2          # Minimum score after calibration (0.0-1.0)
+
+# Per-type exponential decay (defaults shown)
+[memory.decay_journal]
+decay_rate = 0.90  # 7-day half-life
+floor_multiplier = 0.1
 ```
 
 **Available tools:**
 - `create_memory`, `read_memory`, `update_memory`, `append_memory`, `delete_memory`: CRUD operations (system auto-generates frontmatter for `create_memory`)
-- `search_memories`: Hybrid search with recency boost and tag/type filtering
+- `search_memories`: Hybrid search with exponential decay scoring and tag/type filtering
 - `search_linked_memories`: Find memories linking to a specific document via ghost nodes
 - `get_memory_stats`: Memory bank statistics
 - `merge_memories`: Consolidate multiple memories into one
+
+**Memory Decay System:** Memory search uses exponential decay (`score × decay_rate^days_old`) with per-type rates. Journal memories (decay_rate=0.90) decay faster than facts (decay_rate=0.98), modeling real-world importance over time. Scores are calibrated using sigmoid expansion (raw RRF 0.01-0.05 → interpretable 0-1 range) before decay, providing 6.77x separation vs. 1.95x in raw scores. Results below `score_threshold` (default: 0.2) are filtered.
 
 See [Memory Management](docs/memory.md) for complete documentation.
 

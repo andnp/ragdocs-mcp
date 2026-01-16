@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, cast
 import os
@@ -94,7 +94,7 @@ class SearchConfig:
     tag_expansion_enabled: bool = True
     tag_expansion_max_tags: int = 5
     tag_expansion_depth: int = 2
-    score_calibration_threshold: float = 0.035
+    score_calibration_threshold: float = 0.04
     score_calibration_steepness: float = 150.0
 
 @dataclass
@@ -105,13 +105,13 @@ class LLMConfig:
 @dataclass
 class ChunkingConfig:
     strategy: str = "header_based"
-    min_chunk_chars: int = 200
-    max_chunk_chars: int = 2000
-    overlap_chars: int = 100
+    min_chunk_chars: int = 1000
+    max_chunk_chars: int = 3000
+    overlap_chars: int = 200
     include_parent_headers: bool = True
     parent_retrieval_enabled: bool = True
     parent_chunk_min_chars: int = 1500
-    parent_chunk_max_chars: int = 2000
+    parent_chunk_max_chars: int = 4000
 
 
 @dataclass
@@ -124,11 +124,34 @@ class GitIndexingConfig:
 
 
 @dataclass
+class MemoryDecayConfig:
+    decay_rate: float
+    floor_multiplier: float
+
+    def __post_init__(self):
+        if not (0.0 < self.decay_rate <= 1.0):
+            raise ValueError(
+                f"decay_rate must be in (0.0, 1.0], got {self.decay_rate}"
+            )
+        if not (0.0 <= self.floor_multiplier <= 1.0):
+            raise ValueError(
+                f"floor_multiplier must be in [0.0, 1.0], got {self.floor_multiplier}"
+            )
+
+
+@dataclass
 class MemoryConfig:
     enabled: bool = True
     storage_strategy: str = "user"
-    recency_boost_days: int = 7
-    recency_boost_factor: float = 1.2
+    score_threshold: float = 0.2
+    decay_journal: MemoryDecayConfig = field(default_factory=lambda: MemoryDecayConfig(0.90, 0.1))
+    decay_plan: MemoryDecayConfig = field(default_factory=lambda: MemoryDecayConfig(0.85, 0.1))
+    decay_fact: MemoryDecayConfig = field(default_factory=lambda: MemoryDecayConfig(0.98, 0.2))
+    decay_observation: MemoryDecayConfig = field(default_factory=lambda: MemoryDecayConfig(0.92, 0.15))
+    decay_reflection: MemoryDecayConfig = field(default_factory=lambda: MemoryDecayConfig(0.95, 0.2))
+    # Deprecated fields (for backward compatibility)
+    recency_boost_days: int | None = None
+    recency_boost_factor: float | None = None
 
     def __post_init__(self):
         if self.storage_strategy not in ("project", "user"):
@@ -136,10 +159,38 @@ class MemoryConfig:
                 f"Invalid storage_strategy '{self.storage_strategy}': "
                 "must be 'project' or 'user'"
             )
-        if self.recency_boost_days < 0:
-            raise ValueError("recency_boost_days must be non-negative")
-        if self.recency_boost_factor < 1.0:
-            raise ValueError("recency_boost_factor must be >= 1.0")
+
+        if not (0.0 <= self.score_threshold <= 1.0):
+            raise ValueError(
+                f"score_threshold must be in [0.0, 1.0], got {self.score_threshold}"
+            )
+
+        # Warn about deprecated fields
+        if self.recency_boost_days is not None:
+            logger.warning(
+                "Config field 'recency_boost_days' is deprecated. "
+                "Use per-type decay configs instead (e.g., decay_journal)."
+            )
+        if self.recency_boost_factor is not None:
+            logger.warning(
+                "Config field 'recency_boost_factor' is deprecated. "
+                "Use per-type decay configs instead (e.g., decay_journal)."
+            )
+
+    def get_decay_config(self, memory_type: str):
+        decay_configs = {
+            "journal": self.decay_journal,
+            "plan": self.decay_plan,
+            "fact": self.decay_fact,
+            "observation": self.decay_observation,
+            "reflection": self.decay_reflection,
+        }
+        if memory_type in decay_configs:
+            return decay_configs[memory_type]
+        logger.debug(
+            f"No decay config for type '{memory_type}', using decay_journal"
+        )
+        return self.decay_journal
 
 
 @dataclass
@@ -159,11 +210,49 @@ class Config:
     projects: list[ProjectConfig] = field(default_factory=list)
 
 
-def _expand_path(path_str: str) -> str:
+def _expand_path(path_str: str):
     path = Path(path_str).expanduser()
     if not path.is_absolute():
         path = path.resolve()
     return str(path)
+
+
+def _load_dataclass_from_dict[T](cls: type[T], data: dict[str, Any], path_fields: set[str] | None = None) -> T:
+    if path_fields is None:
+        path_fields = set()
+
+    kwargs: dict[str, Any] = {}
+    for f in fields(cast(type, cls)):
+        if f.name not in data:
+            continue
+
+        value = data[f.name]
+
+        if is_dataclass(f.type) and isinstance(f.type, type) and isinstance(value, dict):
+            value = _load_dataclass_from_dict(f.type, value)
+        elif f.name in path_fields and isinstance(value, str):
+            value = _expand_path(value)
+
+        kwargs[f.name] = value
+
+    return cls(**kwargs)
+
+
+def _load_memory_config(data: dict[str, Any]):
+    kwargs: dict[str, Any] = {}
+
+    simple_fields = {"enabled", "storage_strategy", "score_threshold", "recency_boost_days", "recency_boost_factor"}
+    decay_fields = {"decay_journal", "decay_plan", "decay_fact", "decay_observation", "decay_reflection"}
+
+    for key in simple_fields:
+        if key in data:
+            kwargs[key] = data[key]
+
+    for key in decay_fields:
+        if key in data and isinstance(data[key], dict):
+            kwargs[key] = _load_dataclass_from_dict(MemoryDecayConfig, data[key])
+
+    return MemoryConfig(**kwargs)
 
 
 def _find_project_config():
@@ -192,40 +281,23 @@ def load_config():
         Path.home() / ".config" / "mcp-markdown-ragdocs" / "config.toml"
     )
 
-    config_data = {}
+    config_data: dict[str, Any] = {}
     for config_path in config_locations:
         if config_path.exists():
             with open(config_path, "rb") as f:
                 config_data = tomllib.load(f)
             break
 
-    server_data = config_data.get("server", {})
-    server = ServerConfig(
-        host=server_data.get("host", "127.0.0.1"),
-        port=server_data.get("port", 8000)
-    )
+    server = _load_dataclass_from_dict(ServerConfig, config_data.get("server", {}))
 
-    indexing_data = config_data.get("indexing", {})
-    indexing = IndexingConfig(
-        documents_path=_expand_path(indexing_data.get("documents_path", ".")),
-        index_path=_expand_path(indexing_data.get("index_path", ".index_data/")),
-        recursive=indexing_data.get("recursive", True),
-        include=indexing_data.get("include", ["**/*"]),
-        exclude=indexing_data.get("exclude", [
-            "**/.venv/**",
-            "**/venv/**",
-            "**/build/**",
-            "**/dist/**",
-            "**/.git/**",
-            "**/node_modules/**",
-            "**/__pycache__/**",
-            "**/.pytest_cache/**"
-        ]),
-        exclude_hidden_dirs=indexing_data.get("exclude_hidden_dirs", True),
-        reconciliation_interval_seconds=indexing_data.get("reconciliation_interval_seconds", 3600),
-        coordination_mode=indexing_data.get("coordination_mode", "file_lock"),
-        lock_timeout_seconds=indexing_data.get("lock_timeout_seconds", 5.0),
+    indexing = _load_dataclass_from_dict(
+        IndexingConfig,
+        config_data.get("indexing", {}),
+        path_fields={"documents_path", "index_path"},
     )
+    # Always expand paths (defaults may be relative)
+    indexing.documents_path = _expand_path(indexing.documents_path)
+    indexing.index_path = _expand_path(indexing.index_path)
 
     parsers = config_data.get("parsers", {
         "**/*.md": "MarkdownParser",
@@ -233,70 +305,11 @@ def load_config():
         "**/*.txt": "PlainTextParser"
     })
 
-    search_data = config_data.get("search", {})
-    search = SearchConfig(
-        semantic_weight=search_data.get("semantic_weight", 1.0),
-        keyword_weight=search_data.get("keyword_weight", 1.0),
-        recency_bias=search_data.get("recency_bias", 0.5),
-        rrf_k_constant=search_data.get("rrf_k_constant", 60),
-        min_confidence=search_data.get("min_confidence", 0.0),
-        max_chunks_per_doc=search_data.get("max_chunks_per_doc", 0),
-        dedup_enabled=search_data.get("dedup_enabled", False),
-        dedup_similarity_threshold=search_data.get("dedup_similarity_threshold", 0.85),
-        ngram_dedup_enabled=search_data.get("ngram_dedup_enabled", True),
-        ngram_dedup_threshold=search_data.get("ngram_dedup_threshold", 0.7),
-        mmr_enabled=search_data.get("mmr_enabled", False),
-        mmr_lambda=search_data.get("mmr_lambda", 0.7),
-        rerank_enabled=search_data.get("rerank_enabled", False),
-        rerank_model=search_data.get("rerank_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
-        rerank_top_n=search_data.get("rerank_top_n", 10),
-        adaptive_weights_enabled=search_data.get("adaptive_weights_enabled", False),
-        code_search_enabled=search_data.get("code_search_enabled", False),
-        code_search_weight=search_data.get("code_search_weight", 1.0),
-        query_expansion_enabled=search_data.get("query_expansion_enabled", True),
-        query_expansion_max_terms=search_data.get("query_expansion_max_terms", 5000),
-        query_expansion_min_frequency=search_data.get("query_expansion_min_frequency", 2),
-        community_detection_enabled=search_data.get("community_detection_enabled", True),
-        community_boost_factor=search_data.get("community_boost_factor", 1.1),
-        dynamic_weights_enabled=search_data.get("dynamic_weights_enabled", True),
-        variance_threshold=search_data.get("variance_threshold", 0.1),
-        min_weight_factor=search_data.get("min_weight_factor", 0.5),
-        hyde_enabled=search_data.get("hyde_enabled", True),
-    )
-
-    llm_data = config_data.get("llm", {})
-    llm = LLMConfig(
-        embedding_model=llm_data.get("embedding_model", "local")
-    )
-
-    chunking_data = config_data.get("chunking", {})
-    chunking = ChunkingConfig(
-        strategy=chunking_data.get("strategy", "header_based"),
-        min_chunk_chars=chunking_data.get("min_chunk_chars", 200),
-        max_chunk_chars=chunking_data.get("max_chunk_chars", 1500),
-        overlap_chars=chunking_data.get("overlap_chars", 100),
-        include_parent_headers=chunking_data.get("include_parent_headers", True),
-        parent_retrieval_enabled=chunking_data.get("parent_retrieval_enabled", False),
-        parent_chunk_min_chars=chunking_data.get("parent_chunk_min_chars", 1500),
-        parent_chunk_max_chars=chunking_data.get("parent_chunk_max_chars", 2000),
-    )
-
-    git_indexing_data = config_data.get("git_indexing", {})
-    git_indexing = GitIndexingConfig(
-        enabled=git_indexing_data.get("enabled", True),
-        delta_max_lines=git_indexing_data.get("delta_max_lines", 200),
-        batch_size=git_indexing_data.get("batch_size", 100),
-        watch_enabled=git_indexing_data.get("watch_enabled", True),
-        watch_cooldown=git_indexing_data.get("watch_cooldown", 5.0),
-    )
-
-    memory_data = config_data.get("memory", {})
-    memory = MemoryConfig(
-        enabled=memory_data.get("enabled", True),
-        storage_strategy=memory_data.get("storage_strategy", "user"),
-        recency_boost_days=memory_data.get("recency_boost_days", 7),
-        recency_boost_factor=memory_data.get("recency_boost_factor", 1.2),
-    )
+    search = _load_dataclass_from_dict(SearchConfig, config_data.get("search", {}))
+    llm = _load_dataclass_from_dict(LLMConfig, config_data.get("llm", {}))
+    chunking = _load_dataclass_from_dict(ChunkingConfig, config_data.get("chunking", {}))
+    git_indexing = _load_dataclass_from_dict(GitIndexingConfig, config_data.get("git_indexing", {}))
+    memory = _load_memory_config(config_data.get("memory", {}))
 
     projects_data = config_data.get("projects", [])
     projects = []

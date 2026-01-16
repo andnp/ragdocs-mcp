@@ -10,6 +10,7 @@ from src.indices.code import CodeIndex
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
+from src.indexing.implicit_graph import ImplicitGraphBuilder
 from src.parsers.dispatcher import dispatch_parser
 from src.search.edge_types import infer_edge_type
 
@@ -63,7 +64,14 @@ class IndexManager:
                 self.vector.add_chunk(chunk)
                 self.keyword.add_chunk(chunk)
 
-            self.graph.add_node(document.id, document.metadata)
+            # Pass full metadata including tags and file_path to the graph
+            # This is crucial for ImplicitGraphBuilder to work correctly
+            graph_metadata = {
+                **document.metadata,
+                "tags": document.tags,
+                "file_path": document.file_path,
+            }
+            self.graph.add_node(document.id, graph_metadata)
 
             from src.parsers.markdown import MarkdownParser
             if isinstance(parser, MarkdownParser):
@@ -155,6 +163,11 @@ class IndexManager:
 
     def _persist_indices(self, index_path: Path):
         try:
+            # Build implicit graph edges (directory siblings, shared tags)
+            # to improve community detection density
+            implicit_builder = ImplicitGraphBuilder(self.graph)
+            implicit_builder.build_implicit_edges()
+
             self.vector.persist(index_path / "vector")
             self.keyword.persist(index_path / "keyword")
             self.graph.persist(index_path / "graph")

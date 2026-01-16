@@ -794,9 +794,35 @@ max_delta_lines = 200
 
 See [Configuration Reference](configuration.md#git_indexing) for all options.
 
+### Incremental Indexing
+
+Git commit indexing uses **incremental updates** by default:
+
+**On Startup:**
+- Queries last indexed timestamp per repository
+- Fetches only commits added since last index
+- Skips indexing if no new commits found
+- Logs incremental vs first-time indexing
+
+**State Persistence:**
+- Last indexed timestamp stored in SQLite per repository
+- Repository paths normalized (absolute, no `.git` suffix, no trailing slashes)
+- Ensures consistent timestamp tracking across restarts
+
+**Full Rebuild:**
+- Use `rebuild-index` CLI command to force full reindex
+- Clears commit database and reindexes all commits
+- Incremental indexing resumes after rebuild
+
+**Zero-Commit Optimization:**
+- Repositories with no new commits skipped during startup
+- Reduces unnecessary git operations for static repositories
+
 ### Performance
 
 - **Indexing:** 60 commits/sec (includes git operations, parsing, embedding)
+- **Incremental startup:** Near-instant when no new commits
+- **Full rebuild:** Scales with commit count (10k commits ≈ 3 minutes)
 - **Query:** 5ms average for 10k commits
 - **Storage:** ~2KB per commit (metadata + embedding + truncated delta)
 
@@ -812,9 +838,27 @@ which git
 
 If git not found, install or add to PATH.
 
+**Commits reindexed on every startup:**
+
+This issue was fixed in recent versions. If experiencing:
+1. Update to latest version
+2. Run `rebuild-index` once to reset state with normalized paths
+3. Verify logs show "Last indexed at..." rather than "First-time indexing" on subsequent startups
+
+**Verifying incremental indexing:**
+
+Check server logs on startup:
+```
+Repository /path/to/repo: Last indexed at 2026-01-15T10:30:00, found 5 new commits
+```
+
+"Last indexed at" confirms incremental indexing is working. "First-time indexing" indicates state was reset or not found.
+
 **Slow initial indexing:**
 
-Large repositories (10k+ commits) take several minutes. Progress logged at INFO level. Consider excluding archived branches.
+Large repositories (10k+ commits) take several minutes for first-time indexing. Progress logged at INFO level. Consider excluding archived branches.
+
+Subsequent startups with incremental indexing are near-instant when no new commits exist.
 
 **High memory usage:**
 

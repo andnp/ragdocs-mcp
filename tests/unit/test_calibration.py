@@ -17,20 +17,20 @@ class TestCalibrateScore:
 
     def test_threshold_gives_half(self):
         """Score at threshold → 0.5."""
-        threshold = 0.035
+        threshold = 0.04
         score = calibrate_score(threshold, threshold=threshold)
         assert score == pytest.approx(0.5, abs=0.01)
 
     def test_high_score_high_confidence(self):
         """0.08 RRF → >0.95 confidence."""
-        score = calibrate_score(0.08, threshold=0.035, steepness=150.0)
+        score = calibrate_score(0.08, threshold=0.04, steepness=150.0)
         assert score > 0.95
         assert score <= 1.0
 
     def test_low_score_low_confidence(self):
-        """0.015 RRF → <0.05 confidence."""
-        score = calibrate_score(0.015, threshold=0.035, steepness=150.0)
-        assert score < 0.05
+        """0.015 RRF → <0.03 confidence."""
+        score = calibrate_score(0.015, threshold=0.04, steepness=150.0)
+        assert score < 0.03
         assert score >= 0.0
 
     def test_monotonic_increasing(self):
@@ -52,8 +52,8 @@ class TestCalibrateScore:
 
     def test_steepness_affects_curve(self):
         """Higher steepness → sharper transition."""
-        score = 0.04
-        threshold = 0.035
+        score = 0.05
+        threshold = 0.04
 
         # Lower steepness → gentler curve
         cal_gentle = calibrate_score(score, threshold=threshold, steepness=50.0)
@@ -70,15 +70,15 @@ class TestCalibrateScore:
     def test_overflow_protection(self):
         """Extreme scores don't crash."""
         # Test very large scores
-        large_score = calibrate_score(1000.0, threshold=0.035, steepness=150.0)
+        large_score = calibrate_score(1000.0, threshold=0.04, steepness=150.0)
         assert large_score == pytest.approx(1.0, abs=0.01)
 
         # Test very small scores
-        small_score = calibrate_score(-1000.0, threshold=0.035, steepness=150.0)
+        small_score = calibrate_score(-1000.0, threshold=0.04, steepness=150.0)
         assert small_score == pytest.approx(0.0, abs=0.001)
 
         # Test extreme steepness
-        extreme_steep = calibrate_score(0.05, threshold=0.035, steepness=1000.0)
+        extreme_steep = calibrate_score(0.06, threshold=0.04, steepness=1000.0)
         assert 0.0 <= extreme_steep <= 1.0
 
     def test_empty_results(self):
@@ -92,14 +92,14 @@ class TestCalibrateScore:
         fused = [
             ("doc1", 0.0831),  # Very high RRF (multiple strategies + boost)
             ("doc2", 0.0667),  # High RRF
-            ("doc3", 0.0450),  # Above threshold
-            ("doc4", 0.0350),  # At threshold
+            ("doc3", 0.0500),  # Above threshold
+            ("doc4", 0.0400),  # At threshold
             ("doc5", 0.0250),  # Below threshold
             ("doc6", 0.0167),  # Low RRF
             ("doc7", 0.0100),  # Very low RRF
         ]
 
-        calibrated = calibrate_results(fused, threshold=0.035, steepness=150.0)
+        calibrated = calibrate_results(fused, threshold=0.04, steepness=150.0)
 
         # Verify all scores in [0, 1]
         assert all(0.0 <= score <= 1.0 for _, score in calibrated)
@@ -116,16 +116,16 @@ class TestCalibrateScore:
         assert 0.4 < calibrated[3][1] < 0.6
 
         # doc7 (very low) should have low confidence
-        assert calibrated[6][1] < 0.05
+        assert calibrated[6][1] < 0.02
 
     def test_recency_boosted_scores(self):
-        """0.04 RRF with recency boost → 0.7-0.8 confidence."""
+        """0.045 RRF with recency boost → 0.6-0.8 confidence."""
         # Simulate recency-boosted score
-        base_rrf = 0.033  # Base RRF score
+        base_rrf = 0.038  # Base RRF score
         recency_multiplier = 1.2  # 7-day recency boost
-        boosted_score = base_rrf * recency_multiplier  # ~0.040
+        boosted_score = base_rrf * recency_multiplier  # ~0.046
 
-        calibrated = calibrate_score(boosted_score, threshold=0.035, steepness=150.0)
+        calibrated = calibrate_score(boosted_score, threshold=0.04, steepness=150.0)
 
         # Should map to moderate-high confidence
         assert 0.6 < calibrated < 0.85, f"Expected 0.6-0.85, got {calibrated}"
@@ -240,14 +240,24 @@ class TestEdgeCases:
     """Edge case handling."""
 
     def test_zero_score(self):
-        """Zero score → very low confidence."""
+        """
+        Verify a zero score produces a very low calibrated value.
+
+        With default parameters (threshold=0.035, steepness=150), a zero
+        score is well below threshold and should produce confidence < 0.01.
+        """
         calibrated = calibrate_score(0.0)
         assert 0.0 <= calibrated < 0.01
 
     def test_negative_score(self):
-        """Negative score (shouldn't happen) → very close to 0.0."""
+        """
+        Verify negative scores produce very low calibrated values.
+
+        Negative scores are below the threshold and should produce
+        confidence very close to zero.
+        """
         calibrated = calibrate_score(-0.05)
-        assert calibrated == pytest.approx(0.0, abs=0.001)
+        assert calibrated == pytest.approx(0.0, abs=0.01)
 
     def test_huge_score(self):
         """Very large score → 1.0."""

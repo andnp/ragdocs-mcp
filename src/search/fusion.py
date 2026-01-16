@@ -103,7 +103,7 @@ def fuse_results_v2(
 
 def normalize_final_scores(
     fused_results: list[tuple[str, float]],
-    threshold: float = 0.035,
+    threshold: float = 0.04,
     steepness: float = 150.0
 ) -> list[tuple[str, float]]:
     return calibrate_results(fused_results, threshold, steepness)

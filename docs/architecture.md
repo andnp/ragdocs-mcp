@@ -597,15 +597,33 @@ Shares embedding model with VectorIndex (BAAI/bge-small-en-v1.5, 384 dimensions)
 
 **Incremental Updates:**
 
-GitWatcher monitors `.git/HEAD` and `.git/refs/` directories with 5-second cooldown. On changes:
+On startup and when GitWatcher detects changes:
 
-1. Query `git log --all --after={last_indexed_timestamp}` for new commits
-2. Parse commit metadata and delta
-3. Generate embedding and store in SQLite
-4. Update `indexed_at` timestamp
+1. Query last indexed timestamp for repository (normalized path)
+2. Execute `git log --all --after={last_indexed_timestamp}` for new commits
+3. Skip indexing if zero new commits found
+4. Parse commit metadata and delta for new commits
+5. Generate embedding and store in SQLite
+6. Update `indexed_at` timestamp
+
+**Path Normalization:**
+
+Repository paths normalized before storage/retrieval to ensure consistent state tracking:
+- Absolute path resolution
+- `.git` suffix stripped
+- Trailing slashes removed
+- Example: `/repo/.git/` → `/repo`
+
+This prevents timestamp lookup failures that would cause full reindexing on every startup.
+
+**State Persistence:**
+
+Last indexed timestamp stored per repository in `git_commits` table. The `repo_path` field uses normalized paths for consistent querying across restarts.
 
 **Operations:**
-- `add_commit(hash, metadata, delta, document)`: Parse, embed, store commit
+- `add_commit(hash, metadata, delta, document, repo_path)`: Parse, embed, store commit
+- `get_last_indexed_timestamp(repo_path)`: Retrieve last index time (with path normalization)
+- `clear()`: Remove all commits (used by rebuild-index command)
 - `query_by_embedding(query_embedding, top_k, filters)`: Semantic search
 - `get_last_indexed_timestamp(repo_path)`: Track incremental indexing
 - `persist()`: SQLite auto-persists on commit

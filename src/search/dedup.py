@@ -4,6 +4,8 @@ from collections.abc import Callable
 import numpy as np
 from numpy.typing import NDArray
 
+from src.utils.similarity import cosine_similarity
+
 
 def get_ngrams(text: str, n: int = 3) -> set[str]:
     text = text.lower().strip()
@@ -93,14 +95,6 @@ def deduplicate_by_content_hash(
             kept.append((chunk_id, score))
 
     return kept, removed
-
-
-def cosine_similarity(a: NDArray[np.floating], b: NDArray[np.floating]) -> float:
-    norm_a = np.linalg.norm(a)
-    norm_b = np.linalg.norm(b)
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return float(np.dot(a, b) / (norm_a * norm_b))
 
 
 def deduplicate_by_similarity(

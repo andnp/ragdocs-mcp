@@ -157,6 +157,9 @@ def rebuild_index_cmd(project: str | None):
                 click.echo("⚠️  Git binary not available, skipping git commit indexing")
             else:
                 try:
+                    click.echo("Clearing git commit index...")
+                    ctx.commit_indexer.clear()
+
                     repos = discover_git_repositories(
                         docs_path,
                         ctx.config.indexing.exclude,
@@ -169,7 +172,7 @@ def rebuild_index_cmd(project: str | None):
                         repo_commits_map: dict[Path, list[str]] = {}
                         for repo_path in repos:
                             try:
-                                last_timestamp = ctx.commit_indexer.get_last_indexed_timestamp(str(repo_path))
+                                last_timestamp = ctx.commit_indexer.get_last_indexed_timestamp(str(repo_path.parent))
                                 commit_hashes = get_commits_after_timestamp(repo_path, last_timestamp)
                                 repo_commits_map[repo_path] = commit_hashes
                                 total_commits += len(commit_hashes)

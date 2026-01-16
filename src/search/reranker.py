@@ -1,14 +1,18 @@
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class ContentProvider(Protocol):
     def __call__(self, chunk_id: str, /) -> str | None: ...
 
 
+class CrossEncoderProtocol(Protocol):
+    def predict(self, pairs: list[tuple[str, str]]) -> list[float]: ...
+
+
 class ReRanker:
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
         self._model_name = model_name
-        self._model = None
+        self._model: Any = None
 
     def _ensure_model_loaded(self) -> None:
         if self._model is not None:

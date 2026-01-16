@@ -3,13 +3,7 @@ from collections.abc import Callable
 import numpy as np
 from numpy.typing import NDArray
 
-
-def _cosine_similarity(a: NDArray[np.floating], b: NDArray[np.floating]) -> float:
-    norm_a = np.linalg.norm(a)
-    norm_b = np.linalg.norm(b)
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return float(np.dot(a, b) / (norm_a * norm_b))
+from src.utils.similarity import cosine_similarity
 
 
 def select_mmr(
@@ -33,7 +27,7 @@ def select_mmr(
         emb = get_embedding(chunk_id)
         if emb is not None:
             embeddings[chunk_id] = np.array(emb, dtype=np.float64)
-            relevance_scores[chunk_id] = _cosine_similarity(embeddings[chunk_id], query_vec)
+            relevance_scores[chunk_id] = cosine_similarity(embeddings[chunk_id], query_vec)
         else:
             relevance_scores[chunk_id] = score
 
@@ -52,7 +46,7 @@ def select_mmr(
                 chunk_emb = embeddings[chunk_id]
                 for sel_id, _ in selected:
                     if sel_id in embeddings:
-                        sim = _cosine_similarity(chunk_emb, embeddings[sel_id])
+                        sim = cosine_similarity(chunk_emb, embeddings[sel_id])
                         max_sim_to_selected = max(max_sim_to_selected, sim)
 
             mmr_score = lambda_param * relevance - (1 - lambda_param) * max_sim_to_selected

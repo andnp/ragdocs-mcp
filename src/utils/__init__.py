@@ -1,5 +1,7 @@
 import fnmatch
 
+from src.utils.similarity import cosine_similarity, cosine_similarity_lists
+
 
 def should_include_file(
     file_path: str,
@@ -29,3 +31,10 @@ def should_include_file(
             return False
 
     return True
+
+
+__all__ = [
+    "should_include_file",
+    "cosine_similarity",
+    "cosine_similarity_lists",
+]

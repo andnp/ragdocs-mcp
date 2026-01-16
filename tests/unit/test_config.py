@@ -99,7 +99,7 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         assert config.server.port == 8000
         assert config.indexing.recursive is True
         assert config.search.semantic_weight == 1.0
-        assert config.search.keyword_weight == 1.0
+        assert config.search.keyword_weight == 0.8
         assert config.search.recency_bias == 0.5
         assert config.search.rrf_k_constant == 60
         assert config.llm.embedding_model == "local"

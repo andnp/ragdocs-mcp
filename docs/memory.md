@@ -13,6 +13,85 @@ The Memory Management System provides a separate "Memory Lane" corpus for AI ass
 - Tag and type-based filtering
 - Memory consolidation (merge)
 
+## Search Scoring & Calibration
+
+Memory search scores undergo a multi-stage pipeline to produce interpretable, well-separated confidence values.
+
+### Scoring Pipeline
+
+Memory search applies transformations in this order:
+
+1. **RRF Fusion**: Reciprocal Rank Fusion combines vector and keyword search rankings → raw scores (typically 0.01-0.05 range)
+2. **Calibration**: Sigmoid expansion maps compressed RRF scores to interpretable 0-1 range
+3. **Decay**: Exponential decay adjusts scores based on memory age and type
+4. **Threshold**: Filter results below `score_threshold` (default: 0.2)
+
+### Score Ranges
+
+After calibration, scores represent absolute match quality:
+
+| Score Range | Interpretation | Typical Use Case |
+|-------------|----------------|------------------|
+| **0.6 - 0.9** | High relevance | Strong semantic match, directly answers query |
+| **0.3 - 0.6** | Medium relevance | Related content, partial match |
+| **0.1 - 0.3** | Low relevance | Tangentially related, may contain keywords |
+| **< 0.2** | Filtered | Below threshold (configurable via `score_threshold`) |
+
+### Calibration Formula
+
+The system uses sigmoid calibration to expand compressed RRF scores:
+
+```python
+def calibrate_score(rrf_score: float, threshold: float = 0.035, steepness: float = 150.0) -> float:
+    """Sigmoid calibration: maps [0.01, 0.05] → [0, 1] with interpretable separation."""
+    return 1.0 / (1.0 + exp(-steepness * (rrf_score - threshold)))
+```
+
+**Parameters:**
+- `threshold` (default: 0.035): RRF score corresponding to 50% confidence
+- `steepness` (default: 150.0): Controls curve sharpness (higher = more separation)
+
+**Before/After Example:**
+
+```python
+# Without calibration (compressed)
+raw_rrf_score = 0.039
+score_separation = 0.039 / 0.020  # 1.95x between best and good match
+
+# With calibration (expanded)
+calibrated_score = 0.646  # sigmoid(0.039)
+separation = 0.646 / 0.095  # 6.77x separation (3.5x improvement)
+```
+
+**Impact:**
+- Score compression: **Fixed** (1.95x → 6.77x separation)
+- Range: 0.01-0.03 → **0-1** (interpretable)
+- Filtering: Effective threshold-based filtering at `score_threshold`
+
+### Configuration
+
+Tune calibration and filtering in `config.toml`:
+
+```toml
+[memory]
+score_threshold = 0.2  # Minimum score after calibration (default: 0.2)
+
+[search]  # Affects memory search calibration
+score_calibration_threshold = 0.035  # RRF score → 50% confidence
+score_calibration_steepness = 150.0  # Curve sharpness
+```
+
+**Tuning Guidelines:**
+
+| Scenario | Adjust | Value | Effect |
+|----------|--------|-------|--------|
+| Too few results | Lower `score_threshold` | 0.15 or 0.1 | Allow more low-confidence matches |
+| Too many irrelevant | Raise `score_threshold` | 0.25 or 0.3 | Stricter filtering |
+| Scores too strict | Lower `score_calibration_threshold` | 0.03 | Shift curve left (higher scores) |
+| Scores too generous | Raise `score_calibration_threshold` | 0.04 | Shift curve right (lower scores) |
+| Need more separation | Raise `score_calibration_steepness` | 200.0 | Sharper distinctions near threshold |
+| Smoother gradation | Lower `score_calibration_steepness` | 100.0 | Gentler transitions |
+
 ## Configuration
 
 Enable memory management in `config.toml`:
@@ -21,16 +100,173 @@ Enable memory management in `config.toml`:
 [memory]
 enabled = true
 storage_strategy = "project"  # "project" or "user"
-recency_boost_days = 7
-recency_boost_factor = 1.2
+
+# Per-type decay configurations
+[memory.decay_journal]
+decay_rate = 0.90
+floor_multiplier = 0.1
+
+[memory.decay_plan]
+decay_rate = 0.85
+floor_multiplier = 0.1
+
+[memory.decay_fact]
+decay_rate = 0.98
+floor_multiplier = 0.2
+
+[memory.decay_observation]
+decay_rate = 0.92
+floor_multiplier = 0.15
+
+[memory.decay_reflection]
+decay_rate = 0.95
+floor_multiplier = 0.2
 ```
+
+### Core Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable the Memory Management System |
 | `storage_strategy` | string | `"project"` | `"project"`: `.memories/` in project root; `"user"`: `~/.local/share/mcp-markdown-ragdocs/memories/` |
-| `recency_boost_days` | int | `7` | Days within which memories receive recency boost |
-| `recency_boost_factor` | float | `1.2` | Score multiplier for recent memories (1.2 = 20% boost) |
+
+### Decay System
+
+Memory search uses an **exponential decay scoring system** that reduces relevance scores over time based on memory type. Unlike the deprecated recency boost (binary window), decay provides smooth, continuous scoring that better models memory importance.
+
+**Decay Formula:**
+
+```
+adjusted_score = original_score × max(floor_multiplier, decay_rate^days_old)
+```
+
+- `original_score`: Hybrid search score (semantic + keyword fusion)
+- `decay_rate`: Exponential decay rate per day (0.0-1.0)
+- `days_old`: Days since memory creation
+- `floor_multiplier`: Minimum score multiplier (prevents complete decay)
+
+**Threshold Filtering:**
+
+Memories scoring < `0.001` after decay are filtered from results. This threshold is tuned to ~5% of high-relevance scores (0.018-0.020) observed in real-world usage.
+
+### Per-Type Decay Rates
+
+| Memory Type | Decay Rate | Half-Life | Floor | Rationale |
+|------------|------------|-----------|-------|----------|
+| `journal` | 0.90 | 7 days | 0.1 | Session notes decay quickly |
+| `plan` | 0.85 | 4.5 days | 0.1 | Plans become stale rapidly |
+| `fact` | 0.98 | 35 days | 0.2 | Facts remain relevant longer |
+| `observation` | 0.92 | 8.3 days | 0.15 | Observations moderately durable |
+| `reflection` | 0.95 | 14 days | 0.2 | Reflections have lasting value |
+
+**Half-life**: Days until score decays to 50% of original value.
+
+### Configuration Examples
+
+**Default (Balanced):**
+
+```toml
+[memory]
+enabled = true
+storage_strategy = "project"
+
+[memory.decay_journal]
+decay_rate = 0.90  # 7-day half-life
+floor_multiplier = 0.1
+```
+
+**Aggressive Decay (Short-Term Focus):**
+
+```toml
+[memory.decay_journal]
+decay_rate = 0.85  # 4.5-day half-life
+floor_multiplier = 0.05  # Lower floor
+
+[memory.decay_plan]
+decay_rate = 0.80  # 3-day half-life
+floor_multiplier = 0.05
+```
+
+**Conservative Decay (Long-Term Focus):**
+
+```toml
+[memory.decay_fact]
+decay_rate = 0.99  # 70-day half-life
+floor_multiplier = 0.3  # Higher floor
+
+[memory.decay_reflection]
+decay_rate = 0.98  # 35-day half-life
+floor_multiplier = 0.25
+```
+
+### Decay Curves Over Time
+
+**Journal (decay_rate=0.90, floor=0.1):**
+
+| Days | Multiplier | Example Score (0.020) |
+|------|------------|----------------------|
+| 0 | 1.00 | 0.020 |
+| 7 | 0.48 | 0.0096 |
+| 14 | 0.23 | 0.0046 |
+| 30 | 0.10 (floor) | 0.002 |
+| 60+ | 0.10 (floor) | 0.002 |
+
+**Fact (decay_rate=0.98, floor=0.2):**
+
+| Days | Multiplier | Example Score (0.020) |
+|------|------------|----------------------|
+| 0 | 1.00 | 0.020 |
+| 35 | 0.50 | 0.010 |
+| 70 | 0.25 | 0.005 |
+| 150 | 0.20 (floor) | 0.004 |
+| 300+ | 0.20 (floor) | 0.004 |
+
+### When to Tune Decay Rates
+
+**Increase decay rate (slower decay):**
+- Knowledge base with evergreen content
+- Research notes requiring long-term recall
+- Reference documentation
+
+**Decrease decay rate (faster decay):**
+- Session journals tracking daily work
+- Short-term task planning
+- Volatile project state
+
+**Adjust floor multiplier:**
+- **Lower floor (0.05-0.1)**: Aggressive filtering, surface only relevant recent memories
+- **Higher floor (0.2-0.3)**: Preserve older memories, ensure discoverability
+
+### Migration from Deprecated Config
+
+The old `recency_boost_days` and `recency_boost_factor` fields are **deprecated** and will be ignored if present.
+
+**Old config (deprecated):**
+
+```toml
+[memory]
+recency_boost_days = 7
+recency_boost_factor = 1.2
+```
+
+**New config (equivalent decay):**
+
+```toml
+[memory.decay_journal]
+decay_rate = 0.90  # Approximates 7-day window
+floor_multiplier = 0.1
+```
+
+**Behavioral differences:**
+
+| Aspect | Old Boost | New Decay |
+|--------|-----------|----------|
+| Scoring | Binary (1.0x or 1.2x) | Continuous (exponential) |
+| Threshold | Fixed time window | Age-aware gradual reduction |
+| Type-awareness | None | Per-type rates |
+| Long-term | Cliff at window edge | Smooth floor approach |
+
+**Backward compatibility:** The system automatically detects and uses decay configs. If deprecated fields are present, warnings are logged but decay system still applies.
 
 ### Storage Strategies
 
@@ -63,7 +299,7 @@ Memory content in Markdown.
 Use [[wikilinks]] to reference documents from the main corpus.
 ```
 
-### Frontmatter Fields
+### Metadata Fields
 
 | Field | Type | Required | Values |
 |-------|------|----------|--------|
@@ -221,14 +457,37 @@ Hybrid search across memory corpus with recency boost.
 ]
 ```
 
-**Recency Boost:**
+**Score Interpretation:**
 
-Memories created within `recency_boost_days` receive score × `recency_boost_factor`:
+Memory scores after calibration and decay represent absolute match quality:
+
+- **0.6-0.9**: Highly relevant, directly answers query
+- **0.3-0.6**: Moderately relevant, related content
+- **0.1-0.3**: Low relevance, tangential
+- **< 0.2**: Filtered by default threshold
+
+**Decay Scoring:**
+
+Decay applies *after* calibration, adjusting scores based on memory age:
 
 ```python
-if (now - created_at).days <= 7:
-    score *= 1.2  # 20% boost
+def apply_decay(calibrated_score: float, created_at: datetime, decay_rate: float, floor: float) -> float:
+    """Apply exponential decay to calibrated score."""
+    days_old = (datetime.now() - created_at).days
+    decay_multiplier = decay_rate ** days_old
+    return calibrated_score * max(floor, decay_multiplier)
 ```
+
+**Example:** 7-day-old journal (decay_rate=0.90, floor=0.1, calibrated_score=0.646):
+
+```
+adjusted_score = 0.646 × max(0.1, 0.90^7)
+               = 0.646 × max(0.1, 0.478)
+               = 0.646 × 0.478
+               = 0.309  # Still above threshold (0.2)
+```
+
+Memories scoring below `score_threshold` (default: 0.2) after decay are filtered.
 
 #### `search_linked_memories`
 
@@ -469,6 +728,80 @@ Find all memories related to a file:
 ```
 
 ## Troubleshooting
+
+### Score Interpretation
+
+**Q: What do memory search scores mean?**
+
+Scores represent calibrated confidence after RRF fusion, exponential decay, and threshold filtering:
+
+- **0.6-0.9**: High confidence, strong semantic match
+- **0.3-0.6**: Medium confidence, related content
+- **0.1-0.3**: Low confidence, tangentially related
+- **< 0.2**: Filtered (below default `score_threshold`)
+
+Scores above 0.6 indicate the memory directly addresses the query. Scores 0.3-0.6 suggest partial relevance. Adjust `score_threshold` to tune precision/recall.
+
+**Q: Why are my memory scores different from document search?**
+
+Memory search applies exponential decay based on age, while document search uses recency tiers:
+
+- **Memory decay**: Continuous score reduction (`score × decay_rate^days_old`)
+- **Document recency**: Fixed multipliers (1.2x for 7 days, 1.1x for 30 days)
+
+Recent memories decay less, older memories decay more. Decay curves are type-specific (facts decay slower than journals).
+
+**Q: How do I tune the score threshold for my use case?**
+
+Adjust `score_threshold` in `config.toml` based on result quality:
+
+```toml
+[memory]
+score_threshold = 0.2  # Default: balanced precision/recall
+```
+
+**Tuning decision tree:**
+
+1. **Getting zero or very few results?**
+   - Lower threshold: `score_threshold = 0.15` or `0.1`
+   - Trade-off: More results but lower average relevance
+
+2. **Getting too many irrelevant results?**
+   - Raise threshold: `score_threshold = 0.25` or `0.3`
+   - Trade-off: Fewer results but higher precision
+
+3. **Scores seem wrong (too low or too high)?**
+   - Check decay configuration for memory type
+   - Verify memory age (older memories decay more)
+   - Adjust `score_calibration_threshold` in `[search]` section (affects calibration curve)
+
+**Q: When should I adjust score_threshold up or down?**
+
+**Lower threshold (0.15 or 0.1) when:**
+- Building a comprehensive knowledge base (prioritize recall)
+- Exploring broad topics with diverse memories
+- Memories are older and decay has reduced scores significantly
+
+**Raise threshold (0.25 or 0.3) when:**
+- Need high precision for critical queries
+- Memory bank has lots of tangentially-related content
+- Want only the most relevant results (prioritize precision)
+
+**Keep default (0.2) when:**
+- Balanced use case (general knowledge retrieval)
+- Mix of recent and older memories
+- Standard documentation/journal workflow
+
+**Common Scenarios:**
+
+| Symptom | Root Cause | Solution |
+|---------|------------|----------|
+| "Too few results" | Threshold too high or decay too aggressive | Lower `score_threshold` to 0.15; adjust decay rates |
+| "Too many irrelevant results" | Threshold too low | Raise `score_threshold` to 0.25 or 0.3 |
+| "Scores seem wrong" | Decay inappropriate for memory age | Check `decay_rate` for memory type; verify memory age |
+| "Good matches scored low" | Calibration threshold too high | Lower `score_calibration_threshold` to 0.03 in `[search]` |
+| "Poor matches scored high" | Calibration threshold too low | Raise `score_calibration_threshold` to 0.04 in `[search]` |
+| "All scores bunched together" | Steepness too low | Raise `score_calibration_steepness` to 200.0 in `[search]` |
 
 ### Memories Not Appearing in Search
 

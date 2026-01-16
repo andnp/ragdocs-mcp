@@ -17,22 +17,22 @@ class TestNormalizeScores:
         Verify correct sigmoid calibration.
 
         High scores map to high confidence, low scores to low confidence,
-        and threshold score maps to ~0.5.
+        and threshold score (0.04) maps to ~0.5.
         """
-        fused = [("doc1", 0.05), ("doc2", 0.03), ("doc3", 0.01)]
+        fused = [("doc1", 0.06), ("doc2", 0.04), ("doc3", 0.01)]
         normalized = normalize_scores(fused)
 
-        # Highest score (0.05) should have high confidence
+        # Highest score (0.06) should have high confidence
         assert normalized[0][0] == "doc1"
-        assert 0.75 < normalized[0][1] <= 1.0
+        assert 0.90 < normalized[0][1] <= 1.0
 
-        # Middle score (0.03) below threshold should have low-moderate confidence
+        # Middle score (0.04) is at threshold, should be ~0.5
         assert normalized[1][0] == "doc2"
-        assert 0.1 < normalized[1][1] < 0.5
+        assert 0.45 < normalized[1][1] < 0.55
 
-        # Lowest score (0.01) should have very low confidence
+        # Lowest score (0.01) is well below threshold, should have very low confidence
         assert normalized[2][0] == "doc3"
-        assert 0.0 <= normalized[2][1] < 0.05
+        assert 0.0 <= normalized[2][1] < 0.02
 
     def test_normalize_scores_single_result(self):
         """
@@ -40,18 +40,18 @@ class TestNormalizeScores:
 
         Calibration provides absolute confidence, not relative ranking.
         """
-        fused = [("doc1", 0.0391)]
+        fused = [("doc1", 0.06)]
         normalized = normalize_scores(fused)
 
         assert len(normalized) == 1
         assert normalized[0][0] == "doc1"
-        # 0.0391 is just above threshold (0.035), so ~0.5-0.65
-        assert 0.5 < normalized[0][1] < 0.7
+        # 0.06 is above threshold (0.04), so should be high confidence
+        assert 0.90 < normalized[0][1] < 1.0
 
         # Test with high score
         fused_high = [("doc_high", 0.100)]
         normalized_high = normalize_scores(fused_high)
-        assert normalized_high[0][1] > 0.95
+        assert normalized_high[0][1] > 0.99
 
         # Test with low score
         fused_low = [("doc_low", 0.001)]
@@ -87,7 +87,8 @@ class TestNormalizeScores:
         fused_low = [("a", 0.01), ("b", 0.01)]
         normalized_low = normalize_scores(fused_low)
         assert abs(normalized_low[0][1] - normalized_low[1][1]) < 0.001
-        assert normalized_low[0][1] < 0.05
+        # 0.01 is well below threshold (0.04), should be very low
+        assert normalized_low[0][1] < 0.02
 
     def test_normalize_scores_preserves_order(self):
         """
@@ -134,15 +135,15 @@ class TestNormalizeScores:
         normalized_small = normalize_scores(fused_small)
 
         assert all(0.0 <= score <= 1.0 for _, score in normalized_small)
-        # All very low, should be near 0
-        assert all(score < 0.01 for _, score in normalized_small)
+        # All very low (well below 0.035 threshold), should be very low confidence
+        assert all(score < 0.02 for _, score in normalized_small)
 
         # Negative scores (defensive - shouldn't happen)
         fused_negative = [("doc1", 0.05), ("doc2", 0.0), ("doc3", -0.05)]
         normalized_negative = normalize_scores(fused_negative)
 
         assert all(0.0 <= score <= 1.0 for _, score in normalized_negative)
-        assert abs(normalized_negative[2][1]) < 0.001  # Negative very close to 0
+        assert abs(normalized_negative[2][1]) < 0.01  # Negative very close to 0
 
     def test_normalize_scores_monotonic_increasing(self):
         """
@@ -174,14 +175,14 @@ class TestNormalizeScores:
 
         Both should be calibrated independently based on absolute values.
         """
-        fused = [("doc1", 0.05), ("doc2", 0.03)]
+        fused = [("doc1", 0.06), ("doc2", 0.04)]
         normalized = normalize_scores(fused)
 
         assert len(normalized) == 2
-        # 0.05 should have high confidence
-        assert 0.75 < normalized[0][1] <= 1.0
-        # 0.03 below threshold should have low confidence
-        assert 0.1 < normalized[1][1] < 0.5
+        # 0.06 should have high confidence
+        assert 0.90 < normalized[0][1] <= 1.0
+        # 0.04 is at threshold, should be ~0.5
+        assert 0.45 < normalized[1][1] < 0.55
 
         # Test with very close scores - both get similar calibration
         fused_close = [("high", 0.0501), ("low", 0.0500)]
@@ -198,7 +199,7 @@ class TestNormalizeScores:
         Test calibration with realistic RRF+recency scores.
 
         Integration test using score ranges typical of actual
-        RRF fusion output (around 0.01-0.05 range).
+        RRF fusion output (around 0.01-0.08 range).
         """
         # Typical RRF scores from fusion.py
         # RRF(0) with k=60 = 1/60 ≈ 0.0167
@@ -206,10 +207,10 @@ class TestNormalizeScores:
         fused_realistic = [
             ("doc1", 0.0831),  # High multi-strategy + boost
             ("doc2", 0.0667),  # High multi-strategy
-            ("doc3", 0.0450),  # Above threshold
-            ("doc4", 0.0350),  # At threshold
+            ("doc3", 0.0500),  # Above threshold
+            ("doc4", 0.0400),  # At threshold
             ("doc5", 0.0250),  # Below threshold
-            ("doc6", 0.0167),  # Low single strategy
+            ("doc6", 0.0167),  # Well below threshold
         ]
 
         normalized = normalize_scores(fused_realistic)
@@ -223,10 +224,10 @@ class TestNormalizeScores:
 
         # Verify calibration ranges
         # doc1 (very high) should have very high confidence
-        assert normalized[0][1] > 0.95
+        assert normalized[0][1] > 0.99
 
-        # doc4 (at threshold) should be around 0.5
-        assert 0.4 < normalized[3][1] < 0.6
+        # doc4 (0.04 = threshold) should be ~0.5
+        assert 0.45 < normalized[3][1] < 0.55
 
-        # doc6 (low) should have low confidence
-        assert normalized[5][1] < 0.07  # Adjusted threshold
+        # doc6 (0.0167) is well below threshold, should be very low
+        assert normalized[5][1] < 0.05

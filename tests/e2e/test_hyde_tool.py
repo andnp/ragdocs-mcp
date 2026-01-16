@@ -10,6 +10,7 @@ Tests the search_with_hypothesis MCP tool end-to-end:
 """
 
 from typing import cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -26,6 +27,7 @@ from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
+from src.mcp.handlers import HandlerContext, get_handler
 from src.mcp_server import MCPServer
 from src.search.orchestrator import SearchOrchestrator
 
@@ -125,7 +127,7 @@ def _create_config(tmp_path, test_docs_dir, hyde_enabled: bool = True) -> Config
     )
 
 
-def _create_mcp_server(config: Config, docs_dir) -> MCPServer:
+def _create_mcp_server(config: Config, docs_dir) -> tuple[MCPServer, HandlerContext]:
     """
     Create an MCPServer with initialized indices.
 
@@ -134,7 +136,7 @@ def _create_mcp_server(config: Config, docs_dir) -> MCPServer:
         docs_dir: Path to test documents directory
 
     Returns:
-        Initialized MCPServer instance
+        Tuple of (MCPServer, HandlerContext) for testing
     """
     vector = VectorIndex()
     keyword = KeywordIndex()
@@ -157,27 +159,32 @@ def _create_mcp_server(config: Config, docs_dir) -> MCPServer:
             return True
 
     mock_ctx = MockContext()
-    return MCPServer(ctx=cast(ApplicationContext, mock_ctx))
+    server = MCPServer(ctx=cast(ApplicationContext, mock_ctx))
+
+    # Create HandlerContext for direct handler testing
+    mock_coordinator = MagicMock()
+    mock_coordinator.wait_ready = MagicMock(return_value=None)
+    hctx = HandlerContext(ctx=cast(ApplicationContext, mock_ctx), coordinator=mock_coordinator)
+
+    return server, hctx
 
 
 # ============================================================================
-# Tool Handler Tests (verifies _handle_search_with_hypothesis exists and works)
+# Tool Handler Tests (verifies search_with_hypothesis handler exists and works)
 # ============================================================================
 
 
 class TestHyDEToolHandler:
-    """Tests that the HyDE handler method exists and is callable."""
+    """Tests that the HyDE handler exists and is callable."""
 
     @pytest.mark.asyncio
     async def test_handler_method_exists(self, tmp_path, test_docs_dir):
         """
-        The _handle_search_with_hypothesis method should exist on MCPServer.
+        The search_with_hypothesis handler should be registered.
         """
-        config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
-
-        assert hasattr(server, "_handle_search_with_hypothesis")
-        assert callable(server._handle_search_with_hypothesis)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
+        assert callable(handler)
 
     @pytest.mark.asyncio
     async def test_handler_returns_text_content(self, tmp_path, test_docs_dir):
@@ -185,9 +192,11 @@ class TestHyDEToolHandler:
         The handler should return a list of TextContent objects.
         """
         config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
-        result = await server._handle_search_with_hypothesis({
+        result = await handler(hctx, {
             "hypothesis": "Documentation about configuration",
             "top_n": 3,
         })
@@ -212,9 +221,11 @@ class TestHyDEToolInvocation:
         Valid hypothesis returns search results.
         """
         config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
-        result = await server._handle_search_with_hypothesis({
+        result = await handler(hctx, {
             "hypothesis": (
                 "To add a new MCP tool, I need to modify the list_tools method "
                 "and add a handler in call_tool."
@@ -235,9 +246,11 @@ class TestHyDEToolInvocation:
         We verify that results are returned and contain file paths.
         """
         config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
-        result = await server._handle_search_with_hypothesis({
+        result = await handler(hctx, {
             "hypothesis": (
                 "The MCP server has a method called list_tools that returns Tool objects. "
                 "Each tool has a name, description, and inputSchema."
@@ -257,14 +270,16 @@ class TestHyDEToolInvocation:
         top_n parameter limits the number of results.
         """
         config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
-        result_1 = await server._handle_search_with_hypothesis({
+        result_1 = await handler(hctx, {
             "hypothesis": "Search documentation",
             "top_n": 1,
         })
 
-        result_5 = await server._handle_search_with_hypothesis({
+        result_5 = await handler(hctx, {
             "hypothesis": "Search documentation",
             "top_n": 5,
         })
@@ -281,9 +296,11 @@ class TestHyDEToolInvocation:
         excluded_files parameter filters out specified files.
         """
         config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
-        result = await server._handle_search_with_hypothesis({
+        result = await handler(hctx, {
             "hypothesis": "Configuration and search settings",
             "top_n": 5,
             "excluded_files": ["config.md"],
@@ -312,10 +329,12 @@ class TestHyDEParameterValidation:
         Missing hypothesis parameter should raise ValueError.
         """
         config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
         with pytest.raises(ValueError, match="hypothesis"):
-            await server._handle_search_with_hypothesis({
+            await handler(hctx, {
                 "top_n": 5,
             })
 
@@ -325,10 +344,12 @@ class TestHyDEParameterValidation:
         Empty hypothesis parameter should raise ValueError.
         """
         config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
         with pytest.raises(ValueError, match="hypothesis"):
-            await server._handle_search_with_hypothesis({
+            await handler(hctx, {
                 "hypothesis": "",
                 "top_n": 5,
             })
@@ -339,16 +360,18 @@ class TestHyDEParameterValidation:
         Invalid top_n parameter should raise ValueError.
         """
         config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
         with pytest.raises(ValueError, match="top_n"):
-            await server._handle_search_with_hypothesis({
+            await handler(hctx, {
                 "hypothesis": "test",
                 "top_n": 0,
             })
 
         with pytest.raises(ValueError, match="top_n"):
-            await server._handle_search_with_hypothesis({
+            await handler(hctx, {
                 "hypothesis": "test",
                 "top_n": 1000,
             })
@@ -372,9 +395,11 @@ class TestHyDEIntegrationWithSearchInfrastructure:
         as embedding model behavior can vary.
         """
         config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
-        result = await server._handle_search_with_hypothesis({
+        result = await handler(hctx, {
             "hypothesis": (
                 "Documentation about adding new tools to the Model Context Protocol server "
                 "including the Tool class and schema definitions."
@@ -394,9 +419,11 @@ class TestHyDEIntegrationWithSearchInfrastructure:
         Results should include relevance scores.
         """
         config = _create_config(tmp_path, test_docs_dir)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
-        result = await server._handle_search_with_hypothesis({
+        result = await handler(hctx, {
             "hypothesis": "Search system documentation",
             "top_n": 3,
         })
@@ -419,9 +446,11 @@ class TestHyDEConfigToggle:
         With hyde_enabled=False, search_with_hypothesis falls back to regular query.
         """
         config = _create_config(tmp_path, test_docs_dir, hyde_enabled=False)
-        server = _create_mcp_server(config, test_docs_dir)
+        _server, hctx = _create_mcp_server(config, test_docs_dir)
+        handler = get_handler("search_with_hypothesis")
+        assert handler is not None
 
-        result = await server._handle_search_with_hypothesis({
+        result = await handler(hctx, {
             "hypothesis": "Search documentation",
             "top_n": 3,
         })

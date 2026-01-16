@@ -1,78 +1,113 @@
 import pytest
-from unittest.mock import MagicMock
-import numpy as np
-from src.memory.maintenance import MemoryGardener, MemoryCluster
+from typing import TYPE_CHECKING, cast
+from src.memory.maintenance import MemoryGardener
 
-class MockVectorIndex:
-    def __init__(self, embeddings):
-        self.embeddings = embeddings
+if TYPE_CHECKING:
+    from src.memory.manager import MemoryIndexManager
+
+
+class FakeVectorIndex:
+    def __init__(self, embeddings: dict[str, list[float]], chunk_data: dict[str, dict]):
+        self._embeddings = embeddings
+        self._chunk_data = chunk_data
         self.doc_ids = list(embeddings.keys())
 
     def get_document_ids(self):
         return self.doc_ids
 
-    def get_chunk_by_id(self, doc_id):
-        if doc_id in self.embeddings:
-            return {
-                "metadata": {"memory_type": "journal"},
-                "file_path": f"/memories/{doc_id}.md",
-                "content": f"Content for {doc_id}"
-            }
-        return None
+    def get_chunk_by_id(self, doc_id: str):
+        return self._chunk_data.get(doc_id)
 
-    def get_embedding_for_chunk(self, doc_id):
-        return self.embeddings.get(doc_id)
+    def get_embedding_for_chunk(self, doc_id: str):
+        return self._embeddings.get(doc_id)
+
+
+class FakeMemoryManager:
+    def __init__(self, vector: FakeVectorIndex):
+        self.vector = vector
+
 
 @pytest.fixture
-def mock_manager():
-    manager = MagicMock()
-    # Create 3 vectors: A and B are close, C is far
+def sample_manager():
     embeddings = {
         "mem1": [1.0, 0.0, 0.0],
-        "mem2": [0.99, 0.1, 0.0],  # Very close to mem1
-        "mem3": [0.0, 1.0, 0.0],   # Orthogonal to mem1
+        "mem2": [0.99, 0.1, 0.0],
+        "mem3": [0.0, 1.0, 0.0],
     }
-    manager.vector = MockVectorIndex(embeddings)
-    return manager
+    chunk_data = {
+        "mem1": {
+            "metadata": {"memory_type": "journal"},
+            "file_path": "/memories/mem1.md",
+            "content": "Content for mem1"
+        },
+        "mem2": {
+            "metadata": {"memory_type": "journal"},
+            "file_path": "/memories/mem2.md",
+            "content": "Content for mem2"
+        },
+        "mem3": {
+            "metadata": {"memory_type": "journal"},
+            "file_path": "/memories/mem3.md",
+            "content": "Content for mem3"
+        },
+    }
+    vector = FakeVectorIndex(embeddings, chunk_data)
+    return cast("MemoryIndexManager", FakeMemoryManager(vector))
 
-def test_find_clusters(mock_manager):
-    gardener = MemoryGardener(mock_manager)
-    
-    # Threshold 0.9 should group mem1 and mem2
+
+def test_find_clusters(sample_manager):
+    """
+    Verify that similar memories are grouped into clusters.
+
+    Two memories with nearly identical embeddings (mem1, mem2) should form
+    a single cluster when the similarity threshold is met.
+    """
+    gardener = MemoryGardener(sample_manager)
+
     clusters = gardener.find_clusters(threshold=0.9, min_cluster_size=2)
-    
+
     assert len(clusters) == 1
     cluster = clusters[0]
     assert set(cluster.memory_ids) == {"mem1", "mem2"}
     assert cluster.score > 0.9
 
-def test_find_clusters_no_matches(mock_manager):
-    gardener = MemoryGardener(mock_manager)
-    
-    # Threshold 0.999 should find nothing (dot product of mem1, mem2 is < 1.0)
-    # mem1.mem2 = 0.99 / (1 * sqrt(0.99^2 + 0.1^2)) ~= 0.995
-    # Wait, 0.99*1 + 0*0.1 = 0.99. Norm(mem2) = sqrt(0.99^2 + 0.01) = sqrt(0.9901) ~= 0.995
-    # Cosine sim = 0.99 / 0.995 ~= 0.994
-    
-    # If we set threshold 0.995, it might split them
+
+def test_find_clusters_no_matches(sample_manager):
+    """
+    Verify that a very high threshold results in no clusters.
+
+    When the threshold is higher than the actual similarity between
+    any pair of memories, no clusters should be formed.
+    """
+    gardener = MemoryGardener(sample_manager)
+
     clusters = gardener.find_clusters(threshold=0.999, min_cluster_size=2)
     assert len(clusters) == 0
 
+
 def test_filter_type():
-    manager = MagicMock()
-    embeddings = {"mem1": [1,0], "mem2": [1,0]}
-    manager.vector = MockVectorIndex(embeddings)
-    
-    # Mock return values for get_chunk_by_id to have different types
-    def get_chunk(doc_id):
-        return {
-            "metadata": {"memory_type": "journal" if doc_id == "mem1" else "plan"},
-            "file_path": f"/{doc_id}",
+    """
+    Verify that type filtering excludes memories of non-matching types.
+
+    When filtering for 'journal' type only, memories of other types
+    should be excluded, potentially resulting in smaller or no clusters.
+    """
+    embeddings = {"mem1": [1.0, 0.0], "mem2": [1.0, 0.0]}
+    chunk_data = {
+        "mem1": {
+            "metadata": {"memory_type": "journal"},
+            "file_path": "/mem1.md",
             "content": "content"
-        }
-    manager.vector.get_chunk_by_id = get_chunk
-    
+        },
+        "mem2": {
+            "metadata": {"memory_type": "plan"},
+            "file_path": "/mem2.md",
+            "content": "content"
+        },
+    }
+    vector = FakeVectorIndex(embeddings, chunk_data)
+    manager = cast("MemoryIndexManager", FakeMemoryManager(vector))
+
     gardener = MemoryGardener(manager)
     clusters = gardener.find_clusters(threshold=0.5, filter_type="journal")
-    # Should be 0 because mem2 is filtered out, leaving only mem1 (size < 2)
     assert len(clusters) == 0
