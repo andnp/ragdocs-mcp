@@ -203,6 +203,9 @@ async def search_memories(
     filter_tags: list[str] | None = None,
     filter_type: str | None = None,
     load_full_memory: bool = False,
+    after_timestamp: int | None = None,
+    before_timestamp: int | None = None,
+    relative_days: int | None = None,
 ) -> list[dict]:
     if ctx.memory_manager is None or ctx.memory_search is None:
         return [{"error": "Memory system is not enabled"}]
@@ -214,6 +217,9 @@ async def search_memories(
             filter_tags=filter_tags,
             filter_type=filter_type,
             load_full_memory=load_full_memory,
+            after_timestamp=after_timestamp,
+            before_timestamp=before_timestamp,
+            relative_days=relative_days,
         )
 
         return [

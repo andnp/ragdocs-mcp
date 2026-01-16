@@ -334,12 +334,23 @@ floor_multiplier = 0.1
 
 **Available tools:**
 - `create_memory`, `read_memory`, `update_memory`, `append_memory`, `delete_memory`: CRUD operations (system auto-generates frontmatter for `create_memory`)
-- `search_memories`: Hybrid search with exponential decay scoring and tag/type filtering
+- `search_memories`: Hybrid search with recency boost, tag/type filtering, and time range filtering (absolute timestamps or relative days)
 - `search_linked_memories`: Find memories linking to a specific document via ghost nodes
 - `get_memory_stats`: Memory bank statistics
 - `merge_memories`: Consolidate multiple memories into one
 
-**Memory Decay System:** Memory search uses exponential decay (`score × decay_rate^days_old`) with per-type rates. Journal memories (decay_rate=0.90) decay faster than facts (decay_rate=0.98), modeling real-world importance over time. Scores are calibrated using sigmoid expansion (raw RRF 0.01-0.05 → interpretable 0-1 range) before decay, providing 6.77x separation vs. 1.95x in raw scores. Results below `score_threshold` (default: 0.2) are filtered.
+**Time range filtering examples:**
+
+```json
+// Last 7 days
+{"query": "bug fixes", "relative_days": 7}
+
+// Absolute range (Jan 1-31, 2024)
+{"query": "features", "after_timestamp": 1704067200, "before_timestamp": 1706745600}
+
+// Combined with tag filtering
+{"query": "auth improvements", "relative_days": 30, "filter_tags": ["security"]}
+```
 
 See [Memory Management](docs/memory.md) for complete documentation.
 

@@ -543,6 +543,389 @@ This note links to [[other/file.py]] not the target.
 # ============================================================================
 
 
+class TestTimeRangeFiltering:
+    """
+    Tests for time-based filtering of memory search results.
+
+    This class tests the newly implemented after_timestamp, before_timestamp,
+    and relative_days filtering parameters.
+    """
+
+    @pytest.mark.asyncio
+    async def test_filter_after_timestamp(
+        self,
+        memory_manager: MemoryIndexManager,
+        memory_search: MemorySearchOrchestrator,
+        memory_path: Path,
+    ):
+        """
+        Verify only memories after timestamp are returned.
+        """
+        import os
+        
+        # Create memories with different timestamps
+        old_memory = create_memory_file(
+            memory_path,
+            "old-memory",
+            '---\ntype: "journal"\ncreated_at: "2025-01-01T12:00:00Z"\n---\n# Old Memory\n\nOld content about testing.'
+        )
+        new_memory = create_memory_file(
+            memory_path,
+            "new-memory",
+            '---\ntype: "journal"\ncreated_at: "2025-01-14T12:00:00Z"\n---\n# New Memory\n\nNew content about testing.'
+        )
+
+        memory_manager.index_memory(str(old_memory))
+        memory_manager.index_memory(str(new_memory))
+
+        # Filter for memories after Jan 10, 2025
+        cutoff = datetime(2025, 1, 10, tzinfo=timezone.utc)
+        after_ts = int(cutoff.timestamp())
+
+        results = await memory_search.search_memories(
+            "testing",
+            limit=10,
+            after_timestamp=after_ts,
+        )
+
+        # Only new memory should be returned
+        assert len(results) > 0
+        for result in results:
+            assert result.memory_id in ["memory:new-memory"]
+
+    @pytest.mark.asyncio
+    async def test_filter_before_timestamp(
+        self,
+        memory_manager: MemoryIndexManager,
+        memory_search: MemorySearchOrchestrator,
+        memory_path: Path,
+    ):
+        """
+        Verify only memories before timestamp are returned.
+        """
+        # Create memories with different timestamps
+        old_memory = create_memory_file(
+            memory_path,
+            "old-note",
+            '---\ntype: "fact"\ncreated_at: "2025-01-05T12:00:00Z"\n---\n# Old Note\n\nDatabase configuration notes.'
+        )
+        new_memory = create_memory_file(
+            memory_path,
+            "new-note",
+            '---\ntype: "fact"\ncreated_at: "2025-01-15T12:00:00Z"\n---\n# New Note\n\nDatabase configuration notes.'
+        )
+
+        memory_manager.index_memory(str(old_memory))
+        memory_manager.index_memory(str(new_memory))
+
+        # Filter for memories before Jan 10, 2025
+        cutoff = datetime(2025, 1, 10, tzinfo=timezone.utc)
+        before_ts = int(cutoff.timestamp())
+
+        results = await memory_search.search_memories(
+            "database configuration",
+            limit=10,
+            before_timestamp=before_ts,
+        )
+
+        # Only old memory should be returned
+        assert len(results) > 0
+        for result in results:
+            assert result.memory_id in ["memory:old-note"]
+
+    @pytest.mark.asyncio
+    async def test_filter_time_range(
+        self,
+        memory_manager: MemoryIndexManager,
+        memory_search: MemorySearchOrchestrator,
+        memory_path: Path,
+    ):
+        """
+        Verify combined after/before filtering (AND logic).
+        """
+        # Create memories at different dates
+        memories = [
+            ("mem-2024-12", '---\ntype: "plan"\ncreated_at: "2024-12-20T12:00:00Z"\n---\n# Plan 2024\n\nAPI redesign plan.'),
+            ("mem-2025-01", '---\ntype: "plan"\ncreated_at: "2025-01-08T12:00:00Z"\n---\n# Plan Jan\n\nAPI redesign plan.'),
+            ("mem-2025-02", '---\ntype: "plan"\ncreated_at: "2025-02-01T12:00:00Z"\n---\n# Plan Feb\n\nAPI redesign plan.'),
+        ]
+
+        for filename, content in memories:
+            path = create_memory_file(memory_path, filename, content)
+            memory_manager.index_memory(str(path))
+
+        # Filter for Jan 2025 only
+        after_ts = int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp())
+        before_ts = int(datetime(2025, 2, 1, tzinfo=timezone.utc).timestamp())
+
+        results = await memory_search.search_memories(
+            "API redesign",
+            limit=10,
+            after_timestamp=after_ts,
+            before_timestamp=before_ts,
+        )
+
+        # Only January memory should be returned
+        assert len(results) == 1
+        assert results[0].memory_id == "memory:mem-2025-01"
+
+    @pytest.mark.asyncio
+    async def test_filter_relative_days(
+        self,
+        memory_manager: MemoryIndexManager,
+        memory_search: MemorySearchOrchestrator,
+        memory_path: Path,
+    ):
+        """
+        Verify relative_days works correctly.
+        """
+        from datetime import timedelta
+
+        now = datetime.now(timezone.utc)
+        
+        # Create memories at different relative dates
+        old_date = (now - timedelta(days=10)).isoformat()
+        recent_date = (now - timedelta(days=3)).isoformat()
+
+        old_memory = create_memory_file(
+            memory_path,
+            "old-observation",
+            f'---\ntype: "observation"\ncreated_at: "{old_date}"\n---\n# Old Observation\n\nPerformance metrics observation.'
+        )
+        recent_memory = create_memory_file(
+            memory_path,
+            "recent-observation",
+            f'---\ntype: "observation"\ncreated_at: "{recent_date}"\n---\n# Recent Observation\n\nPerformance metrics observation.'
+        )
+
+        memory_manager.index_memory(str(old_memory))
+        memory_manager.index_memory(str(recent_memory))
+
+        # Filter for last 7 days
+        results = await memory_search.search_memories(
+            "performance metrics",
+            limit=10,
+            relative_days=7,
+        )
+
+        # Only recent memory should be returned
+        assert len(results) > 0
+        for result in results:
+            assert result.memory_id in ["memory:recent-observation"]
+
+    @pytest.mark.asyncio
+    async def test_relative_days_overrides_absolute(
+        self,
+        memory_manager: MemoryIndexManager,
+        memory_search: MemorySearchOrchestrator,
+        memory_path: Path,
+    ):
+        """
+        Verify relative_days takes precedence over absolute timestamps.
+        """
+        from datetime import timedelta
+
+        now = datetime.now(timezone.utc)
+        recent_date = (now - timedelta(days=2)).isoformat()
+
+        memory = create_memory_file(
+            memory_path,
+            "recent-note",
+            f'---\ntype: "journal"\ncreated_at: "{recent_date}"\n---\n# Recent Note\n\nImportant notes.'
+        )
+
+        memory_manager.index_memory(str(memory))
+
+        # Provide both relative_days and absolute timestamps
+        # relative_days should override
+        results = await memory_search.search_memories(
+            "important notes",
+            limit=10,
+            after_timestamp=0,  # Would match everything if used
+            before_timestamp=1,  # Would match nothing if used
+            relative_days=5,  # Should be used instead
+        )
+
+        # Should get results because relative_days=5 includes recent memory
+        assert len(results) > 0
+
+    @pytest.mark.asyncio
+    async def test_invalid_timestamp_range_raises_error(
+        self,
+        memory_search: MemorySearchOrchestrator,
+    ):
+        """
+        Verify ValueError for after >= before.
+        """
+        after_ts = 1000000
+        before_ts = 500000  # before < after (invalid)
+
+        with pytest.raises(ValueError, match="after_timestamp must be less than before_timestamp"):
+            await memory_search.search_memories(
+                "test query",
+                limit=5,
+                after_timestamp=after_ts,
+                before_timestamp=before_ts,
+            )
+
+    @pytest.mark.asyncio
+    async def test_negative_relative_days_raises_error(
+        self,
+        memory_search: MemorySearchOrchestrator,
+    ):
+        """
+        Verify ValueError for relative_days < 0.
+        """
+        with pytest.raises(ValueError, match="relative_days must be non-negative"):
+            await memory_search.search_memories(
+                "test query",
+                limit=5,
+                relative_days=-5,
+            )
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_file_mtime(
+        self,
+        memory_manager: MemoryIndexManager,
+        memory_search: MemorySearchOrchestrator,
+        memory_path: Path,
+    ):
+        """
+        Verify fallback when memory_created_at missing.
+        """
+        import os
+        from datetime import timedelta
+
+        # Create memory without created_at in frontmatter
+        memory_no_timestamp = create_memory_file(
+            memory_path,
+            "no-timestamp",
+            '---\ntype: "journal"\n---\n# No Timestamp\n\nContent without timestamp.'
+        )
+
+        # Set file mtime to a specific time
+        now = datetime.now(timezone.utc)
+        old_time = now - timedelta(days=10)
+        os.utime(memory_no_timestamp, (old_time.timestamp(), old_time.timestamp()))
+
+        memory_manager.index_memory(str(memory_no_timestamp))
+
+        # Filter for recent memories only
+        cutoff = now - timedelta(days=5)
+        after_ts = int(cutoff.timestamp())
+
+        results = await memory_search.search_memories(
+            "content",
+            limit=10,
+            after_timestamp=after_ts,
+        )
+
+        # Should get no results because file mtime is old
+        assert len(results) == 0
+
+    @pytest.mark.asyncio
+    async def test_time_filter_with_other_filters(
+        self,
+        memory_manager: MemoryIndexManager,
+        memory_search: MemorySearchOrchestrator,
+        memory_path: Path,
+    ):
+        """
+        Verify time filter works with tags/type filters.
+        """
+        from datetime import timedelta
+
+        now = datetime.now(timezone.utc)
+        recent_date = (now - timedelta(days=2)).isoformat()
+        old_date = (now - timedelta(days=10)).isoformat()
+
+        # Create memories with different types, tags, and dates
+        memories = [
+            ("recent-api", f'---\ntype: "plan"\ntags: ["api"]\ncreated_at: "{recent_date}"\n---\n# Recent API\n\nAPI development.'),
+            ("old-api", f'---\ntype: "plan"\ntags: ["api"]\ncreated_at: "{old_date}"\n---\n# Old API\n\nAPI development.'),
+            ("recent-ui", f'---\ntype: "fact"\ntags: ["ui"]\ncreated_at: "{recent_date}"\n---\n# Recent UI\n\nUI development.'),
+        ]
+
+        for filename, content in memories:
+            path = create_memory_file(memory_path, filename, content)
+            memory_manager.index_memory(str(path))
+
+        # Filter for recent API plans only
+        results = await memory_search.search_memories(
+            "development",
+            limit=10,
+            filter_type="plan",
+            filter_tags=["api"],
+            relative_days=7,
+        )
+
+        # Should only get recent-api
+        assert len(results) == 1
+        assert results[0].memory_id == "memory:recent-api"
+
+    @pytest.mark.asyncio
+    async def test_empty_results_with_time_filter(
+        self,
+        memory_manager: MemoryIndexManager,
+        memory_search: MemorySearchOrchestrator,
+        memory_path: Path,
+    ):
+        """
+        Verify empty list when no memories match time filter.
+        """
+        # Create memory with old timestamp
+        old_memory = create_memory_file(
+            memory_path,
+            "very-old",
+            '---\ntype: "journal"\ncreated_at: "2020-01-01T12:00:00Z"\n---\n# Very Old\n\nAncient notes.'
+        )
+
+        memory_manager.index_memory(str(old_memory))
+
+        # Filter for very recent memories (last 1 day)
+        results = await memory_search.search_memories(
+            "ancient notes",
+            limit=10,
+            relative_days=1,
+        )
+
+        # Should get no results
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_timezone_normalization(
+        self,
+        memory_manager: MemoryIndexManager,
+        memory_search: MemorySearchOrchestrator,
+        memory_path: Path,
+    ):
+        """
+        Verify timezone handling for naive datetimes.
+        """
+        # Create memory with naive datetime (no timezone)
+        memory = create_memory_file(
+            memory_path,
+            "naive-tz",
+            '---\ntype: "fact"\ncreated_at: "2025-01-10T12:00:00"\n---\n# Naive TZ\n\nConfiguration details.'
+        )
+
+        memory_manager.index_memory(str(memory))
+
+        # Filter using timezone-aware timestamp
+        after_ts = int(datetime(2025, 1, 9, tzinfo=timezone.utc).timestamp())
+        before_ts = int(datetime(2025, 1, 11, tzinfo=timezone.utc).timestamp())
+
+        results = await memory_search.search_memories(
+            "configuration details",
+            limit=10,
+            after_timestamp=after_ts,
+            before_timestamp=before_ts,
+        )
+
+        # Should find the memory despite timezone differences
+        assert len(results) > 0
+
+
 class TestSearchResultQuality:
 
     @pytest.mark.asyncio

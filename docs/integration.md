@@ -988,6 +988,9 @@ The server exposes tools for managing persistent AI memories when `memory.enable
   limit?: number;             // Optional: Max results (default: 5)
   filter_tags?: string[];     // Optional: Filter by tags (OR logic)
   filter_type?: string;       // Optional: Filter by memory type
+  after_timestamp?: number;   // Optional: Unix timestamp (memories after, inclusive)
+  before_timestamp?: number;  // Optional: Unix timestamp (memories before, exclusive)
+  relative_days?: number;     // Optional: Last N days (overrides absolute timestamps, ≥ 0)
 }
 ```
 
@@ -1043,6 +1046,32 @@ created_at: "2025-01-11T12:00:00.000000+00:00"
 ```
 
 Returns memories containing `[[src/auth.py]]` with anchor context showing the surrounding text.
+
+**Search with time range (last 7 days):**
+
+```json
+{
+  "query": "bug fixes",
+  "relative_days": 7
+}
+```
+
+**Search with absolute time range:**
+
+```json
+{
+  "query": "quarterly planning",
+  "after_timestamp": 1704067200,
+  "before_timestamp": 1706745600,
+  "filter_tags": ["planning"]
+}
+```
+
+**Time Filtering Notes:**
+- `relative_days` overrides `after_timestamp` and `before_timestamp`
+- Times use `created_at` from frontmatter, fall back to file modification time
+- All timestamps are Unix timestamps (seconds since epoch) and normalized to UTC
+- Validation: `after_timestamp < before_timestamp`, `relative_days ≥ 0`
 
 ### Configuration
 

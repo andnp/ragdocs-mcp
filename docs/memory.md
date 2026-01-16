@@ -428,15 +428,47 @@ Hybrid search across memory corpus with recency boost.
 | `limit` | int | No | 5 | Maximum results |
 | `filter_tags` | list[string] | No | None | Filter by tags (OR logic) |
 | `filter_type` | string | No | None | Filter by memory type |
+| `after_timestamp` | int | No | None | Unix timestamp: only return memories created/modified after this time |
+| `before_timestamp` | int | No | None | Unix timestamp: only return memories created/modified before this time |
+| `relative_days` | int | No | None | Only return memories from last N days (overrides absolute timestamps) |
 
-**Example:**
+**Time Filtering Behavior:**
+
+- **Precedence:** `relative_days` overrides `after_timestamp` and `before_timestamp`
+- **Validation:** `after_timestamp` must be less than `before_timestamp`; `relative_days` must be ≥ 0
+- **Time Source:** Uses `created_at` from frontmatter, falls back to file modification time if unavailable
+- **Timezone:** All timestamps normalized to UTC
+
+**Examples:**
 
 ```json
+// Basic search
 {
   "query": "authentication improvements",
   "filter_tags": ["auth", "security"],
   "filter_type": "plan",
   "limit": 10
+}
+
+// Last 7 days
+{
+  "query": "bug fixes",
+  "relative_days": 7
+}
+
+// Absolute time range (Jan 1-31, 2024)
+{
+  "query": "new features",
+  "after_timestamp": 1704067200,
+  "before_timestamp": 1706745600
+}
+
+// Combined filters
+{
+  "query": "auth improvements",
+  "relative_days": 30,
+  "filter_tags": ["security"],
+  "filter_type": "plan"
 }
 ```
 

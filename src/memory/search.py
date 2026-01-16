@@ -86,6 +86,108 @@ def apply_memory_recency_boost(
     return apply_memory_decay(score, created_at, decay_rate, 0.1)
 
 
+def _normalize_time_filters(
+    after_timestamp: int | None,
+    before_timestamp: int | None,
+    relative_days: int | None,
+) -> tuple[int | None, int | None]:
+    """
+    Validate and normalize time filter parameters.
+
+    Args:
+        after_timestamp: Unix timestamp for lower bound (inclusive)
+        before_timestamp: Unix timestamp for upper bound (exclusive)
+        relative_days: Number of days back from now (overrides absolute timestamps)
+
+    Returns:
+        Tuple of (after_timestamp, before_timestamp) with relative_days applied
+
+    Raises:
+        ValueError: If timestamps are invalid or relative_days is negative
+    """
+    # Validate timestamp range
+    if after_timestamp is not None and before_timestamp is not None:
+        if after_timestamp >= before_timestamp:
+            raise ValueError("after_timestamp must be less than before_timestamp")
+
+    # Handle relative_days (overrides absolute timestamps)
+    if relative_days is not None:
+        if relative_days < 0:
+            raise ValueError("relative_days must be non-negative")
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=relative_days)
+        return int(cutoff.timestamp()), None
+
+    return after_timestamp, before_timestamp
+
+
+def _get_filtering_timestamp(chunk_data: dict) -> datetime | None:
+    """
+    Extract timestamp for time filtering, with fallback to file mtime.
+
+    Args:
+        chunk_data: Chunk metadata dictionary
+
+    Returns:
+        Datetime for filtering, or None if unavailable
+    """
+    metadata = chunk_data.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return None
+
+    # Try memory_created_at from frontmatter first
+    created_at_str = metadata.get("memory_created_at")
+    if created_at_str:
+        try:
+            return datetime.fromisoformat(created_at_str)
+        except ValueError:
+            pass
+
+    # Fallback to file mtime
+    file_path = chunk_data.get("file_path")
+    if file_path and isinstance(file_path, str):
+        path = Path(file_path)
+        if path.exists():
+            return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+
+    return None
+
+
+def _passes_time_filter(
+    filtering_timestamp: datetime | None,
+    after_timestamp: int | None,
+    before_timestamp: int | None,
+) -> bool:
+    """
+    Check if a timestamp passes the time filter criteria.
+
+    Args:
+        filtering_timestamp: The datetime to check
+        after_timestamp: Lower bound (inclusive), None to skip
+        before_timestamp: Upper bound (exclusive), None to skip
+
+    Returns:
+        True if timestamp passes filter (or if no timestamp available)
+    """
+    if filtering_timestamp is None:
+        return True
+
+    # Normalize timezone
+    if filtering_timestamp.tzinfo is None:
+        filtering_timestamp = filtering_timestamp.replace(tzinfo=timezone.utc)
+
+    timestamp = int(filtering_timestamp.timestamp())
+
+    if after_timestamp is not None and timestamp < after_timestamp:
+        return False
+
+    if before_timestamp is not None and timestamp > before_timestamp:
+        return False
+
+    return True
+
+
 class MemorySearchOrchestrator:
     def __init__(
         self,
@@ -108,9 +210,17 @@ class MemorySearchOrchestrator:
         filter_tags: list[str] | None = None,
         filter_type: str | None = None,
         load_full_memory: bool = False,
+        after_timestamp: int | None = None,
+        before_timestamp: int | None = None,
+        relative_days: int | None = None,
     ) -> list[MemorySearchResult]:
         if not query or not query.strip():
             return []
+
+        # Normalize time filters (validates and applies relative_days)
+        after_timestamp, before_timestamp = _normalize_time_filters(
+            after_timestamp, before_timestamp, relative_days
+        )
 
         top_k = max(20, limit * 4)
 
@@ -191,8 +301,15 @@ class MemorySearchOrchestrator:
                 if not any(tag in chunk_tags for tag in filter_tags):
                     continue
 
-            created_at_str = metadata.get("memory_created_at")
+            # Time filtering (with fallback to file mtime)
+            if after_timestamp is not None or before_timestamp is not None:
+                filtering_timestamp = _get_filtering_timestamp(chunk_data)
+                if not _passes_time_filter(filtering_timestamp, after_timestamp, before_timestamp):
+                    continue
+
+            # Extract created_at for recency boost
             created_at = None
+            created_at_str = metadata.get("memory_created_at")
             if created_at_str:
                 try:
                     created_at = datetime.fromisoformat(created_at_str)

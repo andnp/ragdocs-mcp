@@ -703,6 +703,75 @@ Combined content from sources.
 
 
 # ============================================================================
+# Search Memories with Time Filtering Tests
+# ============================================================================
+
+
+class TestSearchMemoriesTimeFiltering:
+    """
+    Test time filtering parameters at the tool level.
+
+    These tests validate that the MCP tool interface correctly
+    passes time filtering parameters to the search orchestrator.
+    """
+
+    @pytest.mark.asyncio
+    async def test_search_invalid_range_returns_error(self, app_context):
+        """
+        Verify search_memories tool returns error for invalid timestamp range.
+        """
+        # after > before (invalid)
+        results = await search_memories(
+            app_context,
+            query="test",
+            limit=5,
+            after_timestamp=2000000,
+            before_timestamp=1000000,
+        )
+
+        # Should return error
+        assert len(results) > 0
+        assert "error" in results[0]
+        assert "after_timestamp" in results[0]["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_search_negative_relative_days_returns_error(self, app_context):
+        """
+        Verify search_memories tool returns error for negative relative_days.
+        """
+        results = await search_memories(
+            app_context,
+            query="test",
+            limit=5,
+            relative_days=-10,
+        )
+
+        # Should return error
+        assert len(results) > 0
+        assert "error" in results[0]
+        assert "non-negative" in results[0]["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_search_disabled_context_returns_error(self, disabled_context):
+        """
+        Verify time filtering parameters still work with disabled context.
+        """
+        results = await search_memories(
+            disabled_context,
+            query="test",
+            limit=5,
+            after_timestamp=1000000,
+            before_timestamp=2000000,
+            relative_days=7,
+        )
+
+        # Should return error about disabled memory system
+        assert len(results) == 1
+        assert "error" in results[0]
+        assert "not enabled" in results[0]["error"].lower()
+
+
+# ============================================================================
 # End-to-End Workflow Tests
 # ============================================================================
 

@@ -108,23 +108,19 @@ class VectorIndex:
 
         embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
 
-        metadata = {
-            "chunk_id": chunk.chunk_id,
-            "doc_id": chunk.doc_id,
-            "chunk_index": chunk.chunk_index,
-            "header_path": chunk.header_path,
-            "file_path": chunk.file_path,
-            "tags": chunk.metadata.get("tags", []),
-            "links": chunk.metadata.get("links", []),
-            "parent_chunk_id": chunk.parent_chunk_id,
-        }
-        for key, value in chunk.metadata.items():
-            if key not in metadata:
-                metadata[key] = value
-
         llama_doc = LlamaDocument(
             text=embedding_text,
-            metadata=metadata,
+            metadata={
+                "chunk_id": chunk.chunk_id,
+                "doc_id": chunk.doc_id,
+                "chunk_index": chunk.chunk_index,
+                "header_path": chunk.header_path,
+                "file_path": chunk.file_path,
+                "tags": chunk.metadata.get("tags", []),
+                "links": chunk.metadata.get("links", []),
+                "parent_chunk_id": chunk.parent_chunk_id,
+                **chunk.metadata,  # Include ALL metadata from chunk
+            },
             id_=chunk.chunk_id,
         )
 

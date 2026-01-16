@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Memory Search Time Range Filtering:**
+  - `search_memories` now supports time-based filtering with three new parameters:
+    - `after_timestamp` (int): Unix timestamp for lower bound (inclusive)
+    - `before_timestamp` (int): Unix timestamp for upper bound (exclusive)
+    - `relative_days` (int): Returns memories from last N days (overrides absolute timestamps)
+  - Validation: `after_timestamp < before_timestamp`, `relative_days ≥ 0`
+  - Time source: Uses `created_at` from frontmatter with fallback to file `mtime`
+  - All timestamps normalized to UTC
+  - Enables temporal scoping for memory searches (e.g., "recent work", "last sprint", "Q4 2024")
 - **Search Infrastructure Overhaul (Spec 17):**
   - **Community Detection:** Louvain algorithm clusters documents by wikilink connectivity; co-community results receive configurable score boost (default 1.1×)
   - **Score-Aware Fusion:** Dynamic weight adjustment based on per-query score variance; low-variance strategies automatically down-weighted

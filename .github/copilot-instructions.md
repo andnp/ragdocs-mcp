@@ -4,7 +4,7 @@
 
 **mcp-markdown-ragdocs** is a local-first RAG server providing semantic search over Markdown documentation via the Model Context Protocol (MCP). It combines vector search (FAISS), keyword search (Whoosh BM25), and graph traversal (NetworkX) using Reciprocal Rank Fusion.
 
-**Core Features**: Hybrid search, git history search, AI memory bank, zero-config auto-indexing, multi-project support
+**Core Features**: Hybrid search, git history search, AI memory bank with time range filtering, zero-config auto-indexing, multi-project support
 
 ## Technology Stack
 
@@ -121,6 +121,33 @@ uv run pytest --cov=src --cov-report=html        # Test with coverage
 uv run ruff check --fix . && ruff format .       # Lint and format
 uv run pyright                                    # Type check (pyright)
 uv tool run ty check .                           # Type check (ty alternative)
+```
+
+---
+
+## Memory Search Features
+
+**Time Range Filtering** (`search_memories` tool):
+- **Absolute timestamps**: `after_timestamp`, `before_timestamp` (Unix timestamps)
+- **Relative filtering**: `relative_days` (last N days, overrides absolute)
+- **Validation**: `after < before`, `relative_days ≥ 0`
+- **Time source**: `created_at` frontmatter field with fallback to file `mtime`
+- **Timezone handling**: UTC normalization
+
+**Usage examples**:
+```python
+# Last 7 days
+await search_memories(ctx, query="bug fixes", relative_days=7)
+
+# Absolute range (Jan 2024)
+await search_memories(ctx, query="features", 
+                     after_timestamp=1704067200, 
+                     before_timestamp=1706745600)
+
+# Combined with tag filtering
+await search_memories(ctx, query="auth", 
+                     relative_days=30, 
+                     filter_tags=["security"])
 ```
 
 ---
