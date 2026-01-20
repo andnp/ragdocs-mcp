@@ -337,3 +337,201 @@ def test_vector_index_header_weighted_improves_relevance(shared_embedding_model)
     # api_chunk should rank higher due to header context
     if "general_chunk_0" in chunk_ids:
         assert chunk_ids.index("api_chunk_0") < chunk_ids.index("general_chunk_0")
+
+
+# ============================================================================
+# Stale Reference Cleanup Tests (Self-Healing)
+# ============================================================================
+
+
+def test_stale_chunk_ref_cleaned_on_lookup(shared_embedding_model):
+    """
+    Test that looking up a stale chunk ID cleans it from mappings.
+
+    When get_chunk_by_id() encounters a chunk ID that exists in mappings
+    but not in the docstore, it should remove the stale reference.
+    """
+    from src.models import Chunk
+
+    vector_index = VectorIndex(embedding_model=shared_embedding_model)
+
+    # Add a real chunk
+    chunk = Chunk(
+        chunk_id="real_chunk",
+        doc_id="doc1",
+        content="Real content that exists in docstore.",
+        metadata={},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=50,
+        file_path="/tmp/real.md",
+        modified_time=datetime.now(),
+    )
+    vector_index.add_chunk(chunk)
+
+    # Manually inject a stale reference (ID in mappings but not docstore)
+    stale_chunk_id = "stale_orphan_chunk"
+    vector_index._chunk_id_to_node_id[stale_chunk_id] = stale_chunk_id
+    vector_index._doc_id_to_node_ids["orphan_doc"] = [stale_chunk_id]
+
+    # Verify stale ref exists in mappings
+    assert stale_chunk_id in vector_index._chunk_id_to_node_id
+    assert "orphan_doc" in vector_index._doc_id_to_node_ids
+
+    # Look up the stale chunk - should trigger cleanup
+    result = vector_index.get_chunk_by_id(stale_chunk_id)
+    assert result is None
+
+    # Verify stale ref was cleaned from mappings
+    assert stale_chunk_id not in vector_index._chunk_id_to_node_id
+    assert "orphan_doc" not in vector_index._doc_id_to_node_ids
+
+
+def test_stale_warning_only_logged_once(shared_embedding_model, caplog):
+    """
+    Test that stale chunk warning is only logged once per chunk ID.
+
+    The _warned_stale_chunk_ids set should prevent duplicate warnings
+    from flooding logs when the same stale chunk is accessed repeatedly.
+    """
+    import logging
+
+    vector_index = VectorIndex(embedding_model=shared_embedding_model)
+    vector_index._initialize_index()  # Initialize so index is not None
+
+    # Inject a stale reference
+    stale_id = "stale_repeatedly_accessed"
+    vector_index._chunk_id_to_node_id[stale_id] = stale_id
+
+    # Clear any existing warnings
+    vector_index._warned_stale_chunk_ids.clear()
+
+    with caplog.at_level(logging.WARNING):
+        # First lookup - should log warning
+        vector_index.get_chunk_by_id(stale_id)
+
+        # Count warnings for our stale ID
+        first_warning_count = sum(
+            1 for record in caplog.records
+            if stale_id in record.message and record.levelno == logging.WARNING
+        )
+        assert first_warning_count == 1
+
+        # Re-add the stale ref (simulate it being re-added somehow)
+        vector_index._chunk_id_to_node_id[stale_id] = stale_id
+
+        # Second lookup - should NOT log another warning
+        caplog.clear()
+        vector_index.get_chunk_by_id(stale_id)
+
+        second_warning_count = sum(
+            1 for record in caplog.records
+            if stale_id in record.message and record.levelno == logging.WARNING
+        )
+        assert second_warning_count == 0
+
+    # Verify the ID is in warned set
+    assert stale_id in vector_index._warned_stale_chunk_ids
+
+
+def test_reconcile_mappings_removes_stale_refs(shared_embedding_model):
+    """
+    Test that reconcile_mappings() batch-removes all stale references.
+
+    The reconcile_mappings() method should scan all mappings and remove
+    any chunk IDs that no longer exist in the docstore.
+    """
+    from src.models import Chunk
+
+    vector_index = VectorIndex(embedding_model=shared_embedding_model)
+
+    # Add real chunks
+    for i in range(3):
+        chunk = Chunk(
+            chunk_id=f"real_chunk_{i}",
+            doc_id=f"doc_{i}",
+            content=f"Real content number {i}.",
+            metadata={},
+            chunk_index=0,
+            header_path="",
+            start_pos=0,
+            end_pos=30,
+            file_path=f"/tmp/real_{i}.md",
+            modified_time=datetime.now(),
+        )
+        vector_index.add_chunk(chunk)
+
+    # Inject multiple stale references
+    for i in range(5):
+        stale_id = f"stale_batch_{i}"
+        vector_index._chunk_id_to_node_id[stale_id] = stale_id
+        vector_index._doc_id_to_node_ids[f"stale_doc_{i}"] = [stale_id]
+
+    # Verify all stale refs exist
+    assert len([k for k in vector_index._chunk_id_to_node_id if k.startswith("stale_")]) == 5
+    assert len([k for k in vector_index._doc_id_to_node_ids if k.startswith("stale_")]) == 5
+
+    # Run reconciliation
+    removed_count = vector_index.reconcile_mappings()
+
+    # Should have removed all 5 stale refs
+    assert removed_count == 5
+
+    # Verify no stale refs remain
+    assert len([k for k in vector_index._chunk_id_to_node_id if k.startswith("stale_")]) == 0
+    assert len([k for k in vector_index._doc_id_to_node_ids if k.startswith("stale_")]) == 0
+
+    # Real chunks should still be there
+    assert len([k for k in vector_index._chunk_id_to_node_id if k.startswith("real_")]) == 3
+
+
+def test_warned_set_cleared_on_load(shared_embedding_model, tmp_path):
+    """
+    Test that _warned_stale_chunk_ids is cleared when loading index.
+
+    After loading an index from disk, the warned set should be reset
+    since the stale state may have changed during persistence.
+    """
+    from src.models import Chunk
+
+    vector_index = VectorIndex(embedding_model=shared_embedding_model)
+
+    # Add a chunk
+    chunk = Chunk(
+        chunk_id="persistent_chunk",
+        doc_id="doc1",
+        content="Content to persist.",
+        metadata={},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=30,
+        file_path="/tmp/test.md",
+        modified_time=datetime.now(),
+    )
+    vector_index.add_chunk(chunk)
+
+    # Simulate having warned about some stale chunks
+    vector_index._warned_stale_chunk_ids.add("old_stale_1")
+    vector_index._warned_stale_chunk_ids.add("old_stale_2")
+
+    # Persist to disk
+    persist_path = tmp_path / "vector_index"
+    vector_index.persist(persist_path)
+
+    # Create new index and load
+    vector_index2 = VectorIndex(embedding_model=shared_embedding_model)
+
+    # Add some warned IDs before load (simulating prior session)
+    vector_index2._warned_stale_chunk_ids.add("pre_load_warning")
+
+    # Load the persisted index
+    vector_index2.load(persist_path)
+
+    # Warned set should be cleared
+    assert len(vector_index2._warned_stale_chunk_ids) == 0
+
+    # Verify index is functional
+    results = vector_index2.search("content persist", top_k=5)
+    assert "persistent_chunk" in _extract_chunk_ids(results)

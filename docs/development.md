@@ -757,6 +757,7 @@ Significant architecture decisions are documented in the `specs/` directory:
 - [specs/10-multi-project-support.md](../specs/10-multi-project-support.md): Project detection and index isolation
 - [specs/11-search-quality-improvements.md](../specs/11-search-quality-improvements.md): Search pipeline enhancements (BM25F, dedup, re-ranking)
 - [specs/12-context-compression.md](../specs/12-context-compression.md): Compression strategy decision (threshold + dedup)
+- [docs/specs/19-self-healing-indices.md](specs/19-self-healing-indices.md): Self-healing index infrastructure (corruption detection and recovery)
 
 Each spec includes:
 - Executive summary

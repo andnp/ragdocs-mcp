@@ -2,26 +2,26 @@
 
 ## Executive Summary
 
-**Purpose:** Introduce normalized 0–1 scores for every search result, enabling confidence-based ranking and filtered retrieval. Currently, RRF fusion produces relative scores without semantic meaning; this design adds normalization and a configurable top-N parameter.
+**Purpose:** Introduce calibrated 0–1 confidence scores for every search result, enabling confidence-based ranking and filtered retrieval. Currently, RRF fusion produces relative scores without semantic meaning; this design adds sigmoid calibration and a configurable top-N parameter.
 
-**Scope:** Modify [src/search/fusion.py](../src/search/fusion.py), [src/search/orchestrator.py](../src/search/orchestrator.py), [src/server.py](../src/server.py), [src/models.py](../src/models.py). Add score normalization after RRF fusion but before top-k filtering. Introduce `top_n` parameter with default `n=5`.
+**Scope:** Modify [src/search/fusion.py](../src/search/fusion.py), [src/search/orchestrator.py](../src/search/orchestrator.py), [src/server.py](../src/server.py), [src/models.py](../src/models.py). Add score calibration after RRF fusion but before top-k filtering. Introduce `top_n` parameter with default `n=5`.
 
-**Decision:** Normalize scores **after** RRF+recency fusion using min-max scaling. Return `list[tuple[str, float]]` where float ∈ [0, 1]. Semantic: 1.0 = perfect match, 0.0 = lowest relevance in result set.
+**Decision:** Calibrate scores **after** RRF+recency fusion using sigmoid calibration. Return `list[tuple[str, float]]` where float ∈ [0, 1]. Semantic: scores represent absolute confidence; top result is not forced to 1.0.
 
 ---
 
 ## 1. Goals & Non-Goals
 
 ### Goals
-1. **Normalized Scores:** Every returned result includes a score ∈ [0, 1] representing relative match quality within the result set.
+1. **Calibrated Scores:** Every returned result includes a score ∈ [0, 1] representing absolute match quality independent of result set size.
 2. **Configurable Top-N:** Expose `top_n` parameter in `query()` method and `/query_documents` endpoint (default: 5).
 3. **Backward Compatibility:** Existing behavior preserved when `top_n` not specified; internal refactor only.
-4. **Score Semantics:** 1.0 = highest-scoring document in result set, 0.0 = lowest, linear interpolation between.
+4. **Score Semantics:** Scores represent absolute confidence; 0.5 corresponds to the calibration threshold, and values approach 1.0 asymptotically for very strong matches.
 
 ### Non-Goals
-1. **Absolute Scoring:** Not implementing confidence intervals or statistical significance tests.
+1. **Relative-Only Normalization:** Min-max normalization (v1.5) is deprecated; this design uses absolute confidence calibration.
 2. **Per-Strategy Scores:** Not exposing individual strategy scores to clients (semantic, keyword, graph remain internal).
-3. **Score Thresholds:** Not filtering results by minimum score (e.g., "return only results with score ≥ 0.7").
+3. **Automatic Threshold Learning:** Filtering is configurable via `min_confidence`; no automatic threshold tuning or learning.
 4. **Machine Learning Ranking:** Not training a reranker or learning-to-rank model.
 5. **Dynamic top_k:** Not replacing RRF's internal `top_k` parameter (used for initial retrieval); only adding result-limiting `top_n`.
 
@@ -121,9 +121,9 @@ class QueryResponse(BaseModel):
 
 ## 3. Proposed Solution
 
-### 3.1. Score Normalization Strategy
+### 3.1. Score Calibration Strategy
 
-**Normalization Method:** Sigmoid Calibration (as of v1.6)
+**Calibration Method:** Sigmoid Calibration (as of v1.6)
 
 ### 3.1.1. Calibrated Scoring System
 
@@ -166,7 +166,7 @@ min_confidence = 0.3                  # Filter results below 30% confidence
 
 **Edge Cases:**
 - **Single result:** Scored by absolute confidence, typically 0.8-0.95 (not always 1.0)
-- **Empty results:** Return empty list (no normalization needed)
+- **Empty results:** Return empty list (no calibration needed)
 - **Very high scores:** Sigmoid asymptotically approaches 1.0, typically max 0.98
 - **Very low scores:** Sigmoid approaches 0.0, filtered by `min_confidence`
 
@@ -200,7 +200,7 @@ min_confidence = 0.3                  # Filter results below 30% confidence
 **Parameter Name:** `top_n` (not `limit` or `max_results` to avoid confusion with `top_k`)
 
 **Semantics:**
-- `top_n`: Maximum number of results to return to client (post-fusion, post-normalization)
+- `top_n`: Maximum number of results to return to client (post-fusion, post-calibration)
 - `top_k`: Internal parameter for strategy retrieval depth (pre-fusion, unchanged)
 
 **Default Value:** `5`
@@ -239,7 +239,7 @@ async def query(
 1. `top_k` gains default value `10` (backward compatibility)
 2. New parameter `top_n` with default `5`
 3. Return type changes: `list[str]` → `list[tuple[str, float]]`
-4. Return value: `[(chunk_id, normalized_score), ...]` limited to `top_n` items
+4. Return value: `[(chunk_id, calibrated_score), ...]` limited to `top_n` items
 
 **Migration:** All existing callers broken (return type change). Must update simultaneously:
 - [src/server.py#L73](../src/server.py) (query_documents endpoint)
@@ -303,39 +303,27 @@ class QueryResponse(BaseModel):
 
 ### 3.4. Implementation Pseudocode
 
-#### fusion.py: Add normalize_scores()
+#### fusion.py: Add calibrate_scores()
 
 ```python
-def normalize_scores(fused_results: list[tuple[str, float]]) -> list[tuple[str, float]]:
+from src.search.calibration import calibrate_results
+
+
+def calibrate_scores(
+    fused_results: list[tuple[str, float]],
+    threshold: float = 0.035,
+    steepness: float = 150.0,
+) -> list[tuple[str, float]]:
     """
-    Normalize RRF+recency scores to [0, 1] range using min-max scaling.
+    Calibrate RRF+recency scores to [0, 1] range using sigmoid calibration.
 
     Args:
         fused_results: [(doc_id, raw_score), ...] sorted descending by raw_score
 
     Returns:
-        [(doc_id, normalized_score), ...] with scores in [0, 1]
+        [(doc_id, calibrated_score), ...] with scores in [0, 1]
     """
-    if not fused_results:
-        return []
-
-    if len(fused_results) == 1:
-        return [(fused_results[0][0], 1.0)]
-
-    scores = [score for _, score in fused_results]
-    min_score = min(scores)
-    max_score = max(scores)
-
-    # Handle edge case: all scores identical (shouldn't happen with RRF, but defensive)
-    if max_score == min_score:
-        return [(doc_id, 1.0) for doc_id, _ in fused_results]
-
-    normalized = [
-        (doc_id, (score - min_score) / (max_score - min_score))
-        for doc_id, score in fused_results
-    ]
-
-    return normalized
+    return calibrate_results(fused_results, threshold, steepness)
 ```
 
 #### orchestrator.py: Update query() method
@@ -360,14 +348,14 @@ async def query(
         modified_times,
     )  # Returns [(chunk_id, raw_score), ...]
 
-    # NEW: Step 6: Normalize scores
-    from src.search.fusion import normalize_scores
-    normalized = normalize_scores(fused)
+    # NEW: Step 6: Calibrate scores
+    from src.search.fusion import calibrate_scores
+    calibrated = calibrate_scores(fused)
 
     # NEW: Step 7: Apply top_n limit
-    limited = normalized[:top_n]
+    limited = calibrated[:top_n]
 
-    # Return chunk IDs with normalized scores
+    # Return chunk IDs with calibrated scores
     return limited
 ```
 
@@ -402,13 +390,14 @@ async def query_documents(request: QueryRequest):
 
 | Option | Complexity | Extensibility | Risk | Cost | Performance |
 |--------|-----------|---------------|------|------|-------------|
-| **Min-Max Normalization** (Chosen) | **Low** (single linear transform) | **High** (easy to swap normalization) | **Low** (well-understood, stable) | **Low** (2 passes: min/max + transform) | **High** (O(n) time, no overhead) |
+| **Sigmoid Calibration** (Chosen) | Medium (nonlinear transform) | **High** (threshold/steepness tunable) | **Low** (stable semantics) | **Low** (O(n) transform) | **High** (minimal overhead) |
+| Min-Max Normalization (v1.5) | **Low** (single linear transform) | Medium (relative-only semantics) | Medium (artificial 1.0 top score) | **Low** (2 passes: min/max + transform) | **High** (O(n) time, no overhead) |
 | Softmax Normalization | Medium (requires exp(), sum) | Medium (tuning temperature adds complexity) | Medium (outlier sensitivity) | Medium (O(n) but more expensive ops) | Medium (exp() slower than division) |
 | Z-Score Normalization | Medium (requires mean, stddev, clipping) | Medium (needs post-clipping to [0, 1]) | Medium (undefined for n=1) | Medium (O(n) but multiple passes) | Medium (more computation than min-max) |
 | No Normalization | **Lowest** (no change) | Lowest (raw RRF scores remain opaque) | **Highest** (clients cannot interpret scores) | **Lowest** (zero compute) | **Highest** (no overhead) |
 | Per-Strategy Score Exposure | High (requires score passthrough, heterogeneous types) | Lowest (clients must handle BM25 vs cosine) | High (API complexity, client burden) | High (refactor entire pipeline) | Low (more data over network) |
 
-**Decision:** **Min-Max Normalization** wins on simplicity, interpretability, and low risk. Softmax adds unnecessary complexity without clear benefit. No normalization fails the goal of interpretable scores.
+**Decision:** **Sigmoid Calibration** wins on stable absolute semantics and tunable confidence thresholds. Min-max normalization is relative-only and inflates the top score. No normalization fails the goal of interpretable scores.
 
 ---
 
@@ -433,18 +422,14 @@ async def query(
 
 **Returns:**
 - `list[tuple[str, float]]`: List of (chunk_id, score) tuples, length ≤ `top_n`, sorted descending by score
-- `score`: Normalized relevance score, float ∈ [0.0, 1.0], where:
-  - 1.0 = highest-scoring document in result set
-  - 0.0 = lowest-scoring document in result set
-  - Linear interpolation between
+- `score`: Calibrated confidence score, float ∈ [0.0, 1.0], representing absolute match quality (top result is not forced to 1.0)
 
 **Invariants:**
 1. `len(result) <= top_n`
 2. `len(result) <= top_k`
 3. `all(0.0 <= score <= 1.0 for _, score in result)`
 4. `result[i][1] >= result[i+1][1]` (descending order)
-5. If `len(result) > 0`, then `result[0][1] == 1.0` (highest score normalized to 1.0)
-6. If `len(result) == 1`, then `result[0][1] == 1.0` (single result always perfect match)
+5. Scores are calibrated, not normalized to the result set; a single result can be < 1.0
 
 **Failures:**
 - `ValueError`: If `query_text` empty or `top_n < 1` or `top_n > top_k`
@@ -470,8 +455,8 @@ async def query(
 {
   "answer": "Authentication is configured via the auth.toml file...",
   "results": [
-    ["authentication.md#L45-L67", 1.0],
-    ["api-reference.md#L120-L145", 0.85],
+    ["authentication.md#L45-L67", 0.92],
+    ["api-reference.md#L120-L145", 0.83],
     ["security.md#L30-L55", 0.42],
     ["oauth-guide.md#L10-L35", 0.30],
     ["deployment.md#L200-L220", 0.15]
@@ -499,20 +484,20 @@ class QueryResponse(BaseModel):
 1. **Empty query:** Return 400 (validation error)
 2. **No results:** Return `{answer: "No relevant documents found.", results: []}`
 3. **top_n > available results:** Return all results (e.g., only 3 documents match, return 3)
-4. **top_n = 1:** Return single best result with score 1.0
+4. **top_n = 1:** Return single best result with calibrated score (may be < 1.0)
 
 ---
 
 ## 6. Implementation Plan
 
-### Phase 1: Core Normalization (1 file, ~30 LOC)
+### Phase 1: Core Calibration (1 file, ~30 LOC)
 1. **File:** [src/search/fusion.py](../src/search/fusion.py)
-2. **Task:** Add `normalize_scores(fused_results: list[tuple[str, float]]) -> list[tuple[str, float]]`
+2. **Task:** Add `calibrate_scores(fused_results: list[tuple[str, float]]) -> list[tuple[str, float]]`
 3. **Tests:** [tests/unit/test_fusion.py](../tests/unit/test_fusion.py)
-   - `test_normalize_scores_min_max_scaling`
-   - `test_normalize_scores_single_result`
-   - `test_normalize_scores_empty_results`
-   - `test_normalize_scores_identical_scores`
+    - `test_calibrate_scores_midpoint_threshold`
+    - `test_calibrate_scores_single_result`
+    - `test_calibrate_scores_empty_results`
+    - `test_calibrate_scores_identical_scores`
 4. **Duration:** 30 minutes
 
 ### Phase 2: Orchestrator Integration (1 file, ~10 LOC)
@@ -520,13 +505,13 @@ class QueryResponse(BaseModel):
 2. **Tasks:**
    - Update `query()` signature: add `top_n: int = 5` parameter
    - Change return type: `list[str]` → `list[tuple[str, float]]`
-   - Call `normalize_scores(fused)` after `fuse_results()`
-   - Apply `top_n` limit: `normalized[:top_n]`
+    - Call `calibrate_scores(fused)` after `fuse_results()`
+    - Apply `top_n` limit: `calibrated[:top_n]`
 3. **Tests:** [tests/integration/test_hybrid_search.py](../tests/integration/test_hybrid_search.py)
    - Update 7 existing tests to assert on `list[tuple[str, float]]`
-   - Add `test_query_returns_normalized_scores`
+    - Add `test_query_returns_calibrated_scores`
    - Add `test_top_n_parameter_limits_results`
-   - Add `test_normalized_scores_range_0_to_1`
+    - Add `test_calibrated_scores_range_0_to_1`
 4. **Duration:** 1 hour
 
 ### Phase 3: API Changes (2 files, ~20 LOC)
@@ -545,8 +530,8 @@ class QueryResponse(BaseModel):
 
 ### Phase 4: Documentation Updates (3 files, ~100 LOC)
 1. **Files:**
-   - [docs/architecture.md](../docs/architecture.md): Update QueryOrchestrator section, add normalization step
-   - [docs/hybrid-search.md](../docs/hybrid-search.md): Add "Score Normalization" subsection under "Result Fusion Process"
+    - [docs/architecture.md](../docs/architecture.md): Update QueryOrchestrator section, add calibration step
+    - [docs/hybrid-search.md](../docs/hybrid-search.md): Add "Score Calibration" subsection under "Result Fusion Process"
    - [README.md](../README.md): Update example query response to show scores
 2. **Duration:** 30 minutes
 
@@ -554,7 +539,7 @@ class QueryResponse(BaseModel):
 1. Start server: `python -m src.cli server --config examples/config-minimal.toml`
 2. Query with default `top_n`: `curl -X POST http://localhost:8000/query_documents -d '{"query": "authentication"}'`
 3. Query with custom `top_n`: `curl -X POST http://localhost:8000/query_documents -d '{"query": "authentication", "top_n": 3}'`
-4. Verify: Scores in [0, 1], highest score = 1.0, descending order
+4. Verify: Scores in [0, 1], descending order, top score not forced to 1.0
 5. **Duration:** 15 minutes
 
 **Total Estimated Duration:** 3.5 hours
@@ -565,38 +550,38 @@ class QueryResponse(BaseModel):
 
 ### Unit Tests (tests/unit/test_fusion.py)
 
-**New Test Class: TestNormalizeScores**
-1. `test_normalize_scores_min_max_scaling()`: Verify formula correctness
+**New Test Class: TestCalibrateScores**
+1. `test_calibrate_scores_midpoint_threshold()`: Verify threshold maps to ~0.5
    ```python
    fused = [("doc1", 0.05), ("doc2", 0.03), ("doc3", 0.01)]
-   normalized = normalize_scores(fused)
-   assert normalized == [("doc1", 1.0), ("doc2", 0.5), ("doc3", 0.0)]
+    calibrated = calibrate_scores(fused)
+    assert calibrated[1][1] == pytest.approx(0.5, abs=0.05)
    ```
 
-2. `test_normalize_scores_single_result()`: Single result always 1.0
+2. `test_calibrate_scores_single_result()`: Single result uses absolute calibration
    ```python
    fused = [("doc1", 0.0391)]
-   normalized = normalize_scores(fused)
-   assert normalized == [("doc1", 1.0)]
+    calibrated = calibrate_scores(fused)
+    assert 0.0 < calibrated[0][1] < 1.0
    ```
 
-3. `test_normalize_scores_empty_results()`: Empty input → empty output
+3. `test_calibrate_scores_empty_results()`: Empty input → empty output
    ```python
-   assert normalize_scores([]) == []
+    assert calibrate_scores([]) == []
    ```
 
-4. `test_normalize_scores_identical_scores()`: All same score → all 1.0
+4. `test_calibrate_scores_identical_scores()`: All same score → identical calibrated values
    ```python
    fused = [("doc1", 0.05), ("doc2", 0.05), ("doc3", 0.05)]
-   normalized = normalize_scores(fused)
-   assert all(score == 1.0 for _, score in normalized)
+    calibrated = calibrate_scores(fused)
+    assert len({score for _, score in calibrated}) == 1
    ```
 
-5. `test_normalize_scores_preserves_order()`: Order unchanged
+5. `test_calibrate_scores_preserves_order()`: Order unchanged
    ```python
    fused = [("doc1", 0.05), ("doc2", 0.03), ("doc3", 0.01)]
-   normalized = normalize_scores(fused)
-   assert [id for id, _ in normalized] == ["doc1", "doc2", "doc3"]
+    calibrated = calibrate_scores(fused)
+    assert [id for id, _ in calibrated] == ["doc1", "doc2", "doc3"]
    ```
 
 ### Integration Tests (tests/integration/test_hybrid_search.py)
@@ -606,12 +591,12 @@ class QueryResponse(BaseModel):
 2. Add score assertions: `assert all(0.0 <= score <= 1.0 for _, score in results)`
 
 **New Tests:**
-1. `test_query_returns_normalized_scores()`: End-to-end normalization
+1. `test_query_returns_calibrated_scores()`: End-to-end calibration
    ```python
    results = await orchestrator.query("authentication", top_k=10, top_n=5)
    assert len(results) == 5
-   assert results[0][1] == 1.0  # Highest score
-   assert results[-1][1] >= 0.0  # Lowest score
+    assert 0.0 <= results[0][1] <= 1.0
+    assert results[-1][1] >= 0.0
    assert all(results[i][1] >= results[i+1][1] for i in range(len(results)-1))
    ```
 
@@ -624,7 +609,7 @@ class QueryResponse(BaseModel):
    assert results_5[:3] == results_3  # Top 3 should match
    ```
 
-3. `test_normalized_scores_range_0_to_1()`: Boundary validation
+3. `test_calibrated_scores_range_0_to_1()`: Boundary validation
    ```python
    results = await orchestrator.query("test", top_k=10, top_n=10)
    for chunk_id, score in results:
@@ -662,7 +647,7 @@ class QueryResponse(BaseModel):
 ### Performance Tests (tests/performance/test_query_latency.py)
 
 **Existing Test Modification:**
-1. `test_query_latency_under_threshold()`: Verify normalization overhead < 5ms
+1. `test_query_latency_under_threshold()`: Verify calibration overhead < 5ms
    ```python
    # Before: baseline = measure_query_time(orchestrator, "test")
    # After: baseline = measure_query_time(orchestrator, "test", top_n=10)
@@ -675,18 +660,18 @@ class QueryResponse(BaseModel):
 
 | Risk | Likelihood | Impact | Mitigation | Status |
 |------|-----------|--------|-----------|--------|
-| **Normalization changes result ranking** | Low | Medium | Normalization preserves order (monotonic transformation). Verified by tests. | Mitigated |
-| **Performance degradation from normalization** | Low | Low | O(n) operation, n typically ≤ 10. Profiling shows <2ms overhead. | Acceptable |
-| **Score semantics misinterpreted by clients** | Medium | Medium | Document in API spec: "1.0 = best in result set, not absolute confidence". Add examples. | Mitigated |
+| **Calibration changes result ranking** | Low | Medium | Calibration preserves order (monotonic transformation). Verified by tests. | Mitigated |
+| **Performance degradation from calibration** | Low | Low | O(n) operation, n typically ≤ 10. Profiling shows <2ms overhead. | Acceptable |
+| **Score semantics misinterpreted by clients** | Medium | Medium | Document in API spec: scores are absolute confidence, not forced to 1.0. Add examples. | Mitigated |
 | **top_n confuses users vs top_k** | Medium | Low | Clear naming: `top_n` (client-facing), `top_k` (internal). Document distinction. | Mitigated |
 | **Edge case: all scores identical** | Low | Low | Handled explicitly: assign all 1.0. Tested in unit tests. | Mitigated |
 | **Breaking change impacts downstream systems** | High | High | Atomic commit + comprehensive test updates. Announce change in CHANGELOG. | Requires coordination |
 
 **Assumptions:**
 1. RRF scores remain positive (always true for current implementation)
-2. Clients want 0-1 normalized scores (not raw RRF or per-strategy scores)
+2. Clients want 0-1 calibrated scores (not raw RRF or per-strategy scores)
 3. Default `top_n=5` is reasonable for LLM synthesis (based on context window research)
-4. No need for absolute confidence scores (relative ranking sufficient)
+4. Absolute confidence scores are preferred over relative-only normalization
 
 ---
 
@@ -734,7 +719,7 @@ class QueryResponse(BaseModel):
 **Q1: Should we expose per-strategy scores to clients?**
 - **Context:** Currently discard semantic/keyword/graph individual scores
 - **Options:**
-  - A: Only aggregated normalized score (current design)
+    - A: Only aggregated calibrated score (current design)
   - B: Add optional `include_strategy_scores` parameter
 - **Recommendation:** Defer to future (adds API complexity, unclear use case)
 - **Decision:** Tracked as DEFERRED:FEATURE:per-strategy-scores
@@ -744,7 +729,7 @@ class QueryResponse(BaseModel):
 - **Options:**
   - A: No filtering (return all top_n results regardless of score)
   - B: Add `min_score` parameter
-- **Recommendation:** No filtering (score thresholds arbitrary without absolute semantics)
+- **Recommendation:** Defer; calibration makes thresholds meaningful, but API surface should stay minimal for now
 - **Decision:** Tracked as DEFERRED:FEATURE:min-score-filter
 
 **Q3: Should we add score explanations (why this score)?**

@@ -26,6 +26,8 @@ Memory search applies transformations in this order:
 3. **Decay**: Exponential decay adjusts scores based on memory age and type
 4. **Threshold**: Filter results below `score_threshold` (default: 0.2)
 
+**Calibration vs Normalization:** Memory search uses sigmoid calibration to produce absolute confidence scores. Legacy min-max normalization is deprecated and not used for memory scoring.
+
 ### Score Ranges
 
 After calibration, scores represent absolute match quality:

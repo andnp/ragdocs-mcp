@@ -104,6 +104,29 @@ class MemoryConfig:
 ❌ **Don't use mutable defaults**: Use `None` with `field(default_factory=...)`
 ❌ **Don't use `typing.Optional/List/Dict`**: Use `T | None`, `list[T]`, `dict[K,V]`
 
+## Self-Healing Index Pattern
+
+All index types implement corruption detection and automatic recovery:
+
+- **Detection**: Catch `json.JSONDecodeError`, `FileNotFoundError`, `OSError`, `DatabaseError` at operation boundaries
+- **Recovery**: Call `_reinitialize_after_corruption()` to reset to clean state
+- **Behavior**: Return empty results (graceful degradation), log warning with `exc_info=True`
+- **Rebuild**: Reconciliation will repopulate indices from source documents
+
+```python
+# Pattern for corruption-safe operations
+def search(self, query: str, top_k: int = 10) -> list[dict]:
+    try:
+        searcher = self._index.searcher()
+    except (FileNotFoundError, OSError) as e:
+        logger.warning(f"Index corruption detected: {e}. Reinitializing.", exc_info=True)
+        self._reinitialize_after_corruption()
+        return []  # Graceful degradation
+    # ... rest of search logic
+```
+
+See [docs/specs/19-self-healing-indices.md](../docs/specs/19-self-healing-indices.md) for full specification.
+
 ## Critical Files
 
 - **`src/mcp_server.py`**: Add MCP tools (list_tools → call_tool → handler)
@@ -140,13 +163,13 @@ uv tool run ty check .                           # Type check (ty alternative)
 await search_memories(ctx, query="bug fixes", relative_days=7)
 
 # Absolute range (Jan 2024)
-await search_memories(ctx, query="features", 
-                     after_timestamp=1704067200, 
+await search_memories(ctx, query="features",
+                     after_timestamp=1704067200,
                      before_timestamp=1706745600)
 
 # Combined with tag filtering
-await search_memories(ctx, query="auth", 
-                     relative_days=30, 
+await search_memories(ctx, query="auth",
+                     relative_days=30,
                      filter_tags=["security"])
 ```
 

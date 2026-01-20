@@ -1,4 +1,5 @@
 import atexit
+import logging
 import shutil
 from pathlib import Path
 from threading import Lock
@@ -11,6 +12,8 @@ from whoosh.qparser import MultifieldParser
 from whoosh.scoring import BM25F
 
 from src.models import Chunk, Document
+
+logger = logging.getLogger(__name__)
 
 
 _temp_dirs: set[Path] = set()
@@ -146,20 +149,36 @@ class KeywordIndex:
             if self._index is None:
                 return
 
-            writer = self._index.writer()
             try:
-                writer.delete_by_term("id", document_id)
-                writer.commit()
-            except Exception:
-                writer.cancel()
-                raise
+                writer = self._index.writer()
+                try:
+                    writer.delete_by_term("id", document_id)
+                    writer.commit()
+                except Exception:
+                    writer.cancel()
+                    raise
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(
+                    f"Keyword index corruption detected during remove({document_id}): {e}. "
+                    "Reinitializing index."
+                )
+                self._reinitialize_after_corruption()
 
     def search(self, query: str, top_k: int = 10, excluded_files: set[str] | None = None, docs_root: Path | None = None) -> list[dict]:
         with self._lock:
             if self._index is None or not query.strip():
                 return []
 
-            searcher = self._index.searcher(weighting=BM25F())
+            try:
+                searcher = self._index.searcher(weighting=BM25F())
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(
+                    f"Keyword index corruption detected during search: {e}. "
+                    "Reinitializing index and returning empty results."
+                )
+                self._reinitialize_after_corruption()
+                return []
+
             parser = MultifieldParser(
                 ["content", "title", "headers", "description", "keywords", "aliases", "tags", "author"],
                 schema=self._schema
@@ -252,6 +271,14 @@ class KeywordIndex:
         _temp_dirs.add(temp_dir)
         self._index = whoosh_index.create_in(str(temp_dir), self._schema)
         self._index_path = temp_dir
+
+    def _reinitialize_after_corruption(self):
+        if self._index_path and self._index_path in _temp_dirs:
+            shutil.rmtree(self._index_path, ignore_errors=True)
+            _temp_dirs.discard(self._index_path)
+        self._index = None
+        self._index_path = None
+        self._initialize_index()
 
     # IndexProtocol methods
 

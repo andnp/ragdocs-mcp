@@ -1033,6 +1033,52 @@ Return list[ChunkResult]
 
 **Acceptable for:** Personal knowledge bases, project documentation, development environments.
 
+### Self-Healing Index Infrastructure
+
+**Rationale:** Local file-based indices are susceptible to corruption from crashes, disk errors, or incomplete writes. Rather than failing permanently, the system should detect corruption and recover automatically.
+
+**Implementation:** Each index type implements a `_reinitialize_after_corruption()` method that recreates the index in a clean state. Corruption is detected during normal operations (load, search, remove) and triggers automatic recovery.
+
+**Recovery Strategies by Index Type:**
+
+| Index | Storage Format | Corruption Detection | Recovery Strategy |
+|-------|---------------|---------------------|-------------------|
+| **VectorIndex** | JSON mappings + FAISS binary | `json.JSONDecodeError` on load | Log warning, rebuild mapping from index or start empty |
+| **KeywordIndex** | Whoosh segment files | `FileNotFoundError`, `OSError` on search/remove | Reinitialize to fresh in-memory index |
+| **GraphStore** | JSON (`graph.json`, `communities.json`) | `json.JSONDecodeError`, `TypeError`, `KeyError` on load | Log warning, reinitialize empty graph |
+| **CodeIndex** | Whoosh segment files | `FileNotFoundError`, `OSError` on search/remove | Reinitialize to fresh in-memory index |
+| **CommitIndexer** | SQLite database | `DatabaseError`, malformed header detection | Delete DB file + WAL/SHM, recreate schema |
+
+**Behavior Characteristics:**
+- **Non-blocking:** Corruption in one index does not prevent other indices from functioning
+- **Graceful degradation:** Search returns empty results rather than raising exceptions
+- **Automatic reindexing:** Reconciliation will repopulate indices on next cycle
+- **Logged recovery:** All corruption events logged at WARNING level with `exc_info=True`
+
+**Example Recovery Flow (KeywordIndex):**
+
+```
+search("query") called
+      ↓
+self._index.searcher() raises OSError (segment file missing)
+      ↓
+Catch exception, log warning with context
+      ↓
+_reinitialize_after_corruption()
+  ├─→ Clean up temp directory
+  ├─→ Reset internal state
+  └─→ Create fresh in-memory index
+      ↓
+Return empty results (graceful degradation)
+      ↓
+Next indexing operation repopulates index
+```
+
+**Design Trade-offs:**
+- **Data loss on corruption:** Corrupt data is discarded rather than repaired. Acceptable because source documents remain intact and reconciliation will rebuild indices.
+- **Silent recovery:** Users may not notice corruption occurred. Mitigated by logging and status endpoint reporting.
+- **Performance impact:** Rebuilding indices after corruption adds latency. Acceptable for rare corruption events.
+
 ## Index Structure
 
 ### Storage Layout

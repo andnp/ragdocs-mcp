@@ -137,14 +137,28 @@ class IndexManager:
             raise
 
     def remove_document(self, doc_id: str):
-        try:
-            self.vector.remove(doc_id)
-            self.keyword.remove(doc_id)
-            self.graph.remove_node(doc_id)
-            if self.code is not None:
+        errors: list[tuple[str, Exception]] = []
+
+        for index_name, remove_fn in [
+            ("vector", lambda: self.vector.remove(doc_id)),
+            ("keyword", lambda: self.keyword.remove(doc_id)),
+            ("graph", lambda: self.graph.remove_node(doc_id)),
+        ]:
+            try:
+                remove_fn()
+            except Exception as e:
+                logger.error(f"Failed to remove {doc_id} from {index_name}: {e}", exc_info=True)
+                errors.append((index_name, e))
+
+        if self.code is not None:
+            try:
                 self.code.remove_by_doc_id(doc_id)
-        except Exception as e:
-            logger.error(f"Failed to remove document {doc_id}: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Failed to remove {doc_id} from code index: {e}", exc_info=True)
+                errors.append(("code", e))
+
+        if errors:
+            logger.warning(f"Document {doc_id} removal completed with {len(errors)} index failures")
 
     def persist(self):
         index_path = Path(self._config.indexing.index_path)

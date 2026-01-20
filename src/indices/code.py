@@ -1,4 +1,5 @@
 import atexit
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -27,6 +28,9 @@ def _cleanup_temp_dirs() -> None:
 
 
 atexit.register(_cleanup_temp_dirs)
+
+
+logger = logging.getLogger(__name__)
 
 
 class CamelCaseSplitter(Filter):
@@ -114,20 +118,38 @@ class CodeIndex:
             if self._index is None:
                 return
 
-            writer = self._index.writer()
             try:
-                writer.delete_by_term("doc_id", doc_id)
-                writer.commit()
-            except Exception:
-                writer.cancel()
-                raise
+                writer = self._index.writer()
+                try:
+                    writer.delete_by_term("doc_id", doc_id)
+                    writer.commit()
+                except Exception:
+                    writer.cancel()
+                    raise
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(
+                    f"Code index corruption detected during remove_by_doc_id({doc_id}): {e}. "
+                    "Reinitializing index.",
+                    exc_info=True,
+                )
+                self._reinitialize_after_corruption()
 
     def search(self, query: str, top_k: int = 10) -> list[dict[str, Any]]:
         with self._lock:
             if self._index is None or not query.strip():
                 return []
 
-            searcher = self._index.searcher(weighting=BM25F())
+            try:
+                searcher = self._index.searcher(weighting=BM25F())
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(
+                    f"Code index corruption detected during search: {e}. "
+                    "Reinitializing index and returning empty results.",
+                    exc_info=True,
+                )
+                self._reinitialize_after_corruption()
+                return []
+
             parser = MultifieldParser(["content"], schema=self._schema)
 
             try:
@@ -197,6 +219,14 @@ class CodeIndex:
         _temp_dirs.add(temp_dir)
         self._index = whoosh_index.create_in(str(temp_dir), self._schema)
         self._index_path = temp_dir
+
+    def _reinitialize_after_corruption(self) -> None:
+        if self._index_path and self._index_path in _temp_dirs:
+            shutil.rmtree(self._index_path, ignore_errors=True)
+            _temp_dirs.discard(self._index_path)
+        self._index = None
+        self._index_path = None
+        self._initialize_index()
 
     def clear(self) -> None:
         with self._lock:

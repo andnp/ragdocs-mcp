@@ -364,3 +364,175 @@ def test_get_total_commits(indexer):
         )
 
     assert indexer.get_total_commits() == 3
+
+
+# ============================================================================
+# SQLite Corruption Recovery Tests
+# ============================================================================
+
+
+def test_is_corruption_error_detection(mock_model, tmp_path):
+    """
+    Test the _is_corruption_error() helper detects corruption patterns.
+
+    Verifies that the helper correctly identifies SQLite corruption
+    error messages from the SQLITE_CORRUPTION_PATTERNS tuple.
+    """
+    db_path = tmp_path / "test.db"
+    indexer = CommitIndexer(db_path=db_path, embedding_model=mock_model)
+
+    # Should detect corruption patterns
+    class FakeError(Exception):
+        pass
+
+    assert indexer._is_corruption_error(FakeError("database disk image is malformed"))
+    assert indexer._is_corruption_error(FakeError("SQLITE: database disk image is malformed"))
+    assert indexer._is_corruption_error(FakeError("disk I/O error"))
+    assert indexer._is_corruption_error(FakeError("unable to open database file"))
+    assert indexer._is_corruption_error(FakeError("database is locked"))
+    assert indexer._is_corruption_error(FakeError("file is not a database"))
+
+    # Should not detect non-corruption errors
+    assert not indexer._is_corruption_error(FakeError("UNIQUE constraint failed"))
+    assert not indexer._is_corruption_error(FakeError("syntax error"))
+    assert not indexer._is_corruption_error(FakeError("no such table: git_commits"))
+
+
+def test_corrupted_database_triggers_recovery(mock_model, tmp_path):
+    """
+    Test that corrupting the DB file triggers automatic recovery.
+
+    Simulates database corruption by writing garbage bytes directly
+    to the .db file, then verifies recovery is triggered and succeeds.
+    """
+    db_path = tmp_path / "test.db"
+    indexer = CommitIndexer(db_path=db_path, embedding_model=mock_model)
+
+    # Add a commit to ensure DB is created
+    indexer.add_commit(
+        hash="initial",
+        timestamp=1000,
+        author="A",
+        committer="C",
+        title="Initial commit",
+        message="M",
+        files_changed=["file.py"],
+        delta_truncated="",
+        commit_document="doc",
+        repo_path="/repo",
+    )
+    indexer.close()
+
+    # Verify file exists
+    assert db_path.exists()
+
+    # Corrupt the database by writing garbage bytes
+    with open(db_path, "wb") as f:
+        f.write(b"CORRUPTED_GARBAGE_DATA" * 100)
+
+    # Create new indexer - should detect corruption and recover
+    indexer2 = CommitIndexer(db_path=db_path, embedding_model=mock_model)
+
+    # DB should be recreated (empty after recovery)
+    assert indexer2.get_total_commits() == 0
+
+
+def test_recovery_allows_reindexing(mock_model, tmp_path):
+    """
+    Test that after corruption recovery, new commits can be indexed.
+
+    After the database is recreated, verifies that the indexer is
+    fully functional and can accept new commits.
+    """
+    db_path = tmp_path / "test.db"
+    indexer = CommitIndexer(db_path=db_path, embedding_model=mock_model)
+
+    # Add initial commit
+    indexer.add_commit(
+        hash="commit1",
+        timestamp=1000,
+        author="A",
+        committer="C",
+        title="First",
+        message="M",
+        files_changed=[],
+        delta_truncated="",
+        commit_document="doc1",
+        repo_path="/repo",
+    )
+    indexer.close()
+
+    # Corrupt the database
+    with open(db_path, "wb") as f:
+        f.write(b"CORRUPTED" * 50)
+
+    # Create new indexer and add commits after recovery
+    indexer2 = CommitIndexer(db_path=db_path, embedding_model=mock_model)
+
+    # Add new commits - should work after recovery
+    indexer2.add_commit(
+        hash="commit_new",
+        timestamp=2000,
+        author="B",
+        committer="D",
+        title="New commit after recovery",
+        message="Fresh start",
+        files_changed=["new.py"],
+        delta_truncated="",
+        commit_document="new doc",
+        repo_path="/repo",
+    )
+
+    # Verify new commit was indexed
+    assert indexer2.get_total_commits() == 1
+
+    # Verify query works
+    query_emb = mock_model.get_text_embedding("new doc")
+    results = indexer2.query_by_embedding(query_emb, top_k=5)
+    assert len(results) == 1
+    assert results[0]["hash"] == "commit_new"
+
+
+def test_query_on_corrupted_db_returns_empty(mock_model, tmp_path):
+    """
+    Test that querying a corrupted DB returns empty list, not exception.
+
+    The self-healing behavior should gracefully handle corruption during
+    query operations by recovering and returning an empty result set.
+    """
+    db_path = tmp_path / "test.db"
+    indexer = CommitIndexer(db_path=db_path, embedding_model=mock_model)
+
+    # Add commits
+    for i in range(3):
+        indexer.add_commit(
+            hash=f"commit{i}",
+            timestamp=1000 + i,
+            author="A",
+            committer="C",
+            title=f"Commit {i}",
+            message="M",
+            files_changed=[],
+            delta_truncated="",
+            commit_document=f"doc {i}",
+            repo_path="/repo",
+        )
+    indexer.close()
+
+    # Corrupt the database
+    with open(db_path, "wb") as f:
+        f.write(b"TOTALLY_CORRUPTED_DATABASE" * 100)
+
+    # Create new indexer
+    indexer2 = CommitIndexer(db_path=db_path, embedding_model=mock_model)
+
+    # Query should return empty list (not raise exception)
+    query_emb = mock_model.get_text_embedding("doc")
+    results = indexer2.query_by_embedding(query_emb, top_k=10)
+    assert results == []
+
+    # get_total_commits should return 0 (not raise exception)
+    assert indexer2.get_total_commits() == 0
+
+    # get_last_indexed_timestamp should return None (not raise exception)
+    assert indexer2.get_last_indexed_timestamp("/repo") is None

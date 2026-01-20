@@ -703,3 +703,146 @@ def test_keyword_index_schema_mismatch_triggers_rebuild(tmp_path):
 
     results = keyword_index.search("Test Author", top_k=5)
     assert "new_chunk_0" in _extract_chunk_ids(results)
+
+
+def test_keyword_index_remove_handles_corrupted_segment(tmp_path):
+    """
+    Remove operation handles corrupted segment files gracefully.
+
+    When Whoosh segment files (.seg) are deleted/corrupted mid-operation,
+    the index should detect the corruption, reinitialize, and not crash.
+    """
+    import glob
+    from pathlib import Path
+
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    chunk = Chunk(
+        chunk_id="chunk_to_remove_0",
+        doc_id="test-doc",
+        content="Content for removal testing.",
+        metadata={"tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=30,
+        file_path="/tmp/test.md",
+        modified_time=datetime.now(),
+    )
+    keyword_index.add_chunk(chunk)
+
+    index_path = tmp_path / "corrupted_keyword_index"
+    keyword_index.persist(index_path)
+    keyword_index.load(index_path)
+
+    seg_files = glob.glob(str(index_path / "*.seg"))
+    assert len(seg_files) > 0, "Expected segment files after persist"
+    for seg in seg_files:
+        Path(seg).unlink()
+
+    keyword_index.remove("chunk_to_remove_0")
+
+    results = keyword_index.search("removal testing", top_k=5)
+    assert isinstance(results, list)
+
+
+def test_keyword_index_search_handles_corrupted_segment(tmp_path):
+    """
+    Search operation handles corrupted segment files gracefully.
+
+    When Whoosh segment files (.seg) are corrupted, search should detect
+    the issue, reinitialize the index, and return an empty list rather
+    than crashing.
+    """
+    import glob
+    from pathlib import Path
+
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    chunk = Chunk(
+        chunk_id="search_chunk_0",
+        doc_id="search-doc",
+        content="Searchable content for testing.",
+        metadata={"tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=35,
+        file_path="/tmp/test.md",
+        modified_time=datetime.now(),
+    )
+    keyword_index.add_chunk(chunk)
+
+    index_path = tmp_path / "corrupted_search_index"
+    keyword_index.persist(index_path)
+    keyword_index.load(index_path)
+
+    seg_files = glob.glob(str(index_path / "*.seg"))
+    assert len(seg_files) > 0, "Expected segment files after persist"
+    for seg in seg_files:
+        Path(seg).unlink()
+
+    results = keyword_index.search("searchable content", top_k=5)
+
+    assert results == []
+
+
+def test_keyword_index_recovery_allows_reindexing(tmp_path):
+    """
+    After corruption recovery, new documents can be indexed successfully.
+
+    This tests the full cycle: create index, persist, corrupt, detect
+    corruption during operation, reinitialize, then add new documents
+    successfully.
+    """
+    import glob
+    from pathlib import Path
+
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    original_chunk = Chunk(
+        chunk_id="original_0",
+        doc_id="original-doc",
+        content="Original content before corruption.",
+        metadata={"tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=40,
+        file_path="/tmp/original.md",
+        modified_time=datetime.now(),
+    )
+    keyword_index.add_chunk(original_chunk)
+
+    index_path = tmp_path / "recovery_test_index"
+    keyword_index.persist(index_path)
+    keyword_index.load(index_path)
+
+    seg_files = glob.glob(str(index_path / "*.seg"))
+    for seg in seg_files:
+        Path(seg).unlink()
+
+    keyword_index.search("trigger corruption detection", top_k=5)
+
+    new_chunk = Chunk(
+        chunk_id="new_after_recovery_0",
+        doc_id="new-doc",
+        content="New content added after recovery.",
+        metadata={"tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=35,
+        file_path="/tmp/new.md",
+        modified_time=datetime.now(),
+    )
+    keyword_index.add_chunk(new_chunk)
+
+    results = keyword_index.search("new content recovery", top_k=5)
+    assert "new_after_recovery_0" in _extract_chunk_ids(results)

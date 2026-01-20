@@ -65,10 +65,10 @@ class IndexingConfig:
 @dataclass
 class SearchConfig:
     semantic_weight: float = 1.0
-    keyword_weight: float = 0.8
+    keyword_weight: float = 1.0
     recency_bias: float = 0.5
     rrf_k_constant: int = 60
-    min_confidence: float = 0.0
+    min_confidence: float = 0.3
     max_chunks_per_doc: int = 2
     dedup_enabled: bool = True
     dedup_similarity_threshold: float = 0.80
@@ -94,7 +94,7 @@ class SearchConfig:
     tag_expansion_enabled: bool = True
     tag_expansion_max_tags: int = 5
     tag_expansion_depth: int = 2
-    score_calibration_threshold: float = 0.04
+    score_calibration_threshold: float = 0.035
     score_calibration_steepness: float = 150.0
 
 @dataclass

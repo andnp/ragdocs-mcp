@@ -165,16 +165,32 @@ class GraphStore:
                 self._communities = {}
                 return
 
-            with open(graph_file, "r") as f:
-                graph_data = json.load(f)
-
-            self._graph = nx.node_link_graph(graph_data, directed=True)
+            try:
+                with open(graph_file, "r") as f:
+                    graph_data = json.load(f)
+                self._graph = nx.node_link_graph(graph_data, directed=True)
+            except (json.JSONDecodeError, TypeError, KeyError, AttributeError) as e:
+                logger.warning(
+                    f"Graph index corruption detected (malformed graph.json): {e}. "
+                    "Reinitializing graph.",
+                    exc_info=True,
+                )
+                self._reinitialize_after_corruption()
+                return
 
             communities_file = path / "communities.json"
             if communities_file.exists():
-                with open(communities_file, "r") as f:
-                    self._communities = json.load(f)
-                logger.info(f"Loaded {len(set(self._communities.values()))} communities")
+                try:
+                    with open(communities_file, "r") as f:
+                        self._communities = json.load(f)
+                    logger.info(f"Loaded {len(set(self._communities.values()))} communities")
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        f"Communities file corruption detected (malformed communities.json): {e}. "
+                        "Continuing with empty communities.",
+                        exc_info=True,
+                    )
+                    self._communities = {}
             else:
                 self._communities = {}
 
@@ -202,6 +218,11 @@ class GraphStore:
     def clear(self) -> None:
         with self._lock:
             self._graph = nx.DiGraph()
+            self._communities = {}
+
+    def _reinitialize_after_corruption(self) -> None:
+        self._graph = nx.DiGraph()
+        self._communities = {}
 
     def save(self, path: Path) -> None:
         self.persist(path)

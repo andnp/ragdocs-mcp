@@ -792,6 +792,8 @@ Where:
 
 **Steepness Parameter:** Controls sigmoid curve steepness. Higher values create sharper transitions between low and high confidence.
 
+**Calibration vs Normalization:** Calibration (sigmoid) produces **absolute confidence** from raw RRF+recency scores. Legacy min-max normalization is deprecated and is not applied to final scores; any internal normalization is limited to per-strategy scaling and does not change output confidence values.
+
 **Score Interpretation:**
 
 | Calibrated Score | Interpretation | Raw RRF Range | Typical Conditions |

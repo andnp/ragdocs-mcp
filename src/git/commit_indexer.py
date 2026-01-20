@@ -13,6 +13,14 @@ from src.indices.vector import VectorIndex
 
 logger = logging.getLogger(__name__)
 
+SQLITE_CORRUPTION_PATTERNS = (
+    "database disk image is malformed",
+    "database is locked",
+    "disk i/o error",
+    "unable to open database file",
+    "file is not a database",
+)
+
 
 class CommitIndexer:
     """Manages git commit index with embeddings."""
@@ -61,14 +69,23 @@ class CommitIndexer:
 
         return normalized
 
+    def _is_corruption_error(self, error: Exception) -> bool:
+        error_msg = str(error).lower()
+        return any(pattern in error_msg for pattern in SQLITE_CORRUPTION_PATTERNS)
+
     def _get_connection(self) -> sqlite3.Connection:
-        """Get or create database connection."""
         if self._conn is None:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            # Enable WAL mode for better concurrency
-            self._conn.execute("PRAGMA journal_mode=WAL")
+            try:
+                self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+                self._conn.row_factory = sqlite3.Row
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA integrity_check(1)").fetchone()
+            except sqlite3.DatabaseError as e:
+                if self._is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return self._get_connection()
+                raise
         return self._conn
 
     def _ensure_schema(self) -> None:
@@ -110,6 +127,35 @@ class CommitIndexer:
         conn.commit()
         logger.debug(f"Ensured schema for git_commits at {self._db_path}")
 
+    def _reinitialize_after_corruption(self) -> None:
+        logger.warning(
+            f"SQLite database corruption detected at {self._db_path}. "
+            "Recreating database (commits will be re-indexed)."
+        )
+
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
+        try:
+            if self._db_path.exists():
+                self._db_path.unlink()
+            wal_path = self._db_path.with_suffix(".db-wal")
+            shm_path = self._db_path.with_suffix(".db-shm")
+            if wal_path.exists():
+                wal_path.unlink()
+            if shm_path.exists():
+                shm_path.unlink()
+        except OSError as e:
+            logger.error(f"Failed to delete corrupted database: {e}", exc_info=True)
+            raise RuntimeError(f"Cannot recover from database corruption: {e}") from e
+
+        self._ensure_schema()
+        logger.info(f"Database recreated at {self._db_path}")
+
     def add_commit(
         self,
         hash: str,
@@ -123,53 +169,46 @@ class CommitIndexer:
         commit_document: str,
         repo_path: str = "",
     ) -> None:
-        """
-        Add or update commit in index.
+        try:
+            embedding = self._embedding_model.get_text_embedding(commit_document)
+            embedding_bytes = self._serialize_embedding(embedding)
 
-        Args:
-            hash: Commit SHA
-            timestamp: Unix timestamp
-            author: Author string
-            committer: Committer string
-            title: First line of commit message
-            message: Full commit message body
-            files_changed: List of changed file paths
-            delta_truncated: Truncated diff text
-            commit_document: Full searchable text for embedding
-            repo_path: Path to repository (optional)
-        """
-        # Generate embedding
-        embedding = self._embedding_model.get_text_embedding(commit_document)
-        embedding_bytes = self._serialize_embedding(embedding)
+            conn = self._get_connection()
+            indexed_at = int(time.time())
+            normalized_path = self._normalize_repo_path(repo_path)
 
-        # Store in SQLite with normalized path
-        conn = self._get_connection()
-        indexed_at = int(time.time())
-        normalized_path = self._normalize_repo_path(repo_path)
-
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO git_commits
-            (hash, timestamp, author, committer, title, message,
-             files_changed, delta_truncated, embedding, indexed_at, repo_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                hash,
-                timestamp,
-                author,
-                committer,
-                title,
-                message,
-                json.dumps(files_changed),
-                delta_truncated,
-                embedding_bytes,
-                indexed_at,
-                normalized_path,
-            ),
-        )
-        conn.commit()
-        logger.debug(f"Indexed commit {hash[:8]}")
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO git_commits
+                (hash, timestamp, author, committer, title, message,
+                 files_changed, delta_truncated, embedding, indexed_at, repo_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    hash,
+                    timestamp,
+                    author,
+                    committer,
+                    title,
+                    message,
+                    json.dumps(files_changed),
+                    delta_truncated,
+                    embedding_bytes,
+                    indexed_at,
+                    normalized_path,
+                ),
+            )
+            conn.commit()
+            logger.debug(f"Indexed commit {hash[:8]}")
+        except sqlite3.DatabaseError as e:
+            if self._is_corruption_error(e):
+                self._reinitialize_after_corruption()
+                self.add_commit(
+                    hash, timestamp, author, committer, title, message,
+                    files_changed, delta_truncated, commit_document, repo_path
+                )
+                return
+            raise
 
     def remove_commit(self, commit_hash: str) -> None:
         """Remove commit from index by hash."""
@@ -192,89 +231,90 @@ class CommitIndexer:
         after_timestamp: int | None = None,
         before_timestamp: int | None = None,
     ) -> list[dict]:
-        """
-        Query commits by embedding similarity.
+        try:
+            conn = self._get_connection()
 
-        Args:
-            query_embedding: Query embedding vector
-            top_k: Number of results to return
-            after_timestamp: Optional filter for commits after timestamp
-            before_timestamp: Optional filter for commits before timestamp
+            query = "SELECT * FROM git_commits"
+            conditions: list[str] = []
+            params: list[int] = []
 
-        Returns:
-            List of dicts with keys: hash, score, timestamp, etc.
-        """
-        conn = self._get_connection()
+            if after_timestamp is not None:
+                conditions.append("timestamp > ?")
+                params.append(after_timestamp)
 
-        # Build query with optional timestamp filters
-        query = "SELECT * FROM git_commits"
-        conditions = []
-        params = []
+            if before_timestamp is not None:
+                conditions.append("timestamp < ?")
+                params.append(before_timestamp)
 
-        if after_timestamp is not None:
-            conditions.append("timestamp > ?")
-            params.append(after_timestamp)
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
 
-        if before_timestamp is not None:
-            conditions.append("timestamp < ?")
-            params.append(before_timestamp)
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
 
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
+            query_vec = np.array(query_embedding, dtype=np.float32)
+            results = []
 
-        cursor = conn.execute(query, params)
-        rows = cursor.fetchall()
+            for row in rows:
+                embedding = self._deserialize_embedding(row["embedding"])
+                score = self._cosine_similarity(query_vec, embedding)
 
-        # Compute cosine similarity for each commit
-        query_vec = np.array(query_embedding, dtype=np.float32)
-        results = []
+                try:
+                    files_changed = json.loads(row["files_changed"])
+                except (json.JSONDecodeError, TypeError):
+                    files_changed = []
 
-        for row in rows:
-            embedding = self._deserialize_embedding(row["embedding"])
-            score = self._cosine_similarity(query_vec, embedding)
+                results.append({
+                    "hash": row["hash"],
+                    "timestamp": row["timestamp"],
+                    "author": row["author"],
+                    "committer": row["committer"],
+                    "title": row["title"],
+                    "message": row["message"],
+                    "files_changed": files_changed,
+                    "delta_truncated": row["delta_truncated"],
+                    "score": float(score),
+                    "repo_path": row["repo_path"],
+                })
 
-            try:
-                files_changed = json.loads(row["files_changed"])
-            except (json.JSONDecodeError, TypeError):
-                files_changed = []
-
-            results.append({
-                "hash": row["hash"],
-                "timestamp": row["timestamp"],
-                "author": row["author"],
-                "committer": row["committer"],
-                "title": row["title"],
-                "message": row["message"],
-                "files_changed": files_changed,
-                "delta_truncated": row["delta_truncated"],
-                "score": float(score),
-                "repo_path": row["repo_path"],
-            })
-
-        # Sort by score descending and take top K
-        results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:top_k]
+            results.sort(key=lambda x: x["score"], reverse=True)
+            return results[:top_k]
+        except sqlite3.DatabaseError as e:
+            if self._is_corruption_error(e):
+                self._reinitialize_after_corruption()
+                return []
+            raise
 
     def get_last_indexed_timestamp(self, repo_path: str) -> int | None:
-        """Get most recent commit timestamp for a repository."""
-        conn = self._get_connection()
-        normalized_path = self._normalize_repo_path(repo_path)
-        cursor = conn.execute(
-            "SELECT MAX(timestamp) as max_ts FROM git_commits WHERE repo_path = ?",
-            (normalized_path,),
-        )
-        row = cursor.fetchone()
+        try:
+            conn = self._get_connection()
+            normalized_path = self._normalize_repo_path(repo_path)
+            cursor = conn.execute(
+                "SELECT MAX(timestamp) as max_ts FROM git_commits WHERE repo_path = ?",
+                (normalized_path,),
+            )
+            row = cursor.fetchone()
 
-        if row and row["max_ts"] is not None:
-            return int(row["max_ts"])
-        return None
+            if row and row["max_ts"] is not None:
+                return int(row["max_ts"])
+            return None
+        except sqlite3.DatabaseError as e:
+            if self._is_corruption_error(e):
+                self._reinitialize_after_corruption()
+                return None
+            raise
 
     def get_total_commits(self) -> int:
-        """Count total commits in index."""
-        conn = self._get_connection()
-        cursor = conn.execute("SELECT COUNT(*) as count FROM git_commits")
-        row = cursor.fetchone()
-        return int(row["count"]) if row else 0
+        try:
+            conn = self._get_connection()
+            cursor = conn.execute("SELECT COUNT(*) as count FROM git_commits")
+            row = cursor.fetchone()
+            return int(row["count"]) if row else 0
+        except sqlite3.DatabaseError as e:
+            if self._is_corruption_error(e):
+                self._reinitialize_after_corruption()
+                return 0
+            raise
 
     @staticmethod
     def _serialize_embedding(embedding: list[float]) -> bytes:

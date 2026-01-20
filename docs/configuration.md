@@ -756,7 +756,7 @@ Controls hybrid search behavior and result fusion.
 #### `keyword_weight`
 
 - **Type:** float
-- **Default:** `0.8`
+- **Default:** `1.0`
 - **Description:** Weight multiplier for keyword (BM25) search results in RRF fusion. Higher values increase influence of exact term matches.
 - **Range:** 0.0 to infinity (typical: 0.5 to 2.0)
 - **Example:**
@@ -797,10 +797,11 @@ Controls hybrid search behavior and result fusion.
 #### `min_confidence`
 
 - **Type:** float
-- **Default:** `0.0`
-- **Description:** Minimum normalized score threshold for results. Results below this threshold are filtered out. Set to `0.0` to disable filtering (backward compatible default).
+- **Default:** `0.3`
+- **Description:** Minimum calibrated confidence threshold for results. Results below this threshold are filtered out. Set to `0.0` to disable filtering.
 - **Range:** 0.0 to 1.0 (recommended: 0.3 for filtering low-relevance results)
 - **Effect:** Higher values return fewer but more relevant results. When no results meet the threshold, an empty list is returned.
+- **Notes:** Threshold applies **after sigmoid calibration** of RRF+recency scores. Legacy min-max normalization is deprecated and not used for final scores.
 - **Example:**
   ```toml
   [search]

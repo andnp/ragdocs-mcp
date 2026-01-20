@@ -83,7 +83,7 @@
 | Algorithm | Reciprocal Rank Fusion (RRF) with k=60 |
 | Strategy Weights | `semantic_weight`, `keyword_weight` (configurable), `graph=1.0` (fixed) |
 | Recency Boost | Tier-based: 1.2x (<7 days), 1.1x (<30 days), 1.0x (older) |
-| Normalization | Min-max scaling to [0, 1] after fusion |
+| Calibration | Sigmoid calibration to [0, 1] after fusion |
 
 **Strength:** Rank-based fusion handles heterogeneous score scales without calibration.
 
@@ -698,7 +698,7 @@ def limit_per_document(
 ```
 RRF Fusion
   ↓
-Score Normalization [0.0, 1.0]
+Score Calibration [0.0, 1.0]
   ↓
 Confidence Threshold Filter (P10)
   ↓
@@ -906,16 +906,16 @@ def filter_by_confidence(
 
 **Processing Pipeline Position:**
 ```
-RRF Fusion → Normalize → P10: Threshold Filter → P8: Semantic Dedup → P8: Doc Limit → P6: Re-rank
+RRF Fusion → Calibrate (sigmoid) → P10: Threshold Filter → P8: Semantic Dedup → P8: Doc Limit → P6: Re-rank
 ```
 
 **File Changes:**
 - [src/search/filters.py](../src/search/filters.py): New file with `filter_by_confidence()`
 - [src/search/orchestrator.py](../src/search/orchestrator.py): Apply filtering as first post-fusion step
-- [src/config.py](../src/config.py): Add `[search] min_confidence: float = 0.0`
+- [src/config.py](../src/config.py): Add `[search] min_confidence: float = 0.3`
 
 **API Changes:**
-- New config option: `[search] min_confidence = 0.0` (default 0.0 for backward compatibility; recommended 0.3 for compressed results)
+- New config option: `[search] min_confidence = 0.3` (set to 0.0 to disable filtering)
 
 **Testing Strategy:**
 - Unit: `test_confidence_filter_removes_low_scores`, `test_confidence_filter_zero_returns_all`, `test_confidence_filter_returns_count`
@@ -1062,7 +1062,7 @@ def deduplicate_by_ngram(
 
 **Processing Pipeline Position:**
 ```
-RRF → Normalize → Threshold → N-gram Dedup (fast) → Semantic Dedup/MMR (slow) → Re-rank
+RRF → Calibrate (sigmoid) → Threshold → N-gram Dedup (fast) → Semantic Dedup/MMR (slow) → Re-rank
 ```
 
 **File Changes:**
@@ -1274,7 +1274,7 @@ quadrantChart
 
 6. **Per-Document Limit (P8):** [src/search/dedup.py](../src/search/dedup.py) implements `limit_per_document()`.
 
-7. **Processing Pipeline:** Orchestrator in [src/search/orchestrator.py](../src/search/orchestrator.py) applies: normalize → confidence filter → doc limit → dedup → top_n. Returns `tuple[list[ChunkResult], CompressionStats]`.
+7. **Processing Pipeline:** Orchestrator in [src/search/orchestrator.py](../src/search/orchestrator.py) applies: calibrate (sigmoid) → confidence filter → doc limit → dedup → top_n. Returns `tuple[list[ChunkResult], CompressionStats]`.
 
 8. **CompressionStats:** Added to [src/models.py](../src/models.py) with fields: `original_count`, `after_threshold`, `after_doc_limit`, `after_dedup`, `clusters_merged`.
 
@@ -1316,7 +1316,7 @@ quadrantChart
 
 3. **Processing Pipeline (updated):**
    ```
-   RRF Fusion → Normalize → Threshold → Doc Limit → Dedup → Re-rank → top_n
+    RRF Fusion → Calibrate (sigmoid) → Threshold → Doc Limit → Dedup → Re-rank → top_n
    ```
 
 **Acceptance Criteria:**
@@ -1391,7 +1391,7 @@ flowchart TD
 
     subgraph Fusion["Result Fusion"]
         RRF[RRF Fusion<br/>P3: Adaptive weights]
-        NORM[Normalize Scores]
+        CAL[Calibrate Scores]
         CONF[P10: Confidence Filter]
         DIV[P8: Diversity Filter]
     end
@@ -1411,8 +1411,8 @@ flowchart TD
     EQ --> SEM & KW & CODE
     Q --> GRAPH
     SEM & KW & CODE & GRAPH --> RRF
-    RRF --> NORM
-    NORM --> CONF
+    RRF --> CAL
+    CAL --> CONF
     CONF --> CE
     CE --> DIV
     DIV --> RES
@@ -1465,7 +1465,7 @@ recency_bias = 0.5
 rrf_k_constant = 60
 
 # P10: Confidence threshold (0.0 = disabled, recommended 0.3 for filtering)
-min_confidence = 0.0
+min_confidence = 0.3
 
 # P8: Result clustering and deduplication
 max_chunks_per_doc = 0              # 0 = disabled
@@ -1489,7 +1489,7 @@ class SearchConfig:
     keyword_weight: float = 1.0
     recency_bias: float = 0.5
     rrf_k_constant: int = 60
-    min_confidence: float = 0.0                    # P10: Score threshold
+    min_confidence: float = 0.3                    # P10: Score threshold
     max_chunks_per_doc: int = 0                    # P8: Per-doc limit (0 = disabled)
     dedup_enabled: bool = False                    # P8: Semantic deduplication
     dedup_similarity_threshold: float = 0.85       # P8: Clustering threshold

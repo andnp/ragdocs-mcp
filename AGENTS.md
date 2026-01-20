@@ -58,6 +58,7 @@ The system is composed of four distinct layers:
 - **Asyncio**: The core is async-first. Use `async def` and `await` for all I/O bound operations (file reading, searching).
 - **Typing**: Strict Python type hints are required. Use modern (python 3.13+) typing standards, and Pydantic models.
 - **Error Handling**: specialized exceptions in `src/utils.py`. Never swallow errors silently; log them using the centralized logger.
+- **Index Resilience**: All indices implement self-healing via `_reinitialize_after_corruption()`. On corruption detection, indices reinitialize to a clean state and return empty results (graceful degradation). Reconciliation rebuilds indices automatically.
 - **Testing**:
   - `pytest` is the runner.
   - `tests/unit`: Fast, isolated tests.

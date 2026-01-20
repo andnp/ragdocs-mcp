@@ -50,6 +50,7 @@ class VectorIndex:
         self._concept_vocabulary: dict[str, list[float]] = {}
         self._term_counts: dict[str, int] = {}  # Track term frequencies for incremental updates
         self._pending_terms: set[str] = set()  # Terms that need embedding
+        self._warned_stale_chunk_ids: set[str] = set()  # Deduplicate stale chunk warnings
 
     def _ensure_model_loaded(self) -> None:
         if self._model_loaded:
@@ -195,12 +196,13 @@ class VectorIndex:
 
     def get_chunk_by_id(self, chunk_id: str):
         if self._index is None:
-            logger.warning(f"get_chunk_by_id({chunk_id}): index is None")
+            if chunk_id not in self._warned_stale_chunk_ids:
+                logger.warning(f"get_chunk_by_id({chunk_id}): index is None")
+                self._warned_stale_chunk_ids.add(chunk_id)
             return None
 
         logger.debug(f"get_chunk_by_id({chunk_id}): attempting direct docstore lookup")
 
-        # Try direct lookup in docstore first
         try:
             docstore = self._index.docstore
             node = docstore.get_document(chunk_id)
@@ -208,7 +210,6 @@ class VectorIndex:
             if node:
                 logger.debug(f"get_chunk_by_id({chunk_id}): found in docstore")
                 node_text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
-
                 return {
                     "chunk_id": chunk_id,
                     "doc_id": node.metadata.get("doc_id"),
@@ -219,29 +220,17 @@ class VectorIndex:
                     "metadata": node.metadata,
                 }
             else:
-                logger.warning(f"get_chunk_by_id({chunk_id}): not found in docstore")
+                if chunk_id not in self._warned_stale_chunk_ids:
+                    logger.warning(f"get_chunk_by_id({chunk_id}): not found in docstore")
+                    self._warned_stale_chunk_ids.add(chunk_id)
+                self._cleanup_stale_reference(chunk_id)
         except Exception as e:
-            logger.warning(f"get_chunk_by_id({chunk_id}): docstore lookup failed: {e}")
+            if chunk_id not in self._warned_stale_chunk_ids:
+                logger.warning(f"get_chunk_by_id({chunk_id}): docstore lookup failed: {e}")
+                self._warned_stale_chunk_ids.add(chunk_id)
+            self._cleanup_stale_reference(chunk_id)
 
-        logger.debug(f"get_chunk_by_id({chunk_id}): falling back to retriever search")
-        # Fallback to retriever search
-        retriever = self._index.as_retriever(similarity_top_k=100)
-        nodes = retriever.retrieve(chunk_id)
-
-        for node in nodes:
-            if node.metadata.get("chunk_id") == chunk_id:
-                node_text = node.node.get_content() if hasattr(node.node, "get_content") else getattr(node.node, "text", "")
-
-                return {
-                    "chunk_id": chunk_id,
-                    "doc_id": node.metadata.get("doc_id"),
-                    "score": 1.0,
-                    "header_path": node.metadata.get("header_path", ""),
-                    "file_path": node.metadata.get("file_path", ""),
-                    "content": node_text,
-                    "metadata": node.metadata,
-                }
-
+        # Skip the expensive retriever fallback - if not in docstore, it won't help
         return None
 
     def get_chunk_ids_for_document(self, doc_id: str) -> list[str]:
@@ -566,6 +555,7 @@ class VectorIndex:
             self._term_counts = {}
 
         self._pending_terms.clear()
+        self._warned_stale_chunk_ids.clear()
 
     def _initialize_index(self) -> None:
         from llama_index.core import StorageContext, VectorStoreIndex
@@ -587,6 +577,46 @@ class VectorIndex:
             nodes=[],
             storage_context=storage_context,
         )
+
+    def _cleanup_stale_reference(self, chunk_id: str) -> None:
+        """Remove a stale chunk reference from internal mappings."""
+        if chunk_id in self._chunk_id_to_node_id:
+            del self._chunk_id_to_node_id[chunk_id]
+
+        for doc_id, node_ids in list(self._doc_id_to_node_ids.items()):
+            if chunk_id in node_ids:
+                node_ids.remove(chunk_id)
+                if not node_ids:
+                    del self._doc_id_to_node_ids[doc_id]
+                break
+
+    def reconcile_mappings(self) -> int:
+        """
+        Reconcile mappings by removing stale references.
+
+        Returns:
+            Count of stale references removed.
+        """
+        if self._index is None:
+            return 0
+
+        removed = 0
+        docstore = self._index.docstore
+
+        for chunk_id in list(self._chunk_id_to_node_id.keys()):
+            try:
+                node = docstore.get_document(chunk_id)
+                if node is None:
+                    self._cleanup_stale_reference(chunk_id)
+                    removed += 1
+            except Exception:
+                self._cleanup_stale_reference(chunk_id)
+                removed += 1
+
+        if removed > 0:
+            logger.info(f"Reconciled vector index: removed {removed} stale references")
+
+        return removed
 
     # IndexProtocol methods
 
@@ -620,6 +650,7 @@ class VectorIndex:
         self._concept_vocabulary = {}
         self._term_counts = {}
         self._pending_terms.clear()
+        self._warned_stale_chunk_ids.clear()
 
     def save(self, path: Path) -> None:
         self.persist(path)
