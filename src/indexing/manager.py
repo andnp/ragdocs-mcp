@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 from src.chunking.factory import get_chunker
 from src.config import Config
 from src.coordination import IndexLock
@@ -161,6 +163,11 @@ class IndexManager:
             logger.warning(f"Document {doc_id} removal completed with {len(errors)} index failures")
 
     def persist(self):
+        """Persist all indices with retry logic for transient failures.
+
+        Implements exponential backoff with 3 retry attempts to handle
+        transient failures like disk full, NFS timeout, or permission errors.
+        """
         index_path = Path(self._config.indexing.index_path)
 
         coordination_mode_str = self._config.indexing.coordination_mode.lower()
@@ -169,11 +176,24 @@ class IndexManager:
             lock = IndexLock(index_path, self._config.indexing.lock_timeout_seconds)
             lock.acquire_exclusive()
             try:
-                self._persist_indices(index_path)
+                self._persist_indices_with_retry(index_path)
             finally:
                 lock.release()
         else:
-            self._persist_indices(index_path)
+            self._persist_indices_with_retry(index_path)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    def _persist_indices_with_retry(self, index_path: Path):
+        """Execute persistence with automatic retry on failure.
+
+        Retries up to 3 times with exponential backoff (1s, 2s, 4s).
+        Raises the original exception after all retries are exhausted.
+        """
+        self._persist_indices(index_path)
 
     def _persist_indices(self, index_path: Path):
         try:

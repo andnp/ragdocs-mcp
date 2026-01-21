@@ -9,6 +9,7 @@ from typing import Any, Final, Protocol, cast
 import numpy as np
 
 from src.models import Chunk, Document
+from src.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from src.utils.similarity import cosine_similarity
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,14 @@ class VectorIndex:
         self._model_lock = threading.Lock()
         self._model_loaded = embedding_model is not None
 
+        # Circuit breaker for embedding model failure protection
+        self._embedding_circuit_breaker = CircuitBreaker(
+            failure_threshold=5,
+            recovery_timeout=60.0,
+            success_threshold=2,
+            window_duration=60.0,
+        )
+
         # If embedding model was provided, set it in Settings immediately
         if embedding_model is not None:
             from llama_index.core import Settings
@@ -55,17 +64,20 @@ class VectorIndex:
         self._concept_vocabulary: OrderedDict[str, list[float]] = OrderedDict()
         self._term_counts: OrderedDict[str, int] = OrderedDict()
         self._pending_terms: set[str] = set()  # Terms that need embedding
-        self._warned_stale_chunk_ids: set[str] = set()  # Deduplicate stale chunk warnings
+        # Bounded warning deduplication with LRU eviction (max 1000 entries)
+        self._warned_stale_chunk_ids: OrderedDict[str, bool] = OrderedDict()
+        self._max_warned_chunks = 1000
         self._index_lock = threading.Lock()  # Protects index operations during concurrent access
 
     def _ensure_model_loaded(self, timeout: float = 120.0) -> None:
-        """Load the embedding model with timeout protection.
+        """Load the embedding model with timeout and circuit breaker protection.
 
         Args:
             timeout: Maximum seconds to wait for model loading (default: 120s)
 
         Raises:
             RuntimeError: If model loading exceeds timeout
+            CircuitBreakerOpen: If circuit breaker is open (too many recent failures)
         """
         if self._model_loaded:
             return
@@ -84,11 +96,20 @@ class VectorIndex:
                 return model
 
             try:
+                # Wrap model loading with circuit breaker
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(load_model)
-                    self._embedding_model = future.result(timeout=timeout)
+                    self._embedding_model = self._embedding_circuit_breaker.call(
+                        lambda: future.result(timeout=timeout)
+                    )
                     self._model_loaded = True
                     logger.info(f"Embedding model loaded: {self._embedding_model_name}")
+            except CircuitBreakerOpen as e:
+                error_msg = (
+                    f"Embedding model circuit breaker is OPEN. Too many recent failures. {e}"
+                )
+                logger.error(error_msg)
+                raise RuntimeError(error_msg) from e
             except FuturesTimeoutError:
                 error_msg = (
                     f"Embedding model loading timed out after {timeout}s. "
@@ -242,7 +263,7 @@ class VectorIndex:
         if self._index is None:
             if chunk_id not in self._warned_stale_chunk_ids:
                 logger.warning(f"get_chunk_by_id({chunk_id}): index is None")
-                self._warned_stale_chunk_ids.add(chunk_id)
+                self._log_stale_warning(chunk_id)
             return None
 
         logger.debug(f"get_chunk_by_id({chunk_id}): attempting direct docstore lookup")
@@ -266,16 +287,27 @@ class VectorIndex:
             else:
                 if chunk_id not in self._warned_stale_chunk_ids:
                     logger.warning(f"get_chunk_by_id({chunk_id}): not found in docstore")
-                    self._warned_stale_chunk_ids.add(chunk_id)
+                    self._log_stale_warning(chunk_id)
                 self._cleanup_stale_reference(chunk_id)
         except Exception as e:
             if chunk_id not in self._warned_stale_chunk_ids:
                 logger.warning(f"get_chunk_by_id({chunk_id}): docstore lookup failed: {e}")
-                self._warned_stale_chunk_ids.add(chunk_id)
+                self._log_stale_warning(chunk_id)
             self._cleanup_stale_reference(chunk_id)
 
         # Skip the expensive retriever fallback - if not in docstore, it won't help
         return None
+
+    def _log_stale_warning(self, chunk_id: str) -> None:
+        """Record that we've warned about this chunk_id with bounded memory usage.
+
+        Uses LRU eviction when cache exceeds max size (1000 entries).
+        """
+        # Evict oldest if at capacity
+        if len(self._warned_stale_chunk_ids) >= self._max_warned_chunks:
+            self._warned_stale_chunk_ids.popitem(last=False)  # Remove oldest (FIFO)
+
+        self._warned_stale_chunk_ids[chunk_id] = True
 
     def get_chunk_ids_for_document(self, doc_id: str) -> list[str]:
         with self._index_lock:

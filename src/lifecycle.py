@@ -46,6 +46,10 @@ class LifecycleCoordinator:
         return self._state in (LifecycleState.INITIALIZING, LifecycleState.READY, LifecycleState.DEGRADED)
 
     async def start(self, ctx: ApplicationContext, *, background_index: bool = False) -> None:
+        """Start the application lifecycle with automatic cleanup on failure.
+
+        If startup fails, automatically calls cleanup to prevent resource leaks.
+        """
         if self._state != LifecycleState.UNINITIALIZED:
             raise RuntimeError(f"Cannot start from state {self._state}")
 
@@ -85,6 +89,8 @@ class LifecycleCoordinator:
                 self._state = LifecycleState.READY
                 logger.info("Lifecycle: READY")
         except Exception:
+            logger.error("Startup failed, cleaning up resources", exc_info=True)
+            await self._cleanup_resources()
             self._state = LifecycleState.TERMINATED
             raise
 
@@ -149,17 +155,41 @@ class LifecycleCoordinator:
             self._emergency_timer = None
 
     async def shutdown(self) -> None:
+        """Perform orderly shutdown with resource cleanup.
+
+        Emergency timer is cancelled early in cleanup to prevent
+        spurious exits during normal shutdown.
+        """
         if self._state == LifecycleState.TERMINATED:
             return
 
         self._state = LifecycleState.SHUTTING_DOWN
+
+        await self._cleanup_resources()
+
+        self._state = LifecycleState.TERMINATED
+        # Double-check timer is cancelled (already done in _cleanup_resources)
+        self._cancel_emergency_timer()
+        logger.info("Lifecycle: TERMINATED")
+
+    async def _cleanup_resources(self) -> None:
+        """Best-effort cleanup of all resources.
+
+        Called during shutdown or after startup failure.
+        Continues cleanup even if individual steps fail.
+
+        Cancels emergency timer early to prevent spurious exits during cleanup.
+        """
+        # Cancel emergency timer immediately at start of cleanup
+        # to prevent race condition where timer fires during cleanup
+        self._cancel_emergency_timer()
 
         # Stop git watcher first
         if self._git_watcher:
             try:
                 await self._git_watcher.stop()
             except Exception as e:
-                logger.error(f"Error stopping git watcher: {e}")
+                logger.error(f"Error stopping git watcher: {e}", exc_info=True)
             self._git_watcher = None
 
         if self._ctx:
@@ -169,11 +199,7 @@ class LifecycleCoordinator:
             except asyncio.TimeoutError:
                 logger.warning("Graceful shutdown timed out")
             except Exception as e:
-                logger.error(f"Error during shutdown: {e}")
-
-        self._state = LifecycleState.TERMINATED
-        self._cancel_emergency_timer()
-        logger.info("Lifecycle: TERMINATED")
+                logger.error(f"Error during context cleanup: {e}", exc_info=True)
 
     def install_signal_handlers(self, loop: asyncio.AbstractEventLoop) -> None:
         for sig in (signal.SIGINT, signal.SIGTERM):

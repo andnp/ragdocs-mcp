@@ -83,25 +83,36 @@ class GraphStore:
                 self._graph.remove_node(doc_id)
 
     def get_neighbors(self, doc_id: str, depth: int = 1):
+        """Get neighbors up to specified depth using snapshot pattern.
+
+        Takes a shallow copy of the graph under lock, then performs BFS
+        traversal without holding the lock. This prevents lock contention
+        during deep graph traversals while maintaining consistency.
+        """
+        # Take shallow copy of graph under lock
         with self._lock:
             if doc_id not in self._graph:
                 return []
+            graph_snapshot = self._graph.copy()
 
-            neighbors = set()
-            current_level = {doc_id}
+        # BFS on snapshot (no lock held)
+        neighbors = set()
+        current_level = {doc_id}
 
-            for _ in range(depth):
-                next_level = set()
-                for node in current_level:
-                    successors = set(self._graph.successors(node))
-                    predecessors = set(self._graph.predecessors(node))
-                    next_level.update(successors | predecessors)
+        for _ in range(depth):
+            next_level = set()
+            for node in current_level:
+                if node not in graph_snapshot:
+                    continue
+                successors = set(graph_snapshot.successors(node))
+                predecessors = set(graph_snapshot.predecessors(node))
+                next_level.update(successors | predecessors)
 
-                neighbors.update(next_level)
-                current_level = next_level
+            neighbors.update(next_level)
+            current_level = next_level
 
-            neighbors.discard(doc_id)
-            return list(neighbors)
+        neighbors.discard(doc_id)
+        return list(neighbors)
 
     def detect_communities(self, algorithm: str = "louvain") -> dict[str, int]:
         with self._lock:

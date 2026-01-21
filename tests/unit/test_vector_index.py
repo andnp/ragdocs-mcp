@@ -513,8 +513,8 @@ def test_warned_set_cleared_on_load(shared_embedding_model, tmp_path):
     vector_index.add_chunk(chunk)
 
     # Simulate having warned about some stale chunks
-    vector_index._warned_stale_chunk_ids.add("old_stale_1")
-    vector_index._warned_stale_chunk_ids.add("old_stale_2")
+    vector_index._warned_stale_chunk_ids["old_stale_1"] = True
+    vector_index._warned_stale_chunk_ids["old_stale_2"] = True
 
     # Persist to disk
     persist_path = tmp_path / "vector_index"
@@ -524,7 +524,7 @@ def test_warned_set_cleared_on_load(shared_embedding_model, tmp_path):
     vector_index2 = VectorIndex(embedding_model=shared_embedding_model)
 
     # Add some warned IDs before load (simulating prior session)
-    vector_index2._warned_stale_chunk_ids.add("pre_load_warning")
+    vector_index2._warned_stale_chunk_ids["pre_load_warning"] = True
 
     # Load the persisted index
     vector_index2.load(persist_path)

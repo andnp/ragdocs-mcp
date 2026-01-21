@@ -8,6 +8,9 @@ from mcp.types import Tool, TextContent
 from src.context import ApplicationContext
 from src.lifecycle import LifecycleCoordinator
 from src.mcp.handlers import HandlerContext, get_handler, MIN_TOP_N, MAX_TOP_N
+from src.search.classifier import classify_query as classify_query_type
+from src.search.pipeline import SearchPipelineConfig
+from src.search.utils import truncate_content
 import src.mcp.handlers  # noqa: F401 - registers search handlers
 import src.mcp.memory_handlers  # noqa: F401 - registers memory handlers
 

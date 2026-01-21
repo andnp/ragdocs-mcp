@@ -233,7 +233,7 @@ class ApplicationContext:
         # Index git commits after document indexing
         if self.commit_indexer is not None:
             if background_index:
-                asyncio.create_task(self._index_git_commits_initial())
+                asyncio.create_task(self._index_git_commits_initial_with_timeout())
             else:
                 self._index_git_commits_initial_sync()
 
@@ -557,3 +557,22 @@ class ApplicationContext:
     async def _index_git_commits_initial(self) -> None:
         """Index all commits in discovered repositories (async wrapper)."""
         await asyncio.to_thread(self._index_git_commits_initial_sync)
+
+    async def _index_git_commits_initial_with_timeout(self) -> None:
+        """Index git commits with timeout protection.
+
+        Prevents git indexing from hanging indefinitely during startup.
+        If timeout is reached, logs warning and continues without blocking.
+        """
+        try:
+            await asyncio.wait_for(
+                self._index_git_commits_initial(),
+                timeout=30.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Git commit indexing timed out after 30s. "
+                "Consider reducing repository size or increasing timeout."
+            )
+        except Exception as e:
+            logger.error(f"Git commit indexing failed: {e}", exc_info=True)

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from pathlib import Path
 
 from src.config import Config
@@ -35,6 +36,11 @@ class SearchOrchestrator:
         self._code = code_index
         self._pipeline: SearchPipeline | None = None
 
+        # Query embedding cache with LRU eviction
+        self._embedding_cache: dict[str, tuple[list[float], float]] = {}
+        self._cache_max_size = 100
+        self._cache_ttl = 300.0  # 5 minutes
+
     def _get_pipeline(self) -> SearchPipeline:
         if self._pipeline is None:
             pipeline_config = SearchPipelineConfig(
@@ -53,6 +59,44 @@ class SearchOrchestrator:
             )
             self._pipeline = SearchPipeline(pipeline_config)
         return self._pipeline
+
+    def _get_cached_embedding(self, query: str) -> list[float]:
+        """Get query embedding with LRU cache and TTL-based expiration.
+
+        Cache entries expire after 5 minutes to prevent stale embeddings.
+        When cache is full, evicts the oldest entry (LRU policy).
+
+        Args:
+            query: Query text to embed
+
+        Returns:
+            Embedding vector for the query
+        """
+        current_time = time.time()
+
+        # Check cache
+        if query in self._embedding_cache:
+            embedding, timestamp = self._embedding_cache[query]
+            # Expire after TTL
+            if current_time - timestamp < self._cache_ttl:
+                logger.debug(f"Embedding cache hit for query: {query[:50]}...")
+                return embedding
+            else:
+                # Remove expired entry
+                del self._embedding_cache[query]
+
+        # Compute new embedding
+        logger.debug(f"Embedding cache miss for query: {query[:50]}...")
+        embedding = self._vector.get_text_embedding(query)
+
+        # Evict oldest if cache full (LRU policy)
+        if len(self._embedding_cache) >= self._cache_max_size:
+            oldest_key = min(self._embedding_cache, key=lambda k: self._embedding_cache[k][1])
+            del self._embedding_cache[oldest_key]
+            logger.debug(f"Evicted oldest cache entry: {oldest_key[:50]}...")
+
+        self._embedding_cache[query] = (embedding, current_time)
+        return embedding
 
     async def query(
         self,
@@ -226,7 +270,7 @@ class SearchOrchestrator:
         if self._config.search.mmr_enabled or (
             pipeline_config is not None and pipeline_config.mmr_enabled
         ):
-            query_embedding = self._vector.get_text_embedding(query_text)
+            query_embedding = self._get_cached_embedding(query_text)
 
         final, compression_stats = pipeline.process(
             fused,
