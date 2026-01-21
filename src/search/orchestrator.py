@@ -152,7 +152,11 @@ class SearchOrchestrator:
         if code_search_enabled and code_results:
             results_dict["code"] = [r["chunk_id"] for r in code_results]
 
-        modified_times = self._collect_modified_times(all_doc_ids | set(graph_neighbors))
+        # Collect file modified times using asyncio.to_thread to avoid blocking event loop
+        modified_times = await asyncio.to_thread(
+            self._collect_modified_times,
+            all_doc_ids | set(graph_neighbors)
+        )
 
         base_semantic = self._config.search.semantic_weight
         base_keyword = self._config.search.keyword_weight

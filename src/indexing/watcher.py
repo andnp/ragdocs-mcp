@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 EventType: TypeAlias = Literal["created", "modified", "deleted"]
 
+# Maximum queue size to prevent memory exhaustion under load
+MAX_QUEUE_SIZE = 1000
+
 
 class FileWatcher:
     def __init__(
@@ -28,7 +31,8 @@ class FileWatcher:
         self._index_manager = index_manager
         self._cooldown = cooldown
         self._observer: BaseObserver | None = None
-        self._event_queue = queue.Queue[tuple[EventType, str]]()
+        # Bounded queue prevents memory exhaustion during high file change rates
+        self._event_queue = queue.Queue[tuple[EventType, str]](maxsize=MAX_QUEUE_SIZE)
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._last_sync_time: str | None = None
@@ -47,12 +51,18 @@ class FileWatcher:
         logger.info(f"File watcher started for {self._documents_path}")
 
     async def stop(self):
+        """Stop file watcher and drain remaining events before shutdown.
+
+        Ensures queued file system events are processed before termination
+        to prevent data loss during shutdown.
+        """
         if not self._running:
             return
 
+        # Set flag to prevent new event acceptance
         self._running = False
 
-        # Stop the observer thread first (it's what feeds the queue)
+        # Stop the observer thread (no new events)
         if self._observer:
             self._observer.stop()
             # Join with short timeout - don't wait forever
@@ -65,6 +75,14 @@ class FileWatcher:
                 logger.warning("Observer thread did not stop within timeout")
             self._observer = None
 
+        # Drain remaining events from queue (with timeout)
+        try:
+            await asyncio.wait_for(self._drain_queue(), timeout=2.0)
+        except asyncio.TimeoutError:
+            remaining = self._event_queue.qsize()
+            if remaining > 0:
+                logger.warning(f"Queue drain timed out, {remaining} events lost")
+
         # Cancel the event processing task
         if self._task:
             self._task.cancel()
@@ -75,6 +93,26 @@ class FileWatcher:
             self._task = None
 
         logger.info("File watcher stopped")
+
+    async def _drain_queue(self):
+        """Process all remaining events in queue before shutdown."""
+        events: dict[str, EventType] = {}
+
+        # Collect all queued events (non-blocking)
+        while True:
+            try:
+                event_type, file_path = await asyncio.to_thread(
+                    self._event_queue.get, timeout=0.1
+                )
+                if file_path:
+                    events[file_path] = event_type
+            except queue.Empty:
+                break
+
+        # Process collected events if any
+        if events:
+            logger.info(f"Draining {len(events)} queued file system events")
+            await self._batch_process(events)
 
     async def _process_events(self):
         events: dict[str, EventType] = {}
@@ -142,10 +180,24 @@ class _MarkdownEventHandler(FileSystemEventHandler):
     def __init__(self, queue: queue.Queue[tuple[EventType, str]]):
         super().__init__()
         self._queue = queue
+        self._dropped_events = 0  # Track backpressure events
 
     def _is_markdown(self, path: str | bytes):
         path_str = path if isinstance(path, str) else path.decode("utf-8")
         return Path(path_str).suffix.lower() in (".md", ".markdown")
+
+    def _queue_event(self, event_type: EventType, path_str: str):
+        """Queue event with backpressure handling."""
+        try:
+            self._queue.put_nowait((event_type, path_str))
+        except queue.Full:
+            # Drop event if queue is full to prevent memory exhaustion
+            self._dropped_events += 1
+            if self._dropped_events % 100 == 1:  # Log every 100th drop to avoid spam
+                logger.warning(
+                    f"Event queue full ({MAX_QUEUE_SIZE}), dropped {self._dropped_events} events. "
+                    "Increase cooldown or MAX_QUEUE_SIZE if this persists."
+                )
 
     def on_created(self, event: FileSystemEvent):
         if not event.is_directory and self._is_markdown(event.src_path):
@@ -154,7 +206,7 @@ class _MarkdownEventHandler(FileSystemEventHandler):
                 if isinstance(event.src_path, str)
                 else event.src_path.decode("utf-8")
             )
-            self._queue.put_nowait(("created", path_str))
+            self._queue_event("created", path_str)
 
     def on_modified(self, event: FileSystemEvent):
         if not event.is_directory and self._is_markdown(event.src_path):
@@ -163,7 +215,7 @@ class _MarkdownEventHandler(FileSystemEventHandler):
                 if isinstance(event.src_path, str)
                 else event.src_path.decode("utf-8")
             )
-            self._queue.put_nowait(("modified", path_str))
+            self._queue_event("modified", path_str)
 
     def on_deleted(self, event: FileSystemEvent):
         if not event.is_directory and self._is_markdown(event.src_path):
@@ -172,4 +224,4 @@ class _MarkdownEventHandler(FileSystemEventHandler):
                 if isinstance(event.src_path, str)
                 else event.src_path.decode("utf-8")
             )
-            self._queue.put_nowait(("deleted", path_str))
+            self._queue_event("deleted", path_str)

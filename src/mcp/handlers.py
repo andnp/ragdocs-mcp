@@ -8,6 +8,14 @@ from typing import TYPE_CHECKING, Callable, Awaitable
 
 from mcp.types import TextContent
 
+from src.mcp.validation import (
+    ValidationError,
+    validate_query,
+    validate_integer_range,
+    validate_float_range,
+    validate_string_list,
+    validate_boolean,
+)
 from src.search.pipeline import SearchPipelineConfig
 from src.search.utils import classify_query_type, truncate_content
 
@@ -60,53 +68,36 @@ class HandlerContext:
             await self.coordinator.wait_ready(timeout=timeout)
 
 
-def _validate_top_n(value: int | None, default: int = 5) -> int:
-    if value is None:
-        return default
-    if not isinstance(value, int) or value < MIN_TOP_N or value > MAX_TOP_N:
-        raise ValueError(f"top_n must be an integer between {MIN_TOP_N} and {MAX_TOP_N}")
-    return value
-
-
-def _validate_min_score(value: float | int | None, default: float = 0.5) -> float:
-    if value is None:
-        return default
-    if not isinstance(value, (int, float)) or value < 0.0 or value > 1.0:
-        raise ValueError("min_score must be a number between 0.0 and 1.0")
-    return float(value)
-
-
-def _validate_similarity_threshold(value: float | int | None, default: float = 0.85) -> float:
-    if value is None:
-        return default
-    if not isinstance(value, (int, float)) or value < 0.5 or value > 1.0:
-        raise ValueError("similarity_threshold must be a number between 0.5 and 1.0")
-    return float(value)
-
-
 async def _query_documents_impl(
     hctx: HandlerContext,
     arguments: dict,
     max_chunks_per_doc: int,
     result_header: str,
 ) -> list[TextContent]:
-    query = arguments.get("query")
-    if not query:
-        raise ValueError("Missing required parameter: query")
+    """Query documents implementation with comprehensive validation."""
+    try:
+        # Validate required parameters
+        query = validate_query(arguments, "query")
+
+        # Validate optional parameters with proper defaults and ranges
+        top_n = validate_integer_range(arguments, "top_n", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N)
+        min_score = validate_float_range(arguments, "min_score", default=0.3, min_val=0.0, max_val=1.0)
+        similarity_threshold = validate_float_range(
+            arguments, "similarity_threshold", default=0.85, min_val=0.5, max_val=1.0
+        )
+        show_stats = validate_boolean(arguments, "show_stats", default=False)
+
+        # Validate list parameters
+        excluded_files_raw = validate_string_list(arguments, "excluded_files", default=[])
+
+    except ValidationError as e:
+        return [TextContent(type="text", text=f"Validation error: {e}")]
 
     await hctx.wait_for_ready()
 
-    top_n = _validate_top_n(arguments.get("top_n"), 5)
-    min_score = _validate_min_score(arguments.get("min_score"), 0.3)
-    similarity_threshold = _validate_similarity_threshold(arguments.get("similarity_threshold"), 0.85)
-
-    show_stats = arguments.get("show_stats", False)
-    if not isinstance(show_stats, bool):
-        raise ValueError("show_stats must be a boolean")
-
     ctx = hctx.require_ctx()
 
-    excluded_files_raw = arguments.get("excluded_files", [])
+    # Normalize excluded file paths
     excluded_files = None
     if excluded_files_raw:
         from src.search.path_utils import normalize_path
@@ -179,16 +170,25 @@ async def handle_query_unique_documents(hctx: HandlerContext, arguments: dict) -
 
 @tool_handler("search_with_hypothesis")
 async def handle_search_with_hypothesis(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
-    hypothesis = arguments.get("hypothesis")
-    if not hypothesis:
-        raise ValueError("Missing required parameter: hypothesis")
+    """Search with hypothesis (HyDE technique) with comprehensive validation."""
+    try:
+        # Validate required parameters
+        hypothesis = validate_query(arguments, "hypothesis")
+
+        # Validate optional parameters with proper defaults and ranges
+        top_n = validate_integer_range(arguments, "top_n", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N)
+
+        # Validate list parameters
+        excluded_files_raw = validate_string_list(arguments, "excluded_files", default=[])
+
+    except ValidationError as e:
+        return [TextContent(type="text", text=f"Validation error: {e}")]
 
     await hctx.wait_for_ready()
 
-    top_n = _validate_top_n(arguments.get("top_n"), 5)
     ctx = hctx.require_ctx()
 
-    excluded_files_raw = arguments.get("excluded_files", [])
+    # Normalize excluded file paths
     excluded_files = None
     if excluded_files_raw:
         from src.search.path_utils import normalize_path

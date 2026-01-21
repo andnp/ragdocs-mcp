@@ -758,6 +758,7 @@ Significant architecture decisions are documented in the `specs/` directory:
 - [specs/11-search-quality-improvements.md](../specs/11-search-quality-improvements.md): Search pipeline enhancements (BM25F, dedup, re-ranking)
 - [specs/12-context-compression.md](../specs/12-context-compression.md): Compression strategy decision (threshold + dedup)
 - [docs/specs/19-self-healing-indices.md](specs/19-self-healing-indices.md): Self-healing index infrastructure (corruption detection and recovery)
+- [docs/specs/20-vector-index-thread-safety.md](specs/20-vector-index-thread-safety.md): Thread-safe concurrent operations with fine-grained locking
 
 Each spec includes:
 - Executive summary

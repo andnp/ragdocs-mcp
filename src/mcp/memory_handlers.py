@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from mcp.types import TextContent
 
-from src.mcp.handlers import HandlerContext, tool_handler
+from src.mcp.handlers import HandlerContext, tool_handler, MIN_TOP_N, MAX_TOP_N
+from src.mcp.validation import (
+    ValidationError,
+    validate_query,
+    validate_integer_range,
+    validate_string_list,
+    validate_enum,
+    validate_boolean,
+    validate_timestamp,
+)
 from src.memory import tools as memory_tools
 
 
@@ -68,16 +77,52 @@ async def handle_delete_memory(hctx: HandlerContext, arguments: dict) -> list[Te
 
 @tool_handler("search_memories")
 async def handle_search_memories(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+    """Search memories with comprehensive input validation."""
     ctx = hctx.require_ctx()
 
-    query = arguments.get("query", "")
-    limit = arguments.get("limit", 5)
-    filter_tags = arguments.get("filter_tags")
-    filter_type = arguments.get("filter_type")
-    load_full_memory = arguments.get("load_full_memory", False)
+    try:
+        # Validate required parameters
+        query = validate_query(arguments, "query")
+
+        # Validate optional parameters with proper defaults and ranges
+        limit = validate_integer_range(arguments, "limit", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N)
+        load_full_memory = validate_boolean(arguments, "load_full_memory", default=False)
+
+        # Validate optional list/enum parameters
+        filter_tags = validate_string_list(arguments, "filter_tags", default=None)
+        filter_type = validate_enum(
+            arguments,
+            "filter_type",
+            allowed_values={"plan", "journal", "fact", "observation", "reflection"},
+            default=None
+        )
+
+        # Validate optional timestamp parameters
+        after_timestamp = validate_timestamp(arguments, "after_timestamp", default=None)
+        before_timestamp = validate_timestamp(arguments, "before_timestamp", default=None)
+        relative_days = arguments.get("relative_days")  # Will be validated in memory_tools
+
+        # Validate timestamp ordering if both provided
+        if after_timestamp is not None and before_timestamp is not None:
+            if after_timestamp >= before_timestamp:
+                raise ValidationError(
+                    f"after_timestamp ({after_timestamp}) must be less than "
+                    f"before_timestamp ({before_timestamp})"
+                )
+
+    except ValidationError as e:
+        return _text_response(f"Validation error: {e}")
 
     results = await memory_tools.search_memories(
-        ctx, query, limit, filter_tags, filter_type, load_full_memory
+        ctx,
+        query,
+        limit,
+        filter_tags,
+        filter_type,
+        load_full_memory,
+        after_timestamp=after_timestamp,
+        before_timestamp=before_timestamp,
+        relative_days=relative_days,
     )
 
     if results and "error" in results[0]:

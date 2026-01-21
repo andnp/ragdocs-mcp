@@ -326,54 +326,65 @@ class TestHyDEParameterValidation:
     @pytest.mark.asyncio
     async def test_missing_hypothesis_raises_error(self, tmp_path, test_docs_dir):
         """
-        Missing hypothesis parameter should raise ValueError.
+        Missing hypothesis parameter should return validation error.
         """
         config = _create_config(tmp_path, test_docs_dir)
         _server, hctx = _create_mcp_server(config, test_docs_dir)
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        with pytest.raises(ValueError, match="hypothesis"):
-            await handler(hctx, {
-                "top_n": 5,
-            })
+        result = await handler(hctx, {
+            "top_n": 5,
+        })
+
+        assert len(result) == 1
+        assert "Validation error" in result[0].text
+        assert "hypothesis" in result[0].text.lower()
 
     @pytest.mark.asyncio
     async def test_empty_hypothesis_raises_error(self, tmp_path, test_docs_dir):
         """
-        Empty hypothesis parameter should raise ValueError.
+        Empty hypothesis parameter should return validation error.
         """
         config = _create_config(tmp_path, test_docs_dir)
         _server, hctx = _create_mcp_server(config, test_docs_dir)
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        with pytest.raises(ValueError, match="hypothesis"):
-            await handler(hctx, {
-                "hypothesis": "",
-                "top_n": 5,
-            })
+        result = await handler(hctx, {
+            "hypothesis": "",
+            "top_n": 5,
+        })
+
+        assert len(result) == 1
+        assert "Validation error" in result[0].text
+        assert "empty" in result[0].text.lower()
 
     @pytest.mark.asyncio
     async def test_invalid_top_n_raises_error(self, tmp_path, test_docs_dir):
         """
-        Invalid top_n parameter should raise ValueError.
+        Invalid top_n parameter should return validation error.
         """
         config = _create_config(tmp_path, test_docs_dir)
         _server, hctx = _create_mcp_server(config, test_docs_dir)
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        with pytest.raises(ValueError, match="top_n"):
-            await handler(hctx, {
-                "hypothesis": "test",
-                "top_n": 0,
-            })
+        result = await handler(hctx, {
+            "hypothesis": "test",
+            "top_n": 0,
+        })
+        assert len(result) == 1
+        assert "Validation error" in result[0].text
+        assert "top_n" in result[0].text.lower()
 
-        with pytest.raises(ValueError, match="top_n"):
-            await handler(hctx, {
-                "hypothesis": "test",
-                "top_n": 1000,
+        result = await handler(hctx, {
+            "hypothesis": "test",
+            "top_n": 1000,
+        })
+        assert len(result) == 1
+        assert "Validation error" in result[0].text
+        assert "top_n" in result[0].text.lower()
             })
 
 

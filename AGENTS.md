@@ -59,6 +59,7 @@ The system is composed of four distinct layers:
 - **Typing**: Strict Python type hints are required. Use modern (python 3.13+) typing standards, and Pydantic models.
 - **Error Handling**: specialized exceptions in `src/utils.py`. Never swallow errors silently; log them using the centralized logger.
 - **Index Resilience**: All indices implement self-healing via `_reinitialize_after_corruption()`. On corruption detection, indices reinitialize to a clean state and return empty results (graceful degradation). Reconciliation rebuilds indices automatically.
+- **Thread Safety**: VectorIndex uses fine-grained locking (`_index_lock`) to protect internal state during concurrent operations. Lock is held only during dict access + mutation, not during expensive I/O (embeddings, docstore). See [docs/specs/20-vector-index-thread-safety.md](docs/specs/20-vector-index-thread-safety.md).
 - **Testing**:
   - `pytest` is the runner.
   - `tests/unit`: Fast, isolated tests.

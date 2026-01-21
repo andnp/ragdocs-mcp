@@ -2,8 +2,9 @@ import json
 import logging
 import re
 import threading
+from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Final, Protocol, cast
 
 import numpy as np
 
@@ -12,6 +13,9 @@ from src.utils.similarity import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
+# Constants for bounded vocabulary to prevent unbounded memory growth
+MAX_VOCABULARY_SIZE: Final = 10_000  # Maximum unique terms to track
+MAX_PENDING_TERMS: Final = 5_000  # Maximum terms awaiting embedding
 
 STOPWORDS = frozenset({
     "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
@@ -47,23 +51,54 @@ class VectorIndex:
         self._chunk_id_to_node_id: dict[str, str] = {}
         self._vector_store = None
         self._index = None
-        self._concept_vocabulary: dict[str, list[float]] = {}
-        self._term_counts: dict[str, int] = {}  # Track term frequencies for incremental updates
+        # Use OrderedDict for LRU-style eviction to prevent unbounded memory growth
+        self._concept_vocabulary: OrderedDict[str, list[float]] = OrderedDict()
+        self._term_counts: OrderedDict[str, int] = OrderedDict()
         self._pending_terms: set[str] = set()  # Terms that need embedding
         self._warned_stale_chunk_ids: set[str] = set()  # Deduplicate stale chunk warnings
+        self._index_lock = threading.Lock()  # Protects index operations during concurrent access
 
-    def _ensure_model_loaded(self) -> None:
+    def _ensure_model_loaded(self, timeout: float = 120.0) -> None:
+        """Load the embedding model with timeout protection.
+
+        Args:
+            timeout: Maximum seconds to wait for model loading (default: 120s)
+
+        Raises:
+            RuntimeError: If model loading exceeds timeout
+        """
         if self._model_loaded:
             return
         with self._model_lock:
             if self._model_loaded:
                 return
-            from llama_index.core import Settings
-            from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-            self._embedding_model = HuggingFaceEmbedding(model_name=self._embedding_model_name)
-            Settings.embed_model = self._embedding_model
-            self._model_loaded = True
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+            def load_model():
+                from llama_index.core import Settings
+                from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
+                model = HuggingFaceEmbedding(model_name=self._embedding_model_name)
+                Settings.embed_model = model
+                return model
+
+            try:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(load_model)
+                    self._embedding_model = future.result(timeout=timeout)
+                    self._model_loaded = True
+                    logger.info(f"Embedding model loaded: {self._embedding_model_name}")
+            except FuturesTimeoutError:
+                error_msg = (
+                    f"Embedding model loading timed out after {timeout}s. "
+                    f"Check network connection or download model manually: {self._embedding_model_name}"
+                )
+                logger.error(error_msg)
+                raise RuntimeError(error_msg) from None
+            except Exception as e:
+                logger.error(f"Failed to load embedding model: {e}", exc_info=True)
+                raise
 
     def warm_up(self) -> None:
         self._ensure_model_loaded()
@@ -94,9 +129,11 @@ class VectorIndex:
         )
 
         node_id = llama_doc.id_
-        self._doc_id_to_node_ids[document.id] = [node_id]
 
-        self._index.insert_nodes([llama_doc])
+        # Protect index operations with lock to prevent race condition during shutdown/persist
+        with self._index_lock:
+            self._doc_id_to_node_ids[document.id] = [node_id]
+            self._index.insert_nodes([llama_doc])
 
     def add_chunk(self, chunk: Chunk) -> None:
         from llama_index.core import Document as LlamaDocument
@@ -126,22 +163,29 @@ class VectorIndex:
         )
 
         node_id = llama_doc.id_
-        self._chunk_id_to_node_id[chunk.chunk_id] = node_id
 
-        if chunk.doc_id not in self._doc_id_to_node_ids:
-            self._doc_id_to_node_ids[chunk.doc_id] = []
-        self._doc_id_to_node_ids[chunk.doc_id].append(node_id)
+        # Protect index operations with lock to prevent race condition during shutdown/persist
+        with self._index_lock:
+            self._chunk_id_to_node_id[chunk.chunk_id] = node_id
 
-        self._index.insert_nodes([llama_doc])
+            if chunk.doc_id not in self._doc_id_to_node_ids:
+                self._doc_id_to_node_ids[chunk.doc_id] = []
+            self._doc_id_to_node_ids[chunk.doc_id].append(node_id)
+
+            self._index.insert_nodes([llama_doc])
 
         # Register terms for incremental vocabulary update
         self.register_document_terms(embedding_text)
 
     def remove(self, document_id: str) -> None:
-        if self._index is None or document_id not in self._doc_id_to_node_ids:
+        if self._index is None:
             return
 
-        del self._doc_id_to_node_ids[document_id]
+        # Protect mapping access with lock
+        with self._index_lock:
+            if document_id not in self._doc_id_to_node_ids:
+                return
+            del self._doc_id_to_node_ids[document_id]
 
     def search(self, query: str, top_k: int = 10, excluded_files: set[str] | None = None, docs_root: Path | None = None) -> list[dict]:
         if self._index is None or not query.strip():
@@ -234,10 +278,12 @@ class VectorIndex:
         return None
 
     def get_chunk_ids_for_document(self, doc_id: str) -> list[str]:
-        return self._doc_id_to_node_ids.get(doc_id, [])
+        with self._index_lock:
+            return list(self._doc_id_to_node_ids.get(doc_id, []))
 
     def get_document_ids(self) -> list[str]:
-        return list(self._doc_id_to_node_ids.keys())
+        with self._index_lock:
+            return list(self._doc_id_to_node_ids.keys())
 
     def get_parent_content(self, parent_chunk_id: str) -> str | None:
         chunk_data = self.get_chunk_by_id(parent_chunk_id)
@@ -303,13 +349,42 @@ class VectorIndex:
         return term_counts
 
     def register_document_terms(self, text: str, min_term_length: int = 3) -> None:
-        """Register terms from a newly indexed document for later vocabulary update."""
+        """Register terms from a newly indexed document for later vocabulary update.
+
+        Implements bounded collections with LRU eviction to prevent memory leaks.
+        """
         doc_terms = self.extract_terms_from_text(text, min_term_length)
         for term, count in doc_terms.items():
+            # Update or add term count
             self._term_counts[term] = self._term_counts.get(term, 0) + count
+            # Move to end (most recently used) for LRU tracking
+            self._term_counts.move_to_end(term)
+
             # Mark as pending if not already in vocabulary
             if term not in self._concept_vocabulary:
                 self._pending_terms.add(term)
+
+        # Evict least recently used terms if exceeding limits
+        if len(self._term_counts) > MAX_VOCABULARY_SIZE:
+            num_to_remove = len(self._term_counts) - MAX_VOCABULARY_SIZE
+            for _ in range(num_to_remove):
+                # Remove oldest (least recently used) term
+                old_term = next(iter(self._term_counts))
+                self._term_counts.pop(old_term)
+                self._concept_vocabulary.pop(old_term, None)
+                self._pending_terms.discard(old_term)
+            logger.debug(f"Evicted {num_to_remove} LRU terms from vocabulary (limit: {MAX_VOCABULARY_SIZE})")
+
+        # Limit pending terms by keeping most frequent
+        if len(self._pending_terms) > MAX_PENDING_TERMS:
+            # Sort pending by frequency and keep top N
+            sorted_pending = sorted(
+                self._pending_terms,
+                key=lambda t: self._term_counts.get(t, 0),
+                reverse=True
+            )
+            self._pending_terms = set(sorted_pending[:MAX_PENDING_TERMS])
+            logger.debug(f"Trimmed pending terms to {MAX_PENDING_TERMS} most frequent")
 
     def update_vocabulary_incremental(
         self,
@@ -450,29 +525,31 @@ class VectorIndex:
 
         path.mkdir(parents=True, exist_ok=True)
 
-        storage_context = self._index.storage_context
-        storage_context.persist(persist_dir=str(path))
+        # Acquire lock to prevent concurrent add_chunk operations during serialization
+        with self._index_lock:
+            storage_context = self._index.storage_context
+            storage_context.persist(persist_dir=str(path))
 
-        if self._vector_store is not None:
-            import faiss
-            faiss_path = path / "faiss_index.bin"
-            faiss.write_index(self._vector_store._faiss_index, str(faiss_path))  # type: ignore[attr-defined]
+            if self._vector_store is not None:
+                import faiss
+                faiss_path = path / "faiss_index.bin"
+                faiss.write_index(self._vector_store._faiss_index, str(faiss_path))  # type: ignore[attr-defined]
 
-        mapping_file = path / "doc_id_mapping.json"
-        with open(mapping_file, "w") as f:
-            json.dump(self._doc_id_to_node_ids, f)
+            mapping_file = path / "doc_id_mapping.json"
+            with open(mapping_file, "w") as f:
+                json.dump(self._doc_id_to_node_ids, f)
 
-        chunk_mapping_file = path / "chunk_id_mapping.json"
-        with open(chunk_mapping_file, "w") as f:
-            json.dump(self._chunk_id_to_node_id, f)
+            chunk_mapping_file = path / "chunk_id_mapping.json"
+            with open(chunk_mapping_file, "w") as f:
+                json.dump(self._chunk_id_to_node_id, f)
 
-        vocab_file = path / "concept_vocabulary.json"
-        with open(vocab_file, "w") as f:
-            json.dump(self._concept_vocabulary, f)
+            vocab_file = path / "concept_vocabulary.json"
+            with open(vocab_file, "w") as f:
+                json.dump(self._concept_vocabulary, f)
 
-        term_counts_file = path / "term_counts.json"
-        with open(term_counts_file, "w") as f:
-            json.dump(self._term_counts, f)
+            term_counts_file = path / "term_counts.json"
+            with open(term_counts_file, "w") as f:
+                json.dump(self._term_counts, f)
 
     def load(self, path: Path) -> None:
         from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage
@@ -579,16 +656,21 @@ class VectorIndex:
         )
 
     def _cleanup_stale_reference(self, chunk_id: str) -> None:
-        """Remove a stale chunk reference from internal mappings."""
-        if chunk_id in self._chunk_id_to_node_id:
-            del self._chunk_id_to_node_id[chunk_id]
+        """Remove a stale chunk reference from internal mappings.
 
-        for doc_id, node_ids in list(self._doc_id_to_node_ids.items()):
-            if chunk_id in node_ids:
-                node_ids.remove(chunk_id)
-                if not node_ids:
-                    del self._doc_id_to_node_ids[doc_id]
-                break
+        Note: This is called from get_chunk_by_id which doesn't hold the lock,
+        so we acquire it here.
+        """
+        with self._index_lock:
+            if chunk_id in self._chunk_id_to_node_id:
+                del self._chunk_id_to_node_id[chunk_id]
+
+            for doc_id, node_ids in list(self._doc_id_to_node_ids.items()):
+                if chunk_id in node_ids:
+                    node_ids.remove(chunk_id)
+                    if not node_ids:
+                        del self._doc_id_to_node_ids[doc_id]
+                    break
 
     def reconcile_mappings(self) -> int:
         """
@@ -603,7 +685,11 @@ class VectorIndex:
         removed = 0
         docstore = self._index.docstore
 
-        for chunk_id in list(self._chunk_id_to_node_id.keys()):
+        # Take snapshot of chunk IDs to check (avoid holding lock during docstore lookups)
+        with self._index_lock:
+            chunk_ids_snapshot = list(self._chunk_id_to_node_id.keys())
+
+        for chunk_id in chunk_ids_snapshot:
             try:
                 node = docstore.get_document(chunk_id)
                 if node is None:
