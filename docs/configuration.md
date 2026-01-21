@@ -714,6 +714,32 @@ Controls git commit history indexing and search.
   max_delta_lines = 200
   ```
 
+#### `parallel_workers`
+
+- **Type:** integer
+- **Default:** `4`
+- **Description:** Number of parallel workers for git commit parsing. Uses ThreadPoolExecutor (not multiprocessing) since git subprocesses release the GIL. Provides 2-4x speedup for 100+ commits.
+- **Range:** 1 to 16 (typical: 2 to 8)
+- **Effect:** Higher values improve indexing throughput at cost of CPU usage.
+- **Example:**
+  ```toml
+  [git_indexing]
+  parallel_workers = 8  # Use 8 threads for faster indexing
+  ```
+
+#### `embed_batch_size`
+
+- **Type:** integer
+- **Default:** `32`
+- **Description:** Batch size for embedding generation during git commit indexing. Commits are batched together before embedding to improve throughput.
+- **Range:** 8 to 128 (typical: 16 to 64)
+- **Effect:** Larger batches improve embedding throughput; smaller batches reduce memory usage.
+- **Example:**
+  ```toml
+  [git_indexing]
+  embed_batch_size = 64  # Larger batches for high-memory systems
+  ```
+
 **Complete Example:**
 
 ```toml
@@ -721,6 +747,8 @@ Controls git commit history indexing and search.
 enabled = true
 exclude_patterns = [".venv", "node_modules", "build"]
 max_delta_lines = 200
+parallel_workers = 4
+embed_batch_size = 32
 ```
 
 **Behavior:**
@@ -733,9 +761,10 @@ max_delta_lines = 200
 
 **Performance:**
 
-- Indexing: 60 commits/sec (includes git operations, parsing, embedding)
+- Indexing: 60-240 commits/sec depending on `parallel_workers` (2-4x speedup with parallelization)
 - Query: 5ms average for 10k commits
 - Storage: ~2KB per commit (metadata + embedding + truncated delta)
+- Parallelization: ThreadPoolExecutor used (not ProcessPoolExecutor) because git subprocesses release the GIL
 
 ### [search]
 

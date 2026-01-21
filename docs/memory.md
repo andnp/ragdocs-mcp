@@ -428,7 +428,6 @@ Hybrid search across memory corpus with recency boost.
 |------|------|----------|---------|-------------|
 | `query` | string | Yes | - | Natural language query |
 | `limit` | int | No | 5 | Maximum results |
-| `filter_tags` | list[string] | No | None | Filter by tags (OR logic) |
 | `filter_type` | string | No | None | Filter by memory type |
 | `after_timestamp` | int | No | None | Unix timestamp: only return memories created/modified after this time |
 | `before_timestamp` | int | No | None | Unix timestamp: only return memories created/modified before this time |
@@ -447,7 +446,6 @@ Hybrid search across memory corpus with recency boost.
 // Basic search
 {
   "query": "authentication improvements",
-  "filter_tags": ["auth", "security"],
   "filter_type": "plan",
   "limit": 10
 }
@@ -469,7 +467,6 @@ Hybrid search across memory corpus with recency boost.
 {
   "query": "auth improvements",
   "relative_days": 30,
-  "filter_tags": ["security"],
   "filter_type": "plan"
 }
 ```
@@ -651,6 +648,209 @@ Suggest groups of memories that could be merged based on content similarity.
     ]
   }
 ]
+```
+
+### Graph Relationship Operations
+
+Memory-to-memory relationships are created via wikilink syntax with context keywords. The system detects relationship types based on surrounding text.
+
+#### `get_memory_relationships`
+
+**Primary tool for querying memory relationships.** Get version history (SUPERSEDES), dependencies (DEPENDS_ON), or contradictions (CONTRADICTS) for a memory.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `filename` | string | Yes | Memory filename to query |
+| `relationship_type` | string | No | `"supersedes"`, `"depends_on"`, `"contradicts"`, or omit for all |
+
+**Relationship Types:**
+
+| Type | Edge Type | Meaning | Context Keywords |
+|------|-----------|---------|------------------|
+| `supersedes` | `SUPERSEDES` | Version/revision chain | "supersedes", "replaces", "updates" |
+| `depends_on` | `DEPENDS_ON` | Prerequisites/dependencies | "depends on", "requires", "needs" |
+| `contradicts` | `CONTRADICTS` | Conflicting information | "contradicts", "disagrees with", "challenges" |
+
+**Creating Relationships:**
+
+Use `[[memory:filename]]` wikilinks with context keywords:
+
+```markdown
+This plan [[memory:auth-v1]] supersedes the previous approach.
+
+The implementation [[memory:jwt-impl]] depends on [[memory:auth-refactor-plan]].
+
+Our new strategy [[memory:stateless-auth]] contradicts [[memory:session-based-auth]].
+```
+
+**Examples:**
+
+```json
+// Get all relationships
+{
+  "filename": "auth-refactor-v2.md"
+}
+
+// Get only version history
+{
+  "filename": "auth-refactor-v2.md",
+  "relationship_type": "supersedes"
+}
+
+// Get only dependencies
+{
+  "filename": "jwt-implementation.md",
+  "relationship_type": "depends_on"
+}
+
+// Get only contradictions
+{
+  "filename": "new-approach.md",
+  "relationship_type": "contradicts"
+}
+```
+
+**Response (all relationships):**
+
+```json
+{
+  "supersedes": {
+    "version_chain": [
+      {
+        "memory_id": "memory:auth-refactor-v2",
+        "file_path": "/project/.memories/auth-refactor-v2.md"
+      },
+      {
+        "memory_id": "memory:auth-refactor-v1",
+        "file_path": "/project/.memories/auth-refactor-v1.md"
+      }
+    ],
+    "count": 2
+  },
+  "depends_on": [
+    {
+      "memory_id": "memory:jwt-library-research",
+      "file_path": "/project/.memories/jwt-library-research.md",
+      "context": "...implementation depends on [[memory:jwt-library-research]] for library selection..."
+    }
+  ],
+  "contradicts": [
+    {
+      "memory_id": "memory:session-based-auth",
+      "file_path": "/project/.memories/session-based-auth.md",
+      "context": "...this approach contradicts [[memory:session-based-auth]] which relied on cookies..."
+    }
+  ]
+}
+```
+
+**Response (single relationship type):**
+
+```json
+{
+  "supersedes": {
+    "version_chain": [
+      {
+        "memory_id": "memory:auth-refactor-v2",
+        "file_path": "/project/.memories/auth-refactor-v2.md"
+      },
+      {
+        "memory_id": "memory:auth-refactor-v1",
+        "file_path": "/project/.memories/auth-refactor-v1.md"
+      }
+    ],
+    "count": 2
+  }
+}
+```
+
+#### ⚠️ `get_memory_versions` (DEPRECATED)
+
+**DEPRECATED: Use `get_memory_relationships(filename, "supersedes")` instead.**
+
+Show version history by following SUPERSEDES chain.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `filename` | string | Yes | Memory filename to get version history for |
+
+**Migration Example:**
+
+```json
+// Old (deprecated)
+{
+  "tool": "get_memory_versions",
+  "filename": "auth-plan.md"
+}
+
+// New (recommended)
+{
+  "tool": "get_memory_relationships",
+  "filename": "auth-plan.md",
+  "relationship_type": "supersedes"
+}
+```
+
+#### ⚠️ `get_memory_dependencies` (DEPRECATED)
+
+**DEPRECATED: Use `get_memory_relationships(filename, "depends_on")` instead.**
+
+Show dependencies by finding DEPENDS_ON links.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `filename` | string | Yes | Memory filename to get dependencies for |
+
+**Migration Example:**
+
+```json
+// Old (deprecated)
+{
+  "tool": "get_memory_dependencies",
+  "filename": "implementation.md"
+}
+
+// New (recommended)
+{
+  "tool": "get_memory_relationships",
+  "filename": "implementation.md",
+  "relationship_type": "depends_on"
+}
+```
+
+#### ⚠️ `detect_contradictions` (DEPRECATED)
+
+**DEPRECATED: Use `get_memory_relationships(filename, "contradicts")` instead.**
+
+Find conflicting memories by detecting CONTRADICTS links.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `filename` | string | Yes | Memory filename to detect contradictions for |
+
+**Migration Example:**
+
+```json
+// Old (deprecated)
+{
+  "tool": "detect_contradictions",
+  "filename": "new-strategy.md"
+}
+
+// New (recommended)
+{
+  "tool": "get_memory_relationships",
+  "filename": "new-strategy.md",
+  "relationship_type": "contradicts"
+}
 ```
 
 ## Architecture

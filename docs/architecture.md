@@ -602,9 +602,53 @@ On startup and when GitWatcher detects changes:
 1. Query last indexed timestamp for repository (normalized path)
 2. Execute `git log --all --after={last_indexed_timestamp}` for new commits
 3. Skip indexing if zero new commits found
-4. Parse commit metadata and delta for new commits
-5. Generate embedding and store in SQLite
+4. Parse commit metadata and delta for new commits (using parallel indexer)
+5. Generate embeddings in batches and store in SQLite
 6. Update `indexed_at` timestamp
+
+#### Parallel Indexer (src/git/parallel_indexer.py)
+
+**Purpose:** Accelerate git commit indexing through parallelization and batching.
+
+**Configuration:**
+```python
+@dataclass
+class ParallelIndexingConfig:
+    max_workers: int = 4      # ThreadPoolExecutor workers
+    batch_size: int = 100     # Commits per processing batch
+    embed_batch_size: int = 32  # Documents per embedding batch
+```
+
+**Pipeline Stages:**
+
+1. **Parallel Parsing** (`parse_commits_parallel`):
+   - Uses `ThreadPoolExecutor` (not `ProcessPoolExecutor`)
+   - Git subprocess calls release GIL, enabling true parallelism
+   - Each worker: `git show`, `git diff` for one commit
+   - Graceful failure handling: individual parse failures don't crash batch
+
+2. **Batch Embedding** (`batch_embed_texts`):
+   - Groups commit documents into batches of `embed_batch_size`
+   - Embedding model processes batch sequentially
+   - Reduces per-call overhead compared to single-document embedding
+
+3. **Bulk Insert** (`add_commits_batch`):
+   - Uses SQLite `executemany()` for batch inserts
+   - Single transaction per batch reduces I/O overhead
+   - Atomic: entire batch succeeds or fails together
+
+**Variants:**
+- `index_commits_parallel()`: Async variant using `asyncio.to_thread()`
+- `index_commits_parallel_sync()`: Synchronous variant for CLI commands
+
+**Expected Speedup:**
+- 2-4x faster for 100+ commits compared to sequential indexing
+- Bottleneck shifts from git subprocess calls to embedding generation
+
+**Integration Points:**
+- Initial indexing: `ApplicationContext._index_git_commits_initial_sync()`
+- Incremental updates: `GitWatcher._batch_process()`
+- Manual rebuild: `rebuild-index` CLI command
 
 **Path Normalization:**
 
@@ -632,7 +676,7 @@ Last indexed timestamp stored per repository in `git_commits` table. The `repo_p
 **Storage Location:** `{index_path}/commits.db`
 
 **Performance:**
-- Indexing: 60 commits/sec (includes git operations, parsing, embedding)
+- Indexing: 60-240 commits/sec (2-4x speedup with parallel indexer)
 - Query: 5ms average for 10k commits (cosine similarity in-memory)
 - Storage: ~2KB per commit (metadata + embedding)
 

@@ -18,6 +18,83 @@ This server supports two transport methods:
 
 The Model Context Protocol (MCP) enables LLMs to access external tools and data sources. This server exposes a `query_documents` tool that allows AI assistants to search and retrieve information from local Markdown documentation.
 
+## Query Document Tools
+
+### `query_documents` Tool Parameters
+
+The `query_documents` tool supports flexible result filtering through the `uniqueness_mode` parameter:
+
+```typescript
+{
+  query: string;                    // Required: Search query
+  top_n?: number;                   // Optional: Max results (default: 5, max: 100)
+  uniqueness_mode?: string;         // Optional: Result uniqueness strategy (default: "allow_multiple")
+  min_score?: number;               // Optional: Min relevance score (default: 0.3)
+  show_stats?: boolean;             // Optional: Show compression stats (default: false)
+  similarity_threshold?: number;    // Optional: Dedup threshold (default: 0.85)
+  excluded_files?: string[];        // Optional: Files to exclude from results
+}
+```
+
+#### Uniqueness Mode
+
+Controls whether multiple chunks from the same document can appear in results:
+
+- **`"allow_multiple"` (default)**: Returns multiple chunks per document for depth within files
+  - Use when you need comprehensive coverage of a topic that may span multiple sections
+  - Example: Understanding all aspects of authentication in a single guide
+  - Results may include several sections from the same file if they're all relevant
+
+- **`"one_per_document"`**: Returns at most one chunk per document for breadth across files
+  - Use when you want to discover which files are relevant across the codebase
+  - Example: Finding all files that mention a particular API or concept
+  - Each result comes from a different file, maximizing document diversity
+
+**Usage Examples:**
+
+```typescript
+// Depth mode: Get comprehensive info from relevant sections
+{
+  "query": "JWT authentication implementation",
+  "top_n": 10,
+  "uniqueness_mode": "allow_multiple"
+}
+// May return: auth.md (3 sections), api.md (2 sections), config.md (1 section)
+```
+
+```typescript
+// Breadth mode: Discover which files discuss JWT
+{
+  "query": "JWT authentication implementation",
+  "top_n": 10,
+  "uniqueness_mode": "one_per_document"
+}
+// Returns: auth.md (best section), api.md (best section), config.md (best section), security.md (best section)...
+```
+
+#### Deprecation Notice
+
+**`query_unique_documents` is now deprecated.** Use `query_documents` with `uniqueness_mode="one_per_document"` instead:
+
+```typescript
+// Old approach (deprecated)
+{
+  "tool": "query_unique_documents",
+  "query": "authentication",
+  "top_n": 5
+}
+
+// New approach (recommended)
+{
+  "tool": "query_documents",
+  "query": "authentication",
+  "top_n": 5,
+  "uniqueness_mode": "one_per_document"
+}
+```
+
+The deprecated `query_unique_documents` tool will be removed in a future release.
+
 ## Integration with VS Code
 
 ### Prerequisites
@@ -966,6 +1043,10 @@ The server exposes tools for managing persistent AI memories when `memory.enable
 | `search_linked_memories` | Find memories linking to a document |
 | `get_memory_stats` | Memory bank statistics |
 | `merge_memories` | Consolidate multiple memories |
+| `get_memory_relationships` | **NEW:** Query memory relationships (versions/dependencies/contradictions) |
+| ~~`get_memory_versions`~~ | **DEPRECATED:** Use `get_memory_relationships(filename, "supersedes")` |
+| ~~`get_memory_dependencies`~~ | **DEPRECATED:** Use `get_memory_relationships(filename, "depends_on")` |
+| ~~`detect_contradictions`~~ | **DEPRECATED:** Use `get_memory_relationships(filename, "contradicts")` |
 
 ### Tool Parameters
 
@@ -1026,12 +1107,12 @@ created_at: "2025-01-11T12:00:00.000000+00:00"
 ---
 ```
 
-**Search with tag filter:**
+**Search memories:**
 
 ```json
 {
   "query": "authentication improvements",
-  "filter_tags": ["auth", "security"],
+  "filter_type": "plan",
   "limit": 10
 }
 ```
@@ -1093,12 +1174,35 @@ See [Memory Management Guide](memory.md) for complete documentation.
 
 Query the documentation index.
 
-**Request:**
+**Request Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | string | (required) | Natural language search query |
+| `top_n` | integer | 5 | Maximum results to return (max: 100) |
+| `uniqueness_mode` | string | `"allow_multiple"` | `"allow_multiple"` or `"one_per_document"` |
+| `min_score` | float | 0.3 | Minimum relevance score threshold (0-1) |
+| `show_stats` | boolean | false | Include compression statistics |
+| `similarity_threshold` | float | 0.85 | Deduplication similarity threshold (0.5-1) |
+| `excluded_files` | string[] | [] | Files to exclude (filename, relative, or absolute path) |
+
+**Request (Depth - multiple chunks per document):**
 
 ```json
 {
   "query": "How do I configure the server?",
-  "top_n": 5
+  "top_n": 5,
+  "uniqueness_mode": "allow_multiple"
+}
+```
+
+**Request (Breadth - one chunk per document):**
+
+```json
+{
+  "query": "How do I configure the server?",
+  "top_n": 5,
+  "uniqueness_mode": "one_per_document"
 }
 ```
 

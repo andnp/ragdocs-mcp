@@ -27,7 +27,14 @@ def config(tmp_path):
             rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="local"),
-        chunking=ChunkingConfig(
+        document_chunking=ChunkingConfig(
+            strategy="header_based",
+            min_chunk_chars=200,
+            max_chunk_chars=1500,
+            overlap_chars=100,
+            include_parent_headers=True,
+        ),
+        memory_chunking=ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=200,
             max_chunk_chars=1500,
@@ -99,7 +106,7 @@ async def test_query_returns_chunk_result_objects(config, manager, orchestrator)
     manager.index_document(doc2)
 
     # Execute query
-    results, _ = await orchestrator.query("authentication setup", top_k=10, top_n=5)
+    results, _, _ = await orchestrator.query("authentication setup", top_k=10, top_n=5)
 
     # Verify return type
     assert isinstance(results, list)
@@ -144,7 +151,7 @@ async def test_chunk_result_contains_metadata(config, manager, orchestrator):
     manager.index_document(doc)
 
     # Query for content that should match
-    results, _ = await orchestrator.query("authentication API", top_k=10, top_n=3)
+    results, _, _ = await orchestrator.query("authentication API", top_k=10, top_n=3)
 
     assert len(results) > 0
 
@@ -193,7 +200,7 @@ async def test_chunk_result_scores_normalized(config, manager, orchestrator):
         manager.index_document(doc_path)
 
     # Query that should match multiple documents
-    results, _ = await orchestrator.query("authentication security", top_k=10, top_n=10)
+    results, _, _ = await orchestrator.query("authentication security", top_k=10, top_n=10)
 
     assert len(results) >= 2, "Should have at least 2 results"
 
@@ -238,7 +245,7 @@ async def test_query_with_missing_chunk_fallback(config, indices, manager, orche
     manager.index_document(doc)
 
     # Get initial results to verify normal operation
-    results, _ = await orchestrator.query("fallback test", top_k=10, top_n=5)
+    results, _, _ = await orchestrator.query("fallback test", top_k=10, top_n=5)
 
     assert len(results) > 0, "Should have at least one result"
 
@@ -288,7 +295,7 @@ async def test_chunk_result_serialization_in_pipeline(config, manager, orchestra
     manager.index_document(doc)
 
     # Execute query
-    results, _ = await orchestrator.query("serialization test", top_k=5, top_n=3)
+    results, _, _ = await orchestrator.query("serialization test", top_k=5, top_n=3)
 
     assert len(results) > 0
 
@@ -356,7 +363,7 @@ Additional details.
     manager.index_document(doc)
 
     # Query for content that should match
-    results, _ = await orchestrator.query("subsection important information", top_k=10, top_n=5)
+    results, _, _ = await orchestrator.query("subsection important information", top_k=10, top_n=5)
 
     assert len(results) > 0
 

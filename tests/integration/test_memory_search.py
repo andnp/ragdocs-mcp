@@ -57,7 +57,8 @@ def memory_config(tmp_path: Path):
             semantic_weight=1.0,
             keyword_weight=1.0,
         ),
-        chunking=ChunkingConfig(),
+        document_chunking=ChunkingConfig(),
+        memory_chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
@@ -160,15 +161,19 @@ class TestApplyMemoryDecay:
         # After 180 days, 0.90^180 ≈ 0.0000000002, floor kicks in
         assert decayed == pytest.approx(0.020 * 0.1)  # Floor applied
 
-    def test_missing_created_at_applies_floor(self):
-        """Verify None created_at uses floor multiplier."""
+    def test_missing_created_at_no_penalty(self):
+        """
+        Verify None created_at returns original score without penalty.
+
+        This handles legacy memories indexed before we added timestamp tracking.
+        """
         decayed = apply_memory_decay(
             score=0.5,
             created_at=None,
             decay_rate=0.90,
             floor_multiplier=0.1,
         )
-        assert decayed == pytest.approx(0.05)  # 0.5 × 0.1
+        assert decayed == pytest.approx(0.5)  # No penalty applied
 
     def test_handles_naive_datetime(self):
         """Verify naive datetime is converted to UTC."""
@@ -357,38 +362,6 @@ class TestMemorySearchFilters:
         for result in results:
             assert result.frontmatter.type == "plan"
 
-    @pytest.mark.asyncio
-    async def test_filter_by_tags(
-        self,
-        memory_manager: MemoryIndexManager,
-        memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
-    ):
-        """
-        Verify tag filter narrows results to memories with matching tags.
-        """
-        create_memory_file(
-            memory_path,
-            "api-note",
-            "---\ntags: [\"api\", \"backend\"]\n---\n# API\n\nAPI documentation."
-        )
-        create_memory_file(
-            memory_path,
-            "frontend-note",
-            "---\ntags: [\"frontend\", \"ui\"]\n---\n# Frontend\n\nUI documentation."
-        )
-
-        memory_manager.reindex_all()
-
-        results = await memory_search.search_memories(
-            "documentation",
-            limit=10,
-            filter_tags=["api"]
-        )
-
-        for result in results:
-            assert "api" in result.frontmatter.tags or len(results) == 0
-
 
 # ============================================================================
 # Linked Memory Search Tests
@@ -561,7 +534,6 @@ class TestTimeRangeFiltering:
         """
         Verify only memories after timestamp are returned.
         """
-        import os
         
         # Create memories with different timestamps
         old_memory = create_memory_file(
@@ -831,7 +803,7 @@ class TestTimeRangeFiltering:
         memory_path: Path,
     ):
         """
-        Verify time filter works with tags/type filters.
+        Verify time filter works with type filters.
         """
         from datetime import timedelta
 
@@ -839,29 +811,28 @@ class TestTimeRangeFiltering:
         recent_date = (now - timedelta(days=2)).isoformat()
         old_date = (now - timedelta(days=10)).isoformat()
 
-        # Create memories with different types, tags, and dates
+        # Create memories with different types and dates
         memories = [
-            ("recent-api", f'---\ntype: "plan"\ntags: ["api"]\ncreated_at: "{recent_date}"\n---\n# Recent API\n\nAPI development.'),
-            ("old-api", f'---\ntype: "plan"\ntags: ["api"]\ncreated_at: "{old_date}"\n---\n# Old API\n\nAPI development.'),
-            ("recent-ui", f'---\ntype: "fact"\ntags: ["ui"]\ncreated_at: "{recent_date}"\n---\n# Recent UI\n\nUI development.'),
+            ("recent-plan", f'---\ntype: "plan"\ncreated_at: "{recent_date}"\n---\n# Recent Plan\n\nAPI development.'),
+            ("old-plan", f'---\ntype: "plan"\ncreated_at: "{old_date}"\n---\n# Old Plan\n\nAPI development.'),
+            ("recent-fact", f'---\ntype: "fact"\ncreated_at: "{recent_date}"\n---\n# Recent Fact\n\nUI development.'),
         ]
 
         for filename, content in memories:
             path = create_memory_file(memory_path, filename, content)
             memory_manager.index_memory(str(path))
 
-        # Filter for recent API plans only
+        # Filter for recent plans only
         results = await memory_search.search_memories(
             "development",
             limit=10,
             filter_type="plan",
-            filter_tags=["api"],
             relative_days=7,
         )
 
-        # Should only get recent-api
+        # Should only get recent-plan
         assert len(results) == 1
-        assert results[0].memory_id == "memory:recent-api"
+        assert results[0].memory_id == "memory:recent-plan"
 
     @pytest.mark.asyncio
     async def test_empty_results_with_time_filter(

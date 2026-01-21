@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from src.compression.thresholding import filter_by_score
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig, ChunkingConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -61,6 +61,8 @@ def integration_config(tmp_path_factory) -> Config:
             rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        document_chunking=ChunkingConfig(),
+        memory_chunking=ChunkingConfig(),
     )
 
 
@@ -234,7 +236,7 @@ class TestCompressionPipeline:
         Verifies the basic flow: query → filter → deduplicate → return.
         """
         # Execute query
-        results, _ = await integration_orchestrator.query(
+        results, _, _ = await integration_orchestrator.query(
             "What is Python programming?",
             top_k=20,
             top_n=20,
@@ -257,7 +259,7 @@ class TestCompressionPipeline:
 
         Higher threshold should result in fewer results.
         """
-        results, _ = await integration_orchestrator.query(
+        results, _, _ = await integration_orchestrator.query(
             "Python variables and types",
             top_k=20,
             top_n=20,
@@ -290,7 +292,7 @@ class TestCompressionPipeline:
             dedup_threshold=0.85,
         )
 
-        results, stats = await integration_orchestrator.query(
+        results, stats, _ = await integration_orchestrator.query(
             "Introduction to Python programming language",
             top_k=20,
             top_n=20,
@@ -327,7 +329,7 @@ class TestCompressionStats:
             dedup_threshold=0.85,
         )
 
-        results, stats = await integration_orchestrator.query(
+        results, stats, _ = await integration_orchestrator.query(
             "database query optimization",
             top_k=20,
             top_n=20,
@@ -390,7 +392,7 @@ class TestParameterHandling:
             dedup_threshold=0.85,
         )
 
-        results, _ = await integration_orchestrator.query(
+        results, _, _ = await integration_orchestrator.query(
             "programming language introduction",
             top_k=20,
             top_n=3,
@@ -410,7 +412,7 @@ class TestParameterHandling:
 
         Different min_score values should produce different result counts.
         """
-        results, _ = await integration_orchestrator.query(
+        results, _, _ = await integration_orchestrator.query(
             "Rust ownership memory safety",
             top_k=20,
             top_n=20,
@@ -447,14 +449,14 @@ class TestParameterHandling:
             dedup_threshold=0.7,
         )
 
-        _, stats_high = await integration_orchestrator.query(
+        _, stats_high, _ = await integration_orchestrator.query(
             "Python programming basics",
             top_k=20,
             top_n=20,
             pipeline_config=config_high,
         )
 
-        _, stats_low = await integration_orchestrator.query(
+        _, stats_low, _ = await integration_orchestrator.query(
             "Python programming basics",
             top_k=20,
             top_n=20,
@@ -483,7 +485,7 @@ class TestEdgeCases:
 
         Should handle empty results gracefully.
         """
-        results, _ = await integration_orchestrator.query(
+        results, _, _ = await integration_orchestrator.query(
             "xyzzy completely unrelated nonsense query 12345",
             top_k=5,
             top_n=5,
@@ -512,7 +514,7 @@ class TestEdgeCases:
             dedup_threshold=0.85,
         )
 
-        results, stats = await integration_orchestrator.query(
+        results, stats, _ = await integration_orchestrator.query(
             "Rust fearless concurrency type system",
             top_k=5,
             top_n=1,
@@ -534,7 +536,7 @@ class TestEdgeCases:
 
         Very high threshold may filter everything out.
         """
-        results, _ = await integration_orchestrator.query(
+        results, _, _ = await integration_orchestrator.query(
             "general programming concepts",
             top_k=10,
             top_n=10,
@@ -560,7 +562,7 @@ class TestEmbeddingsIntegration:
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
-        results, _ = await integration_orchestrator.query(
+        results, _, _ = await integration_orchestrator.query(
             "Python introduction",
             top_k=5,
             top_n=5,
@@ -582,7 +584,7 @@ class TestEmbeddingsIntegration:
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
-        results, _ = await integration_orchestrator.query(
+        results, _, _ = await integration_orchestrator.query(
             "Python programming language overview",
             top_k=10,
             top_n=10,

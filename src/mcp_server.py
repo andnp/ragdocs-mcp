@@ -8,9 +8,8 @@ from mcp.types import Tool, TextContent
 from src.context import ApplicationContext
 from src.lifecycle import LifecycleCoordinator
 from src.mcp.handlers import HandlerContext, get_handler, MIN_TOP_N, MAX_TOP_N
-from src.search.classifier import classify_query as classify_query_type
 from src.search.pipeline import SearchPipelineConfig
-from src.search.utils import truncate_content
+from src.search.utils import classify_query_type, truncate_content
 import src.mcp.handlers  # noqa: F401 - registers search handlers
 import src.mcp.memory_handlers  # noqa: F401 - registers memory handlers
 
@@ -32,7 +31,8 @@ class MCPServer:
                     description=(
                         "Search local documentation using hybrid search (semantic + keyword + graph). " +
                         "Returns ranked document chunks with relevance scores. " +
-                        "Use for discovering relevant documentation sections in a large corpus."
+                        "Use for discovering relevant documentation sections in a large corpus. " +
+                        "Supports optional uniqueness_mode parameter for document-unique results."
                     ),
                     inputSchema={
                         "type": "object",
@@ -73,6 +73,12 @@ class MCPServer:
                                 "items": {"type": "string"},
                                 "default": [],
                             },
+                            "uniqueness_mode": {
+                                "type": "string",
+                                "enum": ["allow_multiple", "one_per_document"],
+                                "description": "Result uniqueness mode: 'allow_multiple' (default) returns multiple chunks per document, 'one_per_document' returns at most one chunk per document for breadth across files",
+                                "default": "allow_multiple",
+                            },
                         },
                         "required": ["query"],
                     },
@@ -80,6 +86,7 @@ class MCPServer:
                 Tool(
                     name="query_unique_documents",
                     description=(
+                        "**DEPRECATED: Use query_documents(query, uniqueness_mode='one_per_document') instead.** " +
                         "Search local documentation using hybrid search with strict document uniqueness. " +
                         "Returns at most ONE chunk per document, ensuring results span multiple files. " +
                         "Use when you want breadth across documentation rather than depth within files."
@@ -282,11 +289,6 @@ class MCPServer:
                                 "description": "Maximum number of results (default: 5)",
                                 "default": 5,
                             },
-                            "filter_tags": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Only return memories with these tags",
-                            },
                             "filter_type": {
                                 "type": "string",
                                 "enum": ["plan", "journal", "fact", "observation", "reflection"],
@@ -466,8 +468,32 @@ class MCPServer:
                     },
                 ),
                 Tool(
+                    name="get_memory_relationships",
+                    description=(
+                        "Get memory relationships by type (supersedes/depends_on/contradicts). " +
+                        "Returns version history, dependencies, or contradictions for a memory. " +
+                        "Use [[memory:filename]] links with context keywords ('supersedes', 'depends on', 'contradicts') to create relationships."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "Memory filename to query relationships for",
+                            },
+                            "relationship_type": {
+                                "type": "string",
+                                "enum": ["supersedes", "depends_on", "contradicts"],
+                                "description": "Type of relationship to query. If omitted, returns all relationships.",
+                            },
+                        },
+                        "required": ["filename"],
+                    },
+                ),
+                Tool(
                     name="get_memory_versions",
                     description=(
+                        "**DEPRECATED: Use get_memory_relationships(filename, 'supersedes') instead.** " +
                         "Show version history by following SUPERSEDES chain. " +
                         "Use [[memory:filename]] with 'supersedes' in context to create version links."
                     ),
@@ -485,6 +511,7 @@ class MCPServer:
                 Tool(
                     name="get_memory_dependencies",
                     description=(
+                        "**DEPRECATED: Use get_memory_relationships(filename, 'depends_on') instead.** " +
                         "Show dependencies by finding DEPENDS_ON links. " +
                         "Use [[memory:filename]] with 'depends on' in context to create dependency links."
                     ),
@@ -502,6 +529,7 @@ class MCPServer:
                 Tool(
                     name="detect_contradictions",
                     description=(
+                        "**DEPRECATED: Use get_memory_relationships(filename, 'contradicts') instead.** " +
                         "Find conflicting memories by detecting CONTRADICTS links. " +
                         "Use [[memory:filename]] with 'contradicts' in context to mark conflicts."
                     ),
@@ -592,7 +620,7 @@ class MCPServer:
             rerank_enabled=False,
         )
 
-        results, stats = await self.ctx.orchestrator.query(
+        results, stats, _ = await self.ctx.orchestrator.query(
             query,
             top_k=top_k,
             top_n=top_n,
@@ -665,7 +693,7 @@ class MCPServer:
 
         top_k = max(20, top_n * 4)
 
-        results, stats = await self.ctx.orchestrator.query_with_hypothesis(
+        results, _, _ = await self.ctx.orchestrator.query_with_hypothesis(
             hypothesis,
             top_k=top_k,
             top_n=top_n,
@@ -851,7 +879,6 @@ class MCPServer:
 
         query = arguments.get("query", "")
         limit = arguments.get("limit", 5)
-        filter_tags = arguments.get("filter_tags")
         filter_type = arguments.get("filter_type")
         load_full_memory = arguments.get("load_full_memory", False)
         after_timestamp = arguments.get("after_timestamp")
@@ -859,7 +886,7 @@ class MCPServer:
         relative_days = arguments.get("relative_days")
 
         results = await memory_tools.search_memories(
-            self.ctx, query, limit, filter_tags, filter_type, load_full_memory,
+            self.ctx, query, limit, filter_type, load_full_memory,
             after_timestamp, before_timestamp, relative_days
         )
 

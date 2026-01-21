@@ -91,7 +91,7 @@ def create_app():
             rerank_enabled=False,
         )
 
-        results, _ = await orchestrator.query(
+        results, _, _ = await orchestrator.query(
             query,
             top_k=top_k,
             top_n=top_n,

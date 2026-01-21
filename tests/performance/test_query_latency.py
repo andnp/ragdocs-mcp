@@ -170,7 +170,7 @@ async def test_query_latency_warm_queries(config, orchestrator, indexed_corpus):
     # Benchmark multiple queries
     for query in queries:
         start_time = time.perf_counter()
-        results, _ = await orchestrator.query(query, top_k=10, top_n=10)
+        results, _, _ = await orchestrator.query(query, top_k=10, top_n=10)
         end_time = time.perf_counter()
 
         latency_ms = (end_time - start_time) * 1000
@@ -225,7 +225,7 @@ async def test_query_latency_by_top_k(config, orchestrator, indexed_corpus):
         latencies = []
         for _ in range(5):  # 5 runs per top_k
             start_time = time.perf_counter()
-            results, _ = await orchestrator.query(query, top_k=top_k, top_n=top_k)
+            results, _, _ = await orchestrator.query(query, top_k=top_k, top_n=top_k)
             end_time = time.perf_counter()
 
             latency_ms = (end_time - start_time) * 1000
@@ -312,7 +312,7 @@ async def test_query_latency_empty_results(config, orchestrator, indexed_corpus)
 
     for _ in range(10):
         start_time = time.perf_counter()
-        results, _ = await orchestrator.query(query, top_k=10, top_n=10)
+        results, _, _ = await orchestrator.query(query, top_k=10, top_n=10)
         end_time = time.perf_counter()
 
         latency_ms = (end_time - start_time) * 1000

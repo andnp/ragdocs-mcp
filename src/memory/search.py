@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,8 +14,13 @@ from src.memory.models import (
     MemoryFrontmatter,
     MemorySearchResult,
 )
-from src.search.fusion import fuse_results, normalize_final_scores
-from src.search.tag_expansion import expand_query_with_tags
+from src.search.base_orchestrator import BaseSearchOrchestrator
+from src.search.score_pipeline import ScorePipelineConfig
+from src.search.time_scoring import (
+    DecayConfig,
+    TimeScoreMode,
+    apply_time_boost,
+)
 from src.utils.similarity import cosine_similarity_lists
 
 logger = logging.getLogger(__name__)
@@ -26,37 +32,13 @@ def apply_memory_decay(
     decay_rate: float,
     floor_multiplier: float,
 ) -> float:
-    """
-    Apply exponential decay to memory score based on age.
-
-    Formula: adjusted_score = original_score × max(floor_multiplier, decay_rate^days_old)
-
-    Args:
-        score: Original search score
-        created_at: Memory creation timestamp
-        decay_rate: Daily decay rate (0.0 < rate <= 1.0)
-        floor_multiplier: Minimum multiplier to prevent zero scores
-
-    Returns:
-        Score with decay applied
-    """
-    if created_at is None:
-        # No created_at: treat as very old, apply floor
+    if decay_rate <= 0 or decay_rate >= 1:
         return score * floor_multiplier
 
-    now = datetime.now(timezone.utc)
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
+    half_life_days = -math.log(0.5) / (-math.log(decay_rate))
 
-    age_days = (now - created_at).days
-
-    # Calculate decay multiplier
-    decay_multiplier = decay_rate ** age_days
-
-    # Apply floor to prevent scores from reaching zero
-    final_multiplier = max(floor_multiplier, decay_multiplier)
-
-    return score * final_multiplier
+    config = DecayConfig(half_life_days=half_life_days, min_score=floor_multiplier)
+    return apply_time_boost(score, created_at, TimeScoreMode.DECAY, config)
 
 
 def apply_memory_recency_boost(
@@ -188,7 +170,7 @@ def _passes_time_filter(
     return True
 
 
-class MemorySearchOrchestrator:
+class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
     def __init__(
         self,
         vector: VectorIndex,
@@ -197,17 +179,26 @@ class MemorySearchOrchestrator:
         config: Config,
         manager: MemoryIndexManager,
     ):
-        self._vector = vector
-        self._keyword = keyword
-        self._graph = graph
-        self._config = config
+        super().__init__(vector, keyword, graph, config)
         self._manager = manager
+        self._pending_reindex: set[str] = set()
+        self._reindex_tasks: set[asyncio.Task] = set()
+
+    def _build_score_pipeline_config(
+        self, weights: dict[str, float]
+    ) -> ScorePipelineConfig:
+        return ScorePipelineConfig(
+            rrf_k=self._config.search.rrf_k_constant,
+            strategy_weights=weights,
+            use_dynamic_weights=False,
+            calibration_threshold=self._config.search.score_calibration_threshold,
+            calibration_steepness=self._config.search.score_calibration_steepness,
+        )
 
     async def search_memories(
         self,
         query: str,
         limit: int = 5,
-        filter_tags: list[str] | None = None,
         filter_type: str | None = None,
         load_full_memory: bool = False,
         after_timestamp: int | None = None,
@@ -217,74 +208,29 @@ class MemorySearchOrchestrator:
         if not query or not query.strip():
             return []
 
-        # Normalize time filters (validates and applies relative_days)
         after_timestamp, before_timestamp = _normalize_time_filters(
             after_timestamp, before_timestamp, relative_days
         )
 
         top_k = max(20, limit * 4)
 
-        search_tasks = [
-            self._search_vector(query, top_k),
-            self._search_keyword(query, top_k),
-        ]
+        ctx = await self._execute_parallel_search(query, top_k)
 
-        results = await asyncio.gather(*search_tasks)
-        vector_results = results[0]
-        keyword_results = results[1]
+        self._apply_tag_expansion(ctx, top_k)
 
-        # Tag-based query expansion for memories
-        if self._config.search.tag_expansion_enabled:
-            combined_initial_results = vector_results + keyword_results
-            tag_expanded_results = expand_query_with_tags(
-                initial_results=combined_initial_results,
-                graph=self._graph,
-                vector=self._vector,
-                top_k=top_k,
-                max_related_tags=self._config.search.tag_expansion_max_tags,
-                max_depth=self._config.search.tag_expansion_depth,
-            )
+        strategy_results = self._build_strategy_results(ctx)
 
-            # Merge tag-expanded results into vector results
-            existing_chunk_ids = {r["chunk_id"] for r in vector_results}
-            for result in tag_expanded_results:
-                if result["chunk_id"] not in existing_chunk_ids:
-                    vector_results.append(result)
+        weights = self._get_base_weights()
 
-        results_dict: dict[str, list[str]] = {
-            "semantic": [r["chunk_id"] for r in vector_results],
-            "keyword": [r["chunk_id"] for r in keyword_results],
-        }
-
-        weights = {
-            "semantic": self._config.search.semantic_weight,
-            "keyword": self._config.search.keyword_weight,
-        }
-
-        modified_times = self._collect_modified_times(
-            {r["chunk_id"] for r in vector_results} |
-            {r["chunk_id"] for r in keyword_results}
-        )
-
-        fused = fuse_results(
-            results_dict,
-            self._config.search.rrf_k_constant,
-            weights,
-            modified_times,
-        )
-
-        # Apply score calibration to prevent RRF compression (0.01-0.03 → 0-1 range)
-        fused = normalize_final_scores(
-            fused,
-            self._config.search.score_calibration_threshold,
-            self._config.search.score_calibration_steepness,
-        )
+        fused = self._apply_score_pipeline(strategy_results, weights)
 
         memory_results: list[MemorySearchResult] = []
 
+        missing_chunk_ids: list[str] = []
         for chunk_id, score in fused:
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if not chunk_data:
+                missing_chunk_ids.append(chunk_id)
                 continue
 
             metadata = chunk_data.get("metadata", {})
@@ -295,11 +241,6 @@ class MemorySearchOrchestrator:
 
             if filter_type and metadata.get("memory_type") != filter_type:
                 continue
-
-            if filter_tags:
-                chunk_tags = metadata.get("memory_tags", [])
-                if not any(tag in chunk_tags for tag in filter_tags):
-                    continue
 
             # Time filtering (with fallback to file mtime)
             if after_timestamp is not None or before_timestamp is not None:
@@ -360,6 +301,8 @@ class MemorySearchOrchestrator:
                 break
 
         memory_results.sort(key=lambda r: r.score, reverse=True)
+        if missing_chunk_ids:
+            self._queue_reindex_for_chunks(missing_chunk_ids, "docstore lookup failed")
         return memory_results[:limit]
 
     async def search_linked_memories(
@@ -379,17 +322,21 @@ class MemorySearchOrchestrator:
 
         memory_chunks: list[tuple[str, str, float]] = []
 
+        missing_chunk_ids: list[str] = []
         for memory_id in memory_ids:
             chunk_ids = self._vector.get_chunk_ids_for_document(memory_id)
 
             for chunk_id in chunk_ids:
                 chunk_data = self._vector.get_chunk_by_id(chunk_id)
-                if chunk_data:
-                    content = str(chunk_data.get("content", ""))
-                    if query.lower() in content.lower():
-                        memory_chunks.append((memory_id, chunk_id, 1.0))
-                    else:
-                        memory_chunks.append((memory_id, chunk_id, 0.5))
+                if not chunk_data:
+                    missing_chunk_ids.append(chunk_id)
+                    continue
+
+                content = str(chunk_data.get("content", ""))
+                if query.lower() in content.lower():
+                    memory_chunks.append((memory_id, chunk_id, 1.0))
+                else:
+                    memory_chunks.append((memory_id, chunk_id, 0.5))
 
         if query.strip():
             query_embedding = self._vector.get_text_embedding(query)
@@ -418,6 +365,7 @@ class MemorySearchOrchestrator:
 
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if not chunk_data:
+                missing_chunk_ids.append(chunk_id)
                 continue
 
             edge = edge_map.get(memory_id, {})
@@ -434,34 +382,9 @@ class MemorySearchOrchestrator:
             if len(results) >= limit:
                 break
 
+        if missing_chunk_ids:
+            self._queue_reindex_for_chunks(missing_chunk_ids, "docstore lookup failed")
         return results
-
-    async def _search_vector(self, query: str, top_k: int) -> list[dict]:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, self._vector.search, query, top_k, None, None
-        )
-
-    async def _search_keyword(self, query: str, top_k: int) -> list[dict]:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, self._keyword.search, query, top_k, None, None
-        )
-
-    def _collect_modified_times(self, chunk_ids: set[str]) -> dict[str, float]:
-        modified_times: dict[str, float] = {}
-
-        for chunk_id in chunk_ids:
-            chunk_data = self._vector.get_chunk_by_id(chunk_id)
-            if chunk_data:
-                file_path = chunk_data.get("file_path")
-                # Type guard: ensure file_path is a string
-                if file_path and isinstance(file_path, str):
-                    path = Path(file_path)
-                    if path.exists():
-                        modified_times[chunk_id] = path.stat().st_mtime
-
-        return modified_times
 
     async def search_by_tag_cluster(
         self, tag: str, depth: int = 2, limit: int = 10
@@ -496,6 +419,7 @@ class MemorySearchOrchestrator:
 
         results: list[MemorySearchResult] = []
 
+        missing_chunk_ids: list[str] = []
         for memory_id in list(memory_ids)[:limit]:
             chunk_ids = self._vector.get_chunk_ids_for_document(memory_id)
             if not chunk_ids:
@@ -504,6 +428,7 @@ class MemorySearchOrchestrator:
             chunk_id = chunk_ids[0]
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if not chunk_data:
+                missing_chunk_ids.append(chunk_id)
                 continue
 
             metadata = chunk_data.get("metadata", {})
@@ -538,7 +463,77 @@ class MemorySearchOrchestrator:
             if len(results) >= limit:
                 break
 
+        if missing_chunk_ids:
+            self._queue_reindex_for_chunks(missing_chunk_ids, "docstore lookup failed")
         return results
+
+    def _extract_memory_id_from_chunk_id(self, chunk_id: str):
+        if "_chunk_" in chunk_id:
+            return chunk_id.split("_chunk_", 1)[0]
+        return chunk_id
+
+    def _queue_reindex_for_chunks(self, chunk_ids: list[str], reason: str):
+        memory_ids = {
+            self._extract_memory_id_from_chunk_id(chunk_id)
+            for chunk_id in chunk_ids
+            if chunk_id
+        }
+
+        if not memory_ids:
+            return
+
+        pending: list[str] = []
+        for memory_id in memory_ids:
+            if memory_id and memory_id not in self._pending_reindex:
+                self._pending_reindex.add(memory_id)
+                pending.append(memory_id)
+
+        if not pending:
+            return
+
+        logger.warning(
+            "Detected %d missing memory chunks; scheduling reindex for %d memories (%s)",
+            len(chunk_ids),
+            len(pending),
+            reason,
+        )
+        try:
+            task = asyncio.create_task(self._run_reindex(pending, reason))
+        except RuntimeError:
+            self._reindex_memories_sync(pending, reason)
+            return
+
+        self._reindex_tasks.add(task)
+        task.add_done_callback(lambda finished: self._reindex_tasks.discard(finished))
+
+    async def _run_reindex(self, memory_ids: list[str], reason: str):
+        try:
+            await asyncio.to_thread(self._reindex_memories_sync, memory_ids, reason)
+        finally:
+            for memory_id in memory_ids:
+                self._pending_reindex.discard(memory_id)
+
+    def _reindex_memories_sync(self, memory_ids: list[str], reason: str):
+        reindexed = 0
+        for memory_id in memory_ids:
+            if self._manager.reindex_memory(memory_id, reason=reason):
+                reindexed += 1
+
+        if reindexed > 0:
+            self._manager.persist()
+            logger.info("Reindexed %d memories after missing chunk recovery", reindexed)
+
+    async def drain_reindex(self, timeout: float | None = None):
+        tasks = [task for task in self._reindex_tasks if not task.done()]
+        if not tasks:
+            return 0
+
+        if timeout is None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            return len(tasks)
+
+        done, _pending = await asyncio.wait(tasks, timeout=timeout)
+        return len(done)
 
     def get_related_tags(self, tag: str) -> list[tuple[str, int]]:
         from src.memory.link_parser import normalize_tag
@@ -646,3 +641,90 @@ class MemorySearchOrchestrator:
                     })
 
         return contradictions
+
+    def get_memory_relationships(
+        self, memory_id: str, relationship_type: str | None = None
+    ) -> dict:
+        """
+        Get memory relationships by edge type.
+        
+        Args:
+            memory_id: Memory ID to query relationships for
+            relationship_type: Type of relationship - "supersedes", "depends_on", "contradicts", or None for all
+            
+        Returns:
+            Dictionary with relationship types as keys and lists of related memories as values.
+            For "supersedes", returns a "version_chain" dict instead of a list.
+            Returns {"error": str} if memory not found or invalid relationship type.
+        """
+        if not self._graph.has_node(memory_id):
+            return {"error": f"Memory not found: {memory_id}"}
+
+        # Map of edge types to query
+        edge_type_map = {
+            "supersedes": "SUPERSEDES",
+            "depends_on": "DEPENDS_ON",
+            "contradicts": "CONTRADICTS",
+        }
+
+        # Determine which edge types to query
+        if relationship_type:
+            if relationship_type not in edge_type_map:
+                return {"error": f"Invalid relationship type: {relationship_type}. Must be one of: {', '.join(edge_type_map.keys())}"}
+            edge_types_to_query = {relationship_type: edge_type_map[relationship_type]}
+        else:
+            edge_types_to_query = edge_type_map
+
+        result: dict[str, list[dict] | dict] = {}
+
+        # Handle SUPERSEDES specially (builds a chain)
+        if "supersedes" in edge_types_to_query:
+            chain: list[dict] = []
+            current_id = memory_id
+            visited = set()
+
+            while current_id and current_id not in visited:
+                visited.add(current_id)
+
+                chunk_ids = self._vector.get_chunk_ids_for_document(current_id)
+                if chunk_ids:
+                    chunk_data = self._vector.get_chunk_by_id(chunk_ids[0])
+                    if chunk_data:
+                        chain.append({
+                            "memory_id": current_id,
+                            "file_path": str(chunk_data.get("file_path", "")),
+                        })
+
+                edges = self._graph._graph.out_edges(current_id, data=True)
+                supersedes_edges = [e for e in edges if e[2].get("edge_type") == "SUPERSEDES"]
+
+                if supersedes_edges:
+                    current_id = supersedes_edges[0][1]
+                else:
+                    break
+
+            result["supersedes"] = {"version_chain": chain, "count": len(chain)}
+
+        # Handle other edge types (simple list)
+        for rel_type, edge_type in edge_types_to_query.items():
+            if rel_type == "supersedes":
+                continue  # Already handled above
+
+            relationships: list[dict] = []
+            edges = self._graph._graph.out_edges(memory_id, data=True)
+            matching_edges = [e for e in edges if e[2].get("edge_type") == edge_type]
+
+            for _, target_id, edge_data in matching_edges:
+                chunk_ids = self._vector.get_chunk_ids_for_document(target_id)
+                if chunk_ids:
+                    chunk_data = self._vector.get_chunk_by_id(chunk_ids[0])
+                    if chunk_data:
+                        relationships.append({
+                            "memory_id": target_id,
+                            "file_path": str(chunk_data.get("file_path", "")),
+                            "context": edge_data.get("edge_context", ""),
+                        })
+
+            result[rel_type] = relationships
+
+        return result

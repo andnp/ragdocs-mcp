@@ -20,7 +20,7 @@ Existing RAG solutions require manual database setup, explicit indexing steps, a
 - **HyDE (Hypothetical Document Embeddings)**: `search_with_hypothesis` tool for vague queries
 - Cross-encoder re-ranking for improved precision (optional, ~50ms latency)
 - Query expansion via concept vocabulary for better recall
-- **Git history search:** Semantic search over commit history with metadata and delta context
+- **Git history search:** Semantic search over commit history with metadata and delta context (parallel indexing for 2-4x speedup)
 - **Multi-project support:** Manage isolated indices for multiple projects on one machine with automatic project detection
 - Server-Sent Events (SSE) streaming for real-time response delivery
 - CLI query command with rich formatted output
@@ -159,7 +159,59 @@ uv run mcp-markdown-ragdocs query "authentication" --top-n 3
 
 # Specify project context
 uv run mcp-markdown-ragdocs query "authentication" --project my-project
+
+# Enable debug mode to see search internals
+uv run mcp-markdown-ragdocs query "authentication" --debug
 ```
+
+**Debug Mode (`--debug`):**
+
+Displays two formatted tables showing search internals:
+
+1. **Search Strategy Results**: Result counts from each search strategy
+   - Vector (Semantic): FAISS embedding search results
+   - Keyword (BM25): Whoosh keyword search results
+   - Graph (PageRank): NetworkX graph traversal results
+   - Code: Code-specific search results (if enabled)
+   - Tag Expansion: Query expansion results (if enabled)
+
+2. **Compression Pipeline**: Filtering stages with counts and items removed
+   - Original (RRF Fusion): Combined results before filtering
+   - Confidence Filter: Low-score results removed (threshold: `min_confidence`)
+   - Content Dedup: Exact duplicate content removed
+   - N-gram Dedup: Near-duplicate content removed (character n-grams)
+   - Semantic Dedup: Semantically similar results removed (cosine similarity)
+   - Doc Limit: Per-document chunk limit applied (`max_chunks_per_doc`)
+
+**Example output:**
+
+```
+┌─ Search Strategy Results ─────────────┐
+│ Strategy          │ Count            │
+├───────────────────┼──────────────────┤
+│ Vector (Semantic) │ 15               │
+│ Keyword (BM25)    │ 8                │
+│ Graph (PageRank)  │ 3                │
+└───────────────────┴──────────────────┘
+
+┌─ Compression Pipeline ─────────────────────┐
+│ Stage                      │ Count │ Removed│
+├────────────────────────────┼───────┼────────┤
+│ Original (RRF Fusion)      │ 26    │ -      │
+│ After Confidence Filter    │ 20    │ 6      │
+│ After Content Dedup        │ 18    │ 2      │
+│ After N-gram Dedup         │ 16    │ 2      │
+│ After Semantic Dedup       │ 12    │ 4      │
+│ After Doc Limit            │ 5     │ 7      │
+└────────────────────────────┴───────┴────────┘
+```
+
+**Use debug mode to:**
+- Understand why certain results appear or are filtered
+- Tune search configuration (weights, thresholds, dedup settings)
+- Diagnose low-quality results (check if semantic or keyword search dominates)
+- Identify over-aggressive deduplication (high removal in dedup stages)
+- Optimize performance (balance precision vs. recall via thresholds)
 
 #### Configuration Management
 
@@ -179,7 +231,7 @@ uv run mcp-markdown-ragdocs rebuild-index
 |---------|---------|----------|
 | `mcp` | Stdio MCP server | Integrating with VS Code or MCP clients |
 | `run` | HTTP API server | Development, testing, or HTTP-based integrations |
-| `query` | CLI query | Scripting or quick document searches |
+| `query` | CLI query with optional `--debug` flag | Scripting, quick searches, or debugging search behavior |
 | `check-config` | Validate config | Debugging configuration issues |
 | `rebuild-index` | Force full reindex (documents, git commits, vocabulary) | Config changes, corrupted indices, or force rebuild |
 
@@ -265,9 +317,12 @@ The server exposes two MCP tools:
 **Parameters:**
 - `query` (required): Natural language query or question
 - `top_n` (optional): Maximum results to return (1-100, default: 5)
+- `uniqueness_mode` (optional): Result uniqueness strategy - `"off"` (allow duplicates), `"document"` (one chunk per document), or `"content"` (semantic deduplication, default)
 - `min_score` (optional): Minimum confidence threshold (0.0-1.0, default: 0.3)
 - `similarity_threshold` (optional): Semantic deduplication threshold (0.5-1.0, default: 0.85)
 - `show_stats` (optional): Show compression statistics (default: false)
+
+**Note:** `query_unique_documents` is deprecated. Use `uniqueness_mode="document"` instead.
 
 **Note:** Compression is enabled by default (`min_score=0.3`, `max_chunks_per_doc=2`, `dedup_enabled=true`) to reduce token overhead by 40-60%. Results use compact format: `[N] file § section (score)\ncontent`
 
@@ -466,6 +521,7 @@ See [docs/configuration.md](docs/configuration.md) for exhaustive configuration 
 - [Hybrid Search](docs/hybrid-search.md) - Search strategies and RRF fusion algorithm
 - [Integration](docs/integration.md) - VS Code MCP setup and client integration
 - [Memory Management](docs/memory.md) - AI memory bank, CRUD tools, ghost nodes
+- [Troubleshooting](docs/troubleshooting.md) - Debug mode usage, tuning guide, common issues
 - [Development](docs/development.md) - Development setup, testing, contributing
 
 ## License

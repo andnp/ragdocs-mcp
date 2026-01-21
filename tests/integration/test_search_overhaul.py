@@ -62,7 +62,8 @@ def test_config(tmp_path):
             min_weight_factor=0.5,
             hyde_enabled=True,
         ),
-        chunking=ChunkingConfig(),
+        document_chunking=ChunkingConfig(),
+        memory_chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
@@ -317,7 +318,7 @@ class TestDynamicWeightsIntegration:
         doc3.write_text("# Another Document\n\nMore general software information.")
         manager.index_document(str(doc3))
 
-        results, _ = await orchestrator.query("xyzzy123", top_k=10, top_n=5)
+        results, _, _ = await orchestrator.query("xyzzy123", top_k=10, top_n=5)
 
         assert len(results) > 0
         # With calibration, the unique_term document should still be present
@@ -359,7 +360,7 @@ class TestDynamicWeightsIntegration:
         doc1.write_text("# Test\n\nTest document content.")
         manager_static.index_document(str(doc1))
 
-        results, _ = await orchestrator_static.query("test document", top_k=10, top_n=5)
+        results, _, _ = await orchestrator_static.query("test document", top_k=10, top_n=5)
         assert len(results) >= 0
 
 
@@ -401,7 +402,7 @@ Example tool registration in src/mcp_server.py.
             "adding a handler function in call_tool."
         )
 
-        results, _ = await orchestrator.query_with_hypothesis(
+        results, _, _ = await orchestrator.query_with_hypothesis(
             hypothesis, top_k=10, top_n=5
         )
 
@@ -440,7 +441,7 @@ Example tool registration in src/mcp_server.py.
         doc1.write_text("# Test Document\n\nSome content here.")
         manager_no_hyde.index_document(str(doc1))
 
-        results, _ = await orchestrator_no_hyde.query_with_hypothesis(
+        results, _, _ = await orchestrator_no_hyde.query_with_hypothesis(
             "test hypothesis", top_k=10, top_n=5
         )
 
@@ -458,7 +459,7 @@ Example tool registration in src/mcp_server.py.
             doc.write_text(f"# Document {i}\n\nContent about topic {i}.")
             manager.index_document(str(doc))
 
-        results, _ = await orchestrator.query_with_hypothesis(
+        results, _, _ = await orchestrator.query_with_hypothesis(
             "Information about topics", top_k=10, top_n=5
         )
 
@@ -525,7 +526,7 @@ A related feature that shares concepts.
 """)
         manager.index_document(str(related_doc))
 
-        results, _ = await orchestrator.query("feature implementation", top_k=10, top_n=5)
+        results, _, _ = await orchestrator.query("feature implementation", top_k=10, top_n=5)
 
         assert len(results) > 0
 
@@ -546,7 +547,7 @@ A related feature that shares concepts.
         doc.write_text("# Test\n\nContent.")
         manager.index_document(str(doc))
 
-        results, stats = await orchestrator.query_with_hypothesis("", top_k=10, top_n=5)
+        results, stats, _ = await orchestrator.query_with_hypothesis("", top_k=10, top_n=5)
 
         assert results == []
         assert stats.original_count == 0

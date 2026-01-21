@@ -7,17 +7,31 @@ from pathlib import Path
 import click
 import uvicorn
 from rich.console import Console
-from rich.panel import Panel
-from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
+from rich.progress import (
+    Progress,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+    TimeRemainingColumn,
+)
 from rich.table import Table
 
 from src.config import load_config
-from src.git.repository import discover_git_repositories, get_commits_after_timestamp, is_git_available
-from src.git.commit_parser import parse_commit, build_commit_document
+from src.git.repository import (
+    discover_git_repositories,
+    get_commits_after_timestamp,
+    is_git_available,
+)
+from src.git.parallel_indexer import (
+    ParallelIndexingConfig,
+    index_commits_parallel_sync,
+)
 from src.context import ApplicationContext
 from src.indexing.manifest import IndexManifest, save_manifest
 from src.indexing.reconciler import build_indexed_files_map
 from src.utils import should_include_file
+from src.cli_utils.validators import validate_range, validate_timestamp_range, validate_non_negative
+from src.cli_utils.formatters import print_result_panel, print_debug_stats
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,13 +40,24 @@ MIN_TOP_N = 1
 MAX_TOP_N = 100
 
 
+def _create_query_context(project: str | None) -> ApplicationContext:
+    logging.getLogger().setLevel(logging.WARNING)
+    return ApplicationContext.create(
+        project_override=project,
+        enable_watcher=False,
+        lazy_embeddings=False,
+    )
+
+
 def _should_include_file(
     file_path: str,
     include_patterns: list[str],
     exclude_patterns: list[str],
     exclude_hidden_dirs: bool = True,
 ):
-    return should_include_file(file_path, include_patterns, exclude_patterns, exclude_hidden_dirs)
+    return should_include_file(
+        file_path, include_patterns, exclude_patterns, exclude_hidden_dirs
+    )
 
 
 @click.group()
@@ -43,7 +68,9 @@ def cli():
 def _apply_project_detection(config, project_override: str | None = None):
     from src.config import detect_project, resolve_index_path, resolve_documents_path
 
-    detected_project = detect_project(projects=config.projects, project_override=project_override)
+    detected_project = detect_project(
+        projects=config.projects, project_override=project_override
+    )
     index_path = resolve_index_path(config, detected_project)
     documents_path = resolve_documents_path(config, detected_project, config.projects)
 
@@ -53,7 +80,9 @@ def _apply_project_detection(config, project_override: str | None = None):
 
 
 @cli.command()
-@click.option("--project", default=None, help="Override project detection (name or path)")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
 def mcp(project: str | None):
     """Run MCP server with stdio transport (for VS Code integration)."""
     try:
@@ -76,7 +105,9 @@ def mcp(project: str | None):
 @cli.command()
 @click.option("--host", default=None, help="Override host from config")
 @click.option("--port", default=None, type=int, help="Override port from config")
-@click.option("--project", default=None, help="Override project detection (name or path)")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
 def run(host: str | None, port: int | None, project: str | None):
     try:
         config = load_config()
@@ -98,7 +129,9 @@ def run(host: str | None, port: int | None, project: str | None):
 
 
 @cli.command("rebuild-index")
-@click.option("--project", default=None, help="Override project detection (name or path)")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
 def rebuild_index_cmd(project: str | None):
     try:
         ctx = ApplicationContext.create(
@@ -128,7 +161,9 @@ def rebuild_index_cmd(project: str | None):
                 except ValueError:
                     display_path = file_path
 
-                progress.update(task, description=f"[bold blue]Indexing: {display_path}")
+                progress.update(
+                    task, description=f"[bold blue]Indexing: {display_path}"
+                )
                 ctx.index_manager.index_document(file_path)
                 progress.advance(task)
 
@@ -139,10 +174,10 @@ def rebuild_index_cmd(project: str | None):
             embedding_model=ctx.config.llm.embedding_model,
             parsers=ctx.config.parsers,
             chunking_config={
-                "strategy": ctx.config.chunking.strategy,
-                "min_chunk_chars": ctx.config.chunking.min_chunk_chars,
-                "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
-                "overlap_chars": ctx.config.chunking.overlap_chars,
+                "strategy": ctx.config.document_chunking.strategy,
+                "min_chunk_chars": ctx.config.document_chunking.min_chunk_chars,
+                "max_chunk_chars": ctx.config.document_chunking.max_chunk_chars,
+                "overlap_chars": ctx.config.document_chunking.overlap_chars,
             },
             indexed_files=build_indexed_files_map(files_to_index, docs_path)
         )
@@ -172,57 +207,69 @@ def rebuild_index_cmd(project: str | None):
                         repo_commits_map: dict[Path, list[str]] = {}
                         for repo_path in repos:
                             try:
-                                last_timestamp = ctx.commit_indexer.get_last_indexed_timestamp(str(repo_path.parent))
-                                commit_hashes = get_commits_after_timestamp(repo_path, last_timestamp)
+                                last_timestamp = (
+                                    ctx.commit_indexer.get_last_indexed_timestamp(
+                                        str(repo_path.parent)
+                                    )
+                                )
+                                commit_hashes = get_commits_after_timestamp(
+                                    repo_path, last_timestamp
+                                )
                                 repo_commits_map[repo_path] = commit_hashes
                                 total_commits += len(commit_hashes)
                             except Exception as e:
-                                logger.error(f"Failed to get commits from {repo_path}: {e}")
+                                logger.error(
+                                    f"Failed to get commits from {repo_path}: {e}"
+                                )
                                 continue
 
                         if total_commits > 0:
+                            parallel_config = ParallelIndexingConfig(
+                                max_workers=ctx.config.git_indexing.parallel_workers,
+                                batch_size=ctx.config.git_indexing.batch_size,
+                                embed_batch_size=ctx.config.git_indexing.embed_batch_size,
+                            )
+
                             with Progress(
                                 TextColumn("[bold blue]{task.description}"),
                                 BarColumn(),
                                 TaskProgressColumn(),
                                 TimeRemainingColumn(),
                             ) as progress:
-                                task = progress.add_task("Indexing git commits...", total=total_commits)
+                                task = progress.add_task(
+                                    "Indexing git commits...",
+                                    total=len(repo_commits_map),
+                                )
 
                                 indexed_count = 0
-                                for repo_path, commit_hashes in repo_commits_map.items():
-                                    try:
-                                        for commit_hash in commit_hashes:
-                                            try:
-                                                commit_data = parse_commit(
-                                                    repo_path,
-                                                    commit_hash,
-                                                    ctx.config.git_indexing.delta_max_lines,
-                                                )
-                                                commit_doc = build_commit_document(commit_data)
-                                                ctx.commit_indexer.add_commit(
-                                                    hash=commit_data.hash,
-                                                    timestamp=commit_data.timestamp,
-                                                    author=commit_data.author,
-                                                    committer=commit_data.committer,
-                                                    title=commit_data.title,
-                                                    message=commit_data.message,
-                                                    files_changed=commit_data.files_changed,
-                                                    delta_truncated=commit_data.delta_truncated,
-                                                    commit_document=commit_doc,
-                                                    repo_path=str(repo_path.parent),
-                                                )
-                                                indexed_count += 1
-                                                progress.advance(task)
-                                            except Exception as e:
-                                                logger.error(f"Failed to index commit {commit_hash}: {e}")
-                                                progress.advance(task)
-                                                continue
-                                    except Exception as e:
-                                        logger.error(f"Failed to process repository {repo_path}: {e}")
+                                for (
+                                    repo_path,
+                                    commit_hashes,
+                                ) in repo_commits_map.items():
+                                    if not commit_hashes:
+                                        progress.advance(task)
                                         continue
 
-                            click.echo(f"✅ Successfully indexed {indexed_count} git commits from {len(repos)} repositories")
+                                    try:
+                                        indexed = index_commits_parallel_sync(
+                                            commit_hashes,
+                                            repo_path,
+                                            ctx.commit_indexer,
+                                            parallel_config,
+                                            ctx.config.git_indexing.delta_max_lines,
+                                        )
+                                        indexed_count += indexed
+                                        progress.advance(task)
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Failed to process repository {repo_path}: {e}"
+                                        )
+                                        progress.advance(task)
+                                        continue
+
+                            click.echo(
+                                f"✅ Successfully indexed {indexed_count} git commits from {len(repos)} repositories"
+                            )
                         else:
                             click.echo("ℹ️  No new git commits to index")
                     else:
@@ -241,7 +288,9 @@ def rebuild_index_cmd(project: str | None):
                 )
                 ctx.index_manager.persist()
                 vocab_size = len(ctx.index_manager.vector._concept_vocabulary)
-                click.echo(f"✅ Successfully built concept vocabulary: {vocab_size} terms")
+                click.echo(
+                    f"✅ Successfully built concept vocabulary: {vocab_size} terms"
+                )
             except Exception as e:
                 logger.error(f"Concept vocabulary building failed: {e}")
                 click.echo(f"⚠️  Concept vocabulary building failed: {e}", err=True)
@@ -253,7 +302,9 @@ def rebuild_index_cmd(project: str | None):
 
 
 @cli.command("check-config")
-@click.option("--project", default=None, help="Override project detection (name or path)")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
 def check_config_cmd(project: str | None):
     try:
         logger.info("Loading configuration")
@@ -275,19 +326,29 @@ def check_config_cmd(project: str | None):
 
         if config.projects:
             table.add_row("", "")
-            table.add_row("[bold]Registered Projects[/bold]", f"{len(config.projects)} project(s)")
+            table.add_row(
+                "[bold]Registered Projects[/bold]", f"{len(config.projects)} project(s)"
+            )
             for proj in config.projects:
                 table.add_row(f"  • {proj.name}", proj.path)
 
             from src.config import detect_project
-            detected = detect_project(projects=config.projects, project_override=project)
+
+            detected = detect_project(
+                projects=config.projects, project_override=project
+            )
             if detected:
                 table.add_row("", "")
                 override_indicator = " (via --project)" if project else ""
-                table.add_row("[bold]Active Project[/bold]", f"✅ {detected}{override_indicator}")
+                table.add_row(
+                    "[bold]Active Project[/bold]", f"✅ {detected}{override_indicator}"
+                )
             else:
                 table.add_row("", "")
-                table.add_row("[bold]Active Project[/bold]", "⚠️  None detected (using local index)")
+                table.add_row(
+                    "[bold]Active Project[/bold]",
+                    "⚠️  None detected (using local index)",
+                )
 
         table.add_row("", "")
         table.add_row("Semantic Weight", str(config.search.semantic_weight))
@@ -307,9 +368,13 @@ def check_config_cmd(project: str | None):
             if manifest_path.exists():
                 console.print(f"📊 Index exists at: {index_path}")
             else:
-                console.print(f"⚠️  Index directory exists but no manifest found: {index_path}")
+                console.print(
+                    f"⚠️  Index directory exists but no manifest found: {index_path}"
+                )
         else:
-            console.print(f"📭 No index found (will be created on first run): {index_path}")
+            console.print(
+                f"📭 No index found (will be created on first run): {index_path}"
+            )
 
     except Exception as e:
         logger.error(f"Failed to load configuration: {e}")
@@ -320,18 +385,19 @@ def check_config_cmd(project: str | None):
 @cli.command()
 @click.argument("query_text")
 @click.option("--json", "output_json", is_flag=True, help="Output results as JSON")
-@click.option("--top-n", default=5, type=int, help="Maximum number of results (default: 5)")
-@click.option("--project", default=None, help="Override project detection (name or path)")
-def query(query_text: str, output_json: bool, top_n: int, project: str | None):
+@click.option(
+    "--top-n", default=5, type=int, help="Maximum number of results (default: 5)"
+)
+@click.option(
+    "--debug", is_flag=True, help="Display intermediate search statistics"
+)
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+def query(query_text: str, output_json: bool, top_n: int, debug: bool, project: str | None):
     try:
-        logging.getLogger().setLevel(logging.WARNING)
         console = Console()
-
-        ctx = ApplicationContext.create(
-            project_override=project,
-            enable_watcher=False,
-            lazy_embeddings=False,
-        )
+        ctx = _create_query_context(project)
 
         # Check if manifest exists (indicates a valid index)
         manifest_path = ctx.index_path / "index.manifest.json"
@@ -340,28 +406,35 @@ def query(query_text: str, output_json: bool, top_n: int, project: str | None):
             sys.exit(1)
 
         ctx.index_manager.load()
-
-        if top_n < MIN_TOP_N or top_n > MAX_TOP_N:
-            click.echo(f"Error: --top-n must be between {MIN_TOP_N} and {MAX_TOP_N}", err=True)
-            sys.exit(1)
+        validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
 
         with console.status("[bold green]Searching documents..."):
             top_k = max(20, top_n * 4)
-            results, _ = asyncio.run(ctx.orchestrator.query(
-                query_text,
-                top_k=top_k,
-                top_n=top_n
-            ))
+            async def _run_query_with_healing(query: str, top_k_value: int, top_n_value: int):
+                results, compression_stats, strategy_stats = await ctx.orchestrator.query(
+                    query,
+                    top_k=top_k_value,
+                    top_n=top_n_value,
+                )
+                await ctx.orchestrator.drain_reindex()
+                return results, compression_stats, strategy_stats
+
+            results, compression_stats, strategy_stats = asyncio.run(
+                _run_query_with_healing(query_text, top_k, top_n)
+            )
 
         if output_json:
             output = {
                 "query": query_text,
-                "results": [result.to_dict() for result in results]
+                "results": [result.to_dict() for result in results],
             }
             click.echo(json.dumps(output, indent=2))
             return
 
         console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
+
+        if debug:
+            print_debug_stats(console, strategy_stats, compression_stats, ctx.config.search.score_calibration_threshold)
 
         if results:
             console.print(f"[bold]Found {len(results)} results:[/bold]\n")
@@ -374,26 +447,340 @@ def query(query_text: str, output_json: bool, top_n: int, project: str | None):
                     "",
                     result.content,
                 ]
-
-                result_panel = Panel(
-                    "\n".join(panel_content),
-                    title=f"[bold cyan]#{idx}[/bold cyan] [bold green]Score: {result.score:.4f}[/bold green]",
-                    border_style="cyan",
-                    padding=(0, 1),
+                print_result_panel(
+                    console, idx, result.score, panel_content, is_last=(idx == len(results))
                 )
-                console.print(result_panel)
-
-                if idx < len(results):
-                    console.print()
         else:
             console.print("[yellow]No results found.[/yellow]")
 
     except FileNotFoundError as e:
         logger.error(f"Indices not found: {e}")
-        click.echo("Error: No indices found. Run 'mcp-markdown-ragdocs rebuild-index' first.", err=True)
+        click.echo(
+            "Error: No indices found. Run 'mcp-markdown-ragdocs rebuild-index' first.",
+            err=True,
+        )
         sys.exit(1)
     except Exception as e:
         logger.error(f"Query failed: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("search-commits")
+@click.argument("query_text")
+@click.option("--json", "output_json", is_flag=True, help="Output results as JSON")
+@click.option(
+    "--top-n", default=5, type=int, help="Maximum number of results (default: 5)"
+)
+@click.option(
+    "--debug", is_flag=True, help="Display intermediate search statistics"
+)
+@click.option(
+    "--files-glob",
+    default=None,
+    help="Glob pattern for file filtering (e.g., 'src/**/*.py')",
+)
+@click.option(
+    "--after",
+    "after_timestamp",
+    default=None,
+    type=int,
+    help="Unix timestamp (lower bound)",
+)
+@click.option(
+    "--before",
+    "before_timestamp",
+    default=None,
+    type=int,
+    help="Unix timestamp (upper bound)",
+)
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+def search_commits(
+    query_text: str,
+    output_json: bool,
+    top_n: int,
+    debug: bool,
+    files_glob: str | None,
+    after_timestamp: int | None,
+    before_timestamp: int | None,
+    project: str | None,
+):
+    """Search git commit history using natural language queries."""
+    try:
+        console = Console()
+        ctx = _create_query_context(project)
+
+        # Check git indexing enabled
+        if not ctx.config.git_indexing.enabled:
+            click.echo(
+                "Error: Git indexing is not enabled. Enable it in config.toml", err=True
+            )
+            sys.exit(1)
+
+        # Check commit indexer exists
+        if ctx.commit_indexer is None:
+            click.echo(
+                "Error: Git indexing unavailable. Run 'rebuild-index' to enable git search.",
+                err=True,
+            )
+            sys.exit(1)
+
+        validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
+        validate_timestamp_range(after_timestamp, before_timestamp)
+
+        with console.status("[bold green]Searching git commits..."):
+            from src.git.commit_search import search_git_history
+
+            response = search_git_history(
+                commit_indexer=ctx.commit_indexer,
+                query=query_text,
+                top_n=top_n,
+                files_glob=files_glob,
+                after_timestamp=after_timestamp,
+                before_timestamp=before_timestamp,
+            )
+
+        if output_json:
+            output = {
+                "query": response.query,
+                "total_commits_indexed": response.total_commits_indexed,
+                "results": [
+                    {
+                        "hash": r.hash,
+                        "title": r.title,
+                        "author": r.author,
+                        "committer": r.committer,
+                        "timestamp": r.timestamp,
+                        "message": r.message,
+                        "files_changed": r.files_changed,
+                        "delta_truncated": r.delta_truncated,
+                        "score": r.score,
+                        "repo_path": r.repo_path,
+                    }
+                    for r in response.results
+                ],
+            }
+            click.echo(json.dumps(output, indent=2))
+            return
+
+        console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
+        console.print(
+            f"[dim]Total commits indexed: {response.total_commits_indexed}[/dim]\n"
+        )
+
+        if response.results:
+            console.print(f"[bold]Found {len(response.results)} results:[/bold]\n")
+
+            from datetime import datetime, timezone
+
+            for idx, commit in enumerate(response.results, 1):
+                commit_date = datetime.fromtimestamp(commit.timestamp, timezone.utc)
+                date_str = commit_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+                panel_content = [
+                    f"[yellow]Commit:[/yellow] {commit.hash[:8]}",
+                    f"[cyan]Author:[/cyan] {commit.author}",
+                    f"[blue]Date:[/blue] {date_str}",
+                    "",
+                    commit.title,
+                ]
+
+                if len(commit.files_changed) > 0:
+                    panel_content.append("")
+                    panel_content.append(
+                        f"[magenta]Files Changed ({len(commit.files_changed)}):[/magenta]"
+                    )
+                    for file_path in commit.files_changed[:5]:
+                        panel_content.append(f"  • {file_path}")
+                    if len(commit.files_changed) > 5:
+                        panel_content.append(
+                            f"  ... and {len(commit.files_changed) - 5} more"
+                        )
+
+                print_result_panel(
+                    console, idx, commit.score, panel_content, is_last=(idx == len(response.results))
+                )
+        else:
+            console.print("[yellow]No results found.[/yellow]")
+
+    except Exception as e:
+        logger.error(f"Git commit search failed: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("search-memory")
+@click.argument("query_text")
+@click.option("--json", "output_json", is_flag=True, help="Output results as JSON")
+@click.option(
+    "--limit", default=5, type=int, help="Maximum number of results (default: 5)"
+)
+@click.option(
+    "--debug", is_flag=True, help="Display intermediate search statistics"
+)
+@click.option(
+    "--type",
+    "memory_type",
+    default=None,
+    help="Memory type filter (plan|journal|fact|observation|reflection)",
+)
+@click.option(
+    "--after",
+    "after_timestamp",
+    default=None,
+    type=int,
+    help="Unix timestamp (lower bound)",
+)
+@click.option(
+    "--before",
+    "before_timestamp",
+    default=None,
+    type=int,
+    help="Unix timestamp (upper bound)",
+)
+@click.option(
+    "--relative-days",
+    default=None,
+    type=int,
+    help="Last N days (overrides absolute timestamps)",
+)
+@click.option(
+    "--full", "load_full_memory", is_flag=True, help="Load full memory content"
+)
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+def search_memory(
+    query_text: str,
+    output_json: bool,
+    limit: int,
+    debug: bool,
+    memory_type: str | None,
+    after_timestamp: int | None,
+    before_timestamp: int | None,
+    relative_days: int | None,
+    load_full_memory: bool,
+    project: str | None,
+):
+    """Search AI memory bank using natural language queries."""
+    try:
+        console = Console()
+        ctx = _create_query_context(project)
+
+        # Check memory system enabled
+        if not ctx.config.memory.enabled:
+            click.echo(
+                "Error: Memory system is not enabled. Enable it in config.toml",
+                err=True,
+            )
+            sys.exit(1)
+
+        # Check memory components exist
+        if ctx.memory_manager is None or ctx.memory_search is None:
+            click.echo(
+                "Error: Memory system unavailable. Check configuration.", err=True
+            )
+            sys.exit(1)
+
+        validate_range(limit, MIN_TOP_N, MAX_TOP_N, "--limit")
+        
+        if memory_type is not None:
+            valid_types = ["plan", "journal", "fact", "observation", "reflection"]
+            if memory_type not in valid_types:
+                click.echo(
+                    f"Error: --type must be one of: {', '.join(valid_types)}", err=True
+                )
+                sys.exit(1)
+
+        validate_timestamp_range(after_timestamp, before_timestamp)
+        validate_non_negative(relative_days, "--relative-days")
+
+        # Load memory index
+        ctx.memory_manager.load()
+
+        with console.status("[bold green]Searching memories..."):
+            async def _run_memory_search_with_healing():
+                results = await ctx.memory_search.search_memories(
+                    query=query_text,
+                    limit=limit,
+                    filter_type=memory_type,
+                    load_full_memory=load_full_memory,
+                    after_timestamp=after_timestamp,
+                    before_timestamp=before_timestamp,
+                    relative_days=relative_days,
+                )
+                await ctx.memory_search.drain_reindex()
+                return results
+
+            results = asyncio.run(_run_memory_search_with_healing())
+
+        if output_json:
+            output = {
+                "query": query_text,
+                "results": [
+                    {
+                        "memory_id": r.memory_id,
+                        "score": r.score,
+                        "content": r.content,
+                        "type": r.frontmatter.type,
+                        "status": r.frontmatter.status,
+                        "tags": r.frontmatter.tags,
+                        "created_at": r.frontmatter.created_at.isoformat()
+                        if r.frontmatter.created_at
+                        else None,
+                        "file_path": r.file_path,
+                        "header_path": r.header_path,
+                    }
+                    for r in results
+                ],
+            }
+            click.echo(json.dumps(output, indent=2))
+            return
+
+        console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
+
+        if results:
+            console.print(f"[bold]Found {len(results)} results:[/bold]\n")
+
+            for idx, memory in enumerate(results, 1):
+                tags_str = (
+                    ", ".join(memory.frontmatter.tags)
+                    if memory.frontmatter.tags
+                    else "(none)"
+                )
+                created_str = ""
+                if memory.frontmatter.created_at:
+                    created_str = memory.frontmatter.created_at.strftime(
+                        "%Y-%m-%d %H:%M UTC"
+                    )
+
+                panel_content = [
+                    f"[yellow]Memory:[/yellow] {memory.memory_id}",
+                    f"[cyan]Type:[/cyan] {memory.frontmatter.type} | [magenta]Tags:[/magenta] {tags_str}",
+                ]
+
+                if created_str:
+                    panel_content.append(f"[blue]Created:[/blue] {created_str}")
+
+                panel_content.append("")
+
+                # Truncate content for display unless --full
+                content_display = memory.content
+                if not load_full_memory and len(content_display) > 500:
+                    content_display = content_display[:500] + "..."
+
+                panel_content.append(content_display)
+
+                print_result_panel(
+                    console, idx, memory.score, panel_content, is_last=(idx == len(results))
+                )
+        else:
+            console.print("[yellow]No results found.[/yellow]")
+
+    except Exception as e:
+        logger.error(f"Memory search failed: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 

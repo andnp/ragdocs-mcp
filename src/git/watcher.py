@@ -135,18 +135,25 @@ class GitWatcher:
 
     async def _batch_process(self, git_dirs: set[Path]) -> None:
         """Incrementally index commits for changed repositories."""
+        from src.git.parallel_indexer import (
+            ParallelIndexingConfig,
+            index_commits_parallel,
+        )
         from src.git.repository import get_commits_after_timestamp
-        from src.git.commit_parser import parse_commit, build_commit_document
+
+        parallel_config = ParallelIndexingConfig(
+            max_workers=self._config.git_indexing.parallel_workers,
+            batch_size=self._config.git_indexing.batch_size,
+            embed_batch_size=self._config.git_indexing.embed_batch_size,
+        )
 
         for git_dir in git_dirs:
             try:
-                # Get last indexed timestamp
                 last_timestamp = await asyncio.to_thread(
                     self._commit_indexer.get_last_indexed_timestamp,
                     str(git_dir),
                 )
 
-                # Get new commits
                 commit_hashes = await asyncio.to_thread(
                     get_commits_after_timestamp,
                     git_dir,
@@ -159,37 +166,18 @@ class GitWatcher:
 
                 logger.info(f"Indexing {len(commit_hashes)} new commits from {git_dir.parent}")
 
-                # Index new commits
-                for hash in commit_hashes:
-                    try:
-                        commit = await asyncio.to_thread(
-                            parse_commit,
-                            git_dir,
-                            hash,
-                            self._config.git_indexing.delta_max_lines,
-                        )
-                        doc = build_commit_document(commit)
+                indexed = await index_commits_parallel(
+                    commit_hashes,
+                    git_dir,
+                    self._commit_indexer,
+                    parallel_config,
+                    self._config.git_indexing.delta_max_lines,
+                )
 
-                        await asyncio.to_thread(
-                            self._commit_indexer.add_commit,
-                            hash=commit.hash,
-                            timestamp=commit.timestamp,
-                            author=commit.author,
-                            committer=commit.committer,
-                            title=commit.title,
-                            message=commit.message,
-                            files_changed=commit.files_changed,
-                            delta_truncated=commit.delta_truncated,
-                            commit_document=doc,
-                            repo_path=str(git_dir),
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to index commit {hash}: {e}")
-
-                logger.info(f"Updated commit index for {git_dir.parent.name}")
+                logger.info(f"Updated commit index for {git_dir.parent.name}: {indexed} commits")
 
             except Exception as e:
-                logger.error(f"Failed to update commits for {git_dir}: {e}")
+                logger.error(f"Failed to update commits for {git_dir}: {e}", exc_info=True)
 
 
 class _GitEventHandler(FileSystemEventHandler):

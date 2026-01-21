@@ -130,7 +130,7 @@ Permissions are granted based on user roles.
         vector.build_concept_vocabulary()
 
         # Query should work with expansion enabled
-        results, stats = await orchestrator.query("auth", top_k=10, top_n=5)
+        results, stats, _ = await orchestrator.query("auth", top_k=10, top_n=5)
 
         # Should find results
         assert len(results) > 0
@@ -185,7 +185,7 @@ Connection pooling and query optimization.
         vector.build_concept_vocabulary()
 
         # Query with short form
-        results, _ = await orchestrator.query("auth", top_k=10, top_n=5)
+        results, _, _ = await orchestrator.query("auth", top_k=10, top_n=5)
 
         # Should find security doc (contains "authentication")
         result_doc_ids = [r.doc_id for r in results]
@@ -256,7 +256,7 @@ It is used for web development and scripting.
             manager.index_document(str(doc_file))
 
         # Query with re-ranking enabled
-        results, stats = await orchestrator.query(
+        results, stats, _ = await orchestrator.query(
             "machine learning tutorial",
             top_k=10,
             top_n=3,
@@ -308,7 +308,7 @@ Document {i} is part of the test corpus.
             manager.index_document(str(doc_file))
 
         # Query requesting more than rerank_top_n
-        results, _ = await orchestrator.query(
+        results, _, _ = await orchestrator.query(
             "testing documents",
             top_k=20,
             top_n=10,  # More than rerank_top_n (5)
@@ -394,7 +394,7 @@ Authentication required for protected endpoints.
         vector.build_concept_vocabulary()
 
         # Query with short form (expansion) + reranking
-        results, stats = await orchestrator.query("auth", top_k=10, top_n=3)
+        results, stats, _ = await orchestrator.query("auth", top_k=10, top_n=3)
 
         # Should find results through expansion
         assert len(results) > 0

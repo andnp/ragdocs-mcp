@@ -71,7 +71,8 @@ def memory_config(tmp_path: Path):
             recency_boost_factor=1.2,
         ),
         search=SearchConfig(),
-        chunking=ChunkingConfig(),
+        document_chunking=ChunkingConfig(),
+        memory_chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 

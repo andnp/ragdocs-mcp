@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig, ChunkingConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -48,6 +48,8 @@ def config(tmp_path):
             rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
+        document_chunking=ChunkingConfig(),
+        memory_chunking=ChunkingConfig(),
     )
 
 
@@ -168,7 +170,7 @@ async def test_query_returns_results_from_multiple_strategies(
     create_test_corpus(config, manager)
 
     # Query that should match multiple strategies
-    results, _ = await orchestrator.query("authentication security", top_k=10, top_n=10)
+    results, _, _ = await orchestrator.query("authentication security", top_k=10, top_n=10)
 
     # Verify we got results
     assert len(results) > 0
@@ -205,7 +207,7 @@ async def test_graph_neighbors_boost_related_docs(config, manager, orchestrator)
     create_test_corpus(config, manager)
 
     # Query specifically for "API Documentation"
-    results, _ = await orchestrator.query("API Documentation", top_k=10, top_n=10)
+    results, _, _ = await orchestrator.query("API Documentation", top_k=10, top_n=10)
 
     # Verify scores are valid
     assert all(0.0 <= result.score <= 1.0 for result in results)
@@ -239,7 +241,7 @@ async def test_recency_boosts_recent_docs(config, manager, orchestrator):
     create_test_corpus(config, manager)
 
     # Query that matches both recent and older docs
-    results, _ = await orchestrator.query("authorization access", top_k=10, top_n=10)
+    results, _, _ = await orchestrator.query("authorization access", top_k=10, top_n=10)
 
     # Verify we got results
     assert len(results) > 0
@@ -277,11 +279,11 @@ async def test_empty_query_returns_empty_results(config, manager, orchestrator):
     create_test_corpus(config, manager)
 
     # Test empty query
-    results_empty, _ = await orchestrator.query("", top_k=10, top_n=10)
+    results_empty, _, _ = await orchestrator.query("", top_k=10, top_n=10)
     assert results_empty == []
 
     # Test whitespace-only query
-    results_whitespace, _ = await orchestrator.query("   \n\t  ", top_k=10, top_n=10)
+    results_whitespace, _, _ = await orchestrator.query("   \n\t  ", top_k=10, top_n=10)
     assert results_whitespace == []
 
 
@@ -297,19 +299,19 @@ async def test_top_k_limits_results_correctly(config, manager, orchestrator):
     create_test_corpus(config, manager)
 
     # Query with very low top_k
-    results_k1, _ = await orchestrator.query("authentication", top_k=1, top_n=1)
+    results_k1, _, _ = await orchestrator.query("authentication", top_k=1, top_n=1)
     assert len(results_k1) <= 1
     if results_k1:
         assert all(0.0 <= result.score <= 1.0 for result in results_k1)
 
     # Query with top_k=2
-    results_k2, _ = await orchestrator.query("authentication", top_k=2, top_n=2)
+    results_k2, _, _ = await orchestrator.query("authentication", top_k=2, top_n=2)
     assert len(results_k2) <= 2
     if results_k2:
         assert all(0.0 <= result.score <= 1.0 for result in results_k2)
 
     # Query with top_k=5
-    results_k5, _ = await orchestrator.query("authentication security", top_k=5, top_n=5)
+    results_k5, _, _ = await orchestrator.query("authentication security", top_k=5, top_n=5)
     assert len(results_k5) <= 5
     if results_k5:
         assert all(0.0 <= result.score <= 1.0 for result in results_k5)
@@ -332,7 +334,7 @@ async def test_weighted_strategies_affect_ranking(config, manager, orchestrator,
     create_test_corpus(config, manager)
 
     # Baseline query with equal weights (1.0, 1.0)
-    results_balanced, _ = await orchestrator.query("authentication", top_k=5, top_n=5)
+    results_balanced, _, _ = await orchestrator.query("authentication", top_k=5, top_n=5)
     assert len(results_balanced) > 0
     assert all(0.0 <= result.score <= 1.0 for result in results_balanced)
 
@@ -368,7 +370,7 @@ async def test_weighted_strategies_affect_ranking(config, manager, orchestrator,
     )
 
     # Query with semantic weight favored
-    results_semantic_heavy, _ = await orchestrator_semantic.query("authentication", top_k=5, top_n=5)
+    results_semantic_heavy, _, _ = await orchestrator_semantic.query("authentication", top_k=5, top_n=5)
 
     # Should still get results, but ranking may differ
     assert len(results_semantic_heavy) > 0
@@ -397,7 +399,7 @@ async def test_hybrid_search_integration_end_to_end(config, manager, orchestrato
     assert len(docs) == 5
 
     # Complex query touching multiple aspects
-    results, _ = await orchestrator.query(
+    results, _, _ = await orchestrator.query(
         "authentication security access control",
         top_k=10,
         top_n=10
@@ -439,7 +441,7 @@ async def test_query_returns_normalized_scores(config, manager, orchestrator):
     - Results are tuples of (chunk_id, score)
     """
     create_test_corpus(config, manager)
-    results, _ = await orchestrator.query("authentication", top_k=10, top_n=5)
+    results, _, _ = await orchestrator.query("authentication", top_k=10, top_n=5)
 
     # Verify structure
     assert len(results) <= 5
@@ -480,9 +482,9 @@ async def test_top_n_parameter_limits_results(config, manager, orchestrator):
     """
     create_test_corpus(config, manager)
 
-    results_5, _ = await orchestrator.query("authentication", top_k=10, top_n=5)
-    results_3, _ = await orchestrator.query("authentication", top_k=10, top_n=3)
-    results_1, _ = await orchestrator.query("authentication", top_k=10, top_n=1)
+    results_5, _, _ = await orchestrator.query("authentication", top_k=10, top_n=5)
+    results_3, _, _ = await orchestrator.query("authentication", top_k=10, top_n=3)
+    results_1, _, _ = await orchestrator.query("authentication", top_k=10, top_n=1)
 
     # Verify limits are respected
     assert len(results_5) <= 5
@@ -525,7 +527,7 @@ async def test_normalized_scores_range_0_to_1(config, manager, orchestrator):
     ]
 
     for query in queries:
-        results, _ = await orchestrator.query(query, top_k=10, top_n=10)
+        results, _, _ = await orchestrator.query(query, top_k=10, top_n=10)
 
         for result in results:
             # Verify types
@@ -564,7 +566,7 @@ async def test_top_n_greater_than_10_works_correctly(config, manager, orchestrat
     create_test_corpus(config, manager)
 
     # Request 25 results with dynamic top_k calculation
-    results_25, _ = await orchestrator.query("authentication security API", top_k=50, top_n=25)
+    results_25, _, _ = await orchestrator.query("authentication security API", top_k=50, top_n=25)
 
     # Should return results (exact count depends on corpus size)
     # Since our test corpus has 5 documents with multiple chunks each,
@@ -584,7 +586,7 @@ async def test_top_n_greater_than_10_works_correctly(config, manager, orchestrat
 
     # Verify that top_n=25 can return more results than top_n=10
     # (if corpus is large enough)
-    results_10, _ = await orchestrator.query("authentication security API", top_k=20, top_n=10)
+    results_10, _, _ = await orchestrator.query("authentication security API", top_k=20, top_n=10)
 
     # The key validation: with sufficient corpus, top_n=25 should not be
     # artificially limited to 10 results by a hardcoded top_k

@@ -9,16 +9,17 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.indexing.manager import IndexManager
-from src.models import ChunkResult, CompressionStats
+from src.models import ChunkResult, CompressionStats, SearchStrategyStats
+from src.search.base_orchestrator import BaseSearchOrchestrator
 from src.search.classifier import classify_query, get_adaptive_weights
-from src.search.fusion import fuse_results, fuse_results_v2, normalize_final_scores
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
+from src.search.score_pipeline import ScorePipeline, ScorePipelineConfig
 from src.search.tag_expansion import expand_query_with_tags
 
 logger = logging.getLogger(__name__)
 
 
-class SearchOrchestrator:
+class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
     def __init__(
         self,
         vector_index: VectorIndex,
@@ -28,13 +29,12 @@ class SearchOrchestrator:
         index_manager: IndexManager,
         code_index: CodeIndex | None = None,
     ):
-        self._vector = vector_index
-        self._keyword = keyword_index
-        self._graph = graph_store
-        self._config = config
+        super().__init__(vector_index, keyword_index, graph_store, config)
         self._index_manager = index_manager
         self._code = code_index
         self._pipeline: SearchPipeline | None = None
+        self._pending_reindex: set[str] = set()
+        self._reindex_tasks: set[asyncio.Task] = set()
 
         # Query embedding cache with LRU eviction
         self._embedding_cache: dict[str, tuple[list[float], float]] = {}
@@ -52,7 +52,7 @@ class SearchOrchestrator:
                 ngram_dedup_threshold=self._config.search.ngram_dedup_threshold,
                 mmr_enabled=self._config.search.mmr_enabled,
                 mmr_lambda=self._config.search.mmr_lambda,
-                parent_retrieval_enabled=self._config.chunking.parent_retrieval_enabled,
+                parent_retrieval_enabled=self._config.document_chunking.parent_retrieval_enabled,
                 rerank_enabled=self._config.search.rerank_enabled,
                 rerank_model=self._config.search.rerank_model,
                 rerank_top_n=self._config.search.rerank_top_n,
@@ -105,7 +105,7 @@ class SearchOrchestrator:
         top_n: int = 5,
         pipeline_config: SearchPipelineConfig | None = None,
         excluded_files: set[str] | None = None,
-    ) -> tuple[list[ChunkResult], CompressionStats]:
+    ) -> tuple[list[ChunkResult], CompressionStats, SearchStrategyStats]:
         if not query_text or not query_text.strip():
             return [], CompressionStats(
                 original_count=0,
@@ -115,7 +115,7 @@ class SearchOrchestrator:
                 after_dedup=0,
                 after_doc_limit=0,
                 clusters_merged=0,
-            )
+            ), SearchStrategyStats()
 
         docs_root = Path(self._config.indexing.documents_path)
 
@@ -159,6 +159,7 @@ class SearchOrchestrator:
             chunk_id_to_doc_id[chunk_id] = doc_id
 
         # Tag-based query expansion: Find related documents via tag graph traversal
+        tag_expansion_count = 0
         if self._config.search.tag_expansion_enabled:
             combined_initial_results = vector_results + keyword_results + code_results
             tag_expanded_results = expand_query_with_tags(
@@ -178,6 +179,7 @@ class SearchOrchestrator:
                     all_doc_ids.add(doc_id)
                     chunk_id_to_doc_id[chunk_id] = doc_id
                     vector_results.append(result)  # Add to semantic results for fusion
+                    tag_expansion_count += 1
 
         graph_neighbors = self._get_graph_neighbors(list(all_doc_ids))
 
@@ -187,24 +189,33 @@ class SearchOrchestrator:
             chunk_ids_for_doc = self._vector.get_chunk_ids_for_document(doc_id)
             graph_chunk_ids.extend(chunk_ids_for_doc)
 
-        results_dict: dict[str, list[str]] = {
-            "semantic": [r["chunk_id"] for r in vector_results],
-            "keyword": [r["chunk_id"] for r in keyword_results],
-            "graph": graph_chunk_ids,
-        }
-
-        if code_search_enabled and code_results:
-            results_dict["code"] = [r["chunk_id"] for r in code_results]
-
-        # Collect file modified times using asyncio.to_thread to avoid blocking event loop
-        modified_times = await asyncio.to_thread(
-            self._collect_modified_times,
-            all_doc_ids | set(graph_neighbors)
+        # Build strategy stats
+        strategy_stats = SearchStrategyStats(
+            vector_count=len(vector_results),
+            keyword_count=len(keyword_results),
+            graph_count=len(graph_chunk_ids),
+            code_count=len(code_results) if code_search_enabled else None,
+            tag_expansion_count=tag_expansion_count if self._config.search.tag_expansion_enabled else None,
         )
 
-        base_semantic = self._config.search.semantic_weight
-        base_keyword = self._config.search.keyword_weight
-        base_graph = 1.0
+        results_dict: dict[str, list[str]] = {
+             "semantic": [r["chunk_id"] for r in vector_results],
+             "keyword": [r["chunk_id"] for r in keyword_results],
+             "graph": graph_chunk_ids,
+         }
+
+         if code_search_enabled and code_results:
+             results_dict["code"] = [r["chunk_id"] for r in code_results]
+
+         # Collect file modified times using asyncio.to_thread to avoid blocking event loop
+         modified_times = await asyncio.to_thread(
+             self._collect_modified_times,
+             all_doc_ids | set(graph_neighbors)
+         )
+
+         base_semantic = self._config.search.semantic_weight
+         base_keyword = self._config.search.keyword_weight
+         base_graph = 1.0
 
         if self._config.search.adaptive_weights_enabled:
             query_type = classify_query(query_text)
@@ -225,41 +236,19 @@ class SearchOrchestrator:
         if code_search_enabled:
             weights["code"] = self._config.search.code_search_weight
 
-        use_dynamic = self._config.search.dynamic_weights_enabled
-        if use_dynamic:
-            results_with_scores: dict[str, list[tuple[str, float]]] = {
-                "semantic": [(r["chunk_id"], r.get("score", 0.0)) for r in vector_results],
-                "keyword": [(r["chunk_id"], r.get("score", 0.0)) for r in keyword_results],
-                "graph": [(cid, 1.0) for cid in graph_chunk_ids],
-            }
-            if code_search_enabled and code_results:
-                results_with_scores["code"] = [(r["chunk_id"], r.get("score", 0.0)) for r in code_results]
+        # Build strategy results with scores for ScorePipeline
+        strategy_results: dict[str, list[tuple[str, float]]] = {
+            "semantic": [(r["chunk_id"], r.get("score", 0.0)) for r in vector_results],
+            "keyword": [(r["chunk_id"], r.get("score", 0.0)) for r in keyword_results],
+            "graph": [(cid, 1.0) for cid in graph_chunk_ids],
+        }
+        if code_search_enabled and code_results:
+            strategy_results["code"] = [(r["chunk_id"], r.get("score", 0.0)) for r in code_results]
 
-            fused = fuse_results_v2(
-                results_with_scores,
-                self._config.search.rrf_k_constant,
-                weights,
-                modified_times,
-                use_dynamic_weights=True,
-                variance_threshold=self._config.search.variance_threshold,
-                min_weight_factor=self._config.search.min_weight_factor,
-            )
-        else:
-            fused = fuse_results(
-                results_dict,
-                self._config.search.rrf_k_constant,
-                weights,
-                modified_times,
-            )
+        fused = self._apply_score_pipeline(strategy_results, weights)
 
         if self._config.search.community_detection_enabled:
             fused = self._apply_community_boost(fused, all_doc_ids, chunk_id_to_doc_id)
-
-        fused = normalize_final_scores(
-            fused,
-            self._config.search.score_calibration_threshold,
-            self._config.search.score_calibration_steepness,
-        )
 
         if pipeline_config is not None:
             pipeline = SearchPipeline(pipeline_config)
@@ -282,7 +271,7 @@ class SearchOrchestrator:
         )
 
         # Parent expansion: if enabled, expand child chunks to parent chunks
-        parent_retrieval_enabled = self._config.chunking.parent_retrieval_enabled
+        parent_retrieval_enabled = self._config.document_chunking.parent_retrieval_enabled
         if pipeline_config is not None and pipeline_config.parent_retrieval_enabled:
             parent_retrieval_enabled = True
 
@@ -290,6 +279,7 @@ class SearchOrchestrator:
             final = self._expand_to_parents(final)
 
         chunk_results = []
+        missing_chunk_ids: list[str] = []
         for chunk_id, score in final:
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if chunk_data:
@@ -310,6 +300,7 @@ class SearchOrchestrator:
                     parent_content=parent_content,
                 ))
             else:
+                missing_chunk_ids.append(chunk_id)
                 chunk_results.append(ChunkResult(
                     chunk_id=chunk_id,
                     doc_id=chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else "",
@@ -319,7 +310,10 @@ class SearchOrchestrator:
                     content="",
                 ))
 
-        return chunk_results, compression_stats
+        if missing_chunk_ids:
+            self._queue_reindex_for_chunks(missing_chunk_ids, "docstore lookup failed")
+
+        return chunk_results, compression_stats, strategy_stats
 
     def _expand_to_parents(
         self, results: list[tuple[str, float]]
@@ -330,6 +324,7 @@ class SearchOrchestrator:
         for chunk_id, score in results:
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if not chunk_data:
+                self._queue_reindex_for_chunks([chunk_id], "docstore lookup failed during parent expansion")
                 expanded.append((chunk_id, score))
                 continue
 
@@ -344,6 +339,28 @@ class SearchOrchestrator:
 
         return expanded
 
+    def _build_score_pipeline_config(
+        self, weights: dict[str, float]
+    ) -> ScorePipelineConfig:
+        return ScorePipelineConfig(
+            rrf_k=self._config.search.rrf_k_constant,
+            strategy_weights=weights,
+            use_dynamic_weights=self._config.search.dynamic_weights_enabled,
+            variance_threshold=self._config.search.variance_threshold,
+            min_weight_factor=self._config.search.min_weight_factor,
+            calibration_threshold=self._config.search.score_calibration_threshold,
+            calibration_steepness=self._config.search.score_calibration_steepness,
+        )
+
+    def _apply_score_pipeline(
+        self,
+        strategy_results: dict[str, list[tuple[str, float]]],
+        weights: dict[str, float],
+    ) -> list[tuple[str, float]]:
+        config = self._build_score_pipeline_config(weights)
+        pipeline = ScorePipeline(config)
+        return pipeline.run(strategy_results)
+
     def _get_chunk_embedding(self, chunk_id: str) -> list[float] | None:
         return self._vector.get_embedding_for_chunk(chunk_id)
 
@@ -352,6 +369,7 @@ class SearchOrchestrator:
         if chunk_data:
             content = chunk_data.get("content")
             return str(content) if content is not None else None
+        self._queue_reindex_for_chunks([chunk_id], "docstore lookup failed during content fetch")
         return None
 
     async def _search_vector(self, query_text: str, top_k: int, excluded_files: set[str] | None, docs_root: Path):
@@ -416,7 +434,8 @@ class SearchOrchestrator:
         boosted = []
         for (chunk_id, score), doc_id in zip(fused, chunk_doc_ids):
             boost = boosts.get(doc_id, 1.0)
-            boosted.append((chunk_id, score * boost))
+            # Clamp to [0, 1] since scores are calibrated confidence values
+            boosted.append((chunk_id, min(1.0, score * boost)))
 
         return sorted(boosted, key=lambda x: x[1], reverse=True)
 
@@ -435,6 +454,77 @@ class SearchOrchestrator:
                     modified_times[doc_id] = markdown_file.stat().st_mtime
 
         return modified_times
+
+    def _extract_doc_id_from_chunk_id(self, chunk_id: str):
+        if "_chunk_" in chunk_id:
+            return chunk_id.split("_chunk_", 1)[0]
+        return chunk_id
+
+    def _queue_reindex_for_chunks(self, chunk_ids: list[str], reason: str):
+        doc_ids = {
+            self._extract_doc_id_from_chunk_id(chunk_id)
+            for chunk_id in chunk_ids
+            if chunk_id
+        }
+
+        if not doc_ids:
+            return
+
+        pending: list[str] = []
+        for doc_id in doc_ids:
+            if doc_id and doc_id not in self._pending_reindex:
+                self._pending_reindex.add(doc_id)
+                pending.append(doc_id)
+
+        if not pending:
+            return
+
+        logger.warning(
+            "Detected %d missing chunks; scheduling reindex for %d documents (%s)",
+            len(chunk_ids),
+            len(pending),
+            reason,
+        )
+        try:
+            task = asyncio.create_task(self._run_reindex(pending, reason))
+        except RuntimeError:
+            self._reindex_documents_sync(pending, reason)
+            return
+
+        self._reindex_tasks.add(task)
+        task.add_done_callback(lambda finished: self._reindex_tasks.discard(finished))
+
+    async def drain_reindex(self, timeout: float | None = None):
+        tasks = [task for task in self._reindex_tasks if not task.done()]
+        if not tasks:
+            return 0
+
+        if timeout is None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            return len(tasks)
+
+        done, _pending = await asyncio.wait(tasks, timeout=timeout)
+        return len(done)
+
+    async def _run_reindex(self, doc_ids: list[str], reason: str):
+        try:
+            await asyncio.to_thread(self._reindex_documents_sync, doc_ids, reason)
+        finally:
+            for doc_id in doc_ids:
+                self._pending_reindex.discard(doc_id)
+
+    def _reindex_documents_sync(self, doc_ids: list[str], reason: str):
+        reindexed = 0
+        for doc_id in doc_ids:
+            if self._index_manager.reindex_document(doc_id, reason=reason):
+                reindexed += 1
+
+        if reindexed > 0:
+            try:
+                self._index_manager.persist()
+                logger.info("Reindexed %d documents after missing chunk recovery", reindexed)
+            except TimeoutError as e:
+                logger.warning("Reindex persist skipped (lock busy): %s", e)
 
     def get_documents(self, doc_ids: list[str]):
         docs_path = Path(self._config.indexing.documents_path)
@@ -468,6 +558,7 @@ class SearchOrchestrator:
                 logger.info(f"Successfully retrieved chunk {chunk_id}")
             else:
                 logger.warning(f"Failed to retrieve chunk {chunk_id}")
+                self._queue_reindex_for_chunks([chunk_id], "docstore lookup failed during chunk fetch")
 
         logger.info(f"_get_chunks returning {len(chunks)} chunks")
         return chunks
@@ -478,7 +569,7 @@ class SearchOrchestrator:
         top_k: int = 10,
         top_n: int = 5,
         excluded_files: set[str] | None = None,
-    ) -> tuple[list[ChunkResult], CompressionStats]:
+    ) -> tuple[list[ChunkResult], CompressionStats, SearchStrategyStats]:
         if not hypothesis or not hypothesis.strip():
             return [], CompressionStats(
                 original_count=0,
@@ -488,7 +579,7 @@ class SearchOrchestrator:
                 after_dedup=0,
                 after_doc_limit=0,
                 clusters_merged=0,
-            )
+            ), SearchStrategyStats()
 
         if not self._config.search.hyde_enabled:
             logger.warning("HyDE search disabled in config, falling back to regular query")
@@ -517,27 +608,13 @@ class SearchOrchestrator:
             all_doc_ids.add(doc_id)
             chunk_id_to_doc_id[chunk_id] = doc_id
 
-        results_with_scores: dict[str, list[tuple[str, float]]] = {
+        strategy_results: dict[str, list[tuple[str, float]]] = {
             "semantic": [(r["chunk_id"], r.get("score", 0.0)) for r in vector_results],
         }
 
-        modified_times = self._collect_modified_times(all_doc_ids)
-
         weights: dict[str, float] = {"semantic": 1.0}
 
-        fused = fuse_results_v2(
-            results_with_scores,
-            self._config.search.rrf_k_constant,
-            weights,
-            modified_times,
-            use_dynamic_weights=False,
-        )
-
-        fused = normalize_final_scores(
-            fused,
-            self._config.search.score_calibration_threshold,
-            self._config.search.score_calibration_steepness,
-        )
+        fused = self._apply_score_pipeline(strategy_results, weights)
 
         pipeline = self._get_pipeline()
 
@@ -550,7 +627,13 @@ class SearchOrchestrator:
             None,
         )
 
+        # Build strategy stats (HyDE only uses semantic search)
+        strategy_stats = SearchStrategyStats(
+            vector_count=len(vector_results),
+        )
+
         chunk_results = []
+        missing_chunk_ids: list[str] = []
         for chunk_id, score in final:
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if chunk_data:
@@ -571,6 +654,7 @@ class SearchOrchestrator:
                     parent_content=parent_content,
                 ))
             else:
+                missing_chunk_ids.append(chunk_id)
                 chunk_results.append(ChunkResult(
                     chunk_id=chunk_id,
                     doc_id=chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else "",
@@ -580,4 +664,7 @@ class SearchOrchestrator:
                     content="",
                 ))
 
-        return chunk_results, compression_stats
+        if missing_chunk_ids:
+            self._queue_reindex_for_chunks(missing_chunk_ids, "docstore lookup failed")
+
+        return chunk_results, compression_stats, strategy_stats

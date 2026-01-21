@@ -13,6 +13,7 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.indexing.implicit_graph import ImplicitGraphBuilder
+from src.indexing.manifest import load_manifest, save_manifest
 from src.parsers.dispatcher import dispatch_parser
 from src.search.edge_types import infer_edge_type
 
@@ -41,7 +42,7 @@ class IndexManager:
         self.graph = graph
         self.code = code
         self._failed_files: list[FailedFile] = []
-        self._chunker = get_chunker(config.chunking)
+        self._chunker = get_chunker(config.document_chunking)
 
     def _compute_doc_id(self, file_path: str) -> str:
         docs_path = Path(self._config.indexing.documents_path)
@@ -51,6 +52,93 @@ class IndexManager:
             return str(rel_path.with_suffix(""))
         except ValueError:
             return Path(file_path).stem
+
+    def _get_parser_suffixes(self, fallback_suffixes: list[str] | None = None):
+        suffixes: set[str] = set()
+        for pattern in self._config.parsers.keys():
+            suffix = Path(pattern).suffix
+            if suffix:
+                suffixes.add(suffix)
+
+        if not suffixes:
+            if fallback_suffixes is None:
+                return []
+            suffixes.update(fallback_suffixes)
+
+        return sorted(suffixes)
+
+    def _resolve_doc_path(self, doc_id: str):
+        docs_path = Path(self._config.indexing.documents_path)
+
+        direct_candidate = docs_path / doc_id
+        if direct_candidate.exists():
+            return str(direct_candidate)
+
+        suffixes = self._get_parser_suffixes([".md", ".markdown", ".txt"])
+        for suffix in suffixes:
+            candidate = docs_path / f"{doc_id}{suffix}"
+            if candidate.exists():
+                return str(candidate)
+
+        return None
+
+    def reindex_document(self, doc_id: str, reason: str | None = None):
+        file_path = self._resolve_doc_path(doc_id)
+        if not file_path:
+            pruned = self.prune_document(doc_id, reason=reason)
+            if reason:
+                logger.warning(
+                    "Reindex skipped for %s (reason: %s): file not found",
+                    doc_id,
+                    reason,
+                )
+            else:
+                logger.warning("Reindex skipped for %s: file not found", doc_id)
+            return pruned
+
+        try:
+            self.remove_document(doc_id)
+            self.index_document(file_path)
+            if reason:
+                logger.info(
+                    "Reindexed %s from %s (reason: %s)", doc_id, file_path, reason
+                )
+            else:
+                logger.info("Reindexed %s from %s", doc_id, file_path)
+            return True
+        except Exception as e:
+            logger.error("Failed to reindex %s: %s", doc_id, e, exc_info=True)
+            return False
+
+    def prune_document(self, doc_id: str, reason: str | None = None):
+        try:
+            removed_chunks = self.vector.prune_document(doc_id)
+            self.keyword.remove(doc_id)
+            self.graph.remove_node(doc_id)
+            if self.code is not None:
+                self.code.remove_by_doc_id(doc_id)
+
+            index_path = Path(self._config.indexing.index_path)
+            manifest = load_manifest(index_path)
+            if manifest and manifest.indexed_files and doc_id in manifest.indexed_files:
+                manifest.indexed_files.pop(doc_id, None)
+                save_manifest(index_path, manifest)
+
+            if reason:
+                logger.info(
+                    "Pruned %s from indices (%d chunks removed, reason: %s)",
+                    doc_id,
+                    removed_chunks,
+                    reason,
+                )
+            else:
+                logger.info(
+                    "Pruned %s from indices (%d chunks removed)", doc_id, removed_chunks
+                )
+            return True
+        except Exception as e:
+            logger.error("Failed to prune %s: %s", doc_id, e, exc_info=True)
+            return False
 
     def index_document(self, file_path: str):
         try:
@@ -76,10 +164,13 @@ class IndexManager:
             self.graph.add_node(document.id, graph_metadata)
 
             from src.parsers.markdown import MarkdownParser
+
             if isinstance(parser, MarkdownParser):
                 links_with_context = parser.extract_links_with_context(file_path)
                 for link_info in links_with_context:
-                    edge_type = infer_edge_type(link_info.header_context, link_info.target)
+                    edge_type = infer_edge_type(
+                        link_info.header_context, link_info.target
+                    )
                     self.graph.add_edge(
                         document.id,
                         link_info.target,
@@ -92,21 +183,24 @@ class IndexManager:
 
             if self.code is not None and self._config.search.code_search_enabled:
                 from src.parsers.markdown import MarkdownParser
+
                 if isinstance(parser, MarkdownParser):
                     code_blocks = parser.extract_code_blocks(file_path, document.id)
                     for code_block in code_blocks:
                         self.code.add_code_block(code_block)
 
-            self._failed_files = [
-                f for f in self._failed_files if f.path != file_path
-            ]
+            self._failed_files = [f for f in self._failed_files if f.path != file_path]
 
         except UnicodeDecodeError as e:
             # Try alternative encodings for files with encoding issues
-            logger.warning(f"UTF-8 decode failed for {file_path}, trying alternative encodings: {e}")
-            for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
+            logger.warning(
+                f"UTF-8 decode failed for {file_path}, trying alternative encodings: {e}"
+            )
+            for encoding in ["latin-1", "cp1252", "iso-8859-1"]:
                 try:
-                    logger.info(f"Attempting to read {file_path} with {encoding} encoding")
+                    logger.info(
+                        f"Attempting to read {file_path} with {encoding} encoding"
+                    )
                     parser = dispatch_parser(file_path, self._config)
                     # This will re-attempt parsing with different encoding
                     # Note: We'd need to modify parsers to accept encoding parameter
@@ -125,7 +219,9 @@ class IndexManager:
                 f for f in self._failed_files if f.path != file_path
             ] + [failed]
             # Don't raise - continue indexing other files
-            logger.info(f"Continuing with remaining files after encoding error in {file_path}")
+            logger.info(
+                f"Continuing with remaining files after encoding error in {file_path}"
+            )
         except Exception as e:
             logger.error(f"Failed to index document {file_path}: {e}", exc_info=True)
             failed = FailedFile(
@@ -149,18 +245,24 @@ class IndexManager:
             try:
                 remove_fn()
             except Exception as e:
-                logger.error(f"Failed to remove {doc_id} from {index_name}: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to remove {doc_id} from {index_name}: {e}", exc_info=True
+                )
                 errors.append((index_name, e))
 
         if self.code is not None:
             try:
                 self.code.remove_by_doc_id(doc_id)
             except Exception as e:
-                logger.error(f"Failed to remove {doc_id} from code index: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to remove {doc_id} from code index: {e}", exc_info=True
+                )
                 errors.append(("code", e))
 
         if errors:
-            logger.warning(f"Document {doc_id} removal completed with {len(errors)} index failures")
+            logger.warning(
+                f"Document {doc_id} removal completed with {len(errors)} index failures"
+            )
 
     def persist(self):
         """Persist all indices with retry logic for transient failures.

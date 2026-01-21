@@ -19,7 +19,7 @@ class ProjectConfig:
     path: str
 
     def __post_init__(self):
-        if not re.match(r'^[a-zA-Z0-9_-]+$', self.name):
+        if not re.match(r"^[a-zA-Z0-9_-]+$", self.name):
             raise ValueError(
                 f"Invalid project name '{self.name}': "
                 "must contain only alphanumeric characters, hyphens, and underscores"
@@ -27,9 +27,7 @@ class ProjectConfig:
 
         path_obj = Path(self.path).expanduser()
         if not path_obj.is_absolute():
-            raise ValueError(
-                f"Project path '{self.path}' must be absolute"
-            )
+            raise ValueError(f"Project path '{self.path}' must be absolute")
 
         self.path = str(path_obj.resolve())
 
@@ -46,16 +44,24 @@ class IndexingConfig:
     index_path: str = ".index_data/"
     recursive: bool = True
     include: list[str] = field(default_factory=lambda: ["**/*"])
-    exclude: list[str] = field(default_factory=lambda: [
-        "**/.venv/**",
-        "**/venv/**",
-        "**/build/**",
-        "**/dist/**",
-        "**/.git/**",
-        "**/node_modules/**",
-        "**/__pycache__/**",
-        "**/.pytest_cache/**"
-    ])
+    exclude: list[str] = field(
+        default_factory=lambda: [
+            "**/.venv/**",
+            "**/venv/**",
+            "**/build/**",
+            "**/dist/**",
+            "**/.git/**",
+            "**/node_modules/**",
+            "**/__pycache__/**",
+            "**/.pytest_cache/**",
+            "**/.codanna/**",
+            "**/*-egg-info/**",
+            "**/.mcp-markdown-ragdocs/**",
+            "**/.stversions/**",
+            "**/.worktree/**",
+            "**/.worktrees/**",
+        ]
+    )
     exclude_hidden_dirs: bool = True
     reconciliation_interval_seconds: int = 3600  # 1 hour, 0 to disable
     coordination_mode: str = "file_lock"
@@ -76,7 +82,7 @@ class SearchConfig:
     ngram_dedup_threshold: float = 0.7
     mmr_enabled: bool = False
     mmr_lambda: float = 0.7
-    rerank_enabled: bool = False
+    rerank_enabled: bool = True
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_top_n: int = 10
     adaptive_weights_enabled: bool = True
@@ -96,6 +102,7 @@ class SearchConfig:
     tag_expansion_depth: int = 2
     score_calibration_threshold: float = 0.035
     score_calibration_steepness: float = 150.0
+
 
 @dataclass
 class LLMConfig:
@@ -121,6 +128,8 @@ class GitIndexingConfig:
     batch_size: int = 100
     watch_enabled: bool = True
     watch_cooldown: float = 5.0
+    parallel_workers: int = 4
+    embed_batch_size: int = 32
 
 
 @dataclass
@@ -130,9 +139,7 @@ class MemoryDecayConfig:
 
     def __post_init__(self):
         if not (0.0 < self.decay_rate <= 1.0):
-            raise ValueError(
-                f"decay_rate must be in (0.0, 1.0], got {self.decay_rate}"
-            )
+            raise ValueError(f"decay_rate must be in (0.0, 1.0], got {self.decay_rate}")
         if not (0.0 <= self.floor_multiplier <= 1.0):
             raise ValueError(
                 f"floor_multiplier must be in [0.0, 1.0], got {self.floor_multiplier}"
@@ -144,11 +151,21 @@ class MemoryConfig:
     enabled: bool = True
     storage_strategy: str = "user"
     score_threshold: float = 0.2
-    decay_journal: MemoryDecayConfig = field(default_factory=lambda: MemoryDecayConfig(0.90, 0.1))
-    decay_plan: MemoryDecayConfig = field(default_factory=lambda: MemoryDecayConfig(0.85, 0.1))
-    decay_fact: MemoryDecayConfig = field(default_factory=lambda: MemoryDecayConfig(0.98, 0.2))
-    decay_observation: MemoryDecayConfig = field(default_factory=lambda: MemoryDecayConfig(0.92, 0.15))
-    decay_reflection: MemoryDecayConfig = field(default_factory=lambda: MemoryDecayConfig(0.95, 0.2))
+    decay_journal: MemoryDecayConfig = field(
+        default_factory=lambda: MemoryDecayConfig(0.90, 0.1)
+    )
+    decay_plan: MemoryDecayConfig = field(
+        default_factory=lambda: MemoryDecayConfig(0.85, 0.1)
+    )
+    decay_fact: MemoryDecayConfig = field(
+        default_factory=lambda: MemoryDecayConfig(0.98, 0.2)
+    )
+    decay_observation: MemoryDecayConfig = field(
+        default_factory=lambda: MemoryDecayConfig(0.92, 0.15)
+    )
+    decay_reflection: MemoryDecayConfig = field(
+        default_factory=lambda: MemoryDecayConfig(0.95, 0.2)
+    )
     # Deprecated fields (for backward compatibility)
     recency_boost_days: int | None = None
     recency_boost_factor: float | None = None
@@ -187,9 +204,7 @@ class MemoryConfig:
         }
         if memory_type in decay_configs:
             return decay_configs[memory_type]
-        logger.debug(
-            f"No decay config for type '{memory_type}', using decay_journal"
-        )
+        logger.debug(f"No decay config for type '{memory_type}', using decay_journal")
         return self.decay_journal
 
 
@@ -199,14 +214,17 @@ class Config:
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
-    parsers: dict[str, str] = field(default_factory=lambda: {
-        "**/*.md": "MarkdownParser",
-        "**/*.markdown": "MarkdownParser",
-        "**/*.txt": "PlainTextParser"
-    })
+    parsers: dict[str, str] = field(
+        default_factory=lambda: {
+            "**/*.md": "MarkdownParser",
+            "**/*.markdown": "MarkdownParser",
+            "**/*.txt": "PlainTextParser",
+        }
+    )
     search: SearchConfig = field(default_factory=SearchConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
-    chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
+    document_chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
+    memory_chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     projects: list[ProjectConfig] = field(default_factory=list)
 
 
@@ -217,7 +235,9 @@ def _expand_path(path_str: str):
     return str(path)
 
 
-def _load_dataclass_from_dict[T](cls: type[T], data: dict[str, Any], path_fields: set[str] | None = None) -> T:
+def _load_dataclass_from_dict[T](
+    cls: type[T], data: dict[str, Any], path_fields: set[str] | None = None
+) -> T:
     if path_fields is None:
         path_fields = set()
 
@@ -228,7 +248,11 @@ def _load_dataclass_from_dict[T](cls: type[T], data: dict[str, Any], path_fields
 
         value = data[f.name]
 
-        if is_dataclass(f.type) and isinstance(f.type, type) and isinstance(value, dict):
+        if (
+            is_dataclass(f.type)
+            and isinstance(f.type, type)
+            and isinstance(value, dict)
+        ):
             value = _load_dataclass_from_dict(f.type, value)
         elif f.name in path_fields and isinstance(value, str):
             value = _expand_path(value)
@@ -241,8 +265,20 @@ def _load_dataclass_from_dict[T](cls: type[T], data: dict[str, Any], path_fields
 def _load_memory_config(data: dict[str, Any]):
     kwargs: dict[str, Any] = {}
 
-    simple_fields = {"enabled", "storage_strategy", "score_threshold", "recency_boost_days", "recency_boost_factor"}
-    decay_fields = {"decay_journal", "decay_plan", "decay_fact", "decay_observation", "decay_reflection"}
+    simple_fields = {
+        "enabled",
+        "storage_strategy",
+        "score_threshold",
+        "recency_boost_days",
+        "recency_boost_factor",
+    }
+    decay_fields = {
+        "decay_journal",
+        "decay_plan",
+        "decay_fact",
+        "decay_observation",
+        "decay_reflection",
+    }
 
     for key in simple_fields:
         if key in data:
@@ -299,29 +335,53 @@ def load_config():
     indexing.documents_path = _expand_path(indexing.documents_path)
     indexing.index_path = _expand_path(indexing.index_path)
 
-    parsers = config_data.get("parsers", {
-        "**/*.md": "MarkdownParser",
-        "**/*.markdown": "MarkdownParser",
-        "**/*.txt": "PlainTextParser"
-    })
+    parsers = config_data.get(
+        "parsers",
+        {
+            "**/*.md": "MarkdownParser",
+            "**/*.markdown": "MarkdownParser",
+            "**/*.txt": "PlainTextParser",
+        },
+    )
 
     search = _load_dataclass_from_dict(SearchConfig, config_data.get("search", {}))
     llm = _load_dataclass_from_dict(LLMConfig, config_data.get("llm", {}))
-    chunking = _load_dataclass_from_dict(ChunkingConfig, config_data.get("chunking", {}))
-    git_indexing = _load_dataclass_from_dict(GitIndexingConfig, config_data.get("git_indexing", {}))
+    git_indexing = _load_dataclass_from_dict(
+        GitIndexingConfig, config_data.get("git_indexing", {})
+    )
     memory = _load_memory_config(config_data.get("memory", {}))
+
+    # Backward compatibility: if [chunking] exists, use it for both document and memory
+    # Otherwise, load separate configs
+    if "chunking" in config_data:
+        # Legacy config: single [chunking] section
+        legacy_chunking = _load_dataclass_from_dict(
+            ChunkingConfig, config_data["chunking"]
+        )
+        document_chunking = legacy_chunking
+        memory_chunking = legacy_chunking
+        logger.info("Using legacy [chunking] config for both documents and memories")
+    else:
+        # New config: separate sections
+        document_chunking = _load_dataclass_from_dict(
+            ChunkingConfig, config_data.get("chunking_documents", {})
+        )
+        memory_chunking = _load_dataclass_from_dict(
+            ChunkingConfig, config_data.get("chunking_memories", {})
+        )
 
     projects_data = config_data.get("projects", [])
     projects = []
     if projects_data:
         for proj_data in projects_data:
             try:
-                projects.append(ProjectConfig(
-                    name=proj_data["name"],
-                    path=proj_data["path"]
-                ))
+                projects.append(
+                    ProjectConfig(name=proj_data["name"], path=proj_data["path"])
+                )
             except (KeyError, ValueError) as e:
-                logger.warning(f"Skipping invalid project config: {e}. Project data: {proj_data}")
+                logger.warning(
+                    f"Skipping invalid project config: {e}. Project data: {proj_data}"
+                )
 
     _validate_projects(projects)
 
@@ -333,7 +393,8 @@ def load_config():
         parsers=parsers,
         search=search,
         llm=llm,
-        chunking=chunking,
+        document_chunking=document_chunking,
+        memory_chunking=memory_chunking,
         projects=projects,
     )
 
@@ -357,10 +418,10 @@ def _validate_projects(projects: list[ProjectConfig]):
 
 
 def _generate_unique_project_name(base_name: str, existing_names: list[str]):
-    name = re.sub(r'[^a-zA-Z0-9_-]', '-', base_name)
-    name = re.sub(r'-+', '-', name).strip('-')
+    name = re.sub(r"[^a-zA-Z0-9_-]", "-", base_name)
+    name = re.sub(r"-+", "-", name).strip("-")
 
-    if not name or not re.match(r'^[a-zA-Z0-9_-]+$', name):
+    if not name or not re.match(r"^[a-zA-Z0-9_-]+$", name):
         name = "project"
 
     if name not in existing_names:
@@ -374,7 +435,9 @@ def _generate_unique_project_name(base_name: str, existing_names: list[str]):
 
 
 def persist_project_to_config(project_name: str, project_path: str):
-    global_config_path = Path.home() / ".config" / "mcp-markdown-ragdocs" / "config.toml"
+    global_config_path = (
+        Path.home() / ".config" / "mcp-markdown-ragdocs" / "config.toml"
+    )
 
     global_config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -391,6 +454,7 @@ def persist_project_to_config(project_name: str, project_path: str):
     projects_array: Any = doc["projects"]
     if not isinstance(projects_array, list):
         from tomlkit.items import AoT
+
         projects_array = AoT([])
         doc["projects"] = projects_array
 
@@ -412,10 +476,7 @@ def persist_project_to_config(project_name: str, project_path: str):
     projects_list.append(new_project)
 
     with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=global_config_path.parent,
-        delete=False,
-        suffix=".tmp"
+        mode="w", dir=global_config_path.parent, delete=False, suffix=".tmp"
     ) as tmp_file:
         tmp_path = Path(tmp_file.name)
         tomlkit.dump(doc, tmp_file)
@@ -424,10 +485,16 @@ def persist_project_to_config(project_name: str, project_path: str):
     logger.info(f"Persisted project '{project_name}' to config: {project_path}")
 
 
-def detect_project(cwd: Path | None = None, projects: list[ProjectConfig] | None = None, project_override: str | None = None):
+def detect_project(
+    cwd: Path | None = None,
+    projects: list[ProjectConfig] | None = None,
+    project_override: str | None = None,
+):
     if project_override:
         if projects is None:
-            global_config_path = Path.home() / ".config" / "mcp-markdown-ragdocs" / "config.toml"
+            global_config_path = (
+                Path.home() / ".config" / "mcp-markdown-ragdocs" / "config.toml"
+            )
             if global_config_path.exists():
                 with open(global_config_path, "rb") as f:
                     config_data = tomllib.load(f)
@@ -435,36 +502,41 @@ def detect_project(cwd: Path | None = None, projects: list[ProjectConfig] | None
                 projects = []
                 for proj_data in projects_data:
                     try:
-                        projects.append(ProjectConfig(
-                            name=proj_data["name"],
-                            path=proj_data["path"]
-                        ))
+                        projects.append(
+                            ProjectConfig(
+                                name=proj_data["name"], path=proj_data["path"]
+                            )
+                        )
                     except (KeyError, ValueError):
                         continue
 
         if projects:
             for project in projects:
                 if project.name == project_override:
-                    logger.info(f"Using project from --project flag: {project.name} (path: {project.path})")
+                    logger.info(
+                        f"Using project from --project flag: {project.name} (path: {project.path})"
+                    )
                     return project.name
 
             project_path = Path(project_override).expanduser().resolve()
             for project in projects:
                 if Path(project.path).resolve() == project_path:
-                    logger.info(f"Using project from --project flag (matched by path): {project.name}")
+                    logger.info(
+                        f"Using project from --project flag (matched by path): {project.name}"
+                    )
                     return project.name
 
             # Check if project_override path is a subdirectory of a known project (deepest-match-wins)
             projects_sorted = sorted(
-                projects,
-                key=lambda p: len(Path(p.path).parts),
-                reverse=True
+                projects, key=lambda p: len(Path(p.path).parts), reverse=True
             )
             for project in projects_sorted:
                 project_path_resolved = Path(project.path).resolve()
                 try:
                     project_path.relative_to(project_path_resolved)
-                    logger.info(f"Using project from --project flag (subdirectory of '{project.name}'): {project.path}")
+                    logger.info(
+                        f"Using project from --project flag (subdirectory of '{project.name}'): {project.path}"
+                    )
                     return project.name
                 except ValueError:
                     continue
@@ -474,7 +546,9 @@ def detect_project(cwd: Path | None = None, projects: list[ProjectConfig] | None
             logger.info(f"Using arbitrary path from --project flag: {project_path}")
 
             existing_names = [p.name for p in (projects or [])]
-            project_name = _generate_unique_project_name(project_path.name, existing_names)
+            project_name = _generate_unique_project_name(
+                project_path.name, existing_names
+            )
 
             try:
                 persist_project_to_config(project_name, str(project_path))
@@ -483,14 +557,18 @@ def detect_project(cwd: Path | None = None, projects: list[ProjectConfig] | None
 
             return project_name
 
-        logger.warning(f"Project override '{project_override}' not found in registry and is not a valid path")
+        logger.warning(
+            f"Project override '{project_override}' not found in registry and is not a valid path"
+        )
         return None
 
     if cwd is None:
         cwd = Path.cwd()
 
     if projects is None:
-        global_config_path = Path.home() / ".config" / "mcp-markdown-ragdocs" / "config.toml"
+        global_config_path = (
+            Path.home() / ".config" / "mcp-markdown-ragdocs" / "config.toml"
+        )
         if not global_config_path.exists():
             projects = []
         else:
@@ -501,10 +579,9 @@ def detect_project(cwd: Path | None = None, projects: list[ProjectConfig] | None
             projects = []
             for proj_data in projects_data:
                 try:
-                    projects.append(ProjectConfig(
-                        name=proj_data["name"],
-                        path=proj_data["path"]
-                    ))
+                    projects.append(
+                        ProjectConfig(name=proj_data["name"], path=proj_data["path"])
+                    )
                 except (KeyError, ValueError):
                     continue
 
@@ -514,9 +591,7 @@ def detect_project(cwd: Path | None = None, projects: list[ProjectConfig] | None
     cwd_resolved = cwd.resolve()
 
     projects_sorted = sorted(
-        projects,
-        key=lambda p: len(Path(p.path).parts),
-        reverse=True
+        projects, key=lambda p: len(Path(p.path).parts), reverse=True
     )
 
     for project in projects_sorted:
@@ -539,7 +614,9 @@ def detect_project(cwd: Path | None = None, projects: list[ProjectConfig] | None
 
         try:
             persist_project_to_config(project_name, str(cwd_resolved))
-            logger.info(f"Successfully persisted CWD project '{project_name}': {cwd_resolved}")
+            logger.info(
+                f"Successfully persisted CWD project '{project_name}': {cwd_resolved}"
+            )
             return project_name
         except Exception as e:
             logger.warning(f"Failed to persist CWD project to config: {e}")
@@ -569,30 +646,40 @@ def resolve_index_path(config: Config, detected_project: str | None = None):
     if detected_project:
         safe_project_name = detected_project.replace("/", "_").replace("\\", "_")
         index_path = base_dir / "mcp-markdown-ragdocs" / safe_project_name
-        logger.info(f"Using global data directory for project '{detected_project}': {index_path}")
+        logger.info(
+            f"Using global data directory for project '{detected_project}': {index_path}"
+        )
         return index_path
 
     cwd = Path.cwd()
     cwd_name = cwd.name
-    sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '-', cwd_name)
-    sanitized_name = re.sub(r'-+', '-', sanitized_name).strip('-')
+    sanitized_name = re.sub(r"[^a-zA-Z0-9_-]", "-", cwd_name)
+    sanitized_name = re.sub(r"-+", "-", sanitized_name).strip("-")
 
     if not sanitized_name:
         sanitized_name = "default"
 
     fallback_name = f"local-{sanitized_name}"
     index_path = base_dir / "mcp-markdown-ragdocs" / fallback_name
-    logger.info(f"No project detected, using global data directory with fallback: {index_path}")
+    logger.info(
+        f"No project detected, using global data directory with fallback: {index_path}"
+    )
     return index_path
 
 
-def resolve_documents_path(config: Config, detected_project: str | None = None, projects: list[ProjectConfig] | None = None) -> str:
+def resolve_documents_path(
+    config: Config,
+    detected_project: str | None = None,
+    projects: list[ProjectConfig] | None = None,
+) -> str:
     # If project detected, use the project's path (ignore config.indexing.documents_path)
     if detected_project and projects:
         for project in projects:
             if project.name == detected_project:
                 project_path = Path(project.path)
-                logger.info(f"Using project path as documents root for '{detected_project}': {project_path}")
+                logger.info(
+                    f"Using project path as documents root for '{detected_project}': {project_path}"
+                )
                 return str(project_path)
 
     # No project: use documents_path from config
@@ -622,7 +709,9 @@ def resolve_memory_path(
             for project in projects:
                 if project.name == detected_project:
                     memory_path = Path(project.path) / ".memories"
-                    logger.info(f"Using project memory path for '{detected_project}': {memory_path}")
+                    logger.info(
+                        f"Using project memory path for '{detected_project}': {memory_path}"
+                    )
                     return memory_path
 
         cwd = Path.cwd()
@@ -639,13 +728,17 @@ def resolve_memory_path(
     if detected_project:
         safe_project_name = detected_project.replace("/", "_").replace("\\", "_")
         memory_path = base_dir / "mcp-markdown-ragdocs" / safe_project_name / "memories"
-        logger.info(f"Using user memory path for project '{detected_project}': {memory_path}")
+        logger.info(
+            f"Using user memory path for project '{detected_project}': {memory_path}"
+        )
         return memory_path
 
     cwd = Path.cwd()
-    sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '-', cwd.name)
-    sanitized_name = re.sub(r'-+', '-', sanitized_name).strip('-') or "default"
+    sanitized_name = re.sub(r"[^a-zA-Z0-9_-]", "-", cwd.name)
+    sanitized_name = re.sub(r"-+", "-", sanitized_name).strip("-") or "default"
 
-    memory_path = base_dir / "mcp-markdown-ragdocs" / f"local-{sanitized_name}" / "memories"
+    memory_path = (
+        base_dir / "mcp-markdown-ragdocs" / f"local-{sanitized_name}" / "memories"
+    )
     logger.info(f"Using fallback user memory path: {memory_path}")
     return memory_path

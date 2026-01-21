@@ -200,7 +200,6 @@ async def search_memories(
     ctx: ApplicationContext,
     query: str,
     limit: int = 5,
-    filter_tags: list[str] | None = None,
     filter_type: str | None = None,
     load_full_memory: bool = False,
     after_timestamp: int | None = None,
@@ -214,7 +213,6 @@ async def search_memories(
         results = await ctx.memory_search.search_memories(
             query=query,
             limit=limit,
-            filter_tags=filter_tags,
             filter_type=filter_type,
             load_full_memory=load_full_memory,
             after_timestamp=after_timestamp,
@@ -382,6 +380,27 @@ async def suggest_related_tags(
         }
     except Exception as e:
         logger.error(f"Failed to suggest related tags: {e}", exc_info=True)
+        return {"error": str(e)}
+
+
+async def get_memory_relationships(
+    ctx: ApplicationContext,
+    filename: str,
+    relationship_type: str | None = None,
+) -> dict:
+    """
+    Get memory relationships (supersedes/depends_on/contradicts) for a memory.
+    
+    Replaces get_memory_versions, get_memory_dependencies, and detect_contradictions.
+    """
+    if ctx.memory_manager is None or ctx.memory_search is None:
+        return {"error": "Memory system is not enabled"}
+
+    try:
+        memory_id = f"memory:{Path(filename).stem}"
+        return ctx.memory_search.get_memory_relationships(memory_id, relationship_type)
+    except Exception as e:
+        logger.error(f"Failed to get memory relationships: {e}", exc_info=True)
         return {"error": str(e)}
 
 

@@ -275,7 +275,6 @@ class MemorySearchOrchestrator:
         self,
         query: str,
         limit: int = 5,
-        filter_tags: list[str] | None = None,
         filter_type: str | None = None,
     ) -> list[MemorySearchResult]: ...
 

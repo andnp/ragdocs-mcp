@@ -122,7 +122,8 @@ def _create_config(tmp_path, test_docs_dir, hyde_enabled: bool = True) -> Config
             community_detection_enabled=True,
             dynamic_weights_enabled=True,
         ),
-        chunking=ChunkingConfig(),
+        document_chunking=ChunkingConfig(),
+        memory_chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 

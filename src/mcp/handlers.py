@@ -114,7 +114,7 @@ async def _query_documents_impl(
         rerank_enabled=False,
     )
 
-    results, stats = await ctx.orchestrator.query(
+    results, stats, _ = await ctx.orchestrator.query(
         query,
         top_k=top_k,
         top_n=top_n,
@@ -150,16 +150,30 @@ async def _query_documents_impl(
 
 @tool_handler("query_documents")
 async def handle_query_documents(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+    # Handle optional uniqueness_mode parameter (Priority B unification)
+    uniqueness_mode = arguments.get("uniqueness_mode", "allow_multiple")
+    
+    if uniqueness_mode == "one_per_document":
+        max_chunks_per_doc = 1
+        result_header = "Search Results (Unique Documents)"
+    elif uniqueness_mode == "allow_multiple":
+        max_chunks_per_doc = 0
+        result_header = "Search Results"
+    else:
+        raise ValueError(f"Invalid uniqueness_mode: {uniqueness_mode}. Must be 'allow_multiple' or 'one_per_document'")
+    
     return await _query_documents_impl(
         hctx,
         arguments,
-        max_chunks_per_doc=0,
-        result_header="Search Results",
+        max_chunks_per_doc=max_chunks_per_doc,
+        result_header=result_header,
     )
 
 
 @tool_handler("query_unique_documents")
 async def handle_query_unique_documents(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+    # DEPRECATED: Maintained for backward compatibility
+    # New code should use query_documents with uniqueness_mode="one_per_document"
     return await _query_documents_impl(
         hctx,
         arguments,
@@ -197,7 +211,7 @@ async def handle_search_with_hypothesis(hctx: HandlerContext, arguments: dict) -
 
     top_k = max(20, top_n * 4)
 
-    results, _ = await ctx.orchestrator.query_with_hypothesis(
+    results, _, _ = await ctx.orchestrator.query_with_hypothesis(
         hypothesis,
         top_k=top_k,
         top_n=top_n,

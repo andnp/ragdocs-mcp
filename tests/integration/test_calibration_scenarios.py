@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig, ChunkingConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -36,6 +36,8 @@ def config(tmp_path):
             rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
+        document_chunking=ChunkingConfig(),
+        memory_chunking=ChunkingConfig(),
     )
 
 
@@ -138,7 +140,7 @@ async def test_good_match_returns_high_confidence(config, manager, orchestrator)
     create_test_corpus(config, manager)
 
     # Precise query matching doc1 (api_reference.md)
-    results, _ = await orchestrator.query(
+    results, _, _ = await orchestrator.query(
         "authentication API reference documentation",
         top_k=10,
         top_n=10
@@ -167,7 +169,7 @@ async def test_weak_query_returns_varied_confidence(config, manager, orchestrato
     create_test_corpus(config, manager)
 
     # Vague query with limited semantic signal
-    results, _ = await orchestrator.query(
+    results, _, _ = await orchestrator.query(
         "general information overview",
         top_k=10,
         top_n=10
@@ -197,7 +199,7 @@ async def test_nonsense_query_still_returns_results(config, manager, orchestrato
     create_test_corpus(config, manager)
 
     # Query unrelated to corpus
-    results, _ = await orchestrator.query(
+    results, _, _ = await orchestrator.query(
         "quantum blockchain cryptocurrency mining",
         top_k=10,
         top_n=10
@@ -223,7 +225,7 @@ async def test_score_filtering_in_pipeline(config, manager, orchestrator):
     create_test_corpus(config, manager)
 
     # Query without filtering
-    results_all, _ = await orchestrator.query(
+    results_all, _, _ = await orchestrator.query(
         "security authentication",
         top_k=10,
         top_n=10
@@ -231,7 +233,7 @@ async def test_score_filtering_in_pipeline(config, manager, orchestrator):
 
     # Get fewer results with higher top_n threshold
     # (as a proxy for confidence filtering)
-    results_fewer, _ = await orchestrator.query(
+    results_fewer, _, _ = await orchestrator.query(
         "security authentication",
         top_k=10,
         top_n=3
@@ -257,13 +259,13 @@ async def test_score_consistency_across_queries(config, manager, orchestrator):
     create_test_corpus(config, manager)
 
     # Run same query twice
-    results1, _ = await orchestrator.query(
+    results1, _, _ = await orchestrator.query(
         "API authentication documentation",
         top_k=10,
         top_n=5
     )
 
-    results2, _ = await orchestrator.query(
+    results2, _, _ = await orchestrator.query(
         "API authentication documentation",
         top_k=10,
         top_n=5
@@ -293,14 +295,14 @@ async def test_confidence_levels_interpretation(config, manager, orchestrator):
     create_test_corpus(config, manager)
 
     # High-precision query for excellent match
-    results_excellent, _ = await orchestrator.query(
+    results_excellent, _, _ = await orchestrator.query(
         "API reference authentication",
         top_k=5,
         top_n=5
     )
 
     # Moderate query for good match
-    results_good, _ = await orchestrator.query(
+    results_good, _, _ = await orchestrator.query(
         "authentication security",
         top_k=5,
         top_n=5

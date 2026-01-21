@@ -67,6 +67,7 @@ class VectorIndex:
         # Bounded warning deduplication with LRU eviction (max 1000 entries)
         self._warned_stale_chunk_ids: OrderedDict[str, bool] = OrderedDict()
         self._max_warned_chunks = 1000
+        self._tombstoned_docs: set[str] = set()
         self._index_lock = threading.Lock()  # Protects index operations during concurrent access
 
     def _ensure_model_loaded(self, timeout: float = 120.0) -> None:
@@ -150,6 +151,7 @@ class VectorIndex:
         )
 
         node_id = llama_doc.id_
+        self._tombstoned_docs.discard(document.id)
 
         # Protect index operations with lock to prevent race condition during shutdown/persist
         with self._index_lock:
@@ -184,6 +186,7 @@ class VectorIndex:
         )
 
         node_id = llama_doc.id_
+        self._tombstoned_docs.discard(chunk.doc_id)
 
         # Protect index operations with lock to prevent race condition during shutdown/persist
         with self._index_lock:
@@ -208,6 +211,50 @@ class VectorIndex:
                 return
             del self._doc_id_to_node_ids[document_id]
 
+    def prune_document(self, doc_id: str):
+        if self._index is None:
+            return 0
+
+        self._tombstoned_docs.add(doc_id)
+        removed = 0
+        chunk_ids = list(self._doc_id_to_node_ids.get(doc_id, []))
+        for chunk_id in chunk_ids:
+            try:
+                docstore = self._index.docstore
+                if hasattr(docstore, "delete_document"):
+                    docstore.delete_document(chunk_id)
+                    removed += 1
+                elif hasattr(docstore, "delete"):
+                    docstore.delete(chunk_id)
+                    removed += 1
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self._index, "index_store"):
+                    index_store = self._index.index_store
+                    if hasattr(index_store, "delete"):
+                        index_store.delete(chunk_id)
+            except Exception:
+                pass
+
+            try:
+                if self._vector_store is not None and hasattr(self._vector_store, "delete"):
+                    self._vector_store.delete(chunk_id)
+            except Exception:
+                pass
+
+            self._chunk_id_to_node_id.pop(chunk_id, None)
+
+        try:
+            if hasattr(self._index, "delete_ref_doc"):
+                self._index.delete_ref_doc(doc_id, delete_from_docstore=True)
+        except Exception:
+            pass
+
+        self._doc_id_to_node_ids.pop(doc_id, None)
+        return removed
+
     def search(self, query: str, top_k: int = 10, excluded_files: set[str] | None = None, docs_root: Path | None = None) -> list[dict]:
         if self._index is None or not query.strip():
             return []
@@ -228,13 +275,16 @@ class VectorIndex:
                         continue
 
             chunk_id = node.metadata.get("chunk_id")
+            doc_id = node.metadata.get("doc_id")
+            if doc_id and doc_id in self._tombstoned_docs:
+                continue
 
             node_text = node.node.get_content() if hasattr(node.node, "get_content") else getattr(node.node, "text", "")
 
             if chunk_id:
                 results.append({
                     "chunk_id": chunk_id,
-                    "doc_id": node.metadata.get("doc_id"),
+                    "doc_id": doc_id,
                     "score": node.score if hasattr(node, "score") else 1.0,
                     "header_path": node.metadata.get("header_path", ""),
                     "file_path": node.metadata.get("file_path", ""),
@@ -242,7 +292,6 @@ class VectorIndex:
                     "metadata": node.metadata,
                 })
             else:
-                doc_id = node.metadata.get("doc_id")
                 if doc_id:
                     results.append({
                         "chunk_id": doc_id,
@@ -264,6 +313,11 @@ class VectorIndex:
             if chunk_id not in self._warned_stale_chunk_ids:
                 logger.warning(f"get_chunk_by_id({chunk_id}): index is None")
                 self._log_stale_warning(chunk_id)
+            return None
+
+        doc_id = chunk_id.split("_chunk_", 1)[0] if "_chunk_" in chunk_id else chunk_id
+        if doc_id in self._tombstoned_docs:
+            logger.debug(f"get_chunk_by_id({chunk_id}): doc_id tombstoned")
             return None
 
         logger.debug(f"get_chunk_by_id({chunk_id}): attempting direct docstore lookup")
@@ -583,6 +637,10 @@ class VectorIndex:
             with open(term_counts_file, "w") as f:
                 json.dump(self._term_counts, f)
 
+        tombstone_file = path / "tombstones.json"
+        with open(tombstone_file, "w") as f:
+            json.dump(sorted(self._tombstoned_docs), f)
+
     def load(self, path: Path) -> None:
         from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage
         from llama_index.vector_stores.faiss import FaissVectorStore
@@ -662,6 +720,19 @@ class VectorIndex:
                 self._term_counts = {}
         else:
             self._term_counts = {}
+
+        tombstone_file = path / "tombstones.json"
+        if tombstone_file.exists():
+            try:
+                with open(tombstone_file, "r") as f:
+                    tombstones = json.load(f)
+                    if isinstance(tombstones, list):
+                        self._tombstoned_docs = set(tombstones)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to load tombstones (corrupted JSON): {e}")
+                self._tombstoned_docs = set()
+        else:
+            self._tombstoned_docs = set()
 
         self._pending_terms.clear()
         self._warned_stale_chunk_ids.clear()
@@ -754,21 +825,23 @@ class VectorIndex:
         )
 
         node_id = llama_doc.id_
+        self._tombstoned_docs.discard(doc_id)
         self._doc_id_to_node_ids[doc_id] = [node_id]
         self._index.insert_nodes([llama_doc])
 
     def remove_document(self, doc_id: str) -> None:
-        self.remove(doc_id)
+         self.remove(doc_id)
 
-    def clear(self) -> None:
-        self._doc_id_to_node_ids = {}
-        self._chunk_id_to_node_id = {}
-        self._vector_store = None
-        self._index = None
-        self._concept_vocabulary = {}
-        self._term_counts = {}
-        self._pending_terms.clear()
-        self._warned_stale_chunk_ids.clear()
+     def clear(self) -> None:
+         self._doc_id_to_node_ids = {}
+         self._chunk_id_to_node_id = {}
+         self._vector_store = None
+         self._index = None
+         self._concept_vocabulary = {}
+         self._term_counts = {}
+         self._pending_terms.clear()
+         self._warned_stale_chunk_ids.clear()
+         self._tombstoned_docs.clear()
 
     def save(self, path: Path) -> None:
         self.persist(path)

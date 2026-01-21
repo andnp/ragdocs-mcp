@@ -30,7 +30,12 @@ def config(tmp_path):
             rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
-        chunking=ChunkingConfig(
+        document_chunking=ChunkingConfig(
+            min_chunk_chars=200,
+            max_chunk_chars=2000,
+            overlap_chars=100,
+        ),
+        memory_chunking=ChunkingConfig(
             min_chunk_chars=200,
             max_chunk_chars=2000,
             overlap_chars=100,
@@ -76,12 +81,12 @@ def test_txt_chunking_respects_size_limits(tmp_path, config):
     parser = PlainTextParser()
     doc = parser.parse(str(txt_file))
 
-    chunker = HeaderBasedChunker(config.chunking)
+    chunker = HeaderBasedChunker(config.document_chunking)
     chunks = chunker.chunk_document(doc)
 
     for chunk in chunks:
-        assert len(chunk.content) >= config.chunking.min_chunk_chars
-        assert len(chunk.content) <= config.chunking.max_chunk_chars
+        assert len(chunk.content) >= config.document_chunking.min_chunk_chars
+        assert len(chunk.content) <= config.document_chunking.max_chunk_chars
 
 
 def test_txt_chunks_have_no_header_path(tmp_path, config):
@@ -91,7 +96,7 @@ def test_txt_chunks_have_no_header_path(tmp_path, config):
     parser = PlainTextParser()
     doc = parser.parse(str(txt_file))
 
-    chunker = HeaderBasedChunker(config.chunking)
+    chunker = HeaderBasedChunker(config.document_chunking)
     chunks = chunker.chunk_document(doc)
 
     for chunk in chunks:
@@ -105,7 +110,7 @@ def test_txt_small_content_single_chunk(tmp_path, config):
     parser = PlainTextParser()
     doc = parser.parse(str(txt_file))
 
-    chunker = HeaderBasedChunker(config.chunking)
+    chunker = HeaderBasedChunker(config.document_chunking)
     chunks = chunker.chunk_document(doc)
 
     assert len(chunks) == 1
@@ -160,7 +165,7 @@ def test_txt_chunk_start_end_positions(tmp_path, config):
     parser = PlainTextParser()
     doc = parser.parse(str(txt_file))
 
-    chunker = HeaderBasedChunker(config.chunking)
+    chunker = HeaderBasedChunker(config.document_chunking)
     chunks = chunker.chunk_document(doc)
 
     for chunk in chunks:
@@ -177,7 +182,7 @@ def test_txt_multiple_paragraphs_chunking(tmp_path, config):
     parser = PlainTextParser()
     doc = parser.parse(str(txt_file))
 
-    chunker = HeaderBasedChunker(config.chunking)
+    chunker = HeaderBasedChunker(config.document_chunking)
     chunks = chunker.chunk_document(doc)
 
     assert len(chunks) >= 1
@@ -208,7 +213,7 @@ def test_txt_empty_paragraphs_handled(tmp_path, config):
     parser = PlainTextParser()
     doc = parser.parse(str(txt_file))
 
-    chunker = HeaderBasedChunker(config.chunking)
+    chunker = HeaderBasedChunker(config.document_chunking)
     chunks = chunker.chunk_document(doc)
 
     assert len(chunks) >= 1
@@ -223,7 +228,7 @@ def test_txt_metadata_preserved(tmp_path, config):
     parser = PlainTextParser()
     doc = parser.parse(str(txt_file))
 
-    chunker = HeaderBasedChunker(config.chunking)
+    chunker = HeaderBasedChunker(config.document_chunking)
     chunks = chunker.chunk_document(doc)
 
     for chunk in chunks:
@@ -240,7 +245,7 @@ def test_txt_chunk_ids_unique(tmp_path, config):
     parser = PlainTextParser()
     doc = parser.parse(str(txt_file))
 
-    chunker = HeaderBasedChunker(config.chunking)
+    chunker = HeaderBasedChunker(config.document_chunking)
     chunks = chunker.chunk_document(doc)
 
     chunk_ids = [c.chunk_id for c in chunks]

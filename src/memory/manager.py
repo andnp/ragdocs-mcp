@@ -16,6 +16,7 @@ from src.memory.models import ExtractedLink, MemoryDocument, MemoryFrontmatter
 from src.memory.storage import (
     compute_memory_id,
     ensure_memory_dirs,
+    get_memory_file_path,
     get_indices_path,
     list_memory_files,
 )
@@ -49,7 +50,7 @@ class MemoryIndexManager:
         self._keyword = keyword
         self._graph = graph
         self._failed_files: list[FailedMemory] = []
-        self._chunker = get_chunker(config.chunking)
+        self._chunker = get_chunker(config.memory_chunking)
 
         ensure_memory_dirs(memory_path)
 
@@ -123,6 +124,18 @@ class MemoryIndexManager:
             file_path=str(file_path),
             modified_time=modified_time,
         )
+
+    def _normalize_memory_name(self, memory_id: str):
+        if memory_id.startswith("memory:"):
+            return memory_id.split("memory:", 1)[1]
+        return memory_id
+
+    def _resolve_memory_path(self, memory_id: str):
+        name = self._normalize_memory_name(memory_id)
+        candidate = get_memory_file_path(self._memory_path, name)
+        if candidate.exists():
+            return candidate
+        return None
 
     def _memory_to_document(self, memory: MemoryDocument) -> Document:
         metadata: dict[str, str | list[str] | int | float | bool] = {
@@ -238,6 +251,27 @@ class MemoryIndexManager:
         except Exception as e:
             logger.error(f"Failed to remove memory {memory_id}: {e}", exc_info=True)
 
+    def reindex_memory(self, memory_id: str, reason: str | None = None):
+        file_path = self._resolve_memory_path(memory_id)
+        if not file_path:
+            if reason:
+                logger.warning("Reindex skipped for %s (reason: %s): file not found", memory_id, reason)
+            else:
+                logger.warning("Reindex skipped for %s: file not found", memory_id)
+            return False
+
+        try:
+            self.remove_memory(memory_id)
+            self.index_memory(str(file_path))
+            if reason:
+                logger.info("Reindexed %s from %s (reason: %s)", memory_id, file_path, reason)
+            else:
+                logger.info("Reindexed %s from %s", memory_id, file_path)
+            return True
+        except Exception as e:
+            logger.error("Failed to reindex %s: %s", memory_id, e, exc_info=True)
+            return False
+
     def reindex_all(self) -> int:
         memory_files = list_memory_files(self._memory_path)
         indexed_count = 0
@@ -272,6 +306,53 @@ class MemoryIndexManager:
         except Exception as e:
             logger.error(f"Failed to load memory indices: {e}", exc_info=True)
             raise
+
+    def reconcile(self) -> int:
+        memory_files = list_memory_files(self._memory_path)
+        indexed_ids = set(self._vector.get_document_ids())
+
+        reindexed_count = 0
+        for file_path in memory_files:
+            memory_id = compute_memory_id(self._memory_path, file_path)
+
+            if memory_id not in indexed_ids:
+                try:
+                    self.index_memory(str(file_path))
+                    reindexed_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to reconcile memory {file_path}: {e}")
+                continue
+
+            chunk_ids = self._vector.get_chunk_ids_for_document(memory_id)
+            if not chunk_ids:
+                try:
+                    self.index_memory(str(file_path))
+                    reindexed_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to reconcile memory {file_path}: {e}")
+                continue
+
+            chunk_data = self._vector.get_chunk_by_id(chunk_ids[0])
+            if not chunk_data:
+                continue
+
+            metadata = chunk_data.get("metadata", {})
+            if not isinstance(metadata, dict):
+                continue
+
+            if "memory_type" not in metadata or "memory_created_at" not in metadata:
+                logger.info(f"Reindexing memory with missing metadata: {memory_id}")
+                try:
+                    self.remove_memory(memory_id)
+                    self.index_memory(str(file_path))
+                    reindexed_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to reindex memory {file_path}: {e}")
+
+        if reindexed_count > 0:
+            logger.info(f"Reconciled {reindexed_count} memories with missing metadata")
+
+        return reindexed_count
 
     def get_memory_count(self) -> int:
         return len(self._vector.get_document_ids())

@@ -20,7 +20,8 @@ def test_config(tmp_path):
             index_path=str(index_path),
         ),
         search=SearchConfig(),
-        chunking=ChunkingConfig(),
+        document_chunking=ChunkingConfig(),
+        memory_chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
     )
 
@@ -161,10 +162,10 @@ def test_check_and_rebuild_if_needed_returns_false_for_existing_index(context_wi
         embedding_model=ctx.config.llm.embedding_model,
         parsers=ctx.config.parsers,
         chunking_config={
-            "strategy": ctx.config.chunking.strategy,
-            "min_chunk_chars": ctx.config.chunking.min_chunk_chars,
-            "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
-            "overlap_chars": ctx.config.chunking.overlap_chars,
+            "strategy": ctx.config.document_chunking.strategy,
+            "min_chunk_chars": ctx.config.document_chunking.min_chunk_chars,
+            "max_chunk_chars": ctx.config.document_chunking.max_chunk_chars,
+            "overlap_chars": ctx.config.document_chunking.overlap_chars,
         },
         indexed_files={},
     )

@@ -22,7 +22,7 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.memory.manager import MemoryIndexManager
-from src.memory.storage import ensure_memory_dirs
+from src.memory.storage import compute_memory_id, ensure_memory_dirs
 
 
 # ============================================================================
@@ -51,7 +51,8 @@ def memory_config(tmp_path: Path):
             recency_boost_factor=1.2,
         ),
         search=SearchConfig(),
-        chunking=ChunkingConfig(),
+        document_chunking=ChunkingConfig(),
+        memory_chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
@@ -449,6 +450,29 @@ class TestReindexAndStats:
         indexed_count = memory_manager.reindex_all()
 
         assert indexed_count == 3
+
+    def test_reindex_memory(self, memory_manager: MemoryIndexManager, memory_path: Path):
+        """
+        Verify reindex_memory restores a missing memory entry.
+
+        Ensures:
+        - memory_id resolves to a file under memory_path
+        - reindex_memory returns True when file exists
+        """
+        file_path = create_memory_file(
+            memory_path,
+            "reindex-me",
+            "# Reindex Me\n\nRecoverable memory.",
+        )
+        memory_id = compute_memory_id(memory_path, file_path)
+
+        memory_manager.index_memory(str(file_path))
+        memory_manager.remove_memory(memory_id)
+
+        reindexed = memory_manager.reindex_memory(memory_id, reason="test")
+
+        assert reindexed is True
+        assert memory_id in memory_manager.vector.get_document_ids()
 
     def test_get_all_tags(self, memory_manager: MemoryIndexManager, memory_path: Path):
         """

@@ -93,7 +93,7 @@ The following tools will be exposed via MCP:
     - Moves to `.trash/` (safety).
 
 ### B. Search
-6.  **`search_memories(query: str, limit: int = 5, filter_tags: List[str] = [], filter_type: str | None = None)`**
+6.  **`search_memories(query: str, limit: int = 5, filter_type: str | None = None)`**
     - Standard hybrid search on Memory Lane.
     - **Recency Boost**: Applied automatically.
 7.  **`search_linked_memories(query: str, target_document: str)`**

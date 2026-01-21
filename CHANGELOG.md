@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **CLI Debug Mode for Query Command:**
+  - Added `--debug` flag to `query` command (`uv run mcp-markdown-ragdocs query --debug`)
+  - Displays two formatted tables showing search internals:
+    1. **Search Strategy Results**: Counts from Vector (Semantic), Keyword (BM25), Graph (PageRank), Code, and Tag Expansion
+    2. **Compression Pipeline**: Filtering stages with counts and items removed (Original, Confidence Filter, Content Dedup, N-gram Dedup, Semantic Dedup, Doc Limit)
+  - Useful for understanding result quality, tuning configuration (weights/thresholds), and diagnosing search behavior
+  - Implements `SearchStrategyStats` dataclass in `src/models.py` to capture intermediate counts
+  - Modified `SearchOrchestrator.query()` to return 3-tuple: `(results, compression_stats, strategy_stats)`
+  - Added `print_debug_stats()` formatter in `src/cli_utils/formatters.py` using Rich tables
+- **Parallel Git Commit Indexing:**
+  - New `src/git/parallel_indexer.py` module with `ParallelIndexingConfig`, `parse_commits_parallel()`, `batch_embed_texts()`, `add_commits_batch()`
+  - `ThreadPoolExecutor`-based parallel parsing (git subprocesses release GIL, enabling true parallelism)
+  - Batch embedding generation for improved throughput
+  - Bulk SQLite inserts via `executemany()` for reduced I/O overhead
+  - Both async (`index_commits_parallel`) and sync (`index_commits_parallel_sync`) variants
+  - Expected speedup: 2-4x for 100+ commits
+  - Graceful failure handling: individual commit parse failures don't crash entire batch
+  - New config options in `[git_indexing]`:
+    - `parallel_workers` (default: 4): Number of parallel workers for git operations
+    - `embed_batch_size` (default: 32): Batch size for embedding generation
 - **Memory Search Time Range Filtering:**
   - `search_memories` now supports time-based filtering with three new parameters:
     - `after_timestamp` (int): Unix timestamp for lower bound (inclusive)

@@ -32,6 +32,14 @@ from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 
 
+@pytest.fixture(autouse=True)
+def isolate_xdg_data_home(tmp_path_factory, monkeypatch):
+    data_home = tmp_path_factory.mktemp("xdg-data-home")
+    home_dir = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    monkeypatch.setenv("HOME", str(home_dir))
+
+
 # ============================================================================
 # Test Fixture Factories
 # ============================================================================

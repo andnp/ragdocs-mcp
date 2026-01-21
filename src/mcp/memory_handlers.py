@@ -20,7 +20,9 @@ def _text_response(text: str) -> list[TextContent]:
 
 
 @tool_handler("create_memory")
-async def handle_create_memory(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_create_memory(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -33,7 +35,9 @@ async def handle_create_memory(hctx: HandlerContext, arguments: dict) -> list[Te
 
 
 @tool_handler("append_memory")
-async def handle_append_memory(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_append_memory(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -44,7 +48,9 @@ async def handle_append_memory(hctx: HandlerContext, arguments: dict) -> list[Te
 
 
 @tool_handler("read_memory")
-async def handle_read_memory(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_read_memory(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -56,7 +62,9 @@ async def handle_read_memory(hctx: HandlerContext, arguments: dict) -> list[Text
 
 
 @tool_handler("update_memory")
-async def handle_update_memory(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_update_memory(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -67,7 +75,9 @@ async def handle_update_memory(hctx: HandlerContext, arguments: dict) -> list[Te
 
 
 @tool_handler("delete_memory")
-async def handle_delete_memory(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_delete_memory(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -76,7 +86,9 @@ async def handle_delete_memory(hctx: HandlerContext, arguments: dict) -> list[Te
 
 
 @tool_handler("search_memories")
-async def handle_search_memories(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_search_memories(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     """Search memories with comprehensive input validation."""
     ctx = hctx.require_ctx()
 
@@ -85,8 +97,12 @@ async def handle_search_memories(hctx: HandlerContext, arguments: dict) -> list[
         query = validate_query(arguments, "query")
 
         # Validate optional parameters with proper defaults and ranges
-        limit = validate_integer_range(arguments, "limit", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N)
-        load_full_memory = validate_boolean(arguments, "load_full_memory", default=False)
+        limit = validate_integer_range(
+            arguments, "limit", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N
+        )
+        load_full_memory = validate_boolean(
+            arguments, "load_full_memory", default=False
+        )
 
         # Validate optional list/enum parameters
         filter_tags = validate_string_list(arguments, "filter_tags", default=None)
@@ -94,13 +110,17 @@ async def handle_search_memories(hctx: HandlerContext, arguments: dict) -> list[
             arguments,
             "filter_type",
             allowed_values={"plan", "journal", "fact", "observation", "reflection"},
-            default=None
+            default=None,
         )
 
         # Validate optional timestamp parameters
         after_timestamp = validate_timestamp(arguments, "after_timestamp", default=None)
-        before_timestamp = validate_timestamp(arguments, "before_timestamp", default=None)
-        relative_days = arguments.get("relative_days")  # Will be validated in memory_tools
+        before_timestamp = validate_timestamp(
+            arguments, "before_timestamp", default=None
+        )
+        relative_days = arguments.get(
+            "relative_days"
+        )  # Will be validated in memory_tools
 
         # Validate timestamp ordering if both provided
         if after_timestamp is not None and before_timestamp is not None:
@@ -131,28 +151,34 @@ async def handle_search_memories(hctx: HandlerContext, arguments: dict) -> list[
     output_lines = ["# Memory Search Results", ""]
 
     for i, r in enumerate(results, 1):
-        output_lines.extend([
-            f"## {i}. {r.get('memory_id', 'unknown')} (score: {r.get('score', 0):.3f})",
-            f"**Type:** {r.get('type', 'unknown')} | **Tags:** {', '.join(r.get('tags', []))}",
-            "",
-            r.get("content", "")[:500],
-            "",
-            "---",
-            "",
-        ])
+        output_lines.extend(
+            [
+                f"## {i}. {r.get('memory_id', 'unknown')} (score: {r.get('score', 0):.3f})",
+                f"**Type:** {r.get('type', 'unknown')} | **Tags:** {', '.join(r.get('tags', []))}",
+                "",
+                r.get("content", "")[:500],
+                "",
+                "---",
+                "",
+            ]
+        )
 
     return _text_response("\n".join(output_lines))
 
 
 @tool_handler("search_linked_memories")
-async def handle_search_linked_memories(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_search_linked_memories(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     query = arguments.get("query", "")
     target_document = arguments.get("target_document", "")
     limit = arguments.get("limit", 5)
 
-    results = await memory_tools.search_linked_memories(ctx, query, target_document, limit)
+    results = await memory_tools.search_linked_memories(
+        ctx, query, target_document, limit
+    )
 
     if results and "error" in results[0]:
         return _text_response(str(results[0]))
@@ -160,22 +186,26 @@ async def handle_search_linked_memories(hctx: HandlerContext, arguments: dict) -
     output_lines = [f"# Memories Linked to `{target_document}`", ""]
 
     for i, r in enumerate(results, 1):
-        output_lines.extend([
-            f"## {i}. {r.get('memory_id', 'unknown')} (score: {r.get('score', 0):.3f})",
-            f"**Edge Type:** {r.get('edge_type', 'unknown')}",
-            f"**Anchor Context:** {r.get('anchor_context', '')}",
-            "",
-            r.get("content", "")[:500],
-            "",
-            "---",
-            "",
-        ])
+        output_lines.extend(
+            [
+                f"## {i}. {r.get('memory_id', 'unknown')} (score: {r.get('score', 0):.3f})",
+                f"**Edge Type:** {r.get('edge_type', 'unknown')}",
+                f"**Anchor Context:** {r.get('anchor_context', '')}",
+                "",
+                r.get("content", "")[:500],
+                "",
+                "---",
+                "",
+            ]
+        )
 
     return _text_response("\n".join(output_lines))
 
 
 @tool_handler("get_memory_stats")
-async def handle_get_memory_stats(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_get_memory_stats(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     stats = await memory_tools.get_memory_stats(ctx)
@@ -208,19 +238,25 @@ async def handle_get_memory_stats(hctx: HandlerContext, arguments: dict) -> list
 
 
 @tool_handler("merge_memories")
-async def handle_merge_memories(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_merge_memories(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     source_files = arguments.get("source_files", [])
     target_file = arguments.get("target_file", "")
     summary_content = arguments.get("summary_content", "")
 
-    result = await memory_tools.merge_memories(ctx, source_files, target_file, summary_content)
+    result = await memory_tools.merge_memories(
+        ctx, source_files, target_file, summary_content
+    )
     return _text_response(str(result))
 
 
 @tool_handler("search_by_tag_cluster")
-async def handle_search_by_tag_cluster(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_search_by_tag_cluster(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     tag = arguments.get("tag", "")
@@ -235,21 +271,25 @@ async def handle_search_by_tag_cluster(hctx: HandlerContext, arguments: dict) ->
     output_lines = [f"# Tag Cluster Search: {tag}", ""]
 
     for i, r in enumerate(results, 1):
-        output_lines.extend([
-            f"## {i}. {r.get('memory_id', 'unknown')}",
-            f"**Type:** {r.get('type', 'unknown')} | **Tags:** {', '.join(r.get('tags', []))}",
-            "",
-            r.get("content", "")[:500],
-            "",
-            "---",
-            "",
-        ])
+        output_lines.extend(
+            [
+                f"## {i}. {r.get('memory_id', 'unknown')}",
+                f"**Type:** {r.get('type', 'unknown')} | **Tags:** {', '.join(r.get('tags', []))}",
+                "",
+                r.get("content", "")[:500],
+                "",
+                "---",
+                "",
+            ]
+        )
 
     return _text_response("\n".join(output_lines))
 
 
 @tool_handler("get_tag_graph")
-async def handle_get_tag_graph(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_get_tag_graph(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     result = await memory_tools.get_tag_graph(ctx)
@@ -273,7 +313,9 @@ async def handle_get_tag_graph(hctx: HandlerContext, arguments: dict) -> list[Te
 
 
 @tool_handler("suggest_related_tags")
-async def handle_suggest_related_tags(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_suggest_related_tags(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     tag = arguments.get("tag", "")
@@ -291,8 +333,79 @@ async def handle_suggest_related_tags(hctx: HandlerContext, arguments: dict) -> 
     return _text_response("\n".join(output_lines))
 
 
+@tool_handler("get_memory_relationships")
+async def handle_get_memory_relationships(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
+    ctx = hctx.require_ctx()
+
+    filename = arguments.get("filename", "")
+    relationship_type = arguments.get("relationship_type")
+
+    result = await memory_tools.get_memory_relationships(
+        ctx, filename, relationship_type
+    )
+
+    if "error" in result:
+        return _text_response(str(result))
+
+    output_lines = [f"# Relationships for `{filename}`", ""]
+
+    # Handle supersedes (version chain)
+    if "supersedes" in result:
+        version_data = result["supersedes"]
+        output_lines.extend(["## Version History (SUPERSEDES)", ""])
+        chain = version_data.get("version_chain", [])
+        for i, version in enumerate(chain, 1):
+            output_lines.extend(
+                [
+                    f"{i}. `{version['memory_id']}`",
+                    f"   Path: {version['file_path']}",
+                    "",
+                ]
+            )
+
+    # Handle dependencies
+    if "depends_on" in result:
+        deps = result["depends_on"]
+        output_lines.extend(["## Dependencies (DEPENDS_ON)", ""])
+        if not deps:
+            output_lines.append("No dependencies found.")
+        else:
+            for i, dep in enumerate(deps, 1):
+                output_lines.extend(
+                    [
+                        f"{i}. `{dep['memory_id']}`",
+                        f"   Path: {dep['file_path']}",
+                        f"   Context: {dep['context'][:100]}",
+                        "",
+                    ]
+                )
+
+    # Handle contradictions
+    if "contradicts" in result:
+        contras = result["contradicts"]
+        output_lines.extend(["## Contradictions (CONTRADICTS)", ""])
+        if not contras:
+            output_lines.append("No contradictions detected.")
+        else:
+            for i, contra in enumerate(contras, 1):
+                output_lines.extend(
+                    [
+                        f"{i}. `{contra['memory_id']}`",
+                        f"   Path: {contra['file_path']}",
+                        f"   Context: {contra['context'][:100]}",
+                        "",
+                    ]
+                )
+
+    return _text_response("\n".join(output_lines))
+
+
 @tool_handler("get_memory_versions")
-async def handle_get_memory_versions(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_get_memory_versions(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -305,17 +418,21 @@ async def handle_get_memory_versions(hctx: HandlerContext, arguments: dict) -> l
 
     chain = result.get("version_chain", [])
     for i, version in enumerate(chain, 1):
-        output_lines.extend([
-            f"{i}. `{version['memory_id']}`",
-            f"   Path: {version['file_path']}",
-            "",
-        ])
+        output_lines.extend(
+            [
+                f"{i}. `{version['memory_id']}`",
+                f"   Path: {version['file_path']}",
+                "",
+            ]
+        )
 
     return _text_response("\n".join(output_lines))
 
 
 @tool_handler("get_memory_dependencies")
-async def handle_get_memory_dependencies(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_get_memory_dependencies(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -327,18 +444,22 @@ async def handle_get_memory_dependencies(hctx: HandlerContext, arguments: dict) 
     output_lines = [f"# Dependencies for `{filename}`", ""]
 
     for i, dep in enumerate(results, 1):
-        output_lines.extend([
-            f"{i}. `{dep['memory_id']}`",
-            f"   Path: {dep['file_path']}",
-            f"   Context: {dep['context'][:100]}",
-            "",
-        ])
+        output_lines.extend(
+            [
+                f"{i}. `{dep['memory_id']}`",
+                f"   Path: {dep['file_path']}",
+                f"   Context: {dep['context'][:100]}",
+                "",
+            ]
+        )
 
     return _text_response("\n".join(output_lines))
 
 
 @tool_handler("detect_contradictions")
-async def handle_detect_contradictions(hctx: HandlerContext, arguments: dict) -> list[TextContent]:
+async def handle_detect_contradictions(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -353,11 +474,13 @@ async def handle_detect_contradictions(hctx: HandlerContext, arguments: dict) ->
         output_lines.append("No contradictions detected.")
     else:
         for i, contradiction in enumerate(results, 1):
-            output_lines.extend([
-                f"{i}. `{contradiction['memory_id']}`",
-                f"   Path: {contradiction['file_path']}",
-                f"   Context: {contradiction['context'][:100]}",
-                "",
-            ])
+            output_lines.extend(
+                [
+                    f"{i}. `{contradiction['memory_id']}`",
+                    f"   Path: {contradiction['file_path']}",
+                    f"   Context: {contradiction['context'][:100]}",
+                    "",
+                ]
+            )
 
     return _text_response("\n".join(output_lines))

@@ -1,6 +1,7 @@
 import atexit
 import logging
 import shutil
+import time
 from pathlib import Path
 from threading import Lock
 from typing import Any, cast
@@ -8,6 +9,7 @@ from typing import Any, cast
 from whoosh import index as whoosh_index
 from whoosh.analysis import StemmingAnalyzer
 from whoosh.fields import ID, KEYWORD, TEXT, Schema
+from whoosh.index import LockError
 from whoosh.qparser import MultifieldParser
 from whoosh.scoring import BM25F
 
@@ -15,6 +17,9 @@ from src.models import Chunk, Document
 
 logger = logging.getLogger(__name__)
 
+WRITER_TIMEOUT = 5.0
+WRITER_MAX_RETRIES = 3
+WRITER_RETRY_DELAY = 0.5
 
 _temp_dirs: set[Path] = set()
 
@@ -31,28 +36,158 @@ def _cleanup_temp_dirs() -> None:
 atexit.register(_cleanup_temp_dirs)
 
 
-STOPWORDS: frozenset[str] = frozenset([
-    "a", "an", "and", "are", "as", "at", "be", "but", "by",
-    "for", "if", "in", "into", "is", "it", "no", "not", "of",
-    "on", "or", "such", "that", "the", "their", "then", "there",
-    "these", "they", "this", "to", "was", "will", "with",
-    "i", "me", "my", "myself", "we", "our", "ours", "ourselves",
-    "you", "your", "yours", "yourself", "yourselves",
-    "he", "him", "his", "himself", "she", "her", "hers", "herself",
-    "its", "itself", "them", "themselves",
-    "what", "which", "who", "whom", "when", "where", "why", "how",
-    "all", "each", "both", "few", "more", "most", "other", "some",
-    "any", "only", "own", "same", "so", "than", "too", "very",
-    "can", "just", "should", "now", "d", "ll", "m", "o", "re", "ve",
-    "y", "ain", "aren", "couldn", "didn", "doesn", "hadn", "hasn",
-    "haven", "isn", "ma", "mightn", "mustn", "needn", "shan", "shouldn",
-    "wasn", "weren", "won", "wouldn", "do", "does", "did", "doing",
-    "has", "have", "had", "having", "been", "being", "would", "could",
-    "might", "must", "shall", "am", "were", "about", "above", "after",
-    "again", "against", "before", "below", "between", "during", "from",
-    "further", "here", "once", "out", "over", "under", "until", "up",
-    "while",
-])
+STOPWORDS: frozenset[str] = frozenset(
+    [
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "but",
+        "by",
+        "for",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "no",
+        "not",
+        "of",
+        "on",
+        "or",
+        "such",
+        "that",
+        "the",
+        "their",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "to",
+        "was",
+        "will",
+        "with",
+        "i",
+        "me",
+        "my",
+        "myself",
+        "we",
+        "our",
+        "ours",
+        "ourselves",
+        "you",
+        "your",
+        "yours",
+        "yourself",
+        "yourselves",
+        "he",
+        "him",
+        "his",
+        "himself",
+        "she",
+        "her",
+        "hers",
+        "herself",
+        "its",
+        "itself",
+        "them",
+        "themselves",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "each",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "any",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "can",
+        "just",
+        "should",
+        "now",
+        "d",
+        "ll",
+        "m",
+        "o",
+        "re",
+        "ve",
+        "y",
+        "ain",
+        "aren",
+        "couldn",
+        "didn",
+        "doesn",
+        "hadn",
+        "hasn",
+        "haven",
+        "isn",
+        "ma",
+        "mightn",
+        "mustn",
+        "needn",
+        "shan",
+        "shouldn",
+        "wasn",
+        "weren",
+        "won",
+        "wouldn",
+        "do",
+        "does",
+        "did",
+        "doing",
+        "has",
+        "have",
+        "had",
+        "having",
+        "been",
+        "being",
+        "would",
+        "could",
+        "might",
+        "must",
+        "shall",
+        "am",
+        "were",
+        "about",
+        "above",
+        "after",
+        "again",
+        "against",
+        "before",
+        "below",
+        "between",
+        "during",
+        "from",
+        "further",
+        "here",
+        "once",
+        "out",
+        "over",
+        "under",
+        "until",
+        "up",
+        "while",
+    ]
+)
 
 
 class KeywordIndex:
@@ -76,6 +211,20 @@ class KeywordIndex:
         self._index_path = None
         self._lock = Lock()
 
+    def _get_writer(self):
+        assert self._index is not None
+        for attempt in range(WRITER_MAX_RETRIES):
+            try:
+                return self._index.writer(timeout=WRITER_TIMEOUT)
+            except LockError:
+                if attempt == WRITER_MAX_RETRIES - 1:
+                    raise
+                logger.warning(
+                    f"Whoosh writer lock contention, retrying ({attempt + 1}/{WRITER_MAX_RETRIES})..."
+                )
+                time.sleep(WRITER_RETRY_DELAY * (attempt + 1))
+        raise LockError("Failed to acquire writer lock after retries")
+
     def add(self, document: Document) -> None:
         with self._lock:
             if self._index is None:
@@ -91,14 +240,34 @@ class KeywordIndex:
 
             aliases_text = " ".join(str(a) for a in aliases)
             tags_text = ",".join(document.tags) if document.tags else ""
+            title = str(document.metadata.get("title", ""))
+            description = str(
+                document.metadata.get("description", "")
+                or document.metadata.get("summary", "")
+            )
+            keywords_list = document.metadata.get("keywords", [])
+            keywords_text = (
+                " ".join(keywords_list)
+                if isinstance(keywords_list, list)
+                else str(keywords_list)
+            )
+            author = str(document.metadata.get("author", ""))
+            category = str(document.metadata.get("category", ""))
 
-            writer = self._index.writer()
+            writer = self._get_writer()
             try:
                 writer.update_document(
                     id=document.id,
+                    doc_id=document.id,
                     content=document.content,
+                    title=title,
+                    headers="",
+                    description=description,
+                    keywords=keywords_text,
                     aliases=aliases_text,
                     tags=tags_text,
+                    author=author,
+                    category=category,
                 )
                 writer.commit()
             except Exception:
@@ -116,15 +285,25 @@ class KeywordIndex:
             tags_text = ",".join(metadata.get("tags", []))
             title = str(metadata.get("title", ""))
             headers = chunk.header_path or ""
-            description = str(metadata.get("description", "") or metadata.get("summary", ""))
+            description = str(
+                metadata.get("description", "") or metadata.get("summary", "")
+            )
             keywords_list = metadata.get("keywords", [])
-            keywords_text = " ".join(keywords_list) if isinstance(keywords_list, list) else str(keywords_list)
+            keywords_text = (
+                " ".join(keywords_list)
+                if isinstance(keywords_list, list)
+                else str(keywords_list)
+            )
             aliases_list = metadata.get("aliases", [])
-            aliases_text = " ".join(str(a) for a in aliases_list) if isinstance(aliases_list, list) else str(aliases_list)
+            aliases_text = (
+                " ".join(str(a) for a in aliases_list)
+                if isinstance(aliases_list, list)
+                else str(aliases_list)
+            )
             author = str(metadata.get("author", ""))
             category = str(metadata.get("category", ""))
 
-            writer = self._index.writer()
+            writer = self._get_writer()
             try:
                 writer.update_document(
                     id=chunk.chunk_id,
@@ -150,9 +329,10 @@ class KeywordIndex:
                 return
 
             try:
-                writer = self._index.writer()
+                writer = self._get_writer()
                 try:
                     writer.delete_by_term("id", document_id)
+                    writer.delete_by_term("doc_id", document_id)
                     writer.commit()
                 except Exception:
                     writer.cancel()
@@ -164,7 +344,13 @@ class KeywordIndex:
                 )
                 self._reinitialize_after_corruption()
 
-    def search(self, query: str, top_k: int = 10, excluded_files: set[str] | None = None, docs_root: Path | None = None) -> list[dict]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 10,
+        excluded_files: set[str] | None = None,
+        docs_root: Path | None = None,
+    ) -> list[dict]:
         with self._lock:
             if self._index is None or not query.strip():
                 return []
@@ -180,8 +366,17 @@ class KeywordIndex:
                 return []
 
             parser = MultifieldParser(
-                ["content", "title", "headers", "description", "keywords", "aliases", "tags", "author"],
-                schema=self._schema
+                [
+                    "content",
+                    "title",
+                    "headers",
+                    "description",
+                    "keywords",
+                    "aliases",
+                    "tags",
+                    "author",
+                ],
+                schema=self._schema,
             )
 
             try:
@@ -202,15 +397,18 @@ class KeywordIndex:
                             continue
 
                         from pathlib import Path as PathLib
+
                         filename = PathLib(normalized_doc_id).name
                         if filename in excluded_files:
                             continue
 
-                    chunk_results.append({
-                        "chunk_id": hit["id"],
-                        "doc_id": hit.get("doc_id", hit["id"]),
-                        "score": hit.score,
-                    })
+                    chunk_results.append(
+                        {
+                            "chunk_id": hit["id"],
+                            "doc_id": hit.get("doc_id", hit["id"]),
+                            "score": hit.score,
+                        }
+                    )
 
                     if len(chunk_results) >= top_k:
                         break
@@ -248,6 +446,7 @@ class KeywordIndex:
 
                 if existing_fields != expected_fields:
                     import logging
+
                     logger = logging.getLogger(__name__)
                     missing = expected_fields - existing_fields
                     extra = existing_fields - expected_fields
@@ -294,11 +493,19 @@ class KeywordIndex:
             title = str(metadata.get("title", ""))
             description = str(metadata.get("description", ""))
             keywords_list = metadata.get("keywords", [])
-            keywords_text = " ".join(keywords_list) if isinstance(keywords_list, list) else str(keywords_list)
+            keywords_text = (
+                " ".join(keywords_list)
+                if isinstance(keywords_list, list)
+                else str(keywords_list)
+            )
             aliases_list = metadata.get("aliases", [])
-            aliases_text = " ".join(str(a) for a in aliases_list) if isinstance(aliases_list, list) else str(aliases_list)
+            aliases_text = (
+                " ".join(str(a) for a in aliases_list)
+                if isinstance(aliases_list, list)
+                else str(aliases_list)
+            )
 
-            writer = self._index.writer()
+            writer = self._get_writer()
             try:
                 writer.update_document(
                     id=doc_id,

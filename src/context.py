@@ -156,10 +156,10 @@ class ApplicationContext:
             embedding_model=self.config.llm.embedding_model,
             parsers=self.config.parsers,
             chunking_config={
-                "strategy": self.config.chunking.strategy,
-                "min_chunk_chars": self.config.chunking.min_chunk_chars,
-                "max_chunk_chars": self.config.chunking.max_chunk_chars,
-                "overlap_chars": self.config.chunking.overlap_chars,
+                "strategy": self.config.document_chunking.strategy,
+                "min_chunk_chars": self.config.document_chunking.min_chunk_chars,
+                "max_chunk_chars": self.config.document_chunking.max_chunk_chars,
+                "overlap_chars": self.config.document_chunking.overlap_chars,
             },
         )
 
@@ -247,9 +247,9 @@ class ApplicationContext:
         if self.memory_manager is not None:
             try:
                 self.memory_manager.load()
-                # Memory system relies on persistence - no full reindex on startup
-                # indexed = self.memory_manager.reindex_all()
-                # self.memory_manager.persist()
+                reindexed = self.memory_manager.reconcile()
+                if reindexed > 0:
+                    self.memory_manager.persist()
                 logger.info("Memory system loaded")
             except Exception as e:
                 logger.warning(f"Failed to load memory indices: {e}")
@@ -487,10 +487,13 @@ class ApplicationContext:
         if self.commit_indexer is None:
             return
 
+        from src.git.parallel_indexer import (
+            ParallelIndexingConfig,
+            index_commits_parallel_sync,
+        )
         from src.git.repository import discover_git_repositories, get_commits_after_timestamp
-        from src.git.commit_parser import parse_commit, build_commit_document
 
-        logger.info("Starting initial git commit indexing")
+        logger.info("Starting initial git commit indexing (parallel)")
 
         repos = discover_git_repositories(
             Path(self.config.indexing.documents_path),
@@ -498,16 +501,18 @@ class ApplicationContext:
             self.config.indexing.exclude_hidden_dirs,
         )
 
+        parallel_config = ParallelIndexingConfig(
+            max_workers=self.config.git_indexing.parallel_workers,
+            batch_size=self.config.git_indexing.batch_size,
+            embed_batch_size=self.config.git_indexing.embed_batch_size,
+        )
+
         total_indexed = 0
         for repo_path in repos:
             try:
-                # Get last indexed timestamp for this repo
                 last_timestamp = self.commit_indexer.get_last_indexed_timestamp(str(repo_path.parent))
-
-                # Get new commits
                 commit_hashes = get_commits_after_timestamp(repo_path, last_timestamp)
 
-                # Log indexing status
                 if last_timestamp is not None:
                     from datetime import datetime
                     last_indexed_dt = datetime.fromtimestamp(last_timestamp).isoformat()
@@ -515,42 +520,21 @@ class ApplicationContext:
                 else:
                     logger.info(f"Repository {repo_path.parent}: First-time indexing, found {len(commit_hashes)} commits")
 
-                # Skip if no new commits
                 if len(commit_hashes) == 0:
                     logger.debug(f"No new commits to index for {repo_path.parent}")
                     continue
 
-                # Batch process
-                for i in range(0, len(commit_hashes), self.config.git_indexing.batch_size):
-                    batch = commit_hashes[i:i + self.config.git_indexing.batch_size]
-
-                    for hash in batch:
-                        try:
-                            commit = parse_commit(
-                                repo_path,
-                                hash,
-                                self.config.git_indexing.delta_max_lines,
-                            )
-                            doc = build_commit_document(commit)
-
-                            self.commit_indexer.add_commit(
-                                hash=commit.hash,
-                                timestamp=commit.timestamp,
-                                author=commit.author,
-                                committer=commit.committer,
-                                title=commit.title,
-                                message=commit.message,
-                                files_changed=commit.files_changed,
-                                delta_truncated=commit.delta_truncated,
-                                commit_document=doc,
-                                repo_path=str(repo_path.parent),
-                            )
-                            total_indexed += 1
-                        except Exception as e:
-                            logger.error(f"Failed to index commit {hash}: {e}")
+                indexed = index_commits_parallel_sync(
+                    commit_hashes,
+                    repo_path,
+                    self.commit_indexer,
+                    parallel_config,
+                    self.config.git_indexing.delta_max_lines,
+                )
+                total_indexed += indexed
 
             except Exception as e:
-                logger.error(f"Failed to index repository {repo_path}: {e}")
+                logger.error(f"Failed to index repository {repo_path}: {e}", exc_info=True)
 
         logger.info(f"Initial git commit indexing complete: {total_indexed} commits")
 

@@ -27,7 +27,8 @@ def config(tmp_path):
             rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
-        chunking=ChunkingConfig(),
+        document_chunking=ChunkingConfig(),
+        memory_chunking=ChunkingConfig(),
     )
 
 
@@ -66,7 +67,7 @@ async def test_orchestrator_query_without_exclusions(orchestrator, config):
     orchestrator._vector.add_chunk(chunk1)
     orchestrator._keyword.add_chunk(chunk1)
 
-    results, stats = await orchestrator.query("authentication", top_k=5, top_n=5)
+    results, stats, _ = await orchestrator.query("authentication", top_k=5, top_n=5)
 
     assert len(results) > 0
     assert any("api" in r.chunk_id for r in results)
@@ -108,7 +109,7 @@ async def test_orchestrator_query_with_exclusions(orchestrator, config):
     orchestrator._keyword.add_chunk(chunk2)
 
     excluded = {"docs/api"}
-    results, stats = await orchestrator.query("authentication", top_k=5, top_n=5, excluded_files=excluded)
+    results, stats, _ = await orchestrator.query("authentication", top_k=5, top_n=5, excluded_files=excluded)
 
     assert len(results) > 0
     assert not any("api" in r.chunk_id for r in results)
@@ -138,7 +139,7 @@ async def test_orchestrator_query_compression_stats_with_exclusions(orchestrator
         orchestrator._keyword.add_chunk(chunk)
 
     excluded = {"docs/file0", "docs/file1"}
-    results, stats = await orchestrator.query("API documentation", top_k=10, top_n=5, excluded_files=excluded)
+    results, stats, _ = await orchestrator.query("API documentation", top_k=10, top_n=5, excluded_files=excluded)
 
     assert stats.original_count >= 0
     for result in results:
@@ -169,7 +170,7 @@ async def test_orchestrator_query_multiple_exclusions(orchestrator, config):
         orchestrator._keyword.add_chunk(chunk)
 
     excluded = {"docs/api", "docs/guide"}
-    results, stats = await orchestrator.query("documentation", top_k=10, top_n=5, excluded_files=excluded)
+    results, stats, _ = await orchestrator.query("documentation", top_k=10, top_n=5, excluded_files=excluded)
 
     for result in results:
         assert "api" not in result.chunk_id
