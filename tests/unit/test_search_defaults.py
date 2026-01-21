@@ -29,12 +29,13 @@ class TestSearchDefaults:
 
         assert score == pytest.approx(0.5, abs=0.01)
 
-    def test_apply_memory_decay_floor_when_missing_timestamp(self):
+    def test_apply_memory_decay_no_penalty_when_missing_timestamp(self):
         """
-        Ensure decay applies floor multiplier without created_at.
+        Ensure no penalty is applied for missing timestamps.
 
-        Missing timestamps should still yield a stable, floored score.
+        For backward compatibility with legacy memories that lack created_at,
+        the decay function returns a 1.0 multiplier (no penalty).
         """
         decayed = apply_memory_decay(0.5, None, 0.9, 0.1)
 
-        assert decayed == pytest.approx(0.05)
+        assert decayed == pytest.approx(0.5)

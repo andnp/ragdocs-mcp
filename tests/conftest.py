@@ -353,3 +353,23 @@ def cleanup_persistent_docs(persistent_docs_path: Path) -> Generator[None, None,
                 shutil.rmtree(item)
             else:
                 item.unlink()
+
+
+# ============================================================================
+# pytest-xdist hook to handle serial tests
+# ============================================================================
+
+
+def pytest_xdist_auto_num_workers(config):
+    """Hook to configure pytest-xdist behavior for serial tests."""
+    # Let pytest-xdist determine worker count automatically
+    return None
+
+
+def pytest_collection_modifyitems(config, items):
+    """Mark serial tests to run in the main process."""
+    for item in items:
+        if "serial" in item.keywords:
+            # Force serial tests to run in dist group 'serial'
+            # This ensures they don't run in parallel with other tests
+            item.add_marker(pytest.mark.xdist_group(name="serial"))

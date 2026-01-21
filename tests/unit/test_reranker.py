@@ -14,6 +14,7 @@ Test strategies:
 - Verify lazy loading by checking model state
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import pytest
@@ -23,8 +24,13 @@ from src.search.reranker import ReRanker
 
 @dataclass
 class FakeCrossEncoder:
-    def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
-        return [len(content) * 0.01 for _, content in pairs]
+    def predict(
+        self, sentences: list[tuple[str, str]] | list[list[str]] | tuple[str, str] | list[str]
+    ) -> Iterable[float]:
+        # Handle the most common case: list of (query, content) pairs
+        if isinstance(sentences, list) and sentences and isinstance(sentences[0], tuple):
+            return [len(content) * 0.01 for _, content in sentences]
+        return [0.0]
 
 
 @pytest.fixture

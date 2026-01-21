@@ -796,7 +796,7 @@ class TestTimeRangeFiltering:
         assert len(results) == 0
 
     @pytest.mark.asyncio
-    async def test_time_filter_with_other_filters(
+    async def test_time_filter_with_type_filter(
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,

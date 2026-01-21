@@ -386,7 +386,6 @@ class TestHyDEParameterValidation:
         assert len(result) == 1
         assert "Validation error" in result[0].text
         assert "top_n" in result[0].text.lower()
-            })
 
 
 # ============================================================================

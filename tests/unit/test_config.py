@@ -345,7 +345,13 @@ documents_path = "."
             "**/.git/**",
             "**/node_modules/**",
             "**/__pycache__/**",
-            "**/.pytest_cache/**"
+            "**/.pytest_cache/**",
+            "**/.codanna/**",
+            "**/*-egg-info/**",
+            "**/.mcp-markdown-ragdocs/**",
+            "**/.stversions/**",
+            "**/.worktree/**",
+            "**/.worktrees/**",
         ]
     finally:
         os.chdir(original_cwd)
@@ -470,7 +476,13 @@ include = ["**/*.md", "**/*.rst"]
             "**/.git/**",
             "**/node_modules/**",
             "**/__pycache__/**",
-            "**/.pytest_cache/**"
+            "**/.pytest_cache/**",
+            "**/.codanna/**",
+            "**/*-egg-info/**",
+            "**/.mcp-markdown-ragdocs/**",
+            "**/.stversions/**",
+            "**/.worktree/**",
+            "**/.worktrees/**",
         ]
     finally:
         os.chdir(original_cwd)

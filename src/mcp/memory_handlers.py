@@ -7,7 +7,6 @@ from src.mcp.validation import (
     ValidationError,
     validate_query,
     validate_integer_range,
-    validate_string_list,
     validate_enum,
     validate_boolean,
     validate_timestamp,
@@ -104,8 +103,7 @@ async def handle_search_memories(
             arguments, "load_full_memory", default=False
         )
 
-        # Validate optional list/enum parameters
-        filter_tags = validate_string_list(arguments, "filter_tags", default=None)
+        # Validate optional enum parameter
         filter_type = validate_enum(
             arguments,
             "filter_type",
@@ -136,10 +134,9 @@ async def handle_search_memories(
     results = await memory_tools.search_memories(
         ctx,
         query,
-        limit,
-        filter_tags,
-        filter_type,
-        load_full_memory,
+        limit=limit,
+        filter_type=filter_type,
+        load_full_memory=load_full_memory,
         after_timestamp=after_timestamp,
         before_timestamp=before_timestamp,
         relative_days=relative_days,

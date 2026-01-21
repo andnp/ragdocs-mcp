@@ -44,6 +44,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
+    "pytest-xdist>=3.5.0",
     "ruff>=0.14.10",
     "ty>=0.0.12",
 ]
@@ -56,3 +57,11 @@ packages = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = "."
+addopts = "-n 4 --dist worksteal"
+markers = [
+    "serial: marks tests that must run serially (not in parallel)",
+    "unit: marks unit tests (fast, isolated)",
+    "integration: marks integration tests (involve multiple components)",
+    "e2e: marks end-to-end tests (full system tests)",
+    "slow: marks slow tests (>5s, load models or process large datasets)",
+]

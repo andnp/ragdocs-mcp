@@ -886,8 +886,14 @@ class MCPServer:
         relative_days = arguments.get("relative_days")
 
         results = await memory_tools.search_memories(
-            self.ctx, query, limit, filter_type, load_full_memory,
-            after_timestamp, before_timestamp, relative_days
+            self.ctx,
+            query,
+            limit=limit,
+            filter_type=filter_type,
+            load_full_memory=load_full_memory,
+            after_timestamp=after_timestamp,
+            before_timestamp=before_timestamp,
+            relative_days=relative_days,
         )
 
         if results and "error" in results[0]:

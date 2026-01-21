@@ -535,3 +535,81 @@ def test_warned_set_cleared_on_load(shared_embedding_model, tmp_path):
     # Verify index is functional
     results = vector_index2.search("content persist", top_k=5)
     assert "persistent_chunk" in _extract_chunk_ids(results)
+
+
+def test_term_counts_and_vocabulary_loaded_as_ordereddict(shared_embedding_model, tmp_path):
+    """
+    Test that _term_counts and _concept_vocabulary are loaded as OrderedDict.
+
+    Regression test for bug where JSON loading returned plain dict,
+    causing AttributeError when calling move_to_end() during indexing.
+    """
+    from collections import OrderedDict
+
+    from src.models import Chunk
+
+    vector_index = VectorIndex(embedding_model=shared_embedding_model)
+
+    # Add chunks to populate term counts and vocabulary
+    for i in range(3):
+        chunk = Chunk(
+            chunk_id=f"chunk_{i}",
+            doc_id=f"doc_{i}",
+            content="Machine learning algorithms require training data for optimization.",
+            metadata={},
+            chunk_index=0,
+            header_path="",
+            start_pos=0,
+            end_pos=100,
+            file_path=f"/tmp/doc_{i}.md",
+            modified_time=datetime.now(),
+        )
+        vector_index.add_chunk(chunk)
+
+    # Register terms to populate _term_counts
+    vector_index.register_document_terms("machine learning optimization algorithms")
+
+    # Build vocabulary
+    vector_index.build_concept_vocabulary(min_term_length=3, max_terms=100, min_frequency=1)
+
+    # Verify both are OrderedDict before persist
+    assert isinstance(vector_index._term_counts, OrderedDict)
+    assert isinstance(vector_index._concept_vocabulary, OrderedDict)
+    assert len(vector_index._term_counts) > 0
+    assert len(vector_index._concept_vocabulary) > 0
+
+    # Persist to disk
+    persist_path = tmp_path / "vector_index_ordered"
+    vector_index.persist(persist_path)
+
+    # Load into new index
+    vector_index2 = VectorIndex(embedding_model=shared_embedding_model)
+    vector_index2.load(persist_path)
+
+    # Verify both are still OrderedDict after load (this was the bug)
+    assert isinstance(vector_index2._term_counts, OrderedDict)
+    assert isinstance(vector_index2._concept_vocabulary, OrderedDict)
+
+    # Verify move_to_end() works (this would fail with plain dict)
+    if vector_index2._term_counts:
+        first_term = next(iter(vector_index2._term_counts))
+        vector_index2._term_counts.move_to_end(first_term)  # Should not raise AttributeError
+
+    # Verify indexing still works after load (this triggered the original bug)
+    chunk = Chunk(
+        chunk_id="new_chunk_after_load",
+        doc_id="new_doc",
+        content="New content about neural networks and deep learning.",
+        metadata={},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=60,
+        file_path="/tmp/new.md",
+        modified_time=datetime.now(),
+    )
+    vector_index2.add_chunk(chunk)  # Should not raise AttributeError
+
+    # Verify search works
+    results = vector_index2.search("neural networks", top_k=5)
+    assert "new_chunk_after_load" in _extract_chunk_ids(results)

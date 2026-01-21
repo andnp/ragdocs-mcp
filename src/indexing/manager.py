@@ -85,7 +85,7 @@ class IndexManager:
     def reindex_document(self, doc_id: str, reason: str | None = None):
         file_path = self._resolve_doc_path(doc_id)
         if not file_path:
-            pruned = self.prune_document(doc_id, reason=reason)
+            self.prune_document(doc_id, reason=reason)
             if reason:
                 logger.warning(
                     "Reindex skipped for %s (reason: %s): file not found",
@@ -94,7 +94,7 @@ class IndexManager:
                 )
             else:
                 logger.warning("Reindex skipped for %s: file not found", doc_id)
-            return pruned
+            return False
 
         try:
             self.remove_document(doc_id)

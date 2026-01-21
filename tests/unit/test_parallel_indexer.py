@@ -2,6 +2,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 from src.git.commit_indexer import CommitIndexer
 from src.git.commit_parser import parse_commit, build_commit_document
 from src.git.parallel_indexer import (
@@ -174,6 +176,7 @@ def test_index_commits_parallel_sync(tmp_path, shared_embedding_model):
     assert indexer.get_total_commits() == 20
 
 
+@pytest.mark.serial  # Performance benchmark with timing, needs isolated CPU
 def test_parallel_indexing_performance_vs_serial(tmp_path, shared_embedding_model):
     """
     Compare parallel vs serial indexing performance.

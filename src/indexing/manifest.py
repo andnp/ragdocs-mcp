@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -50,7 +50,7 @@ def load_manifest(path: Path):
         return None
 
 
-def should_rebuild(current: IndexManifest, saved: Optional[IndexManifest]):
+def should_rebuild(current: IndexManifest, saved: IndexManifest | None):
     if saved is None:
         return True
 

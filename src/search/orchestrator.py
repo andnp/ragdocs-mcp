@@ -208,7 +208,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             results_dict["code"] = [r["chunk_id"] for r in code_results]
 
         # Collect file modified times using asyncio.to_thread to avoid blocking event loop
-        modified_times = await asyncio.to_thread(
+        # NOTE: modified_times collected for future recency boosting but not currently used
+        _modified_times = await asyncio.to_thread(
             self._collect_modified_times,
             all_doc_ids | set(graph_neighbors)
         )

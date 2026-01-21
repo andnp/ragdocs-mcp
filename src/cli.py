@@ -526,6 +526,7 @@ def search_commits(
                 err=True,
             )
             sys.exit(1)
+        assert ctx.commit_indexer is not None  # Narrowing for type checker
 
         validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
         validate_timestamp_range(after_timestamp, before_timestamp)
@@ -683,6 +684,8 @@ def search_memory(
                 "Error: Memory system unavailable. Check configuration.", err=True
             )
             sys.exit(1)
+        assert ctx.memory_manager is not None  # Narrowing for type checker
+        assert ctx.memory_search is not None
 
         validate_range(limit, MIN_TOP_N, MAX_TOP_N, "--limit")
         
@@ -700,9 +703,12 @@ def search_memory(
         # Load memory index
         ctx.memory_manager.load()
 
+        # Capture for closure type narrowing
+        memory_search = ctx.memory_search
+
         with console.status("[bold green]Searching memories..."):
             async def _run_memory_search_with_healing():
-                results = await ctx.memory_search.search_memories(
+                results = await memory_search.search_memories(
                     query=query_text,
                     limit=limit,
                     filter_type=memory_type,
@@ -711,7 +717,7 @@ def search_memory(
                     before_timestamp=before_timestamp,
                     relative_days=relative_days,
                 )
-                await ctx.memory_search.drain_reindex()
+                await memory_search.drain_reindex()
                 return results
 
             results = asyncio.run(_run_memory_search_with_healing())

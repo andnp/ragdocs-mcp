@@ -225,14 +225,14 @@ class VectorIndex:
                     docstore.delete_document(chunk_id)
                     removed += 1
                 elif hasattr(docstore, "delete"):
-                    docstore.delete(chunk_id)
+                    docstore.delete(chunk_id)  # type: ignore[attr-defined]
                     removed += 1
             except Exception:
                 pass
 
             try:
                 if hasattr(self._index, "index_store"):
-                    index_store = self._index.index_store
+                    index_store = self._index.index_store  # type: ignore[attr-defined]
                     if hasattr(index_store, "delete"):
                         index_store.delete(chunk_id)
             except Exception:
@@ -405,15 +405,15 @@ class VectorIndex:
             except Exception:
                 continue
 
-        # Store term counts for future incremental updates
-        self._term_counts = term_counts
+        # Store term counts for future incremental updates (convert to OrderedDict)
+        self._term_counts = OrderedDict(term_counts)
 
         # Filter by minimum frequency to reduce vocabulary size
         sorted_terms = sorted(term_counts.items(), key=lambda x: x[1], reverse=True)
         top_terms = [term for term, count in sorted_terms if count >= min_frequency][:max_terms]
 
         self._ensure_model_loaded()
-        self._concept_vocabulary = {}
+        self._concept_vocabulary = OrderedDict()
         for term in top_terms:
             try:
                 assert self._embedding_model is not None
@@ -701,25 +701,27 @@ class VectorIndex:
         if vocab_file.exists():
             try:
                 with open(vocab_file, "r") as f:
-                    self._concept_vocabulary = json.load(f)
+                    loaded_vocab = json.load(f)
+                    self._concept_vocabulary = OrderedDict(loaded_vocab)
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to load concept vocabulary (corrupted JSON): {e}")
                 logger.info("Rebuilding concept vocabulary from scratch")
-                self._concept_vocabulary = {}
+                self._concept_vocabulary = OrderedDict()
         else:
-            self._concept_vocabulary = {}
+            self._concept_vocabulary = OrderedDict()
 
         term_counts_file = path / "term_counts.json"
         if term_counts_file.exists():
             try:
                 with open(term_counts_file, "r") as f:
-                    self._term_counts = json.load(f)
+                    loaded_counts = json.load(f)
+                    self._term_counts = OrderedDict(loaded_counts)
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to load term counts (corrupted JSON): {e}")
                 logger.info("Rebuilding term counts from scratch")
-                self._term_counts = {}
+                self._term_counts = OrderedDict()
         else:
-            self._term_counts = {}
+            self._term_counts = OrderedDict()
 
         tombstone_file = path / "tombstones.json"
         if tombstone_file.exists():
@@ -837,8 +839,8 @@ class VectorIndex:
         self._chunk_id_to_node_id = {}
         self._vector_store = None
         self._index = None
-        self._concept_vocabulary = {}
-        self._term_counts = {}
+        self._concept_vocabulary = OrderedDict()
+        self._term_counts = OrderedDict()
         self._pending_terms.clear()
         self._warned_stale_chunk_ids.clear()
         self._tombstoned_docs.clear()

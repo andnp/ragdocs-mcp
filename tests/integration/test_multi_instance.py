@@ -91,6 +91,7 @@ def run_server_singleton_mode(index_path: str, ready_queue, error_queue):
 
 
 @pytest.mark.integration
+@pytest.mark.serial  # Uses multiprocessing.Process, must run serially
 def test_concurrent_server_startup_file_lock_mode():
     with tempfile.TemporaryDirectory() as tmpdir:
         index_path = str(Path(tmpdir) / "index_data")
@@ -138,6 +139,7 @@ def test_concurrent_server_startup_file_lock_mode():
 
 
 @pytest.mark.integration
+@pytest.mark.serial  # Uses multiprocessing.Process, must run serially
 def test_concurrent_server_startup_singleton_mode():
     with tempfile.TemporaryDirectory() as tmpdir:
         index_path = str(Path(tmpdir) / "index_data")

@@ -1,4 +1,5 @@
-from typing import Any, Protocol
+from collections.abc import Iterable
+from typing import Protocol
 
 
 class ContentProvider(Protocol):
@@ -6,13 +7,16 @@ class ContentProvider(Protocol):
 
 
 class CrossEncoderProtocol(Protocol):
-    def predict(self, pairs: list[tuple[str, str]]) -> list[float]: ...
+    def predict(
+        self,
+        sentences: list[tuple[str, str]] | list[list[str]] | tuple[str, str] | list[str],
+    ) -> Iterable[float]: ...
 
 
 class ReRanker:
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
         self._model_name = model_name
-        self._model: Any = None
+        self._model: CrossEncoderProtocol | None = None
 
     def _ensure_model_loaded(self) -> None:
         if self._model is not None:

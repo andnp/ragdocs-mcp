@@ -2,6 +2,7 @@ import atexit
 import logging
 import re
 import shutil
+from collections.abc import Generator
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -38,7 +39,7 @@ class CamelCaseSplitter(Filter):
         r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])'
     )
 
-    def __call__(self, tokens: Any):
+    def __call__(self, tokens: Any) -> Generator[Any, None, None]:
         for token in tokens:
             text = token.text
             parts = self._camel_split_pattern.split(text)
@@ -54,7 +55,7 @@ class CamelCaseSplitter(Filter):
 
 
 class SnakeCaseSplitter(Filter):
-    def __call__(self, tokens: Any):
+    def __call__(self, tokens: Any) -> Generator[Any, None, None]:
         for token in tokens:
             text = token.text
             if '_' in text:
