@@ -830,18 +830,18 @@ class VectorIndex:
         self._index.insert_nodes([llama_doc])
 
     def remove_document(self, doc_id: str) -> None:
-         self.remove(doc_id)
+        self.remove(doc_id)
 
-     def clear(self) -> None:
-         self._doc_id_to_node_ids = {}
-         self._chunk_id_to_node_id = {}
-         self._vector_store = None
-         self._index = None
-         self._concept_vocabulary = {}
-         self._term_counts = {}
-         self._pending_terms.clear()
-         self._warned_stale_chunk_ids.clear()
-         self._tombstoned_docs.clear()
+    def clear(self) -> None:
+        self._doc_id_to_node_ids = {}
+        self._chunk_id_to_node_id = {}
+        self._vector_store = None
+        self._index = None
+        self._concept_vocabulary = {}
+        self._term_counts = {}
+        self._pending_terms.clear()
+        self._warned_stale_chunk_ids.clear()
+        self._tombstoned_docs.clear()
 
     def save(self, path: Path) -> None:
         self.persist(path)
