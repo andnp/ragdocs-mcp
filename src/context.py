@@ -81,7 +81,10 @@ class ApplicationContext:
         graph = GraphStore()
 
         manager = IndexManager(config, vector, keyword, graph)
-        orchestrator = SearchOrchestrator(vector, keyword, graph, config, manager)
+        orchestrator = SearchOrchestrator(
+            vector, keyword, graph, config, manager,
+            documents_path=Path(documents_path),
+        )
 
         watcher = None
         if enable_watcher:
@@ -133,6 +136,7 @@ class ApplicationContext:
                 graph=memory_graph,
                 config=config,
                 manager=memory_manager,
+                documents_path=Path(memory_path),
             )
 
             logger.info(f"Memory system initialized: {memory_path}")

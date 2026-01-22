@@ -28,8 +28,10 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         config: Config,
         index_manager: IndexManager,
         code_index: CodeIndex | None = None,
+        documents_path: Path | None = None,
     ):
-        super().__init__(vector_index, keyword_index, graph_store, config)
+        super().__init__(vector_index, keyword_index, graph_store, config, documents_path)
+        self._documents_path = documents_path if documents_path is not None else Path(config.indexing.documents_path)
         self._index_manager = index_manager
         self._code = code_index
         self._pipeline: SearchPipeline | None = None
@@ -40,6 +42,10 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         self._embedding_cache: dict[str, tuple[list[float], float]] = {}
         self._cache_max_size = 100
         self._cache_ttl = 300.0  # 5 minutes
+
+    @property
+    def documents_path(self) -> Path:
+        return self._documents_path
 
     def _get_pipeline(self) -> SearchPipeline:
         if self._pipeline is None:
@@ -117,7 +123,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 clusters_merged=0,
             ), SearchStrategyStats()
 
-        docs_root = Path(self._config.indexing.documents_path)
+        docs_root = self._documents_path
 
         search_tasks = [
             self._search_vector(query_text, top_k, excluded_files, docs_root),
@@ -442,7 +448,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
     def _collect_modified_times(self, doc_ids: set[str]):
         modified_times = {}
-        docs_path = Path(self._config.indexing.documents_path)
+        docs_path = self._documents_path
 
         for doc_id in doc_ids:
             # doc_id is now relative path without extension (e.g., "dir/subdir/filename")
@@ -528,7 +534,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 logger.warning("Reindex persist skipped (lock busy): %s", e)
 
     def get_documents(self, doc_ids: list[str]):
-        docs_path = Path(self._config.indexing.documents_path)
+        docs_path = self._documents_path
         documents = []
 
         for doc_id in doc_ids:
@@ -586,7 +592,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             logger.warning("HyDE search disabled in config, falling back to regular query")
             return await self.query(hypothesis, top_k, top_n, excluded_files=excluded_files)
 
-        docs_root = Path(self._config.indexing.documents_path)
+        docs_root = self._documents_path
 
         from src.search.hyde import search_with_hypothesis
         loop = asyncio.get_event_loop()

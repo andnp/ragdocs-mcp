@@ -1,5 +1,11 @@
+import math
 from collections.abc import Iterable
 from typing import Protocol
+
+
+def _sigmoid(x: float):
+    x = max(-20.0, min(20.0, x))
+    return 1.0 / (1.0 + math.exp(-x))
 
 
 class ContentProvider(Protocol):
@@ -51,7 +57,7 @@ class ReRanker:
         scores = self._model.predict(query_content_pairs)
 
         chunk_scores = [
-            (chunk_id, float(score))
+            (chunk_id, _sigmoid(float(score)))
             for (chunk_id, _, _), score in zip(pairs, scores, strict=False)
         ]
 

@@ -178,8 +178,9 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
         graph: GraphStore,
         config: Config,
         manager: MemoryIndexManager,
+        documents_path: Path | None = None,
     ):
-        super().__init__(vector, keyword, graph, config)
+        super().__init__(vector, keyword, graph, config, documents_path)
         self._manager = manager
         self._pending_reindex: set[str] = set()
         self._reindex_tasks: set[asyncio.Task] = set()

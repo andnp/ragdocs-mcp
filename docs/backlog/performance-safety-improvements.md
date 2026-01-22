@@ -1,7 +1,8 @@
 # Performance, Safety, and Resiliency Improvements Backlog
 
 Generated: 2026-01-20
-Status: Planned
+Updated: 2026-01-22
+Status: Nearly Complete
 
 ## Overview
 
@@ -11,11 +12,12 @@ This document tracks medium and lower priority improvements identified during th
 
 ## Priority 3: Medium Priority (1-2 months)
 
-### Issue #1: Add Retry Logic for Index Persistence
+### Issue #1: Add Retry Logic for Index Persistence (DONE)
 
 **Category:** Resiliency - Lack of retry logic
-**Location:** `src/indexing/manager.py:111-127`
+**Location:** `src/indexing/manager.py:238-249`
 **Impact:** MEDIUM - Transient failures cause data loss
+**Status:** ✅ Fixed - `_persist_indices_with_retry()` uses tenacity `@retry` decorator
 
 **Problem:**
 Single-shot persist with no retry. Transient failures (disk full, NFS timeout, permission errors) cause complete failure.
@@ -38,11 +40,12 @@ def persist(self):
 
 ---
 
-### Issue #2: Implement Circuit Breaker for Embedding Model
+### Issue #2: Implement Circuit Breaker for Embedding Model (DONE)
 
 **Category:** Resiliency - Cascading failure risks
-**Location:** `src/indices/vector.py:179-220`
+**Location:** `src/indices/vector.py:47-52`, `src/utils/circuit_breaker.py`
 **Impact:** MEDIUM - Repeated failures cascade to all queries
+**Status:** ✅ Fixed - Custom `CircuitBreaker` class with configurable thresholds (failure_threshold=5, recovery_timeout=60s)
 
 **Problem:**
 No failure tracking. If embedding model fails (OOM, corrupted model file), every query retries the same operation.
@@ -63,11 +66,12 @@ Implement circuit breaker pattern with:
 
 ---
 
-### Issue #3: Optimize Graph Traversal Locking
+### Issue #3: Optimize Graph Traversal Locking (DONE)
 
 **Category:** Performance - Inefficient data structures
 **Location:** `src/indices/graph.py:79-99`
 **Impact:** MEDIUM - Lock contention during traversal
+**Status:** ✅ Fixed - Snapshot pattern implemented (shallow copy under lock, BFS without lock)
 
 **Problem:**
 Holds write lock during entire BFS traversal. For deep graphs, this blocks other operations.
@@ -97,11 +101,12 @@ Two approaches:
 
 ---
 
-### Issue #4: Cache Query Embeddings
+### Issue #4: Cache Query Embeddings (DONE)
 
 **Category:** Performance - Redundant computations
-**Location:** `src/search/orchestrator.py:118-122`
+**Location:** `src/search/orchestrator.py:45-48, 67-93`
 **Impact:** MEDIUM - Repeated expensive operations
+**Status:** ✅ Fixed - `_embedding_cache` dict with TTL (300s) and LRU eviction, `_get_cached_embedding()` method
 
 **Problem:**
 Query embedding computed multiple times (once for search, again for MMR).
@@ -170,11 +175,12 @@ Already implemented with `MAX_QUEUE_SIZE = 1000` and drop-oldest policy.
 
 ## Priority 4: Low Priority (As time permits)
 
-### Issue #6: Add Timeout on Background Tasks
+### Issue #6: Add Timeout on Background Tasks (DONE)
 
 **Category:** Safety - Missing timeout handling
-**Location:** `src/context.py:236-274`
+**Location:** `src/context.py:286-297`
 **Impact:** LOW - Tasks may hang indefinitely
+**Status:** ✅ Fixed - `_index_git_commits_initial_with_timeout()` wraps git indexing with `asyncio.wait_for(timeout=30.0)`
 
 **Problem:**
 Background tasks (git indexing, file watching) have no timeout protection.
@@ -205,8 +211,9 @@ async def _startup_background_tasks(self):
 ### Issue #7: Optimize SearchPipeline Deduplication
 
 **Category:** Performance - Inefficient list scans
-**Location:** `src/search/pipeline.py` (requires reading)
+**Location:** `src/search/dedup.py`
 **Impact:** LOW - Potential O(n²) deduplication
+**Status:** ⏳ Not completed - Still uses O(n²) pattern with nested loops
 
 **Problem:**
 Deduplication may use repeated list scans.
@@ -219,11 +226,12 @@ Use set-based lookups for O(n) deduplication.
 
 ---
 
-### Issue #8: Add Resource Cleanup on Lifecycle Exception
+### Issue #8: Add Resource Cleanup on Lifecycle Exception (DONE)
 
 **Category:** Safety - Resource leaks
-**Location:** `src/lifecycle.py:43-82`
+**Location:** `src/lifecycle.py:54-72`
 **Impact:** LOW - Resources leak on startup exception
+**Status:** ✅ Fixed - `start()` method has try/except that calls `await self._cleanup_resources()` on failure
 
 **Problem:**
 If initialization raises exception, resources (file handles, threads) may leak.
@@ -255,11 +263,12 @@ async def _cleanup_resources(self):
 
 ## Priority 5: Nice-to-Have (Future)
 
-### Issue #9: Optimize Stale Warning Deduplication
+### Issue #9: Optimize Stale Warning Deduplication (DONE)
 
 **Category:** Performance - Minor memory leak
-**Location:** `src/indices/vector.py:49`
+**Location:** `src/indices/vector.py:56-58, 286-293`
 **Impact:** LOW
+**Status:** ✅ Fixed - `OrderedDict` with LRU eviction (`_max_warned_chunks = 1000`)
 
 **Problem:**
 `_warned_stale_chunk_ids` grows unbounded.
@@ -278,11 +287,12 @@ def _log_stale_warning(self, chunk_id: str):
 
 ---
 
-### Issue #10: Cancel Emergency Timer on Normal Shutdown
+### Issue #10: Cancel Emergency Timer on Normal Shutdown (DONE)
 
 **Category:** Safety - Resource cleanup
-**Location:** `src/lifecycle.py:156-175`
+**Location:** `src/lifecycle.py:117-125`
 **Impact:** LOW
+**Status:** ✅ Fixed - `_cancel_emergency_timer()` called at start of `shutdown()` and in `_cleanup_resources()`
 
 **Problem:**
 Emergency timer thread persists briefly after normal shutdown.
@@ -305,18 +315,19 @@ Always call `_cancel_emergency_timer()` in shutdown path.
 - [x] P2: Blocking I/O async wrapping
 
 ### Sprint 2 (Weeks 3-4)
-- [ ] P3-1: Retry logic for persistence
-- [ ] P3-3: Graph traversal locking optimization
-- [ ] P3-4: Query embedding cache
+- [x] P3-1: Retry logic for persistence
+- [x] P3-3: Graph traversal locking optimization
+- [x] P3-4: Query embedding cache
 
 ### Sprint 3 (Weeks 5-6)
-- [ ] P3-2: Circuit breaker for embedding model
-- [ ] P4-6: Background task timeouts
+- [x] P3-2: Circuit breaker for embedding model
+- [x] P4-6: Background task timeouts
 - [ ] P4-7: SearchPipeline optimization
 
 ### Sprint 4+ (Future)
-- [ ] Remaining P4 items
-- [ ] P5 items as quick wins
+- [x] P4-8: Resource cleanup on lifecycle exception
+- [x] P5-9: Stale warning deduplication
+- [x] P5-10: Cancel emergency timer
 
 ---
 
@@ -334,34 +345,23 @@ To validate improvements, track:
 
 ---
 
-## Dependencies
+## Summary
 
-### New Dependencies Needed:
-- `tenacity` (retry logic) - 5k stars, stable
-- `pybreaker` (circuit breaker) - 1.6k stars OR custom (100 lines)
-- `readerwriterlock` (optional, if RWLock approach chosen) - 200 stars
+**Completion Status:** 9 of 10 issues resolved (90%)
 
-### Alternative: Implement patterns from scratch
-- Retry: 30 lines with exponential backoff
-- Circuit breaker: 100 lines for basic state machine
-- RWLock: Use snapshot pattern instead
+| Priority | Total | Completed | Remaining |
+|----------|-------|-----------|-----------|
+| P3 (Medium) | 5 | 5 | 0 |
+| P4 (Low) | 3 | 2 | 1 (P4-7: SearchPipeline dedup) |
+| P5 (Nice-to-have) | 2 | 2 | 0 |
 
-**Recommendation:** Use tenacity (battle-tested), implement custom circuit breaker (project-specific needs).
-
----
-
-## Questions for Discussion
-
-1. **Priority:** Should circuit breaker (P3-2) be promoted to P2 given cascading failure risk?
-2. **Dependencies:** Prefer adding tenacity/pybreaker OR custom implementations?
-3. **Monitoring:** Add Prometheus metrics for production deployments?
-4. **Testing:** Create performance regression test suite alongside fixes?
+**Last Updated:** 2026-01-22
 
 ---
 
 ## Notes
 
 - All P1 and P2 issues resolved as of 2026-01-20
+- P3, P4, P5 issues mostly resolved as of 2026-01-22
+- Only P4-7 (SearchPipeline deduplication optimization) remains
 - This backlog focuses on incremental improvements without breaking changes
-- Each issue includes effort estimate, risk assessment, and solution sketch
-- Ready for sprint planning and prioritization

@@ -9,6 +9,7 @@ from typing import Any, Final, Protocol, cast
 import numpy as np
 
 from src.models import Chunk, Document
+from src.utils.atomic_io import atomic_write_json, fsync_path
 from src.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from src.utils.similarity import cosine_similarity
 
@@ -620,26 +621,22 @@ class VectorIndex:
                 import faiss
                 faiss_path = path / "faiss_index.bin"
                 faiss.write_index(self._vector_store._faiss_index, str(faiss_path))  # type: ignore[attr-defined]
+                fsync_path(faiss_path)
 
             mapping_file = path / "doc_id_mapping.json"
-            with open(mapping_file, "w") as f:
-                json.dump(self._doc_id_to_node_ids, f)
+            atomic_write_json(mapping_file, self._doc_id_to_node_ids)
 
             chunk_mapping_file = path / "chunk_id_mapping.json"
-            with open(chunk_mapping_file, "w") as f:
-                json.dump(self._chunk_id_to_node_id, f)
+            atomic_write_json(chunk_mapping_file, self._chunk_id_to_node_id)
 
             vocab_file = path / "concept_vocabulary.json"
-            with open(vocab_file, "w") as f:
-                json.dump(self._concept_vocabulary, f)
+            atomic_write_json(vocab_file, self._concept_vocabulary)
 
             term_counts_file = path / "term_counts.json"
-            with open(term_counts_file, "w") as f:
-                json.dump(self._term_counts, f)
+            atomic_write_json(term_counts_file, self._term_counts)
 
         tombstone_file = path / "tombstones.json"
-        with open(tombstone_file, "w") as f:
-            json.dump(sorted(self._tombstoned_docs), f)
+        atomic_write_json(tombstone_file, sorted(self._tombstoned_docs))
 
     def load(self, path: Path) -> None:
         from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage

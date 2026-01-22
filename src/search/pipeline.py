@@ -102,7 +102,7 @@ class SearchPipeline:
                 self._config.rerank_top_n,
             )
 
-        final = limited[:top_n]
+        final = [(chunk_id, max(0.0, min(1.0, score))) for chunk_id, score in limited[:top_n]]
 
         stats = CompressionStats(
             original_count=original_count,

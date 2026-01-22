@@ -6,6 +6,8 @@ from typing import Any
 
 import networkx as nx
 
+from src.utils.atomic_io import atomic_write_json
+
 from src.indices.protocol import SearchResult
 from src.search.community import get_community_detector, compute_community_boost, get_community_members
 
@@ -154,8 +156,7 @@ class GraphStore:
             graph_data = nx.node_link_data(self._graph)
             graph_file = path / "graph.json"
 
-            with open(graph_file, "w") as f:
-                json.dump(graph_data, f, indent=2)
+            atomic_write_json(graph_file, graph_data)
 
             if self._community_detection_enabled and self._graph.number_of_nodes() > 0:
                 detector = get_community_detector("louvain")
@@ -164,8 +165,7 @@ class GraphStore:
 
             if self._communities:
                 communities_file = path / "communities.json"
-                with open(communities_file, "w") as f:
-                    json.dump(self._communities, f, indent=2)
+                atomic_write_json(communities_file, self._communities)
 
     def load(self, path: Path) -> None:
         with self._lock:

@@ -11,6 +11,7 @@ from src.memory.storage import (
     get_trash_path,
     list_memory_files,
 )
+from src.utils.atomic_io import atomic_write_text
 
 if TYPE_CHECKING:
     from src.context import ApplicationContext
@@ -56,7 +57,7 @@ async def create_memory(
     full_content = frontmatter + content
 
     try:
-        file_path.write_text(full_content, encoding="utf-8")
+        atomic_write_text(file_path, full_content)
         ctx.memory_manager.index_memory(str(file_path))
         ctx.memory_manager.persist()
 
@@ -87,7 +88,7 @@ async def append_memory(
     try:
         existing_content = file_path.read_text(encoding="utf-8")
         new_content = existing_content.rstrip() + "\n\n" + content
-        file_path.write_text(new_content, encoding="utf-8")
+        atomic_write_text(file_path, new_content)
 
         memory_id = f"memory:{Path(filename).with_suffix('')}"
         ctx.memory_manager.remove_memory(memory_id)
@@ -144,7 +145,7 @@ async def update_memory(
         return {"error": f"Memory file not found: {filename}"}
 
     try:
-        file_path.write_text(content, encoding="utf-8")
+        atomic_write_text(file_path, content)
 
         memory_id = f"memory:{Path(filename).with_suffix('')}"
         ctx.memory_manager.remove_memory(memory_id)
@@ -475,7 +476,7 @@ async def merge_memories(
         source_paths.append(source_path)
 
     try:
-        target_path.write_text(summary_content, encoding="utf-8")
+        atomic_write_text(target_path, summary_content)
 
         ctx.memory_manager.index_memory(str(target_path))
 

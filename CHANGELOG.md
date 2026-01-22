@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **SearchOrchestrator project context isolation:** Fixed bug where `query_documents` could use the wrong project's `documents_path` in multi-project setups. The `SearchOrchestrator` now stores `documents_path` as an immutable instance variable at construction time instead of reading from the shared `Config` object on each query. This ensures project context remains fixed for the server's lifetime, consistent with multi-project isolation guarantees.
+
 ### Added
 - **CLI Debug Mode for Query Command:**
   - Added `--debug` flag to `query` command (`uv run mcp-markdown-ragdocs query --debug`)

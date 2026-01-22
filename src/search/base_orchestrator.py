@@ -2,6 +2,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Generic, TypeVar
 
 from src.config import Config
@@ -38,11 +39,13 @@ class BaseSearchOrchestrator(ABC, Generic[ResultT]):
         keyword: KeywordIndex,
         graph: GraphStore,
         config: Config,
+        documents_path: Path | None = None,
     ):
         self._vector = vector
         self._keyword = keyword
         self._graph = graph
         self._config = config
+        self._documents_path = documents_path
 
     async def _execute_parallel_search(
         self,
@@ -124,11 +127,11 @@ class BaseSearchOrchestrator(ABC, Generic[ResultT]):
     async def _search_vector_base(self, query: str, top_k: int) -> list[dict]:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, self._vector.search, query, top_k, None, None
+            None, self._vector.search, query, top_k, None, self._documents_path
         )
 
     async def _search_keyword_base(self, query: str, top_k: int) -> list[dict]:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, self._keyword.search, query, top_k, None, None
+            None, self._keyword.search, query, top_k, None, self._documents_path
         )

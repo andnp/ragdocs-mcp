@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.utils.atomic_io import atomic_write_json
+
 
 @dataclass
 class IndexManifest:
@@ -25,8 +27,7 @@ def save_manifest(path: Path, manifest: IndexManifest) -> None:
         "indexed_files": manifest.indexed_files or {},
     }
 
-    with manifest_path.open("w") as f:
-        json.dump(data, f, indent=2)
+    atomic_write_json(manifest_path, data)
 
 
 def load_manifest(path: Path):

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Awaitable
 
 from mcp.types import TextContent
@@ -101,7 +100,7 @@ async def _query_documents_impl(
     excluded_files = None
     if excluded_files_raw:
         from src.search.path_utils import normalize_path
-        docs_root = Path(ctx.config.indexing.documents_path)
+        docs_root = ctx.orchestrator.documents_path
         excluded_files = {normalize_path(f, docs_root) for f in excluded_files_raw}
 
     top_k = max(20, top_n * 4)
@@ -206,7 +205,7 @@ async def handle_search_with_hypothesis(hctx: HandlerContext, arguments: dict) -
     excluded_files = None
     if excluded_files_raw:
         from src.search.path_utils import normalize_path
-        docs_root = Path(ctx.config.indexing.documents_path)
+        docs_root = ctx.orchestrator.documents_path
         excluded_files = {normalize_path(f, docs_root) for f in excluded_files_raw}
 
     top_k = max(20, top_n * 4)

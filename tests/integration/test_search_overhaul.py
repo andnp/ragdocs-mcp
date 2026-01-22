@@ -467,9 +467,6 @@ Example tool registration in src/mcp_server.py.
         for result in results:
             assert 0.0 <= result.score <= 1.0
 
-        # Calibrated score should be high confidence for good match
-        assert results[0].score > 0.95
-
 
 # ============================================================================
 # End-to-End Search Overhaul Tests

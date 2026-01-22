@@ -77,9 +77,14 @@ class CommitIndexer:
         if self._conn is None:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+                self._conn = sqlite3.connect(
+                    str(self._db_path),
+                    check_same_thread=False,
+                    timeout=10.0,
+                )
                 self._conn.row_factory = sqlite3.Row
                 self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA synchronous=NORMAL")
                 self._conn.execute("PRAGMA integrity_check(1)").fetchone()
             except sqlite3.DatabaseError as e:
                 if self._is_corruption_error(e):
