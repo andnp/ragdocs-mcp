@@ -688,7 +688,7 @@ def search_memory(
         assert ctx.memory_search is not None
 
         validate_range(limit, MIN_TOP_N, MAX_TOP_N, "--limit")
-        
+
         if memory_type is not None:
             valid_types = ["plan", "journal", "fact", "observation", "reflection"]
             if memory_type not in valid_types:

@@ -67,6 +67,13 @@ def config_reranking(tmp_path):
 
 @pytest.fixture
 def indices(shared_embedding_model):
+    """
+    Function-scoped indices with shared embedding model.
+
+    Kept as function-scoped (not module) because tests in this file
+    mutate index state and require isolation between tests.
+    Still uses shared_embedding_model to avoid redundant model loading.
+    """
     vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()

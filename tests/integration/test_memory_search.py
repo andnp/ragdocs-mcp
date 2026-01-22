@@ -534,7 +534,7 @@ class TestTimeRangeFiltering:
         """
         Verify only memories after timestamp are returned.
         """
-        
+
         # Create memories with different timestamps
         old_memory = create_memory_file(
             memory_path,
@@ -654,7 +654,7 @@ class TestTimeRangeFiltering:
         from datetime import timedelta
 
         now = datetime.now(timezone.utc)
-        
+
         # Create memories at different relative dates
         old_date = (now - timedelta(days=10)).isoformat()
         recent_date = (now - timedelta(days=3)).isoformat()

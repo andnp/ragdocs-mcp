@@ -80,6 +80,39 @@ def shared_embedding_model():
     return HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
 
+@pytest.fixture(scope="module")
+def module_vector_index(shared_embedding_model):
+    """
+    Module-scoped VectorIndex with shared embedding model.
+
+    Use this instead of creating VectorIndex() in function-scoped fixtures
+    to avoid redundant model loading (2-4s overhead per load).
+
+    Note: Module scope means tests share index state. Only use when tests
+    don't mutate the index or when using tmp_path for document isolation.
+    """
+    return VectorIndex(embedding_model=shared_embedding_model)
+
+
+@pytest.fixture(scope="module")
+def module_indices(shared_embedding_model):
+    """
+    Module-scoped indices for integration tests.
+
+    Returns (vector, keyword, graph) tuple with shared embedding model.
+    Avoids redundant model loading across tests in the same module.
+
+    Note: Module scope means tests share index state. Ensure tests either:
+    1. Use separate tmp_path directories for document isolation, OR
+    2. Don't mutate index state, OR
+    3. Explicitly clear indices between tests
+    """
+    vector = VectorIndex(embedding_model=shared_embedding_model)
+    keyword = KeywordIndex()
+    graph = GraphStore()
+    return vector, keyword, graph
+
+
 # ============================================================================
 # Persistent Storage Fixtures
 # ============================================================================

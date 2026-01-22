@@ -26,9 +26,16 @@ def config(tmp_path):
     )
 
 
-@pytest.fixture
-def indices():
-    vector = VectorIndex()
+@pytest.fixture(scope="module")
+def indices(shared_embedding_model):
+    """
+    Module-scoped indices with shared embedding model.
+
+    Scope changed to 'module' to avoid redundant embedding model loading.
+    Each test creates its own documents in tmp_path, providing isolation
+    despite shared indices.
+    """
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
     return vector, keyword, graph
