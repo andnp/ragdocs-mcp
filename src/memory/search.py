@@ -648,11 +648,11 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
     ) -> dict:
         """
         Get memory relationships by edge type.
-        
+
         Args:
             memory_id: Memory ID to query relationships for
             relationship_type: Type of relationship - "supersedes", "depends_on", "contradicts", or None for all
-            
+
         Returns:
             Dictionary with relationship types as keys and lists of related memories as values.
             For "supersedes", returns a "version_chain" dict instead of a list.

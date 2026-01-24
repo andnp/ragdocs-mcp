@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -13,16 +15,23 @@ from src.search.utils import classify_query_type, truncate_content
 import src.mcp.handlers  # noqa: F401 - registers search handlers
 import src.mcp.memory_handlers  # noqa: F401 - registers memory handlers
 
+if TYPE_CHECKING:
+    from src.reader.context import ReadOnlyContext
+
 logger = logging.getLogger(__name__)
 
 
 class MCPServer:
     def __init__(self, project_override: str | None = None, ctx: ApplicationContext | None = None):
-        self.ctx = ctx
+        self.ctx: ApplicationContext | ReadOnlyContext | None = ctx
         self.project_override = project_override
         self.server = Server("mcp-markdown-ragdocs")
         self._coordinator = LifecycleCoordinator()
+        self._use_worker: bool = False
 
+        self._setup_handlers()
+
+    def _setup_handlers(self) -> None:
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:
             return [
@@ -554,17 +563,52 @@ class MCPServer:
             hctx = HandlerContext(self.ctx, self._coordinator)
             return await handler(hctx, arguments)
 
+    async def _ensure_context(self) -> None:
+        if self.ctx is not None:
+            return
+
+        from src.reader.context import ReadOnlyContext as ROContext
+
+        app_ctx = ApplicationContext.create(
+            project_override=self.project_override,
+            enable_watcher=True,
+            lazy_embeddings=True,
+        )
+        config = app_ctx.config
+        self._use_worker = config.worker.enabled
+
+        if self._use_worker:
+            snapshot_base = Path(config.indexing.index_path) / "snapshots"
+            self.ctx = await ROContext.create(config, snapshot_base)
+        else:
+            self.ctx = app_ctx
+
+    async def _start_background_init(self) -> asyncio.Task[None]:
+        from src.reader.context import ReadOnlyContext as ROContext
+
+        if self._use_worker:
+            if not isinstance(self.ctx, ROContext):
+                raise RuntimeError("Worker mode requires ReadOnlyContext")
+            return asyncio.create_task(self._coordinator.start_with_worker(self.ctx))
+        else:
+            if not isinstance(self.ctx, ApplicationContext):
+                raise RuntimeError("Non-worker mode requires ApplicationContext")
+            return asyncio.create_task(self._coordinator.start(self.ctx, background_index=True))
+
     async def startup(self) -> None:
         logger.info("Starting MCP server initialization")
 
-        if self.ctx is None:
-            self.ctx = ApplicationContext.create(
-                project_override=self.project_override,
-                enable_watcher=True,
-                lazy_embeddings=True,
-            )
+        await self._ensure_context()
 
-        await self.ctx.start(background_index=True)
+        if self._use_worker:
+            from src.reader.context import ReadOnlyContext as ROContext
+
+            if isinstance(self.ctx, ROContext):
+                await self._coordinator.start_with_worker(self.ctx)
+        else:
+            if isinstance(self.ctx, ApplicationContext):
+                await self.ctx.start(background_index=True)
+
         logger.info("MCP server initialization complete")
 
 
@@ -1167,26 +1211,15 @@ class MCPServer:
         await ctx.stop()
         logger.info("Shutdown complete")
 
-    async def run(self):
+    async def run(self) -> None:
         loop = asyncio.get_running_loop()
         self._coordinator.install_signal_handlers(loop)
 
         try:
-            # Create minimal context BEFORE entering stdio (lightweight, no model loading)
-            if self.ctx is None:
-                self.ctx = ApplicationContext.create(
-                    project_override=self.project_override,
-                    enable_watcher=True,
-                    lazy_embeddings=True,
-                )
+            await self._ensure_context()
 
-            # Enter MCP protocol loop IMMEDIATELY to respond to initialize handshake fast
             async with stdio_server() as (read_stream, write_stream):
-                # Start background initialization AFTER entering stdio
-                # This allows MCP handshake to complete while indices load
-                init_task = asyncio.create_task(
-                    self._coordinator.start(self.ctx, background_index=True)
-                )
+                init_task = await self._start_background_init()
 
                 try:
                     await self.server.run(
@@ -1195,7 +1228,6 @@ class MCPServer:
                         self.server.create_initialization_options(),
                     )
                 finally:
-                    # Ensure init task completes or is cancelled
                     if not init_task.done():
                         init_task.cancel()
                         try:

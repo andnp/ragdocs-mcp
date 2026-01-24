@@ -638,6 +638,20 @@ class VectorIndex:
         tombstone_file = path / "tombstones.json"
         atomic_write_json(tombstone_file, sorted(self._tombstoned_docs))
 
+    def persist_to(self, snapshot_dir: Path) -> None:
+        self.persist(snapshot_dir)
+
+    def load_from(self, snapshot_dir: Path) -> bool:
+        if not snapshot_dir.exists():
+            return False
+
+        docstore_path = snapshot_dir / "docstore.json"
+        if not docstore_path.exists():
+            return False
+
+        self.load(snapshot_dir)
+        return True
+
     def load(self, path: Path) -> None:
         from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage
         from llama_index.vector_stores.faiss import FaissVectorStore
@@ -698,8 +712,7 @@ class VectorIndex:
         if vocab_file.exists():
             try:
                 with open(vocab_file, "r") as f:
-                    loaded_vocab = json.load(f)
-                    self._concept_vocabulary = OrderedDict(loaded_vocab)
+                    self._concept_vocabulary = json.load(f, object_pairs_hook=OrderedDict)
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to load concept vocabulary (corrupted JSON): {e}")
                 logger.info("Rebuilding concept vocabulary from scratch")
@@ -711,8 +724,7 @@ class VectorIndex:
         if term_counts_file.exists():
             try:
                 with open(term_counts_file, "r") as f:
-                    loaded_counts = json.load(f)
-                    self._term_counts = OrderedDict(loaded_counts)
+                    self._term_counts = json.load(f, object_pairs_hook=OrderedDict)
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to load term counts (corrupted JSON): {e}")
                 logger.info("Rebuilding term counts from scratch")

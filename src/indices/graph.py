@@ -167,6 +167,20 @@ class GraphStore:
                 communities_file = path / "communities.json"
                 atomic_write_json(communities_file, self._communities)
 
+    def persist_to(self, snapshot_dir: Path) -> None:
+        self.persist(snapshot_dir)
+
+    def load_from(self, snapshot_dir: Path) -> bool:
+        if not snapshot_dir.exists():
+            return False
+
+        graph_file = snapshot_dir / "graph.json"
+        if not graph_file.exists():
+            return False
+
+        self.load(snapshot_dir)
+        return True
+
     def load(self, path: Path) -> None:
         with self._lock:
             graph_file = path / "graph.json"

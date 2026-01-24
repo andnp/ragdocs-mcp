@@ -21,6 +21,7 @@ from src.search.utils import classify_query_type, truncate_content
 if TYPE_CHECKING:
     from src.context import ApplicationContext
     from src.lifecycle import LifecycleCoordinator
+    from src.reader.context import ReadOnlyContext
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +51,13 @@ def get_all_handlers() -> dict[str, ToolHandler]:
 class HandlerContext:
     def __init__(
         self,
-        ctx: ApplicationContext | None,
+        ctx: ApplicationContext | ReadOnlyContext | None,
         coordinator: LifecycleCoordinator,
     ):
         self.ctx = ctx
         self.coordinator = coordinator
 
-    def require_ctx(self) -> ApplicationContext:
+    def require_ctx(self) -> ApplicationContext | ReadOnlyContext:
         if self.ctx is None:
             raise RuntimeError("Server not initialized")
         return self.ctx

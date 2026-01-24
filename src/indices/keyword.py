@@ -433,6 +433,29 @@ class KeywordIndex:
                         if item.is_file():
                             shutil.copy2(item, dest)
 
+    def persist_to(self, snapshot_dir: Path) -> None:
+        self.persist(snapshot_dir)
+
+    def load_from(self, snapshot_dir: Path) -> bool:
+        if not snapshot_dir.exists():
+            return False
+
+        try:
+            with self._lock:
+                existing_index = whoosh_index.open_dir(str(snapshot_dir))
+                existing_fields = set(existing_index.schema.names())
+                expected_fields = set(self._schema.names())
+
+                if existing_fields != expected_fields:
+                    existing_index.close()
+                    return False
+
+                self._index = existing_index
+                self._index_path = snapshot_dir
+                return True
+        except (whoosh_index.EmptyIndexError, FileNotFoundError):
+            return False
+
     def load(self, path: Path) -> None:
         with self._lock:
             if not path.exists():

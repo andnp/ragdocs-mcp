@@ -613,3 +613,84 @@ def test_term_counts_and_vocabulary_loaded_as_ordereddict(shared_embedding_model
     # Verify search works
     results = vector_index2.search("neural networks", top_k=5)
     assert "new_chunk_after_load" in _extract_chunk_ids(results)
+
+
+def test_ordered_dict_preserved_after_persist_and_load_regression(shared_embedding_model, tmp_path):
+    """
+    Regression test for bug where json.load() returned plain dict instead of OrderedDict,
+    causing AttributeError: 'dict' object has no attribute 'move_to_end'.
+
+    This simulates the create_memory flow: persist index → load index → add new chunk.
+    The bug manifested when add_chunk called register_document_terms which called
+    _term_counts.move_to_end() on a plain dict.
+    """
+    from collections import OrderedDict
+
+    from src.models import Chunk
+
+    # Create index and add initial content
+    vector_index = VectorIndex(embedding_model=shared_embedding_model)
+    
+    chunk1 = Chunk(
+        chunk_id="chunk_1",
+        doc_id="doc_1",
+        content="Python programming language with asyncio and type hints.",
+        metadata={},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=100,
+        file_path="/tmp/doc_1.md",
+        modified_time=datetime.now(),
+    )
+    vector_index.add_chunk(chunk1)
+    
+    # Populate term counts and vocabulary
+    vector_index.register_document_terms("python asyncio programming")
+    vector_index.build_concept_vocabulary(min_term_length=3, max_terms=100, min_frequency=1)
+    
+    # Verify OrderedDict before persist
+    assert isinstance(vector_index._term_counts, OrderedDict), \
+        "term_counts should be OrderedDict before persist"
+    assert isinstance(vector_index._concept_vocabulary, OrderedDict), \
+        "concept_vocabulary should be OrderedDict before persist"
+
+    # Persist to disk
+    persist_path = tmp_path / "vector_ordered_dict_test"
+    vector_index.persist(persist_path)
+
+    # Create new index and load from disk (simulates memory system startup)
+    vector_index2 = VectorIndex(embedding_model=shared_embedding_model)
+    vector_index2.load(persist_path)
+
+    # CRITICAL: Verify both are OrderedDict after load (this was the bug)
+    assert isinstance(vector_index2._term_counts, OrderedDict), \
+        "term_counts should be OrderedDict after load (was plain dict, causing move_to_end AttributeError)"
+    assert isinstance(vector_index2._concept_vocabulary, OrderedDict), \
+        "concept_vocabulary should be OrderedDict after load"
+
+    # Simulate create_memory flow: add new chunk after loading (this would fail with plain dict)
+    chunk2 = Chunk(
+        chunk_id="chunk_2",
+        doc_id="doc_2",
+        content="FastAPI web framework with dependency injection and Pydantic models.",
+        metadata={},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=100,
+        file_path="/tmp/doc_2.md",
+        modified_time=datetime.now(),
+    )
+    
+    # This should NOT raise AttributeError: 'dict' object has no attribute 'move_to_end'
+    vector_index2.add_chunk(chunk2)
+    
+    # Verify the chunk was indexed successfully
+    results = vector_index2.search("FastAPI web framework", top_k=5)
+    assert "chunk_2" in _extract_chunk_ids(results)
+    
+    # Verify move_to_end() works directly (additional safety check)
+    if vector_index2._term_counts:
+        first_term = next(iter(vector_index2._term_counts))
+        vector_index2._term_counts.move_to_end(first_term)  # Should not raise

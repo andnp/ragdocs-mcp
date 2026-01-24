@@ -87,7 +87,7 @@ Both transport modes use the same indexing and query orchestration subsystems.
 - Coordinate with indexing service and orchestrator
 - Expose `query_documents` tool
 
-**Lifecycle:**
+**Lifecycle (Single-Process Mode):**
 1. Load configuration and detect project
 2. Initialize indices (vector, keyword, graph)
 3. Check manifest for version changes
@@ -95,6 +95,16 @@ Both transport modes use the same indexing and query orchestration subsystems.
 5. Start file watcher
 6. Enter stdio communication loop
 7. On shutdown: stop watcher, persist indices
+
+**Lifecycle (Multiprocess Mode):**
+1. Load configuration and detect project
+2. Create `ReadOnlyContext` with empty indices
+3. Spawn worker process (handles indexing)
+4. Wait for `InitCompleteNotification` from worker
+5. Load indices from worker's snapshot
+6. Start index sync watcher (polls for updates)
+7. Enter stdio communication loop
+8. On shutdown: send `ShutdownCommand` to worker, wait for graceful exit
 
 **Tool Definitions:**
 
@@ -158,6 +168,110 @@ Both transport modes use the same indexing and query orchestration subsystems.
 - `GET /status`: Operational status (document count, queue size, failed files)
 
 **Lifecycle:** Same as MCP server, but uses HTTP transport instead of stdio.
+
+### IPC Layer (Multiprocess Mode)
+
+#### Commands and Responses (src/ipc/commands.py)
+
+**Purpose:** Define typed messages exchanged between main and worker processes.
+
+**Command Types:**
+- `ShutdownCommand`: Request graceful or forced shutdown
+- `HealthCheckCommand`: Request health status
+- `ReindexDocumentCommand`: Request reindex of specific document
+
+**Notification Types:**
+- `InitCompleteNotification`: Worker finished initialization (version, doc_count)
+- `IndexUpdatedNotification`: Worker published new index snapshot
+- `HealthStatusResponse`: Worker health metrics (queue depth, last index time)
+
+#### QueueManager (src/ipc/queue_manager.py)
+
+**Purpose:** Async-friendly wrapper around `multiprocessing.Queue`.
+
+**Features:**
+- Non-blocking `put_nowait()` / `get_nowait()` with graceful overflow handling
+- Async `get()` / `put()` with configurable timeout (polling-based)
+- `drain()` method for bulk retrieval
+
+**Design Rationale:** `multiprocessing.Queue` blocks the event loop; this wrapper uses polling with `asyncio.sleep()` to maintain responsiveness.
+
+#### IndexSyncPublisher / IndexSyncReceiver (src/ipc/index_sync.py)
+
+**Purpose:** Version-based index synchronization between processes.
+
+**Publisher (Worker Process):**
+1. Receives `persist_callback` that writes indices to a directory
+2. Creates versioned snapshot directory (`snapshots/v{N}/`)
+3. Writes binary version file (`version.bin`) atomically
+4. Cleans up old snapshots (keeps last N)
+
+**Receiver (Main Process):**
+1. Polls `version.bin` for version changes
+2. When new version detected, calls `reload_callback` with snapshot path
+3. Indices hot-reloaded without process restart
+
+**Snapshot Structure:**
+```
+{index_path}/snapshots/
+├── version.bin              # Binary: uint32 current version
+├── v1/
+│   ├── vector/
+│   ├── keyword/
+│   └── graph/
+└── v2/
+    ├── vector/
+    ├── keyword/
+    └── graph/
+```
+
+### Worker Process (src/worker/)
+
+#### WorkerState (src/worker/process.py)
+
+**Purpose:** Encapsulate all worker process state.
+
+**Contents:**
+- `config`: Loaded configuration
+- `vector`, `keyword`, `graph`: Index instances
+- `index_manager`: Coordinator for indexing operations
+- `sync_publisher`: Snapshot publisher
+- `command_queue`, `response_queue`: IPC channels
+- `file_watcher`, `git_watcher`: File system observers
+- `commit_indexer`: Git history indexer
+
+#### Worker Lifecycle (worker_main)
+
+1. **Initialize:** Load config, create indices, create `IndexSyncPublisher`
+2. **Initial Index:** Rebuild or load existing indices, run reconciliation
+3. **Publish Snapshot:** Persist indices to versioned snapshot directory
+4. **Start Watchers:** Launch file watcher and git watcher
+5. **Send InitComplete:** Notify main process via `InitCompleteNotification`
+6. **Command Loop:** Process commands, check for index updates, publish snapshots
+7. **Shutdown:** Stop watchers, persist final snapshot, close resources
+
+**Index Update Detection:**
+- Worker polls `FileWatcher.get_last_sync_time()`
+- If sync time > last publish time, persist and publish new snapshot
+- Main process detects via `IndexSyncReceiver.check_for_update()`
+
+### ReadOnlyContext (src/reader/context.py)
+
+**Purpose:** Lightweight context for main process in multiprocess mode.
+
+**Characteristics:**
+- **No indexing:** All indexing done by worker
+- **Read-only indices:** Loaded from snapshots, never modified
+- **Hot-reloadable:** Indices replaced atomically when new snapshot available
+- **Memory efficient:** Shares embedding model with `CommitIndexer`
+
+**Initialization:**
+1. Create empty `VectorIndex`, `KeywordIndex`, `GraphStore`
+2. Find latest snapshot from `version.bin`
+3. Load indices from snapshot (or start empty if none)
+4. Create `SearchOrchestrator` with loaded indices
+5. Create `IndexSyncReceiver` with reload callback
+6. Start background task to poll for updates
 
 ### Indexing Service
 
@@ -1077,6 +1191,45 @@ Return list[ChunkResult]
 
 **Acceptable for:** Personal knowledge bases, project documentation, development environments.
 
+### Multiprocess Architecture
+
+**Rationale:** Python's Global Interpreter Lock (GIL) prevents true parallelism in a single process. For the MCP server, this creates problems:
+- **Slow startup:** Loading embedding models blocks the MCP protocol handler
+- **Blocking reads:** Index updates block query processing
+- **Resource contention:** File watching, indexing, and search compete for GIL
+
+**Solution:** Split into two processes:
+- **Main process:** Handles MCP protocol, executes searches on read-only indices
+- **Worker process:** Handles file watching, indexing, and index updates
+
+**Index Synchronization:** The worker publishes versioned snapshots; the main process polls for updates and hot-reloads indices without restart.
+
+```
+MAIN PROCESS (MCP Server)              WORKER PROCESS (Indexer)
+┌────────────────────────┐             ┌────────────────────────┐
+│ ReadOnlyContext        │◀── Cmds ───│ WorkerState            │
+│ (search, query)        │             │ (indexing, watching)   │
+│                        │── Resp ───▶│                        │
+│ IndexSyncReceiver      │◀── Snap ───│ IndexSyncPublisher     │
+└────────────────────────┘             └────────────────────────┘
+         │                                       │
+         ▼                                       ▼
+┌────────────────────────┐             ┌────────────────────────┐
+│ snapshots/v{N}/        │◀── Load ───│ snapshots/v{N}/        │
+│ ├── vector/            │             │ ├── vector/            │
+│ ├── keyword/           │             │ ├── keyword/           │
+│ └── graph/             │             │ └── graph/             │
+└────────────────────────┘             └────────────────────────┘
+```
+
+**Trade-offs:**
+- **Pros:** Non-blocking MCP responses, faster perceived startup, isolated failures
+- **Cons:** Increased memory (two embedding model instances), snapshot disk I/O, slight index update latency (~100ms polling)
+
+**Configuration:** See `[tool.ragdocs.worker]` in `pyproject.toml`. Disable with `enabled = false` to use single-process mode.
+
+**Implementation:** See [Spec 21: Multiprocess Architecture](specs/21-multiprocess-architecture.md) for detailed design.
+
 ### Self-Healing Index Infrastructure
 
 **Rationale:** Local file-based indices are susceptible to corruption from crashes, disk errors, or incomplete writes. Rather than failing permanently, the system should detect corruption and recover automatically.
@@ -1131,6 +1284,7 @@ Next indexing operation repopulates index
 {index_path}/
 ├── index.manifest.json
 ├── commits.db
+├── git_commits.db
 ├── vector/
 │   ├── docstore.json
 │   ├── index_store.json
@@ -1147,8 +1301,18 @@ Next indexing operation repopulates index
 │   ├── MAIN_*.toc
 │   ├── MAIN_*.seg
 │   └── _MAIN_*.pos
-└── graph/
-    └── graph.json
+├── graph/
+│   └── graph.json
+└── snapshots/                  # Multiprocess mode only
+    ├── version.bin             # Current version (uint32)
+    ├── v1/
+    │   ├── vector/
+    │   ├── keyword/
+    │   └── graph/
+    └── v2/
+        ├── vector/
+        ├── keyword/
+        └── graph/
 ```
 
 ### Manifest Format

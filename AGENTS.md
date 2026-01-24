@@ -7,14 +7,15 @@
 
 ## 2. Architectural Mental Model
 
-The system is composed of four distinct layers:
+The system is composed of four distinct layers, with optional multiprocess separation:
 
 ### A. Interface Layer
 - **MCP Server** (`src/mcp_server.py`): The primary entry point. Handles tool registration (`query_documents`, `search_git_history`) and JSON-RPC communication.
 - **REST Server** (`src/server.py`): An optional HTTP interface for standard API clients.
 
 ### B. Application Core
-- **Context** (`src/context.py`): The singleton `ApplicationContext` holds the state of all indices, the configuration, and the background task manager.
+- **Context** (`src/context.py`): The singleton `ApplicationContext` holds the state of all indices, the configuration, and the background task manager. Used in single-process mode.
+- **ReadOnlyContext** (`src/reader/context.py`): Lightweight context with read-only indices loaded from snapshots. Used in multiprocess mode.
 - **Models** (`src/models.py`): Defines Pydantic models for `DocumentChunk`, `SearchResult`, and configuration objects.
 
 ### C. Indexing Engine
@@ -29,6 +30,25 @@ The system is composed of four distinct layers:
   2. **Parallel Search**: Queries Vector (FAISS), Keyword (Whoosh), and Graph (NetworkX) indices concurrently.
   3. **Fusion**: Merges results using Reciprocal Rank Fusion (RRF) and adaptive weights.
   4. **Post-Processing** (`src/search/pipeline.py`): Deduplication, MMR (Maximum Marginal Relevance) for diversity, and Re-ranking.
+
+### E. Multiprocess Architecture (Default)
+- **IPC Layer** (`src/ipc/`): Commands, queue management, and index synchronization between processes.
+- **Worker Process** (`src/worker/`): Handles all indexing operations in a separate process.
+- **Lifecycle** (`src/lifecycle.py`): Coordinates startup, shutdown, and worker health monitoring.
+
+**Why Multiprocess?** Python's GIL causes blocking when indexing and querying share a process. The worker handles slow operations (embedding, file watching) while the main process responds to MCP queries instantly.
+
+**Data Flow:**
+```
+Worker Process                    Main Process
+┌─────────────────┐              ┌─────────────────┐
+│ FileWatcher     │              │ MCP Protocol    │
+│ IndexManager    │──snapshots──▶│ ReadOnlyContext │
+│ GitWatcher      │              │ SearchOrchest.  │
+└─────────────────┘              └─────────────────┘
+```
+
+Disable multiprocess mode with `[tool.ragdocs.worker] enabled = false` for simpler debugging.
 
 ## 3. Key Workflows
 
@@ -72,6 +92,9 @@ The system is composed of four distinct layers:
 - `src/search/orchestrator.py`: **Start here** to modify search logic/ranking.
 - `src/indexing/manager.py`: **Start here** to change how files are processed.
 - `src/git/commit_indexer.py`: **Start here** for git history features.
+- `src/lifecycle.py`: **Start here** for startup/shutdown and worker management.
+- `src/ipc/`: **Start here** for multiprocess communication.
+- `src/worker/process.py`: **Start here** for worker process logic.
 - `pyproject.toml`: Dependency and build management (uv/hatch).
 
 ## 6. Tool Usage Guidelines

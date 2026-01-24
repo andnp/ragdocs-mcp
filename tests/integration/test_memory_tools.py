@@ -6,6 +6,7 @@ including create, read, append, update, delete, search, and merge.
 """
 
 from dataclasses import dataclass
+from typing import Any
 from pathlib import Path
 
 import pytest
@@ -816,3 +817,119 @@ class TestMemoryToolsWorkflow:
 
         read_deleted = await read_memory(app_context, filename="lifecycle-test")
         assert "error" in read_deleted
+
+
+@pytest.mark.asyncio
+class TestMemoryToolsOrderedDictRegression:
+    """
+    Regression tests for bug where json.load() returned plain dict instead of OrderedDict,
+    causing AttributeError: 'dict' object has no attribute 'move_to_end' when creating
+    memories after loading indices from disk.
+    """
+
+    async def test_create_memory_after_persist_and_load_regression(
+        self, memory_config, tmp_path, shared_embedding_model
+    ):
+        """
+        Test that create_memory works correctly after persisting and loading indices.
+        
+        This was the original bug: After loading indices from disk, _term_counts was a
+        plain dict instead of OrderedDict, causing AttributeError when add_chunk called
+        register_document_terms which called _term_counts.move_to_end().
+        """
+        memory_path = tmp_path / "memories"
+        ensure_memory_dirs(memory_path)
+
+        # Create initial memory manager and add a memory
+        vector1 = VectorIndex(embedding_model=shared_embedding_model)
+        keyword1 = KeywordIndex()
+        graph1 = GraphStore()
+
+        manager1 = MemoryIndexManager(
+            config=memory_config,
+            memory_path=memory_path,
+            vector=vector1,
+            keyword=keyword1,
+            graph=graph1,
+        )
+
+        search1 = MemorySearchOrchestrator(
+            vector=vector1,
+            keyword=keyword1,
+            graph=graph1,
+            config=memory_config,
+            manager=manager1,
+            documents_path=memory_path,
+        )
+
+        ctx1: Any = FakeApplicationContext(
+            memory_manager=manager1,
+            memory_search=search1,
+        )
+
+        # Create first memory
+        result1 = await create_memory(
+            ctx1,
+            filename="first-memory",
+            content="# First Memory\n\nPython asyncio and concurrent programming.",
+            tags=["python", "asyncio"],
+            memory_type="journal",
+        )
+        assert result1["status"] == "created"
+
+        # Persist indices to disk
+        manager1.persist()
+
+        # Create new memory manager and load from disk (simulates server restart)
+        vector2 = VectorIndex(embedding_model=shared_embedding_model)
+        keyword2 = KeywordIndex()
+        graph2 = GraphStore()
+
+        manager2 = MemoryIndexManager(
+            config=memory_config,
+            memory_path=memory_path,
+            vector=vector2,
+            keyword=keyword2,
+            graph=graph2,
+        )
+
+        # Load indices from disk
+        manager2.load()
+
+        search2 = MemorySearchOrchestrator(
+            vector=vector2,
+            keyword=keyword2,
+            graph=graph2,
+            config=memory_config,
+            manager=manager2,
+            documents_path=memory_path,
+        )
+
+        ctx2: Any = FakeApplicationContext(
+            memory_manager=manager2,
+            memory_search=search2,
+        )
+
+        # CRITICAL: Create new memory after loading (this would fail with AttributeError)
+        # This simulates the original bug report where create_memory failed with:
+        # {'error': "'dict' object has no attribute 'move_to_end'"}
+        result2 = await create_memory(
+            ctx2,
+            filename="second-memory",
+            content="# Second Memory\n\nFastAPI web framework with Pydantic models.",
+            tags=["python", "fastapi"],
+            memory_type="journal",
+        )
+        
+        # Should succeed without AttributeError
+        assert result2["status"] == "created", \
+            f"create_memory should succeed after load, got: {result2}"
+        assert "error" not in result2, \
+            f"create_memory should not have error after load, got: {result2}"
+
+        # Verify both memories are searchable
+        search_results = await search_memories(ctx2, query="python", limit=10)
+        assert len(search_results) == 2
+        memory_ids = {r["memory_id"] for r in search_results}
+        assert "memory:first-memory" in memory_ids
+        assert "memory:second-memory" in memory_ids

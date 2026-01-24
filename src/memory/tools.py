@@ -15,6 +15,9 @@ from src.utils.atomic_io import atomic_write_text
 
 if TYPE_CHECKING:
     from src.context import ApplicationContext
+    from src.reader.context import ReadOnlyContext
+
+type ContextType = ApplicationContext | ReadOnlyContext
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +41,7 @@ created_at: "{created_at}"
 
 
 async def create_memory(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     filename: str,
     content: str,
     tags: list[str],
@@ -72,7 +75,7 @@ async def create_memory(
 
 
 async def append_memory(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     filename: str,
     content: str,
 ) -> dict[str, str]:
@@ -106,7 +109,7 @@ async def append_memory(
 
 
 async def read_memory(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     filename: str,
 ) -> dict[str, str]:
     if ctx.memory_manager is None:
@@ -131,7 +134,7 @@ async def read_memory(
 
 
 async def update_memory(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     filename: str,
     content: str,
 ) -> dict[str, str]:
@@ -163,7 +166,7 @@ async def update_memory(
 
 
 async def delete_memory(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     filename: str,
 ) -> dict[str, str]:
     if ctx.memory_manager is None:
@@ -198,7 +201,7 @@ async def delete_memory(
 
 
 async def search_memories(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     query: str,
     limit: int = 5,
     filter_type: str | None = None,
@@ -240,7 +243,7 @@ async def search_memories(
 
 
 async def search_linked_memories(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     query: str,
     target_document: str,
     limit: int = 5,
@@ -271,7 +274,7 @@ async def search_linked_memories(
         return [{"error": str(e)}]
 
 
-async def get_memory_stats(ctx: ApplicationContext) -> dict:
+async def get_memory_stats(ctx: ContextType) -> dict:
     if ctx.memory_manager is None:
         return {"error": "Memory system is not enabled"}
 
@@ -305,7 +308,7 @@ def _format_size(size_bytes: int) -> str:
 
 
 async def search_by_tag_cluster(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     tag: str,
     depth: int = 2,
     limit: int = 10,
@@ -336,7 +339,7 @@ async def search_by_tag_cluster(
         return [{"error": str(e)}]
 
 
-async def get_tag_graph(ctx: ApplicationContext) -> dict:
+async def get_tag_graph(ctx: ContextType) -> dict:
     if ctx.memory_manager is None or ctx.memory_search is None:
         return {"error": "Memory system is not enabled"}
 
@@ -363,7 +366,7 @@ async def get_tag_graph(ctx: ApplicationContext) -> dict:
 
 
 async def suggest_related_tags(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     tag: str,
 ) -> dict:
     if ctx.memory_manager is None or ctx.memory_search is None:
@@ -385,13 +388,13 @@ async def suggest_related_tags(
 
 
 async def get_memory_relationships(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     filename: str,
     relationship_type: str | None = None,
 ) -> dict:
     """
     Get memory relationships (supersedes/depends_on/contradicts) for a memory.
-    
+
     Replaces get_memory_versions, get_memory_dependencies, and detect_contradictions.
     """
     if ctx.memory_manager is None or ctx.memory_search is None:
@@ -406,7 +409,7 @@ async def get_memory_relationships(
 
 
 async def get_memory_versions(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     filename: str,
 ) -> dict:
     if ctx.memory_manager is None or ctx.memory_search is None:
@@ -421,7 +424,7 @@ async def get_memory_versions(
 
 
 async def get_memory_dependencies(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     filename: str,
 ) -> list[dict]:
     if ctx.memory_manager is None or ctx.memory_search is None:
@@ -436,7 +439,7 @@ async def get_memory_dependencies(
 
 
 async def detect_contradictions(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     filename: str,
 ) -> list[dict]:
     if ctx.memory_manager is None or ctx.memory_search is None:
@@ -451,7 +454,7 @@ async def detect_contradictions(
 
 
 async def merge_memories(
-    ctx: ApplicationContext,
+    ctx: ContextType,
     source_files: list[str],
     target_file: str,
     summary_content: str,

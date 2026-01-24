@@ -23,6 +23,8 @@
 3. **Indexing**: `src/indexing/manager.py` (coordinator), `src/parsers/` (pluggable), `src/chunking/` (hierarchy-aware)
 4. **Search**: `src/search/orchestrator.py` (parallel + RRF fusion), `src/search/pipeline.py` (dedup, MMR)
 
+**Multiprocess Mode** (default): Main process handles MCP protocol with read-only indices; worker process handles indexing. See `src/ipc/`, `src/worker/`, `src/reader/`. Disable with `worker.enabled = false`.
+
 **Key Patterns**: Protocol-based abstractions, async-first with `asyncio.gather()`, dataclass configs, singleton coordination, lazy initialization
 
 ## Project Layout
@@ -35,13 +37,17 @@ src/
 ├── context.py               # ApplicationContext singleton
 ├── config.py                # TOML config loading, project detection
 ├── models.py                # Document, Chunk, ChunkResult dataclasses
+├── lifecycle.py             # LifecycleCoordinator (shutdown, worker management)
 ├── chunking/                # HeaderChunker (preserves hierarchy)
 ├── git/                     # Commit indexing, search, watching
 ├── indexing/                # IndexManager, FileWatcher, reconciliation
 ├── indices/                 # VectorIndex (FAISS), KeywordIndex (Whoosh), GraphStore (NetworkX)
+├── ipc/                     # Inter-process communication (commands, queues, sync)
 ├── memory/                  # AI memory bank (CRUD, search, graph linking)
 ├── parsers/                 # MarkdownParser (tree-sitter), PlainTextParser
-└── search/                  # Orchestrator (RRF fusion), Pipeline (dedup, MMR)
+├── reader/                  # ReadOnlyContext for multiprocess mode
+├── search/                  # Orchestrator (RRF fusion), Pipeline (dedup, MMR)
+└── worker/                  # Worker process entry point and state
 ```
 
 ## Coding Philosophy

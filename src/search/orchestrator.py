@@ -26,7 +26,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         keyword_index: KeywordIndex,
         graph_store: GraphStore,
         config: Config,
-        index_manager: IndexManager,
+        index_manager: IndexManager | None = None,
         code_index: CodeIndex | None = None,
         documents_path: Path | None = None,
     ):
@@ -521,6 +521,9 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 self._pending_reindex.discard(doc_id)
 
     def _reindex_documents_sync(self, doc_ids: list[str], reason: str):
+        if self._index_manager is None:
+            return
+
         reindexed = 0
         for doc_id in doc_ids:
             if self._index_manager.reindex_document(doc_id, reason=reason):
