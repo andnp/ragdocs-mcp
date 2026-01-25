@@ -846,3 +846,175 @@ def test_keyword_index_recovery_allows_reindexing(tmp_path):
 
     results = keyword_index.search("new content recovery", top_k=5)
     assert "new_after_recovery_0" in _extract_chunk_ids(results)
+
+
+# ============================================================================
+# Chunk Removal Tests (Phase 2 Delta Indexing)
+# ============================================================================
+
+
+def test_remove_chunk_removes_from_index():
+    """Test that remove_chunk() removes specific chunk from keyword index."""
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    # Add two chunks
+    chunk1 = Chunk(
+        chunk_id="doc1#chunk#0",
+        doc_id="doc1",
+        content="First chunk with Python programming.",
+        metadata={},
+        chunk_index=0,
+        header_path="Section 1",
+        start_pos=0,
+        end_pos=36,
+        file_path="/tmp/doc1.md",
+        modified_time=datetime.now(),
+    )
+    chunk2 = Chunk(
+        chunk_id="doc1#chunk#1",
+        doc_id="doc1",
+        content="Second chunk with Java programming.",
+        metadata={},
+        chunk_index=1,
+        header_path="Section 2",
+        start_pos=37,
+        end_pos=72,
+        file_path="/tmp/doc1.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(chunk1)
+    keyword_index.add_chunk(chunk2)
+
+    # Both chunks should be searchable
+    results = keyword_index.search("Python", top_k=5)
+    assert "doc1#chunk#0" in _extract_chunk_ids(results)
+
+    results = keyword_index.search("Java", top_k=5)
+    assert "doc1#chunk#1" in _extract_chunk_ids(results)
+
+    # Remove first chunk
+    keyword_index.remove_chunk("doc1#chunk#0")
+
+    # First chunk should not be found
+    results = keyword_index.search("Python", top_k=5)
+    assert "doc1#chunk#0" not in _extract_chunk_ids(results)
+
+    # Second chunk should still be found
+    results = keyword_index.search("Java", top_k=5)
+    assert "doc1#chunk#1" in _extract_chunk_ids(results)
+
+
+def test_remove_chunk_handles_missing_chunk():
+    """Test that remove_chunk() handles missing chunk gracefully."""
+    keyword_index = KeywordIndex()
+
+    # Should not raise exception
+    keyword_index.remove_chunk("nonexistent_chunk_id")
+
+
+def test_remove_chunk_handles_corruption(tmp_path):
+    """Test that remove_chunk() handles index corruption gracefully."""
+    from src.models import Chunk
+    import glob
+    from pathlib import Path
+
+    keyword_index = KeywordIndex()
+
+    chunk = Chunk(
+        chunk_id="corrupt_test#chunk#0",
+        doc_id="corrupt_test",
+        content="Content for corruption test.",
+        metadata={},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=29,
+        file_path="/tmp/corrupt.md",
+        modified_time=datetime.now(),
+    )
+    keyword_index.add_chunk(chunk)
+
+    # Persist and corrupt
+    persist_path = tmp_path / "corrupt_index"
+    keyword_index.persist(persist_path)
+    keyword_index.load(persist_path)
+
+    # Delete segment files to simulate corruption
+    seg_files = glob.glob(str(persist_path / "*.seg"))
+    for seg in seg_files:
+        Path(seg).unlink()
+
+    # Should handle corruption gracefully
+    keyword_index.remove_chunk("corrupt_test#chunk#0")
+
+    # Index should be reinitialized and functional
+    new_chunk = Chunk(
+        chunk_id="new_chunk#0",
+        doc_id="new_doc",
+        content="New content after recovery.",
+        metadata={},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=27,
+        file_path="/tmp/new.md",
+        modified_time=datetime.now(),
+    )
+    keyword_index.add_chunk(new_chunk)
+
+    results = keyword_index.search("new content", top_k=5)
+    assert "new_chunk#0" in _extract_chunk_ids(results)
+
+
+def test_remove_chunk_before_initialization():
+    """Test remove_chunk() when index not initialized."""
+    keyword_index = KeywordIndex()
+    keyword_index._index = None
+
+    # Should log warning but not raise
+    keyword_index.remove_chunk("any_chunk_id")
+
+
+def test_remove_chunk_thread_safe():
+    """Test that remove_chunk() is thread-safe with concurrent operations."""
+    from concurrent.futures import ThreadPoolExecutor
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    # Add multiple chunks
+    for i in range(10):
+        chunk = Chunk(
+            chunk_id=f"concurrent#chunk#{i}",
+            doc_id="concurrent",
+            content=f"Chunk {i} with unique term{i}.",
+            metadata={},
+            chunk_index=i,
+            header_path=f"Section {i}",
+            start_pos=i * 30,
+            end_pos=(i + 1) * 30,
+            file_path="/tmp/concurrent.md",
+            modified_time=datetime.now(),
+        )
+        keyword_index.add_chunk(chunk)
+
+    # Concurrently remove half the chunks
+    def remove_chunk_task(chunk_id):
+        keyword_index.remove_chunk(chunk_id)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        chunk_ids_to_remove = [f"concurrent#chunk#{i}" for i in range(0, 10, 2)]
+        list(executor.map(remove_chunk_task, chunk_ids_to_remove))
+
+    # Verify removed chunks are not found
+    for i in range(0, 10, 2):
+        results = keyword_index.search(f"term{i}", top_k=5)
+        assert f"concurrent#chunk#{i}" not in _extract_chunk_ids(results)
+
+    # Verify remaining chunks are still found
+    for i in range(1, 10, 2):
+        results = keyword_index.search(f"term{i}", top_k=5)
+        assert f"concurrent#chunk#{i}" in _extract_chunk_ids(results)

@@ -10,7 +10,13 @@ def reconcile_indices(
     discovered_files: list[str],
     manifest: IndexManifest,
     docs_path: Path
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """Reconcile indices with filesystem state.
+
+    Returns:
+        Tuple of (files_to_add, doc_ids_to_remove, moved_files)
+        where moved_files maps old_doc_id -> new_file_path
+    """
     # Convert discovered files to doc_ids (relative path without extension)
     discovered_doc_ids: set[str] = set()
     doc_id_to_abs: dict[str, str] = {}
@@ -49,7 +55,8 @@ def reconcile_indices(
     if not stale_doc_ids and not new_files:
         logger.debug("Reconciliation: No changes needed")
 
-    return new_files, stale_doc_ids
+    # Return empty dict for moves (will be populated by caller)
+    return new_files, stale_doc_ids, {}
 
 
 def build_indexed_files_map(

@@ -78,12 +78,14 @@ class QueryRequest(BaseModel):
 
 # Config validation (manual in __post_init__)
 @dataclass
-class MemoryConfig:
-    recency_boost_days: int = 7
+class MemoryRecencyConfig:
+    boost_window_days: int = 14
+    max_boost_amount: float = 0.2
+    boost_decay_rate: float = 0.95
 
     def __post_init__(self):
-        if self.recency_boost_days < 0:
-            raise ValueError("recency_boost_days must be non-negative")
+        if self.boost_window_days < 0:
+            raise ValueError("boost_window_days must be non-negative")
 ```
 
 **Validation strategy**:
@@ -130,8 +132,6 @@ def search(self, query: str, top_k: int = 10) -> list[dict]:
         return []  # Graceful degradation
     # ... rest of search logic
 ```
-
-See [docs/specs/19-self-healing-indices.md](../docs/specs/19-self-healing-indices.md) for full specification.
 
 ## Critical Files
 

@@ -49,6 +49,8 @@ class WorkerState:
     git_watcher: GitWatcher | None = None
     commit_indexer: CommitIndexer | None = None
     last_index_time: float | None = None
+    last_publish_time: float | None = None
+    docs_indexed_since_publish: int = 0
     _watcher_callback_registered: bool = field(default=False, repr=False)
 
 
@@ -142,6 +144,10 @@ async def _initialize_worker(
 
     _publish_snapshot(state)
 
+    import time
+    state.last_publish_time = time.time()
+    state.docs_indexed_since_publish = 0
+
     await _start_watchers(state)
 
     doc_count = index_manager.get_document_count()
@@ -187,7 +193,10 @@ async def _create_indices(config: Config) -> tuple[VectorIndex, KeywordIndex, Gr
         embedding_model_name = "BAAI/bge-small-en-v1.5"
 
     logger.info("Loading embedding model: %s", embedding_model_name)
-    vector = VectorIndex(embedding_model_name=embedding_model_name)
+    vector = VectorIndex(
+        embedding_model_name=embedding_model_name,
+        embedding_workers=config.indexing.embedding_workers,
+    )
     await asyncio.to_thread(vector.warm_up)
 
     keyword = KeywordIndex()
@@ -274,39 +283,30 @@ async def _full_index(state: WorkerState, manifest) -> None:
 
 
 async def _startup_reconciliation(state: WorkerState, manifest) -> None:
-    from src.indexing.manifest import load_manifest, save_manifest
-    from src.indexing.reconciler import build_indexed_files_map, reconcile_indices
+    from src.indexing.manifest import save_manifest
+    from src.indexing.reconciler import build_indexed_files_map
 
     docs_path = Path(state.config.indexing.documents_path)
     index_path = Path(state.config.indexing.index_path)
 
     discovered_files = _discover_files(state.config)
-    saved_manifest = load_manifest(index_path)
 
-    if saved_manifest is None:
-        logger.warning("No manifest found during reconciliation")
-        return
-
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    result = await asyncio.to_thread(
+        state.index_manager.reconcile_indices,
         discovered_files,
-        saved_manifest,
         docs_path,
     )
 
-    for doc_id in doc_ids_to_remove:
-        state.index_manager.remove_document(doc_id)
-
-    for file_path in files_to_add:
-        await asyncio.to_thread(state.index_manager.index_document, file_path)
-
-    if files_to_add or doc_ids_to_remove:
+    if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
         await asyncio.to_thread(state.index_manager.persist)
         manifest.indexed_files = build_indexed_files_map(discovered_files, docs_path)
         await asyncio.to_thread(save_manifest, index_path, manifest)
         logger.info(
-            "Reconciliation complete: added %d, removed %d",
-            len(files_to_add),
-            len(doc_ids_to_remove),
+            "Reconciliation complete: added=%d, removed=%d, moved=%d, failed=%d",
+            result.added_count,
+            result.removed_count,
+            result.moved_count,
+            result.failed_count,
         )
     else:
         logger.info("Reconciliation complete: no changes needed")
@@ -326,6 +326,39 @@ def _publish_snapshot(state: WorkerState) -> int:
     return version
 
 
+def _should_publish_snapshot(
+    state: WorkerState,
+    pending_count: int,
+    last_sync: str | None,
+) -> bool:
+    if last_sync is None:
+        return False
+
+    from datetime import datetime
+    last_sync_dt = datetime.fromisoformat(last_sync)
+    last_sync_ts = last_sync_dt.timestamp()
+
+    if pending_count == 0:
+        if state.last_index_time is None or last_sync_ts > state.last_index_time:
+            return True
+        return False
+
+    if state.last_publish_time is None:
+        return False
+
+    import time
+    config = state.config.worker
+    elapsed = time.time() - state.last_publish_time
+
+    if elapsed >= config.progressive_snapshot_interval:
+        return True
+
+    if state.docs_indexed_since_publish >= config.progressive_snapshot_doc_count:
+        return True
+
+    return False
+
+
 async def _start_watchers(state: WorkerState) -> None:
     from src.indexing.watcher import FileWatcher
 
@@ -333,6 +366,18 @@ async def _start_watchers(state: WorkerState) -> None:
         documents_path=state.config.indexing.documents_path,
         index_manager=state.index_manager,
     )
+
+    if not state._watcher_callback_registered:
+        original_batch_process = state.file_watcher._batch_process
+
+        async def batch_process_with_tracking(events: dict):
+            await original_batch_process(events)
+            create_or_modify = sum(1 for event_type in events.values() if event_type in ("created", "modified"))
+            state.docs_indexed_since_publish += create_or_modify
+
+        state.file_watcher._batch_process = batch_process_with_tracking
+        state._watcher_callback_registered = True
+
     state.file_watcher.start()
     logger.info("File watcher started")
 
@@ -446,22 +491,18 @@ async def _check_for_index_updates(state: WorkerState) -> None:
         return
 
     pending = state.file_watcher.get_pending_queue_size()
-    if pending > 0:
-        return
-
     last_sync = state.file_watcher.get_last_sync_time()
-    if last_sync is None:
-        return
 
-    from datetime import datetime
+    should_publish = _should_publish_snapshot(state, pending, last_sync)
 
-    last_sync_dt = datetime.fromisoformat(last_sync)
-    last_sync_ts = last_sync_dt.timestamp()
-
-    if state.last_index_time is None or last_sync_ts > state.last_index_time:
-        logger.info("Detected index changes, publishing snapshot")
+    if should_publish:
+        logger.info("Publishing progressive snapshot (pending: %d)", pending)
         await asyncio.to_thread(state.index_manager.persist)
         version = _publish_snapshot(state)
+
+        import time
+        state.last_publish_time = time.time()
+        state.docs_indexed_since_publish = 0
 
         doc_count = state.index_manager.get_document_count()
         notification = IndexUpdatedNotification(
@@ -489,8 +530,13 @@ async def _handle_command(state: WorkerState, message) -> None:
         )
 
         if success:
+            state.docs_indexed_since_publish += 1
             await asyncio.to_thread(state.index_manager.persist)
             version = _publish_snapshot(state)
+
+            import time
+            state.last_publish_time = time.time()
+            state.docs_indexed_since_publish = 0
 
             doc_count = state.index_manager.get_document_count()
             notification = IndexUpdatedNotification(

@@ -178,3 +178,83 @@ def test_graph_store_cyclic_graph(graph_store):
     neighbors = graph_store.get_neighbors("doc1", depth=2)
 
     assert set(neighbors) == {"doc2", "doc3"}
+
+
+# ============================================================================
+# Chunk Removal Tests (Phase 2 Delta Indexing)
+# ============================================================================
+
+
+def test_remove_chunk_removes_from_graph(graph_store):
+    """Test that remove_chunk() removes chunk node from graph."""
+    # Add chunks as nodes
+    graph_store.add_node("doc1#chunk#0", {"content": "First chunk"})
+    graph_store.add_node("doc1#chunk#1", {"content": "Second chunk"})
+    graph_store.add_edge("doc1#chunk#0", "doc1#chunk#1", "links_to")
+
+    # Verify nodes exist
+    assert graph_store.has_node("doc1#chunk#0")
+    assert graph_store.has_node("doc1#chunk#1")
+
+    # Remove first chunk
+    graph_store.remove_chunk("doc1#chunk#0")
+
+    # Verify removal
+    assert not graph_store.has_node("doc1#chunk#0")
+    assert graph_store.has_node("doc1#chunk#1")
+
+
+def test_remove_chunk_handles_missing_chunk(graph_store):
+    """Test that remove_chunk() handles missing chunk gracefully."""
+    # Should not raise exception, just log debug message
+    graph_store.remove_chunk("nonexistent_chunk_id")
+
+
+def test_remove_chunk_removes_edges(graph_store):
+    """Test that remove_chunk() also removes edges connected to the chunk."""
+    # Add chunks with edges
+    graph_store.add_node("doc1#chunk#0", {})
+    graph_store.add_node("doc1#chunk#1", {})
+    graph_store.add_node("doc1#chunk#2", {})
+    graph_store.add_edge("doc1#chunk#0", "doc1#chunk#1", "links_to")
+    graph_store.add_edge("doc1#chunk#1", "doc1#chunk#2", "links_to")
+
+    # Verify edges exist
+    edges_from_0 = graph_store.get_edges_from("doc1#chunk#0")
+    assert len(edges_from_0) == 1
+    edges_to_2 = graph_store.get_edges_to("doc1#chunk#2")
+    assert len(edges_to_2) == 1
+
+    # Remove middle chunk
+    graph_store.remove_chunk("doc1#chunk#1")
+
+    # Edges involving chunk 1 should be gone
+    edges_from_0 = graph_store.get_edges_from("doc1#chunk#0")
+    assert len(edges_from_0) == 0  # Edge to chunk 1 removed
+    edges_to_2 = graph_store.get_edges_to("doc1#chunk#2")
+    assert len(edges_to_2) == 0  # Edge from chunk 1 removed
+
+
+def test_remove_chunk_thread_safe(graph_store):
+    """Test that remove_chunk() is thread-safe with concurrent operations."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Add multiple chunks
+    for i in range(10):
+        graph_store.add_node(f"concurrent#chunk#{i}", {"index": i})
+
+    # Concurrently remove half the chunks
+    def remove_chunk_task(chunk_id):
+        graph_store.remove_chunk(chunk_id)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        chunk_ids_to_remove = [f"concurrent#chunk#{i}" for i in range(0, 10, 2)]
+        list(executor.map(remove_chunk_task, chunk_ids_to_remove))
+
+    # Verify correct chunks were removed
+    for i in range(10):
+        chunk_id = f"concurrent#chunk#{i}"
+        if i % 2 == 0:
+            assert not graph_store.has_node(chunk_id)
+        else:
+            assert graph_store.has_node(chunk_id)

@@ -630,7 +630,7 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(shared_embeddi
 
     # Create index and add initial content
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
-    
+
     chunk1 = Chunk(
         chunk_id="chunk_1",
         doc_id="doc_1",
@@ -644,11 +644,11 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(shared_embeddi
         modified_time=datetime.now(),
     )
     vector_index.add_chunk(chunk1)
-    
+
     # Populate term counts and vocabulary
     vector_index.register_document_terms("python asyncio programming")
     vector_index.build_concept_vocabulary(min_term_length=3, max_terms=100, min_frequency=1)
-    
+
     # Verify OrderedDict before persist
     assert isinstance(vector_index._term_counts, OrderedDict), \
         "term_counts should be OrderedDict before persist"
@@ -682,15 +682,153 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(shared_embeddi
         file_path="/tmp/doc_2.md",
         modified_time=datetime.now(),
     )
-    
+
     # This should NOT raise AttributeError: 'dict' object has no attribute 'move_to_end'
     vector_index2.add_chunk(chunk2)
-    
+
     # Verify the chunk was indexed successfully
     results = vector_index2.search("FastAPI web framework", top_k=5)
     assert "chunk_2" in _extract_chunk_ids(results)
-    
+
     # Verify move_to_end() works directly (additional safety check)
     if vector_index2._term_counts:
         first_term = next(iter(vector_index2._term_counts))
         vector_index2._term_counts.move_to_end(first_term)  # Should not raise
+
+
+# ============================================================================
+# Chunk Removal Tests (Phase 2 Delta Indexing)
+# ============================================================================
+
+
+def test_remove_chunk_removes_from_all_mappings(vector_index, shared_embedding_model):
+    """Test that remove_chunk() removes chunk from index and all mappings."""
+    from src.models import Chunk
+
+    # Add chunks
+    chunk1 = Chunk(
+        chunk_id="doc1#chunk#0",
+        doc_id="doc1",
+        content="First chunk content.",
+        metadata={},
+        chunk_index=0,
+        header_path="Section 1",
+        start_pos=0,
+        end_pos=20,
+        file_path="/tmp/doc1.md",
+        modified_time=datetime.now(),
+    )
+    chunk2 = Chunk(
+        chunk_id="doc1#chunk#1",
+        doc_id="doc1",
+        content="Second chunk content.",
+        metadata={},
+        chunk_index=1,
+        header_path="Section 2",
+        start_pos=21,
+        end_pos=42,
+        file_path="/tmp/doc1.md",
+        modified_time=datetime.now(),
+    )
+
+    vector_index.add_chunk(chunk1)
+    vector_index.add_chunk(chunk2)
+
+    # Verify chunks are indexed
+    assert "doc1#chunk#0" in vector_index._chunk_id_to_node_id
+    assert "doc1#chunk#1" in vector_index._chunk_id_to_node_id
+    assert "doc1" in vector_index._doc_id_to_node_ids
+    assert len(vector_index._doc_id_to_node_ids["doc1"]) == 2
+
+    # Remove one chunk
+    vector_index.remove_chunk("doc1#chunk#0")
+
+    # Verify removal
+    assert "doc1#chunk#0" not in vector_index._chunk_id_to_node_id
+    assert "doc1#chunk#1" in vector_index._chunk_id_to_node_id
+    assert "doc1" in vector_index._doc_id_to_node_ids
+    assert len(vector_index._doc_id_to_node_ids["doc1"]) == 1
+    assert "doc1#chunk#1" in vector_index._doc_id_to_node_ids["doc1"]
+
+
+def test_remove_chunk_handles_missing_chunk(vector_index):
+    """Test that remove_chunk() handles missing chunk gracefully."""
+    # Should not raise exception
+    vector_index.remove_chunk("nonexistent_chunk_id")
+
+
+def test_remove_chunk_removes_last_chunk_cleans_doc_mapping(vector_index):
+    """Test that removing last chunk of a doc removes the doc from mappings."""
+    from src.models import Chunk
+
+    chunk = Chunk(
+        chunk_id="doc_single#chunk#0",
+        doc_id="doc_single",
+        content="Only chunk.",
+        metadata={},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=11,
+        file_path="/tmp/single.md",
+        modified_time=datetime.now(),
+    )
+
+    vector_index.add_chunk(chunk)
+
+    assert "doc_single" in vector_index._doc_id_to_node_ids
+
+    # Remove the only chunk
+    vector_index.remove_chunk("doc_single#chunk#0")
+
+    # Doc mapping should be removed when last chunk is removed
+    assert "doc_single" not in vector_index._doc_id_to_node_ids
+
+
+def test_remove_chunk_thread_safe(vector_index):
+    """Test that remove_chunk() is thread-safe with concurrent operations."""
+    from concurrent.futures import ThreadPoolExecutor
+    from src.models import Chunk
+
+    # Add multiple chunks
+    chunks = []
+    for i in range(10):
+        chunk = Chunk(
+            chunk_id=f"concurrent_doc#chunk#{i}",
+            doc_id="concurrent_doc",
+            content=f"Chunk {i} content.",
+            metadata={},
+            chunk_index=i,
+            header_path=f"Section {i}",
+            start_pos=i * 20,
+            end_pos=(i + 1) * 20,
+            file_path="/tmp/concurrent.md",
+            modified_time=datetime.now(),
+        )
+        chunks.append(chunk)
+        vector_index.add_chunk(chunk)
+
+    # Concurrently remove half the chunks
+    def remove_chunk_task(chunk_id):
+        vector_index.remove_chunk(chunk_id)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        chunk_ids_to_remove = [f"concurrent_doc#chunk#{i}" for i in range(0, 10, 2)]
+        list(executor.map(remove_chunk_task, chunk_ids_to_remove))
+
+    # Verify correct chunks were removed
+    for i in range(10):
+        chunk_id = f"concurrent_doc#chunk#{i}"
+        if i % 2 == 0:
+            assert chunk_id not in vector_index._chunk_id_to_node_id
+        else:
+            assert chunk_id in vector_index._chunk_id_to_node_id
+
+
+def test_remove_chunk_before_initialization(vector_index):
+    """Test remove_chunk() when index not initialized."""
+    # Clear index
+    vector_index._index = None
+
+    # Should log warning but not raise
+    vector_index.remove_chunk("any_chunk_id")

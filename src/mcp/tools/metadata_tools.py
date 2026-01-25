@@ -1,202 +1,191 @@
+"""Memory metadata and relationship tools for MCP."""
+
 from __future__ import annotations
 
-from mcp.types import TextContent
+from mcp.types import Tool, TextContent
 
-from src.mcp.handlers import HandlerContext, tool_handler, MIN_TOP_N, MAX_TOP_N
-from src.mcp.validation import (
-    ValidationError,
-    validate_query,
-    validate_integer_range,
-    validate_enum,
-    validate_boolean,
-    validate_timestamp,
-)
-from src.memory import tools as memory_tools
+from src.mcp.handlers import HandlerContext, tool_handler
+from src.memory import tools as memory_tools_impl
 
 
 def _text_response(text: str) -> list[TextContent]:
     return [TextContent(type="text", text=text)]
 
 
-@tool_handler("create_memory")
-async def handle_create_memory(
-    hctx: HandlerContext, arguments: dict
-) -> list[TextContent]:
-    ctx = hctx.require_ctx()
-
-    filename = arguments.get("filename", "")
-    content = arguments.get("content", "")
-    tags = arguments.get("tags", [])
-    memory_type = arguments.get("memory_type", "journal")
-
-    result = await memory_tools.create_memory(ctx, filename, content, tags, memory_type)
-    return _text_response(str(result))
-
-
-@tool_handler("append_memory")
-async def handle_append_memory(
-    hctx: HandlerContext, arguments: dict
-) -> list[TextContent]:
-    ctx = hctx.require_ctx()
-
-    filename = arguments.get("filename", "")
-    content = arguments.get("content", "")
-
-    result = await memory_tools.append_memory(ctx, filename, content)
-    return _text_response(str(result))
-
-
-@tool_handler("read_memory")
-async def handle_read_memory(
-    hctx: HandlerContext, arguments: dict
-) -> list[TextContent]:
-    ctx = hctx.require_ctx()
-
-    filename = arguments.get("filename", "")
-    result = await memory_tools.read_memory(ctx, filename)
-
-    if "error" in result:
-        return _text_response(str(result))
-    return _text_response(result.get("content", ""))
-
-
-@tool_handler("update_memory")
-async def handle_update_memory(
-    hctx: HandlerContext, arguments: dict
-) -> list[TextContent]:
-    ctx = hctx.require_ctx()
-
-    filename = arguments.get("filename", "")
-    content = arguments.get("content", "")
-
-    result = await memory_tools.update_memory(ctx, filename, content)
-    return _text_response(str(result))
-
-
-@tool_handler("delete_memory")
-async def handle_delete_memory(
-    hctx: HandlerContext, arguments: dict
-) -> list[TextContent]:
-    ctx = hctx.require_ctx()
-
-    filename = arguments.get("filename", "")
-    result = await memory_tools.delete_memory(ctx, filename)
-    return _text_response(str(result))
-
-
-@tool_handler("search_memories")
-async def handle_search_memories(
-    hctx: HandlerContext, arguments: dict
-) -> list[TextContent]:
-    """Search memories with comprehensive input validation."""
-    ctx = hctx.require_ctx()
-
-    try:
-        # Validate required parameters
-        query = validate_query(arguments, "query")
-
-        # Validate optional parameters with proper defaults and ranges
-        limit = validate_integer_range(
-            arguments, "limit", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N
-        )
-        load_full_memory = validate_boolean(
-            arguments, "load_full_memory", default=False
-        )
-
-        # Validate optional enum parameter
-        filter_type = validate_enum(
-            arguments,
-            "filter_type",
-            allowed_values={"plan", "journal", "fact", "observation", "reflection"},
-            default=None,
-        )
-
-        # Validate optional timestamp parameters
-        after_timestamp = validate_timestamp(arguments, "after_timestamp", default=None)
-        before_timestamp = validate_timestamp(
-            arguments, "before_timestamp", default=None
-        )
-        relative_days = arguments.get(
-            "relative_days"
-        )  # Will be validated in memory_tools
-
-        # Validate timestamp ordering if both provided
-        if after_timestamp is not None and before_timestamp is not None:
-            if after_timestamp >= before_timestamp:
-                raise ValidationError(
-                    f"after_timestamp ({after_timestamp}) must be less than "
-                    f"before_timestamp ({before_timestamp})"
-                )
-
-    except ValidationError as e:
-        return _text_response(f"Validation error: {e}")
-
-    results = await memory_tools.search_memories(
-        ctx,
-        query,
-        limit=limit,
-        filter_type=filter_type,
-        load_full_memory=load_full_memory,
-        after_timestamp=after_timestamp,
-        before_timestamp=before_timestamp,
-        relative_days=relative_days,
-    )
-
-    if results and "error" in results[0]:
-        return _text_response(str(results[0]))
-
-    output_lines = ["# Memory Search Results", ""]
-
-    for i, r in enumerate(results, 1):
-        output_lines.extend(
-            [
-                f"## {i}. {r.get('memory_id', 'unknown')} (score: {r.get('score', 0):.3f})",
-                f"**Type:** {r.get('type', 'unknown')} | **Tags:** {', '.join(r.get('tags', []))}",
-                "",
-                r.get("content", "")[:500],
-                "",
-                "---",
-                "",
-            ]
-        )
-
-    return _text_response("\n".join(output_lines))
-
-
-@tool_handler("search_linked_memories")
-async def handle_search_linked_memories(
-    hctx: HandlerContext, arguments: dict
-) -> list[TextContent]:
-    ctx = hctx.require_ctx()
-
-    query = arguments.get("query", "")
-    target_document = arguments.get("target_document", "")
-    limit = arguments.get("limit", 5)
-
-    results = await memory_tools.search_linked_memories(
-        ctx, query, target_document, limit
-    )
-
-    if results and "error" in results[0]:
-        return _text_response(str(results[0]))
-
-    output_lines = [f"# Memories Linked to `{target_document}`", ""]
-
-    for i, r in enumerate(results, 1):
-        output_lines.extend(
-            [
-                f"## {i}. {r.get('memory_id', 'unknown')} (score: {r.get('score', 0):.3f})",
-                f"**Edge Type:** {r.get('edge_type', 'unknown')}",
-                f"**Anchor Context:** {r.get('anchor_context', '')}",
-                "",
-                r.get("content", "")[:500],
-                "",
-                "---",
-                "",
-            ]
-        )
-
-    return _text_response("\n".join(output_lines))
+def get_metadata_tools() -> list[Tool]:
+    """Return tool schema definitions for memory metadata tools."""
+    return [
+        Tool(
+            name="get_memory_stats",
+            description="Get statistics about the Memory Bank (count, size, tags, types).",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        ),
+        Tool(
+            name="merge_memories",
+            description=(
+                "Merge multiple memory files into a new summary file. "
+                + "Source files are moved to .trash/ after merge."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of memory filenames to merge",
+                    },
+                    "target_file": {
+                        "type": "string",
+                        "description": "Name of the new merged memory file",
+                    },
+                    "summary_content": {
+                        "type": "string",
+                        "description": "Content for the merged file (including frontmatter)",
+                    },
+                },
+                "required": ["source_files", "target_file", "summary_content"],
+            },
+        ),
+        Tool(
+            name="search_by_tag_cluster",
+            description=(
+                "Find memories via tag traversal with configurable depth. "
+                + "Discovers memories that share tags or are connected through tag relationships."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tag": {
+                        "type": "string",
+                        "description": "Tag to start cluster search from",
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Traversal depth (default: 2, max: 3)",
+                        "default": 2,
+                        "minimum": 1,
+                        "maximum": 3,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of memories to return (default: 10)",
+                        "default": 10,
+                    },
+                },
+                "required": ["tag"],
+            },
+        ),
+        Tool(
+            name="get_tag_graph",
+            description=(
+                "Return tag nodes and co-occurrence counts across all memories. "
+                + "Useful for understanding tag relationships and clusters."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        ),
+        Tool(
+            name="suggest_related_tags",
+            description=(
+                "Suggest related tags based on co-occurrence patterns. "
+                + "Finds tags that frequently appear together with the specified tag."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tag": {
+                        "type": "string",
+                        "description": "Tag to find related tags for",
+                    },
+                },
+                "required": ["tag"],
+            },
+        ),
+        Tool(
+            name="get_memory_relationships",
+            description=(
+                "Get memory relationships by type (supersedes/depends_on/contradicts). "
+                + "Returns version history, dependencies, or contradictions for a memory. "
+                + "Use [[memory:filename]] links with context keywords ('supersedes', 'depends on', 'contradicts') to create relationships."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Memory filename to query relationships for",
+                    },
+                    "relationship_type": {
+                        "type": "string",
+                        "enum": ["supersedes", "depends_on", "contradicts"],
+                        "description": "Type of relationship to query. If omitted, returns all relationships.",
+                    },
+                },
+                "required": ["filename"],
+            },
+        ),
+        Tool(
+            name="get_memory_versions",
+            description=(
+                "**DEPRECATED: Use get_memory_relationships(filename, 'supersedes') instead.** "
+                + "Show version history by following SUPERSEDES chain. "
+                + "Use [[memory:filename]] with 'supersedes' in context to create version links."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Memory filename to get version history for",
+                    },
+                },
+                "required": ["filename"],
+            },
+        ),
+        Tool(
+            name="get_memory_dependencies",
+            description=(
+                "**DEPRECATED: Use get_memory_relationships(filename, 'depends_on') instead.** "
+                + "Show dependencies by finding DEPENDS_ON links. "
+                + "Use [[memory:filename]] with 'depends on' in context to create dependency links."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Memory filename to get dependencies for",
+                    },
+                },
+                "required": ["filename"],
+            },
+        ),
+        Tool(
+            name="detect_contradictions",
+            description=(
+                "**DEPRECATED: Use get_memory_relationships(filename, 'contradicts') instead.** "
+                + "Find conflicting memories by detecting CONTRADICTS links. "
+                + "Use [[memory:filename]] with 'contradicts' in context to mark conflicts."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Memory filename to detect contradictions for",
+                    },
+                },
+                "required": ["filename"],
+            },
+        ),
+    ]
 
 
 @tool_handler("get_memory_stats")
@@ -205,7 +194,7 @@ async def handle_get_memory_stats(
 ) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
-    stats = await memory_tools.get_memory_stats(ctx)
+    stats = await memory_tools_impl.get_memory_stats(ctx)
 
     if "error" in stats:
         return _text_response(str(stats))
@@ -244,7 +233,7 @@ async def handle_merge_memories(
     target_file = arguments.get("target_file", "")
     summary_content = arguments.get("summary_content", "")
 
-    result = await memory_tools.merge_memories(
+    result = await memory_tools_impl.merge_memories(
         ctx, source_files, target_file, summary_content
     )
     return _text_response(str(result))
@@ -260,7 +249,7 @@ async def handle_search_by_tag_cluster(
     depth = arguments.get("depth", 2)
     limit = arguments.get("limit", 10)
 
-    results = await memory_tools.search_by_tag_cluster(ctx, tag, depth, limit)
+    results = await memory_tools_impl.search_by_tag_cluster(ctx, tag, depth, limit)
 
     if results and "error" in results[0]:
         return _text_response(str(results[0]))
@@ -289,7 +278,7 @@ async def handle_get_tag_graph(
 ) -> list[TextContent]:
     ctx = hctx.require_ctx()
 
-    result = await memory_tools.get_tag_graph(ctx)
+    result = await memory_tools_impl.get_tag_graph(ctx)
 
     if "error" in result:
         return _text_response(str(result))
@@ -316,7 +305,7 @@ async def handle_suggest_related_tags(
     ctx = hctx.require_ctx()
 
     tag = arguments.get("tag", "")
-    result = await memory_tools.suggest_related_tags(ctx, tag)
+    result = await memory_tools_impl.suggest_related_tags(ctx, tag)
 
     if "error" in result:
         return _text_response(str(result))
@@ -339,7 +328,7 @@ async def handle_get_memory_relationships(
     filename = arguments.get("filename", "")
     relationship_type = arguments.get("relationship_type")
 
-    result = await memory_tools.get_memory_relationships(
+    result = await memory_tools_impl.get_memory_relationships(
         ctx, filename, relationship_type
     )
 
@@ -348,7 +337,6 @@ async def handle_get_memory_relationships(
 
     output_lines = [f"# Relationships for `{filename}`", ""]
 
-    # Handle supersedes (version chain)
     if "supersedes" in result:
         version_data = result["supersedes"]
         output_lines.extend(["## Version History (SUPERSEDES)", ""])
@@ -362,7 +350,6 @@ async def handle_get_memory_relationships(
                 ]
             )
 
-    # Handle dependencies
     if "depends_on" in result:
         deps = result["depends_on"]
         output_lines.extend(["## Dependencies (DEPENDS_ON)", ""])
@@ -379,7 +366,6 @@ async def handle_get_memory_relationships(
                     ]
                 )
 
-    # Handle contradictions
     if "contradicts" in result:
         contras = result["contradicts"]
         output_lines.extend(["## Contradictions (CONTRADICTS)", ""])
@@ -406,7 +392,7 @@ async def handle_get_memory_versions(
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
-    result = await memory_tools.get_memory_versions(ctx, filename)
+    result = await memory_tools_impl.get_memory_versions(ctx, filename)
 
     if "error" in result:
         return _text_response(str(result))
@@ -433,7 +419,7 @@ async def handle_get_memory_dependencies(
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
-    results = await memory_tools.get_memory_dependencies(ctx, filename)
+    results = await memory_tools_impl.get_memory_dependencies(ctx, filename)
 
     if results and "error" in results[0]:
         return _text_response(str(results[0]))
@@ -460,7 +446,7 @@ async def handle_detect_contradictions(
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
-    results = await memory_tools.detect_contradictions(ctx, filename)
+    results = await memory_tools_impl.detect_contradictions(ctx, filename)
 
     if results and "error" in results[0]:
         return _text_response(str(results[0]))

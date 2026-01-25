@@ -102,27 +102,33 @@ Enable memory management in `config.toml`:
 [memory]
 enabled = true
 storage_strategy = "project"  # "project" or "user"
+score_threshold = 0.1
 
-# Per-type decay configurations
-[memory.decay_journal]
-decay_rate = 0.90
-floor_multiplier = 0.1
+# Per-type recency boost configurations
+[memory.recency_journal]
+boost_window_days = 14
+max_boost_amount = 0.2
+boost_decay_rate = 0.95
 
-[memory.decay_plan]
-decay_rate = 0.85
-floor_multiplier = 0.1
+[memory.recency_plan]
+boost_window_days = 21
+max_boost_amount = 0.15
+boost_decay_rate = 0.93
 
-[memory.decay_fact]
-decay_rate = 0.98
-floor_multiplier = 0.2
+[memory.recency_fact]
+boost_window_days = 7
+max_boost_amount = 0.1
+boost_decay_rate = 0.98
 
-[memory.decay_observation]
-decay_rate = 0.92
-floor_multiplier = 0.15
+[memory.recency_observation]
+boost_window_days = 14
+max_boost_amount = 0.2
+boost_decay_rate = 0.92
 
-[memory.decay_reflection]
-decay_rate = 0.95
-floor_multiplier = 0.2
+[memory.recency_reflection]
+boost_window_days = 30
+max_boost_amount = 0.15
+boost_decay_rate = 0.98
 ```
 
 ### Core Options
@@ -132,36 +138,49 @@ floor_multiplier = 0.2
 | `enabled` | bool | `false` | Enable the Memory Management System |
 | `storage_strategy` | string | `"project"` | `"project"`: `.memories/` in project root; `"user"`: `~/.local/share/mcp-markdown-ragdocs/memories/` |
 
-### Decay System
+### Recency Boost System
 
-Memory search uses an **exponential decay scoring system** that reduces relevance scores over time based on memory type. Unlike the deprecated recency boost (binary window), decay provides smooth, continuous scoring that better models memory importance.
+Memory search uses an **exponential additive recency boost** that rewards recent memories without penalizing older ones. Recent memories receive an exponentially decaying bonus *added* to their base score.
 
-**Decay Formula:**
+**Boost Formula:**
 
 ```
-adjusted_score = original_score × max(floor_multiplier, decay_rate^days_old)
+if age_days ≤ boost_window_days:
+    boost_factor = boost_decay_rate^age_days
+    bonus = boost_factor × max_boost_amount
+    final_score = min(1.0, base_score + bonus)
+else:
+    final_score = base_score  # No penalty for old memories
 ```
 
-- `original_score`: Hybrid search score (semantic + keyword fusion)
-- `decay_rate`: Exponential decay rate per day (0.0-1.0)
-- `days_old`: Days since memory creation
-- `floor_multiplier`: Minimum score multiplier (prevents complete decay)
+- `base_score`: Hybrid search score (semantic + keyword fusion)
+- `boost_decay_rate`: Exponential decay rate for boost amount (0.0-1.0)
+- `age_days`: Days since memory creation
+- `max_boost_amount`: Maximum bonus at age 0 (range: 0.0-0.5, typically 0.1-0.2)
+- `boost_window_days`: Days within which to apply boost (7-30 days)
+
+**Key Insight:** Old memories beyond the boost window retain their full base score—they are not penalized for age. This prevents the double-filtering effect that occurred with multiplicative decay.
 
 **Threshold Filtering:**
 
-Memories scoring < `0.001` after decay are filtered from results. This threshold is tuned to ~5% of high-relevance scores (0.018-0.020) observed in real-world usage.
+Memories scoring below `score_threshold` (default: 0.1) after boost are filtered. The threshold can be adjusted based on precision/recall requirements.
 
-### Per-Type Decay Rates
+### Per-Type Boost Configurations
 
-| Memory Type | Decay Rate | Half-Life | Floor | Rationale |
-|------------|------------|-----------|-------|----------|
-| `journal` | 0.90 | 7 days | 0.1 | Session notes decay quickly |
-| `plan` | 0.85 | 4.5 days | 0.1 | Plans become stale rapidly |
-| `fact` | 0.98 | 35 days | 0.2 | Facts remain relevant longer |
-| `observation` | 0.92 | 8.3 days | 0.15 | Observations moderately durable |
-| `reflection` | 0.95 | 14 days | 0.2 | Reflections have lasting value |
+| Memory Type | Window | Max Boost | Decay Rate | Rationale |
+|------------|--------|-----------|------------|----------|
+| `journal` | 14 days | 0.2 | 0.95 | Recent journals highly relevant |
+| `plan` | 21 days | 0.15 | 0.93 | Plans stay relevant longer |
+| `fact` | 7 days | 0.1 | 0.98 | Facts are mostly timeless |
+| `observation` | 14 days | 0.2 | 0.92 | Observations moderately temporal |
+| `reflection` | 30 days | 0.15 | 0.98 | Reflections age well |
 
-**Half-life**: Days until score decays to 50% of original value.
+**Example:** 7-day-old journal memory with base score 0.4:
+```
+boost_factor = 0.95^7 ≈ 0.698
+bonus = 0.698 × 0.2 = 0.140
+final_score = 0.4 + 0.140 = 0.540
+```
 
 ### Configuration Examples
 
@@ -171,37 +190,43 @@ Memories scoring < `0.001` after decay are filtered from results. This threshold
 [memory]
 enabled = true
 storage_strategy = "project"
+score_threshold = 0.1
 
-[memory.decay_journal]
-decay_rate = 0.90  # 7-day half-life
-floor_multiplier = 0.1
+[memory.recency_journal]
+boost_window_days = 14
+max_boost_amount = 0.2
+boost_decay_rate = 0.95
 ```
 
-**Aggressive Decay (Short-Term Focus):**
+**Aggressive Recency Boost (Short-Term Focus):**
 
 ```toml
-[memory.decay_journal]
-decay_rate = 0.85  # 4.5-day half-life
-floor_multiplier = 0.05  # Lower floor
+[memory.recency_journal]
+boost_window_days = 7  # Shorter window
+max_boost_amount = 0.3  # Higher boost
+boost_decay_rate = 0.90  # Faster decay
 
-[memory.decay_plan]
-decay_rate = 0.80  # 3-day half-life
-floor_multiplier = 0.05
+[memory.recency_plan]
+boost_window_days = 10
+max_boost_amount = 0.25
+boost_decay_rate = 0.88
 ```
 
-**Conservative Decay (Long-Term Focus):**
+**Conservative Boost (Long-Term Focus):**
 
 ```toml
-[memory.decay_fact]
-decay_rate = 0.99  # 70-day half-life
-floor_multiplier = 0.3  # Higher floor
+[memory.recency_fact]
+boost_window_days = 30  # Longer window
+max_boost_amount = 0.05  # Minimal boost
+boost_decay_rate = 0.99  # Very slow decay
 
-[memory.decay_reflection]
-decay_rate = 0.98  # 35-day half-life
-floor_multiplier = 0.25
+[memory.recency_reflection]
+boost_window_days = 60
+max_boost_amount = 0.1
+boost_decay_rate = 0.99
 ```
 
-### Decay Curves Over Time
+### Boost Curves Over Time
 
 **Journal (decay_rate=0.90, floor=0.1):**
 
@@ -490,35 +515,38 @@ Hybrid search across memory corpus with recency boost.
 
 **Score Interpretation:**
 
-Memory scores after calibration and decay represent absolute match quality:
+Memory scores after calibration and recency boost represent absolute match quality:
 
-- **0.6-0.9**: Highly relevant, directly answers query
-- **0.3-0.6**: Moderately relevant, related content
-- **0.1-0.3**: Low relevance, tangential
-- **< 0.2**: Filtered by default threshold
+- **0.7-1.0**: Highly relevant (recent memories may be boosted to 1.0)
+- **0.5-0.7**: Moderately relevant, related content
+- **0.2-0.5**: Low relevance, tangential matches
+- **< 0.1**: Filtered by default threshold
 
-**Decay Scoring:**
+**Boost Scoring:**
 
-Decay applies *after* calibration, adjusting scores based on memory age:
+Recency boost applies *after* calibration, adding bonus to recent memories:
 
 ```python
-def apply_decay(calibrated_score: float, created_at: datetime, decay_rate: float, floor: float) -> float:
-    """Apply exponential decay to calibrated score."""
-    days_old = (datetime.now() - created_at).days
-    decay_multiplier = decay_rate ** days_old
-    return calibrated_score * max(floor, decay_multiplier)
+def apply_boost(base_score: float, created_at: datetime, config: MemoryRecencyConfig) -> float:
+    """Apply exponential additive boost to base score."""
+    age_days = (datetime.now() - created_at).days
+    if age_days <= config.boost_window_days:
+        boost_factor = config.boost_decay_rate ** age_days
+        bonus = boost_factor * config.max_boost_amount
+        return min(1.0, base_score + bonus)
+    else:
+        return base_score  # Old memories: no penalty
 ```
 
-**Example:** 7-day-old journal (decay_rate=0.90, floor=0.1, calibrated_score=0.646):
+**Example:** 7-day-old journal (base_score=0.4, max_boost=0.2, boost_rate=0.95):
 
 ```
-adjusted_score = 0.646 × max(0.1, 0.90^7)
-               = 0.646 × max(0.1, 0.478)
-               = 0.646 × 0.478
-               = 0.309  # Still above threshold (0.2)
+boost_factor = 0.95^7 ≈ 0.698
+bonus = 0.698 × 0.2 = 0.140
+final_score = 0.4 + 0.140 = 0.540  # Above threshold (0.1)
 ```
 
-Memories scoring below `score_threshold` (default: 0.2) after decay are filtered.
+Memories scoring below `score_threshold` (default: 0.1) after boost are filtered.
 
 #### `search_linked_memories`
 
@@ -991,50 +1019,62 @@ Adjust `score_threshold` in `config.toml` based on result quality:
 
 ```toml
 [memory]
-score_threshold = 0.2  # Default: balanced precision/recall
+score_threshold = 0.1  # Default: balanced precision/recall
 ```
 
 **Tuning decision tree:**
 
 1. **Getting zero or very few results?**
-   - Lower threshold: `score_threshold = 0.15` or `0.1`
+   - Lower threshold: `score_threshold = 0.05` or `0.08`
    - Trade-off: More results but lower average relevance
 
 2. **Getting too many irrelevant results?**
-   - Raise threshold: `score_threshold = 0.25` or `0.3`
+   - Raise threshold: `score_threshold = 0.15` or `0.2`
    - Trade-off: Fewer results but higher precision
 
 3. **Scores seem wrong (too low or too high)?**
-   - Check decay configuration for memory type
-   - Verify memory age (older memories decay more)
+   - Check boost configuration for memory type
+   - Verify memory age (recent memories get boost)
    - Adjust `score_calibration_threshold` in `[search]` section (affects calibration curve)
 
 **Q: When should I adjust score_threshold up or down?**
 
-**Lower threshold (0.15 or 0.1) when:**
+**Lower threshold (0.05 or 0.08) when:**
 - Building a comprehensive knowledge base (prioritize recall)
 - Exploring broad topics with diverse memories
-- Memories are older and decay has reduced scores significantly
+- Most memories are older (beyond boost window)
 
-**Raise threshold (0.25 or 0.3) when:**
+**Raise threshold (0.15 or 0.2) when:**
 - Need high precision for critical queries
 - Memory bank has lots of tangentially-related content
 - Want only the most relevant results (prioritize precision)
 
-**Keep default (0.2) when:**
+**Keep default (0.1) when:**
 - Balanced use case (general knowledge retrieval)
 - Mix of recent and older memories
 - Standard documentation/journal workflow
+
+**Q: How does recency boost affect scores?**
+
+**Recent memories (within boost window):**
+- Get exponential bonus added to base score
+- Maximum boost at age 0 (e.g., +0.2 for journals)
+- Boost decays exponentially (e.g., 0.95^days)
+
+**Old memories (beyond boost window):**
+- Retain full base score (no penalty)
+- Not affected by boost system
+- Scored purely on content relevance
 
 **Common Scenarios:**
 
 | Symptom | Root Cause | Solution |
 |---------|------------|----------|
-| "Too few results" | Threshold too high or decay too aggressive | Lower `score_threshold` to 0.15; adjust decay rates |
-| "Too many irrelevant results" | Threshold too low | Raise `score_threshold` to 0.25 or 0.3 |
-| "Scores seem wrong" | Decay inappropriate for memory age | Check `decay_rate` for memory type; verify memory age |
+| "Too few results" | Threshold too high | Lower `score_threshold` to 0.08; check if most memories are old (no boost) |
+| "Too many irrelevant results" | Threshold too low | Raise `score_threshold` to 0.15 or 0.2 |
+| "Recent memories dominate" | Boost too aggressive | Lower `max_boost_amount` (e.g., 0.15 → 0.1) |
+| "Old memories never appear" | Threshold calibrated for boosted scores | Lower `score_threshold` to account for unboosted scores |
 | "Good matches scored low" | Calibration threshold too high | Lower `score_calibration_threshold` to 0.03 in `[search]` |
-| "Poor matches scored high" | Calibration threshold too low | Raise `score_calibration_threshold` to 0.04 in `[search]` |
 | "All scores bunched together" | Steepness too low | Raise `score_calibration_steepness` to 200.0 in `[search]` |
 
 ### Memories Not Appearing in Search

@@ -14,16 +14,6 @@ def get_ngrams(text: str, n: int = 3) -> set[str]:
     return {text[i:i + n] for i in range(len(text) - n + 1)}
 
 
-def jaccard_similarity(text_a: str, text_b: str, n: int = 3) -> float:
-    ngrams_a = get_ngrams(text_a, n)
-    ngrams_b = get_ngrams(text_b, n)
-    if not ngrams_a or not ngrams_b:
-        return 0.0
-    intersection = len(ngrams_a & ngrams_b)
-    union = len(ngrams_a | ngrams_b)
-    return intersection / union if union > 0 else 0.0
-
-
 def deduplicate_by_ngram(
     results: list[tuple[str, float]],
     get_content: Callable[[str], str | None],

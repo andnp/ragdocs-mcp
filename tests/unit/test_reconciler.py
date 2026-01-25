@@ -45,7 +45,7 @@ def test_reconcile_no_changes(docs_path, sample_manifest):
         str(docs_path / "doc3.md"),
     ]
 
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
         discovered,
         sample_manifest,
         docs_path
@@ -75,7 +75,7 @@ def test_reconcile_new_files(docs_path, sample_manifest):
         str(docs_path / "subdir/new2.md"),
     ]
 
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
         discovered,
         sample_manifest,
         docs_path
@@ -96,7 +96,7 @@ def test_reconcile_deleted_files(docs_path, sample_manifest):
         str(docs_path / "doc1.md"),
     ]
 
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
         discovered,
         sample_manifest,
         docs_path
@@ -121,7 +121,7 @@ def test_reconcile_mixed_changes(docs_path, sample_manifest):
         str(docs_path / "another.md"),
     ]
 
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
         discovered,
         sample_manifest,
         docs_path
@@ -154,7 +154,7 @@ def test_reconcile_empty_manifest(docs_path):
         str(docs_path / "doc2.md"),
     ]
 
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
         discovered,
         manifest,
         docs_path
@@ -178,7 +178,7 @@ def test_reconcile_manifest_none(docs_path):
 
     discovered = [str(docs_path / "doc1.md")]
 
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
         discovered,
         manifest,
         docs_path
@@ -235,7 +235,7 @@ def test_reconcile_ignores_files_outside_docs_path(docs_path, tmp_path):
         str(outside_file),
     ]
 
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
         discovered,
         manifest,
         docs_path

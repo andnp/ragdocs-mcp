@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+import hashlib
 
 
 @dataclass
@@ -24,6 +25,16 @@ class Chunk:
     file_path: str
     modified_time: datetime
     parent_chunk_id: str | None = None
+    content_hash: str = field(default="", init=False)
+
+    def __post_init__(self):
+        """Compute content hash after initialization."""
+        if not self.content_hash:
+            self.content_hash = self.compute_content_hash()
+
+    def compute_content_hash(self) -> str:
+        """Compute SHA256 hash of chunk content for change detection."""
+        return hashlib.sha256(self.content.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -131,3 +142,12 @@ class GitSearchResponse:
     results: list[CommitResult]
     query: str
     total_commits_indexed: int
+
+
+@dataclass
+class ReconciliationResult:
+    """Result of index reconciliation operation."""
+    added_count: int = 0
+    removed_count: int = 0
+    moved_count: int = 0
+    failed_count: int = 0

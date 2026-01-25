@@ -11,7 +11,7 @@ from src.config import Config, load_config, detect_project, resolve_index_path, 
 from src.coordination import SingletonGuard
 from src.indexing.manager import IndexManager
 from src.indexing.manifest import IndexManifest, load_manifest, save_manifest, should_rebuild
-from src.indexing.reconciler import build_indexed_files_map, reconcile_indices
+from src.indexing.reconciler import build_indexed_files_map
 from src.indexing.watcher import FileWatcher
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -72,9 +72,15 @@ class ApplicationContext:
             embedding_model_name = "BAAI/bge-small-en-v1.5"
 
         if lazy_embeddings:
-            vector = VectorIndex(embedding_model_name=embedding_model_name)
+            vector = VectorIndex(
+                embedding_model_name=embedding_model_name,
+                embedding_workers=config.indexing.embedding_workers,
+            )
         else:
-            vector = VectorIndex(embedding_model_name=embedding_model_name)
+            vector = VectorIndex(
+                embedding_model_name=embedding_model_name,
+                embedding_workers=config.indexing.embedding_workers,
+            )
             vector.warm_up()
 
         keyword = KeywordIndex()
@@ -118,7 +124,10 @@ class ApplicationContext:
 
             memory_path = resolve_memory_path(config, detected_project, config.projects)
 
-            memory_vector = VectorIndex(embedding_model_name=embedding_model_name)
+            memory_vector = VectorIndex(
+                embedding_model_name=embedding_model_name,
+                embedding_workers=config.indexing.embedding_workers,
+            )
             memory_keyword = KeywordIndex()
             memory_graph = GraphStore()
 
@@ -304,28 +313,24 @@ class ApplicationContext:
         docs_path = Path(self.config.indexing.documents_path)
         discovered_files = self.discover_files()
 
-        saved_manifest = load_manifest(self.index_path)
-        if saved_manifest is None:
-            raise RuntimeError("Manifest should exist when needs_rebuild is False")
-
-        files_to_add, doc_ids_to_remove = reconcile_indices(
+        result = await asyncio.to_thread(
+            self.index_manager.reconcile_indices,
             discovered_files,
-            saved_manifest,
             docs_path,
         )
 
-        for doc_id in doc_ids_to_remove:
-            self.index_manager.remove_document(doc_id)
-
-        for file_path in files_to_add:
-            self.index_manager.index_document(file_path)
-
-        if files_to_add or doc_ids_to_remove:
+        if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
             self.index_manager.persist()
             if self.current_manifest:
                 self.current_manifest.indexed_files = build_indexed_files_map(discovered_files, docs_path)
                 save_manifest(self.index_path, self.current_manifest)
-            logger.info(f"Reconciliation complete: added {len(files_to_add)}, removed {len(doc_ids_to_remove)}")
+            logger.info(
+                f"Reconciliation complete: "
+                f"added={result.added_count}, "
+                f"removed={result.removed_count}, "
+                f"moved={result.moved_count}, "
+                f"failed={result.failed_count}"
+            )
         else:
             logger.info("Reconciliation complete: no changes needed")
 
@@ -340,31 +345,23 @@ class ApplicationContext:
                 docs_path = Path(self.config.indexing.documents_path)
                 discovered_files = self.discover_files()
 
-                saved_manifest = load_manifest(self.index_path)
-                if not saved_manifest:
-                    logger.warning("No manifest found during reconciliation, skipping")
-                    continue
-
-                files_to_add, doc_ids_to_remove = reconcile_indices(
+                result = await asyncio.to_thread(
+                    self.index_manager.reconcile_indices,
                     discovered_files,
-                    saved_manifest,
                     docs_path,
                 )
 
-                for doc_id in doc_ids_to_remove:
-                    self.index_manager.remove_document(doc_id)
-
-                for file_path in files_to_add:
-                    self.index_manager.index_document(file_path)
-
-                if files_to_add or doc_ids_to_remove:
+                if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
                     self.index_manager.persist()
                     if self.current_manifest:
                         self.current_manifest.indexed_files = build_indexed_files_map(discovered_files, docs_path)
                         save_manifest(self.index_path, self.current_manifest)
                     logger.info(
-                        f"Periodic reconciliation complete: added {len(files_to_add)}, "
-                        f"removed {len(doc_ids_to_remove)}"
+                        f"Periodic reconciliation: "
+                        f"added={result.added_count}, "
+                        f"removed={result.removed_count}, "
+                        f"moved={result.moved_count}, "
+                        f"failed={result.failed_count}"
                     )
                 else:
                     logger.debug("Periodic reconciliation: no changes needed")

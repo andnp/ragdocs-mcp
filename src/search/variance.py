@@ -1,6 +1,3 @@
-import math
-
-
 def calculate_variance(scores: list[float]):
     if not scores or len(scores) < 2:
         return 0.0
@@ -8,10 +5,6 @@ def calculate_variance(scores: list[float]):
     mean = sum(scores) / len(scores)
     squared_diffs = [(s - mean) ** 2 for s in scores]
     return sum(squared_diffs) / len(scores)
-
-
-def calculate_std_dev(scores: list[float]):
-    return math.sqrt(calculate_variance(scores))
 
 
 def compute_dynamic_weights(

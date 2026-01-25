@@ -66,6 +66,11 @@ class IndexingConfig:
     reconciliation_interval_seconds: int = 3600  # 1 hour, 0 to disable
     coordination_mode: str = "file_lock"
     lock_timeout_seconds: float = 5.0
+    embedding_workers: int = 4
+    enable_delta_indexing: bool = True
+    delta_full_reindex_threshold: float = 0.5
+    enable_move_detection: bool = True
+    move_detection_threshold: float = 0.8
 
 
 @dataclass
@@ -133,16 +138,25 @@ class GitIndexingConfig:
 
 
 @dataclass
-class MemoryDecayConfig:
-    decay_rate: float
-    floor_multiplier: float
+class MemoryRecencyConfig:
+    """Exponential additive recency boost configuration."""
+
+    boost_window_days: int
+    max_boost_amount: float
+    boost_decay_rate: float
 
     def __post_init__(self):
-        if not (0.0 < self.decay_rate <= 1.0):
-            raise ValueError(f"decay_rate must be in (0.0, 1.0], got {self.decay_rate}")
-        if not (0.0 <= self.floor_multiplier <= 1.0):
+        if self.boost_window_days < 0:
             raise ValueError(
-                f"floor_multiplier must be in [0.0, 1.0], got {self.floor_multiplier}"
+                f"boost_window_days must be non-negative, got {self.boost_window_days}"
+            )
+        if not (0.0 <= self.max_boost_amount <= 0.5):
+            raise ValueError(
+                f"max_boost_amount must be in [0.0, 0.5], got {self.max_boost_amount}"
+            )
+        if not (0.0 < self.boost_decay_rate < 1.0):
+            raise ValueError(
+                f"boost_decay_rate must be in (0.0, 1.0), got {self.boost_decay_rate}"
             )
 
 
@@ -150,25 +164,44 @@ class MemoryDecayConfig:
 class MemoryConfig:
     enabled: bool = True
     storage_strategy: str = "user"
-    score_threshold: float = 0.2
-    decay_journal: MemoryDecayConfig = field(
-        default_factory=lambda: MemoryDecayConfig(0.90, 0.1)
+    score_threshold: float = 0.1
+
+    # Exponential additive recency boost per memory type
+    recency_journal: MemoryRecencyConfig = field(
+        default_factory=lambda: MemoryRecencyConfig(
+            boost_window_days=14,
+            max_boost_amount=0.2,
+            boost_decay_rate=0.95,
+        )
     )
-    decay_plan: MemoryDecayConfig = field(
-        default_factory=lambda: MemoryDecayConfig(0.85, 0.1)
+    recency_plan: MemoryRecencyConfig = field(
+        default_factory=lambda: MemoryRecencyConfig(
+            boost_window_days=7,
+            max_boost_amount=0.5,
+            boost_decay_rate=0.9,
+        )
     )
-    decay_fact: MemoryDecayConfig = field(
-        default_factory=lambda: MemoryDecayConfig(0.98, 0.2)
+    recency_fact: MemoryRecencyConfig = field(
+        default_factory=lambda: MemoryRecencyConfig(
+            boost_window_days=60,  # Facts are timeless
+            max_boost_amount=0.2,
+            boost_decay_rate=0.99,
+        )
     )
-    decay_observation: MemoryDecayConfig = field(
-        default_factory=lambda: MemoryDecayConfig(0.92, 0.15)
+    recency_observation: MemoryRecencyConfig = field(
+        default_factory=lambda: MemoryRecencyConfig(
+            boost_window_days=14,
+            max_boost_amount=0.2,
+            boost_decay_rate=0.95,
+        )
     )
-    decay_reflection: MemoryDecayConfig = field(
-        default_factory=lambda: MemoryDecayConfig(0.95, 0.2)
+    recency_reflection: MemoryRecencyConfig = field(
+        default_factory=lambda: MemoryRecencyConfig(
+            boost_window_days=30,  # Reflections age well
+            max_boost_amount=0.15,
+            boost_decay_rate=0.98,
+        )
     )
-    # Deprecated fields (for backward compatibility)
-    recency_boost_days: int | None = None
-    recency_boost_factor: float | None = None
 
     def __post_init__(self):
         if self.storage_strategy not in ("project", "user"):
@@ -182,30 +215,21 @@ class MemoryConfig:
                 f"score_threshold must be in [0.0, 1.0], got {self.score_threshold}"
             )
 
-        # Warn about deprecated fields
-        if self.recency_boost_days is not None:
-            logger.warning(
-                "Config field 'recency_boost_days' is deprecated. "
-                "Use per-type decay configs instead (e.g., decay_journal)."
-            )
-        if self.recency_boost_factor is not None:
-            logger.warning(
-                "Config field 'recency_boost_factor' is deprecated. "
-                "Use per-type decay configs instead (e.g., decay_journal)."
-            )
-
-    def get_decay_config(self, memory_type: str):
-        decay_configs = {
-            "journal": self.decay_journal,
-            "plan": self.decay_plan,
-            "fact": self.decay_fact,
-            "observation": self.decay_observation,
-            "reflection": self.decay_reflection,
+    def get_recency_config(self, memory_type: str) -> MemoryRecencyConfig:
+        """Get recency boost config for memory type."""
+        recency_configs = {
+            "journal": self.recency_journal,
+            "plan": self.recency_plan,
+            "fact": self.recency_fact,
+            "observation": self.recency_observation,
+            "reflection": self.recency_reflection,
         }
-        if memory_type in decay_configs:
-            return decay_configs[memory_type]
-        logger.debug(f"No decay config for type '{memory_type}', using decay_journal")
-        return self.decay_journal
+        if memory_type in recency_configs:
+            return recency_configs[memory_type]
+        logger.debug(
+            f"No recency config for type '{memory_type}', using recency_journal"
+        )
+        return self.recency_journal
 
 
 @dataclass
@@ -218,6 +242,8 @@ class WorkerConfig:
     restart_backoff_base: float = 1.0
     snapshot_keep_count: int = 2
     index_poll_interval: float = 0.1
+    progressive_snapshot_interval: float = 5.0
+    progressive_snapshot_doc_count: int = 10
 
 
 @dataclass
@@ -282,24 +308,22 @@ def _load_memory_config(data: dict[str, Any]):
         "enabled",
         "storage_strategy",
         "score_threshold",
-        "recency_boost_days",
-        "recency_boost_factor",
     }
-    decay_fields = {
-        "decay_journal",
-        "decay_plan",
-        "decay_fact",
-        "decay_observation",
-        "decay_reflection",
+    recency_fields = {
+        "recency_journal",
+        "recency_plan",
+        "recency_fact",
+        "recency_observation",
+        "recency_reflection",
     }
 
     for key in simple_fields:
         if key in data:
             kwargs[key] = data[key]
 
-    for key in decay_fields:
+    for key in recency_fields:
         if key in data and isinstance(data[key], dict):
-            kwargs[key] = _load_dataclass_from_dict(MemoryDecayConfig, data[key])
+            kwargs[key] = _load_dataclass_from_dict(MemoryRecencyConfig, data[key])
 
     return MemoryConfig(**kwargs)
 

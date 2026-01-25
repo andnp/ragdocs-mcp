@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import math
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,56 +15,54 @@ from src.memory.models import (
 )
 from src.search.base_orchestrator import BaseSearchOrchestrator
 from src.search.score_pipeline import ScorePipelineConfig
-from src.search.time_scoring import (
-    DecayConfig,
-    TimeScoreMode,
-    apply_time_boost,
-)
 from src.utils.similarity import cosine_similarity_lists
 
 logger = logging.getLogger(__name__)
 
 
-def apply_memory_decay(
+def apply_recency_boost(
     score: float,
     created_at: datetime | None,
-    decay_rate: float,
-    floor_multiplier: float,
-) -> float:
-    if decay_rate <= 0 or decay_rate >= 1:
-        return score * floor_multiplier
-
-    half_life_days = -math.log(0.5) / (-math.log(decay_rate))
-
-    config = DecayConfig(half_life_days=half_life_days, min_score=floor_multiplier)
-    return apply_time_boost(score, created_at, TimeScoreMode.DECAY, config)
-
-
-def apply_memory_recency_boost(
-    score: float,
-    created_at: datetime | None,
-    boost_days: int,
-    boost_factor: float,
+    boost_window_days: int,
+    max_boost_amount: float,
+    boost_decay_rate: float,
 ) -> float:
     """
-    DEPRECATED: Use apply_memory_decay() instead.
+    Apply exponential additive recency boost to memory score.
 
-    Backward compatibility wrapper for old recency boost API.
-    Approximates old behavior using decay system.
+    Recent memories receive an exponentially decaying bonus ADDED to their base score.
+    Old memories (beyond boost window) retain their base score without penalty.
+
+    Args:
+        score: Base calibrated score from search
+        created_at: Memory creation timestamp
+        boost_window_days: Days within which to apply boost
+        max_boost_amount: Maximum bonus (at age=0 days)
+        boost_decay_rate: Exponential decay rate (e.g., 0.95)
+
+    Returns:
+        Score with additive recency boost (base + exponential bonus)
     """
-    # Convert old boost parameters to decay parameters
-    # boost_factor=1.2 for 7 days ~ decay_rate=0.90
-    # This is an approximation for backward compatibility
-    if boost_days <= 0:
+    if created_at is None:
         return score
 
-    # Map boost factor to approximate decay rate
-    # boost_factor 1.2 -> decay_rate 0.90 (10% daily decay within boost window)
-    # boost_factor 1.5 -> decay_rate 0.85 (15% daily decay within boost window)
-    decay_rate = 2.0 - boost_factor  # Rough approximation
-    decay_rate = max(0.5, min(0.99, decay_rate))  # Clamp to reasonable range
+    # Ensure timezone-aware datetime
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
 
-    return apply_memory_decay(score, created_at, decay_rate, 0.1)
+    # Calculate age in days
+    age_days = (datetime.now(timezone.utc) - created_at).days
+
+    # Apply exponential additive boost for recent memories
+    if age_days <= boost_window_days:
+        # Exponential decay of boost amount (not score!)
+        boost_factor = boost_decay_rate ** age_days
+        bonus = boost_factor * max_boost_amount
+        boosted_score = min(1.0, score + bonus)  # Cap at 1.0
+        return boosted_score
+    else:
+        # Old memories: no boost, but NO PENALTY either!
+        return score
 
 
 def _normalize_time_filters(
@@ -259,17 +256,18 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
                     pass
 
             memory_type = metadata.get("memory_type", "journal")
-            decay_config = self._config.memory.get_decay_config(memory_type)
+            recency_config = self._config.memory.get_recency_config(memory_type)
 
-            decayed_score = apply_memory_decay(
+            boosted_score = apply_recency_boost(
                 score,
                 created_at,
-                decay_config.decay_rate,
-                decay_config.floor_multiplier,
+                recency_config.boost_window_days,
+                recency_config.max_boost_amount,
+                recency_config.boost_decay_rate,
             )
 
-            # Apply threshold filtering (post-calibration)
-            if decayed_score < self._config.memory.score_threshold:
+            # Apply threshold filtering (post-boost)
+            if boosted_score < self._config.memory.score_threshold:
                 continue
 
             frontmatter = MemoryFrontmatter(
@@ -291,7 +289,7 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
 
             memory_results.append(MemorySearchResult(
                 memory_id=str(chunk_data.get("doc_id", chunk_id)),
-                score=decayed_score,
+                score=boosted_score,
                 content=content,
                 frontmatter=frontmatter,
                 file_path=str(chunk_data.get("file_path", "")),

@@ -28,7 +28,7 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.mcp.handlers import HandlerContext, get_handler
-from src.mcp_server import MCPServer
+from src.mcp import MCPServer
 from src.search.orchestrator import SearchOrchestrator
 
 

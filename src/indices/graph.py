@@ -84,6 +84,60 @@ class GraphStore:
             if doc_id in self._graph:
                 self._graph.remove_node(doc_id)
 
+    def remove_chunk(self, chunk_id: str) -> None:
+        """Remove chunk node from graph.
+
+        Thread-safe operation. Handles missing chunks gracefully.
+        """
+        with self._lock:
+            if chunk_id in self._graph:
+                self._graph.remove_node(chunk_id)
+                logger.debug(f"Removed chunk {chunk_id} from graph")
+            else:
+                logger.debug(f"Chunk {chunk_id} not in graph (already removed or never added)")
+
+    def rename_node(self, old_id: str, new_id: str) -> bool:
+        """Rename node preserving all edges and metadata (for file moves).
+
+        Thread-safe operation. Preserves:
+        - All incoming and outgoing edges
+        - All node metadata
+        - Edge types and contexts
+
+        Returns:
+            True if rename successful, False if old node not found
+        """
+        with self._lock:
+            if old_id not in self._graph:
+                logger.debug(f"Node {old_id} not found in graph")
+                return False
+
+            # Get node data and edges before removal
+            node_data = dict(self._graph.nodes[old_id])
+            in_edges = [
+                (source, old_id, dict(self._graph.edges[source, old_id]))
+                for source in self._graph.predecessors(old_id)
+            ]
+            out_edges = [
+                (old_id, target, dict(self._graph.edges[old_id, target]))
+                for target in self._graph.successors(old_id)
+            ]
+
+            # Remove old node
+            self._graph.remove_node(old_id)
+
+            # Add new node with same data
+            self._graph.add_node(new_id, **node_data)
+
+            # Recreate edges
+            for source, _, edge_data in in_edges:
+                self._graph.add_edge(source, new_id, **edge_data)
+            for _, target, edge_data in out_edges:
+                self._graph.add_edge(new_id, target, **edge_data)
+
+            logger.debug(f"Renamed node in graph: {old_id} -> {new_id}")
+            return True
+
     def get_neighbors(self, doc_id: str, depth: int = 1):
         """Get neighbors up to specified depth using snapshot pattern.
 

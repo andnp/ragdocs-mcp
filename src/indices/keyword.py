@@ -344,6 +344,138 @@ class KeywordIndex:
                 )
                 self._reinitialize_after_corruption()
 
+    def remove_chunk(self, chunk_id: str) -> None:
+        """Remove a specific chunk from keyword index.
+
+        Thread-safe operation. Handles missing chunks and corruption gracefully.
+        """
+        with self._lock:
+            if self._index is None:
+                logger.warning(f"Cannot remove chunk {chunk_id}: index not initialized")
+                return
+
+            try:
+                writer = self._get_writer()
+                try:
+                    writer.delete_by_term("id", chunk_id)
+                    writer.commit()
+                    logger.debug(f"Removed chunk {chunk_id} from keyword index")
+                except Exception:
+                    writer.cancel()
+                    raise
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(
+                    f"Keyword index corruption detected during remove_chunk({chunk_id}): {e}. "
+                    "Reinitializing index.",
+                    exc_info=True,
+                )
+                self._reinitialize_after_corruption()
+            except Exception as e:
+                logger.warning(
+                    f"Failed to remove chunk {chunk_id} from keyword index: {e}",
+                    exc_info=True,
+                )
+
+    def move_chunk(self, old_chunk_id: str, new_chunk: Chunk) -> bool:
+        """Move chunk to new ID with updated metadata (for file moves).
+
+        Copies document with new ID and updated content/metadata, then deletes old document.
+        More efficient than full re-indexing since content is not stored in index.
+
+        Args:
+            old_chunk_id: Chunk ID to move from
+            new_chunk: New chunk object with updated path and metadata
+
+        Returns:
+            True if move successful, False otherwise
+        """
+        with self._lock:
+            if self._index is None:
+                logger.warning("Cannot move chunk: index not initialized")
+                return False
+
+            try:
+                # Check if old document exists
+                searcher = self._index.searcher()
+                try:
+                    old_exists = any(searcher.documents(id=old_chunk_id))
+                finally:
+                    searcher.close()
+
+                if not old_exists:
+                    logger.debug(f"Chunk {old_chunk_id} not found in keyword index")
+                    return False
+
+                # Extract metadata from new chunk
+                metadata = new_chunk.metadata
+                tags_text = ",".join(metadata.get("tags", []))
+                title = str(metadata.get("title", ""))
+                headers = new_chunk.header_path or ""
+                description = str(
+                    metadata.get("description", "") or metadata.get("summary", "")
+                )
+                keywords_list = metadata.get("keywords", [])
+                keywords_text = (
+                    " ".join(keywords_list)
+                    if isinstance(keywords_list, list)
+                    else str(keywords_list)
+                )
+                aliases_list = metadata.get("aliases", [])
+                aliases_text = (
+                    " ".join(str(a) for a in aliases_list)
+                    if isinstance(aliases_list, list)
+                    else str(aliases_list)
+                )
+                author = str(metadata.get("author", ""))
+                category = str(metadata.get("category", ""))
+
+                # Add new document first and commit
+                writer = self._get_writer()
+                try:
+                    writer.add_document(
+                        id=new_chunk.chunk_id,
+                        doc_id=new_chunk.doc_id,
+                        content=new_chunk.content,
+                        title=title,
+                        headers=headers,
+                        description=description,
+                        keywords=keywords_text,
+                        aliases=aliases_text,
+                        tags=tags_text,
+                        author=author,
+                        category=category,
+                    )
+                    writer.commit()
+                except Exception:
+                    writer.cancel()
+                    raise
+
+                # Delete old document in separate transaction
+                writer = self._get_writer()
+                try:
+                    writer.delete_by_term("id", old_chunk_id)
+                    writer.commit()
+                    logger.debug(f"Moved chunk in keyword index: {old_chunk_id} -> {new_chunk.chunk_id}")
+                    return True
+                except Exception:
+                    writer.cancel()
+                    raise
+
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(
+                    f"Keyword index corruption detected during move_chunk: {e}. "
+                    "Reinitializing index.",
+                    exc_info=True,
+                )
+                self._reinitialize_after_corruption()
+                return False
+            except Exception as e:
+                logger.warning(
+                    f"Failed to move chunk {old_chunk_id} -> {new_chunk.chunk_id}: {e}",
+                    exc_info=True,
+                )
+                return False
+
     def search(
         self,
         query: str,

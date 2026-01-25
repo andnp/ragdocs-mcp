@@ -87,14 +87,14 @@ def mcp(project: str | None):
     """Run MCP server with stdio transport (for VS Code integration)."""
     try:
         # Import here to avoid importing mcp when not needed
-        from src.mcp_server import main as mcp_main
+        from src.mcp import MCPServer
 
-        # Pass arguments explicitly to avoid argparse parsing sys.argv
-        argv = []
-        if project:
-            argv.extend(["--project", project])
+        # Create and run the server
+        async def _run():
+            server = MCPServer(project_override=project)
+            await server.run()
 
-        asyncio.run(mcp_main(argv))
+        asyncio.run(_run())
     except KeyboardInterrupt:
         pass  # Graceful shutdown handled
     except Exception as e:

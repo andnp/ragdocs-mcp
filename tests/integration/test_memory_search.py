@@ -23,7 +23,7 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.memory.manager import MemoryIndexManager
-from src.memory.search import MemorySearchOrchestrator, apply_memory_recency_boost, apply_memory_decay
+from src.memory.search import MemorySearchOrchestrator, apply_recency_boost
 from src.memory.storage import ensure_memory_dirs
 
 
@@ -50,8 +50,6 @@ def memory_config(tmp_path: Path):
             enabled=True,
             storage_strategy="project",
             score_threshold=0.001,  # Keep low for backward compatibility with tests
-            recency_boost_days=7,
-            recency_boost_factor=1.2,
         ),
         search=SearchConfig(
             semantic_weight=1.0,
@@ -112,156 +110,142 @@ def create_memory_file(memory_path: Path, filename: str, content: str) -> Path:
 
 
 # ============================================================================
-# Memory Decay Function Tests (Exponential Decay System)
+# Memory Recency Boost Function Tests (Exponential Additive Boost)
 # ============================================================================
 
 
-class TestApplyMemoryDecay:
-    """Test the new exponential decay system that replaced recency boost."""
+class TestApplyRecencyBoost:
+    """Test the exponential additive recency boost system."""
 
-    def test_zero_days_old_no_decay(self):
-        """Verify memory created today has no decay (multiplier = 1.0)."""
+    def test_zero_days_old_maximum_boost(self):
+        """Verify memory created today gets maximum boost."""
         now = datetime.now(timezone.utc)
-        decayed = apply_memory_decay(
+        boosted = apply_recency_boost(
             score=0.5,
             created_at=now,
-            decay_rate=0.90,
-            floor_multiplier=0.1,
+            boost_window_days=14,
+            max_boost_amount=0.2,
+            boost_decay_rate=0.95,
         )
-        assert decayed == pytest.approx(0.5)
+        # Age = 0, boost = 0.95^0 × 0.2 = 1.0 × 0.2 = 0.2
+        # Final = 0.5 + 0.2 = 0.7
+        assert boosted == pytest.approx(0.7, abs=1e-6)
 
-    def test_exponential_decay_calculation(self):
-        """Verify exponential decay formula: score × decay_rate^days."""
+    def test_exponential_boost_calculation(self):
+        """Verify exponential boost formula: score + (boost_rate^days × max_boost)."""
         now = datetime.now(timezone.utc)
         seven_days_ago = now - timedelta(days=7)
 
-        decayed = apply_memory_decay(
-            score=0.020,  # Typical post-RRF score
+        boosted = apply_recency_boost(
+            score=0.4,
             created_at=seven_days_ago,
-            decay_rate=0.90,
-            floor_multiplier=0.1,
+            boost_window_days=14,
+            max_boost_amount=0.2,
+            boost_decay_rate=0.95,
         )
 
-        # Expected: 0.020 × 0.90^7 ≈ 0.020 × 0.478 ≈ 0.00956
-        expected = 0.020 * (0.90 ** 7)
-        assert decayed == pytest.approx(expected, abs=1e-6)
+        # boost_factor = 0.95^7 ≈ 0.698
+        # bonus = 0.698 × 0.2 ≈ 0.140
+        # final = 0.4 + 0.140 = 0.540
+        boost_factor = 0.95 ** 7
+        expected = 0.4 + (boost_factor * 0.2)
+        assert boosted == pytest.approx(expected, abs=1e-6)
 
-    def test_floor_multiplier_prevents_zero(self):
-        """Verify floor prevents scores from decaying to zero."""
+    def test_old_memory_no_penalty(self):
+        """Verify old memories beyond window retain base score (no penalty)."""
         now = datetime.now(timezone.utc)
-        very_old = now - timedelta(days=180)
+        very_old = now - timedelta(days=60)
 
-        decayed = apply_memory_decay(
-            score=0.020,
+        boosted = apply_recency_boost(
+            score=0.4,
             created_at=very_old,
-            decay_rate=0.90,
-            floor_multiplier=0.1,
+            boost_window_days=14,
+            max_boost_amount=0.2,
+            boost_decay_rate=0.95,
         )
 
-        # After 180 days, 0.90^180 ≈ 0.0000000002, floor kicks in
-        assert decayed == pytest.approx(0.020 * 0.1)  # Floor applied
+        # Age > window, no boost, no penalty
+        assert boosted == pytest.approx(0.4)
 
-    def test_missing_created_at_no_penalty(self):
+    def test_missing_created_at_no_change(self):
         """
-        Verify None created_at returns original score without penalty.
+        Verify None created_at returns original score unchanged.
 
-        This handles legacy memories indexed before we added timestamp tracking.
+        This handles legacy memories indexed before timestamp tracking.
         """
-        decayed = apply_memory_decay(
+        boosted = apply_recency_boost(
             score=0.5,
             created_at=None,
-            decay_rate=0.90,
-            floor_multiplier=0.1,
+            boost_window_days=14,
+            max_boost_amount=0.2,
+            boost_decay_rate=0.95,
         )
-        assert decayed == pytest.approx(0.5)  # No penalty applied
+        assert boosted == pytest.approx(0.5)
 
     def test_handles_naive_datetime(self):
         """Verify naive datetime is converted to UTC."""
         naive_dt = datetime.now() - timedelta(days=7)
 
-        decayed = apply_memory_decay(
-            score=0.020,
+        boosted = apply_recency_boost(
+            score=0.4,
             created_at=naive_dt,
-            decay_rate=0.90,
-            floor_multiplier=0.1,
+            boost_window_days=14,
+            max_boost_amount=0.2,
+            boost_decay_rate=0.95,
         )
 
-        # Should apply decay without errors
-        assert 0.0 < decayed < 0.020
+        # Should apply boost without errors
+        assert boosted > 0.4  # Should get boost
 
-    def test_per_type_decay_rates(self):
-        """Verify different memory types decay at different rates."""
+    def test_per_type_boost_rates(self):
+        """Verify different memory types can have different boost curves."""
         now = datetime.now(timezone.utc)
-        thirty_days_ago = now - timedelta(days=30)
+        seven_days_ago = now - timedelta(days=7)
 
-        # Journal (fast decay)
-        journal_decay = apply_memory_decay(
-            0.020, thirty_days_ago, 0.90, 0.1
+        # Journal (faster decay of boost)
+        journal_boost = apply_recency_boost(
+            0.4, seven_days_ago, 14, 0.2, 0.90  # Fast decay
         )
 
-        # Fact (slow decay)
-        fact_decay = apply_memory_decay(
-            0.020, thirty_days_ago, 0.98, 0.2
+        # Fact (slower decay of boost)
+        fact_boost = apply_recency_boost(
+            0.4, seven_days_ago, 14, 0.2, 0.98  # Slow decay
         )
 
-        # Fact should retain more relevance
-        assert fact_decay > journal_decay
+        # Fact should retain more boost
+        assert fact_boost > journal_boost
 
-    def test_thirty_day_old_fact(self):
-        """Real-world scenario: 30-day-old fact memory."""
+    def test_window_boundary(self):
+        """Verify boost applies at window edge, not beyond."""
         now = datetime.now(timezone.utc)
-        created = now - timedelta(days=30)
+        at_window = now - timedelta(days=14)
+        beyond_window = now - timedelta(days=15)
 
-        decayed = apply_memory_decay(
-            score=0.020,
-            created_at=created,
-            decay_rate=0.98,  # Fact decay rate
-            floor_multiplier=0.2,
+        at_edge = apply_recency_boost(
+            0.4, at_window, 14, 0.2, 0.95
+        )
+        beyond = apply_recency_boost(
+            0.4, beyond_window, 14, 0.2, 0.95
         )
 
-        # 0.020 × 0.98^30 ≈ 0.011 (above floor)
-        expected = 0.020 * (0.98 ** 30)
-        assert decayed == pytest.approx(expected, abs=1e-6)
+        # At edge gets boost, beyond does not
+        assert at_edge > 0.4
+        assert beyond == pytest.approx(0.4)
 
-    def test_different_floor_multipliers(self):
-        """Verify floor multipliers affect long-term retention."""
+    def test_score_caps_at_one(self):
+        """Verify boosted score cannot exceed 1.0."""
         now = datetime.now(timezone.utc)
-        very_old = now - timedelta(days=365)
 
-        low_floor = apply_memory_decay(
-            0.020, very_old, 0.85, 0.05  # Plan: low floor
+        boosted = apply_recency_boost(
+            score=0.95,
+            created_at=now,
+            boost_window_days=14,
+            max_boost_amount=0.2,  # Would give 1.15
+            boost_decay_rate=0.95,
         )
 
-        high_floor = apply_memory_decay(
-            0.020, very_old, 0.98, 0.3  # Fact: high floor
-        )
-
-        # High floor preserves more
-        assert high_floor > low_floor
-
-
-class TestApplyMemoryRecencyBoost:
-    """DEPRECATED: Tests for backward compatibility wrapper."""
-
-    def test_backward_compatibility_wrapper(self):
-        """
-        Verify deprecated recency_boost function still works via wrapper.
-
-        Note: Behavior changed - now approximates using decay system.
-        """
-        now = datetime.now(timezone.utc)
-        recent = now - timedelta(days=3)
-
-        result = apply_memory_recency_boost(
-            score=0.8,
-            created_at=recent,
-            boost_days=7,
-            boost_factor=1.2,
-        )
-
-        # Wrapper now uses decay approximation, not exact boost
-        # Just verify it returns a reasonable value
-        assert 0.0 < result <= 0.8
+        # Should cap at 1.0
+        assert boosted == pytest.approx(1.0)
 
 
 # ============================================================================

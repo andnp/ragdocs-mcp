@@ -10,12 +10,15 @@ from src.config import Config
 from src.coordination import IndexLock
 from src.indices.code import CodeIndex
 from src.indices.graph import GraphStore
+from src.indices.hash_store import ChunkHashStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.indexing.implicit_graph import ImplicitGraphBuilder
 from src.indexing.manifest import load_manifest, save_manifest
+from src.models import Chunk
 from src.parsers.dispatcher import dispatch_parser
 from src.search.edge_types import infer_edge_type
+from src.search.path_utils import compute_doc_id, resolve_doc_path
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +47,16 @@ class IndexManager:
         self._failed_files: list[FailedFile] = []
         self._chunker = get_chunker(config.document_chunking)
 
-    def _compute_doc_id(self, file_path: str) -> str:
-        docs_path = Path(self._config.indexing.documents_path)
-        abs_path = Path(file_path).resolve()
-        try:
-            rel_path = abs_path.relative_to(docs_path.resolve())
-            return str(rel_path.with_suffix(""))
-        except ValueError:
-            return Path(file_path).stem
+        # Initialize hash store for delta indexing
+        index_path = Path(config.indexing.index_path)
+        hash_store_path = index_path / "chunk_hashes.json"
+        self._hash_store = ChunkHashStore(hash_store_path)
+
+        logger.info(
+            f"IndexManager initialized with embedding_workers={config.indexing.embedding_workers} "
+            f"(mode: {'parallel' if config.indexing.embedding_workers > 1 else 'sequential'}), "
+            f"delta_indexing={'enabled' if config.indexing.enable_delta_indexing else 'disabled'}"
+        )
 
     def _get_parser_suffixes(self, fallback_suffixes: list[str] | None = None):
         suffixes: set[str] = set()
@@ -67,24 +72,11 @@ class IndexManager:
 
         return sorted(suffixes)
 
-    def _resolve_doc_path(self, doc_id: str):
-        docs_path = Path(self._config.indexing.documents_path)
-
-        direct_candidate = docs_path / doc_id
-        if direct_candidate.exists():
-            return str(direct_candidate)
-
-        suffixes = self._get_parser_suffixes([".md", ".markdown", ".txt"])
-        for suffix in suffixes:
-            candidate = docs_path / f"{doc_id}{suffix}"
-            if candidate.exists():
-                return str(candidate)
-
-        return None
-
     def reindex_document(self, doc_id: str, reason: str | None = None):
-        file_path = self._resolve_doc_path(doc_id)
-        if not file_path:
+        docs_path = Path(self._config.indexing.documents_path)
+        suffixes = self._get_parser_suffixes([".md", ".markdown", ".txt"])
+        resolved_path = resolve_doc_path(doc_id, docs_path, suffixes)
+        if not resolved_path:
             self.prune_document(doc_id, reason=reason)
             if reason:
                 logger.warning(
@@ -98,13 +90,13 @@ class IndexManager:
 
         try:
             self.remove_document(doc_id)
-            self.index_document(file_path)
+            self.index_document(str(resolved_path), force=True)  # Force full re-index
             if reason:
                 logger.info(
-                    "Reindexed %s from %s (reason: %s)", doc_id, file_path, reason
+                    "Reindexed %s from %s (reason: %s)", doc_id, resolved_path, reason
                 )
             else:
-                logger.info("Reindexed %s from %s", doc_id, file_path)
+                logger.info("Reindexed %s from %s", doc_id, resolved_path)
             return True
         except Exception as e:
             logger.error("Failed to reindex %s: %s", doc_id, e, exc_info=True)
@@ -140,20 +132,286 @@ class IndexManager:
             logger.error("Failed to prune %s: %s", doc_id, e, exc_info=True)
             return False
 
-    def index_document(self, file_path: str):
+    def _detect_changed_chunks(self, chunks: list[Chunk]) -> tuple[list[Chunk], list[str]]:
+        """Identify chunks with changed content.
+
+        Returns:
+            (changed_chunks, unchanged_chunk_ids)
+        """
+        if not self._config.indexing.enable_delta_indexing:
+            # Delta indexing disabled, all chunks are "changed"
+            return chunks, []
+
+        changed = []
+        unchanged = []
+
+        for chunk in chunks:
+            if self._hash_store.has_changed(chunk):
+                changed.append(chunk)
+            else:
+                unchanged.append(chunk.chunk_id)
+
+        return changed, unchanged
+
+    def _should_use_delta_indexing(
+        self,
+        changed_chunks: list[Chunk],
+        total_chunks: int,
+    ) -> bool:
+        """Decide whether to use delta or full re-index based on change ratio."""
+        if total_chunks == 0:
+            return True
+
+        change_ratio = len(changed_chunks) / total_chunks
+        threshold = self._config.indexing.delta_full_reindex_threshold
+
+        if change_ratio > threshold:
+            logger.info(
+                f"Change ratio {change_ratio:.1%} exceeds threshold {threshold:.1%}, "
+                "using full re-index"
+            )
+            return False
+
+        return True
+
+    def _update_chunks(self, doc_id: str, chunks: list[Chunk]) -> None:
+        """Update specific chunks in all indices (remove old → add new)."""
+        if not chunks:
+            return
+
+        # Remove old versions
+        for chunk in chunks:
+            self.vector.remove_chunk(chunk.chunk_id)
+            self.keyword.remove_chunk(chunk.chunk_id)
+            self.graph.remove_chunk(chunk.chunk_id)
+
+        # Add new versions
+        self.vector.add_chunks(chunks)
+        for chunk in chunks:
+            self.keyword.add_chunk(chunk)
+            self.graph.add_node(chunk.chunk_id, chunk.metadata)
+
+        logger.debug(f"Updated {len(chunks)} chunks for {doc_id}")
+
+    def _full_reindex_document(self, doc_id: str, chunks: list[Chunk]) -> None:
+        """Full re-index of document (remove all old chunks, add all new)."""
+        # Remove all old chunks
+        self.vector.remove(doc_id)
+        self.keyword.remove(doc_id)
+        self.graph.remove_node(doc_id)
+
+        # Add all new chunks
+        self.vector.add_chunks(chunks)
+        for chunk in chunks:
+            self.keyword.add_chunk(chunk)
+            self.graph.add_node(chunk.chunk_id, chunk.metadata)
+
+        # Update hash store (clear old hashes first)
+        if self._config.indexing.enable_delta_indexing:
+            self._hash_store.remove_document(doc_id)
+            for chunk in chunks:
+                self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
+            self._hash_store.persist()
+
+        logger.debug(f"Full re-indexed {doc_id} with {len(chunks)} chunks")
+
+    def _detect_file_moves(
+        self,
+        removed_docs: set[str],
+        added_docs: dict[str, list[Chunk]],
+    ) -> dict[str, str]:
+        """Detect file moves by comparing content hashes.
+
+        Args:
+            removed_docs: Set of doc_ids that appear to be removed
+            added_docs: Dict of doc_id -> chunks for newly added docs
+
+        Returns:
+            Dict mapping old_doc_id -> new_doc_id for detected moves
+        """
+        if not self._config.indexing.enable_move_detection:
+            return {}
+
+        if not self._config.indexing.enable_delta_indexing:
+            logger.debug("Move detection requires delta indexing to be enabled")
+            return {}
+
+        moves: dict[str, str] = {}
+        threshold = self._config.indexing.move_detection_threshold
+
+        for new_doc_id, new_chunks in added_docs.items():
+            if not new_chunks:
+                continue
+
+            # Build hash set for new document
+            new_hashes = {chunk.content_hash for chunk in new_chunks}
+
+            # Compare with each removed document
+            best_match_doc = None
+            best_match_ratio = 0.0
+
+            for old_doc_id in removed_docs:
+                old_chunk_data = self._hash_store.get_chunks_by_document(old_doc_id)
+                if not old_chunk_data:
+                    continue
+
+                old_hashes = {hash_val for _, hash_val in old_chunk_data}
+
+                # Calculate overlap ratio
+                if not old_hashes or not new_hashes:
+                    continue
+
+                matching_hashes = new_hashes & old_hashes
+                match_ratio = len(matching_hashes) / max(len(old_hashes), len(new_hashes))
+
+                if match_ratio > best_match_ratio:
+                    best_match_ratio = match_ratio
+                    best_match_doc = old_doc_id
+
+            # If match ratio exceeds threshold, it's a move
+            if best_match_doc and best_match_ratio >= threshold:
+                moves[best_match_doc] = new_doc_id
+                logger.info(
+                    f"Detected file move: {best_match_doc} -> {new_doc_id} "
+                    f"(match ratio: {best_match_ratio:.1%})"
+                )
+
+        return moves
+
+    def _apply_file_move(
+        self,
+        old_doc_id: str,
+        new_doc_id: str,
+        new_chunks: list[Chunk],
+    ) -> bool:
+        """Apply file move by updating indices without re-embedding.
+
+        Updates vector index metadata, copies keyword index documents,
+        and renames graph nodes.
+
+        Returns:
+            True if move successful, False if fallback to re-index needed
+        """
+        try:
+            # Get old chunks for mapping
+            old_chunk_data = self._hash_store.get_chunks_by_document(old_doc_id)
+            if not old_chunk_data:
+                logger.debug(f"No old chunks found for {old_doc_id}, using full reindex")
+                return False
+
+            # Build hash -> old_chunk_id mapping
+            old_hash_to_chunk: dict[str, str] = {
+                hash_val: chunk_id for chunk_id, hash_val in old_chunk_data
+            }
+
+            # Process each new chunk
+            moved_count = 0
+            failed_moves = []
+
+            for new_chunk in new_chunks:
+                old_chunk_id = old_hash_to_chunk.get(new_chunk.content_hash)
+                if not old_chunk_id:
+                    # Content changed, need full re-index
+                    failed_moves.append(new_chunk.chunk_id)
+                    continue
+
+                # Update indices with new IDs/metadata
+                new_metadata = {
+                    "doc_id": new_chunk.doc_id,
+                    "chunk_id": new_chunk.chunk_id,
+                    "file_path": new_chunk.file_path,
+                    "header_path": new_chunk.header_path,
+                    **new_chunk.metadata,
+                }
+
+                # Update vector index
+                if not self.vector.update_chunk_path(old_chunk_id, new_chunk.chunk_id, new_metadata):
+                    failed_moves.append(new_chunk.chunk_id)
+                    continue
+
+                # Update keyword index
+                if not self.keyword.move_chunk(old_chunk_id, new_chunk):
+                    failed_moves.append(new_chunk.chunk_id)
+                    continue
+
+                # Update graph
+                if not self.graph.rename_node(old_chunk_id, new_chunk.chunk_id):
+                    # Graph update is optional, just log
+                    logger.debug(f"Graph node rename failed for {old_chunk_id}")
+
+                moved_count += 1
+
+            # Update hash store
+            self._hash_store.remove_document(old_doc_id)
+            for chunk in new_chunks:
+                self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
+            self._hash_store.persist()
+
+            # If too many chunks failed, fall back to full re-index
+            if failed_moves:
+                failure_ratio = len(failed_moves) / len(new_chunks)
+                if failure_ratio > (1.0 - self._config.indexing.move_detection_threshold):
+                    logger.info(
+                        f"Move operation had {failure_ratio:.1%} failures, "
+                        "falling back to full re-index"
+                    )
+                    return False
+
+            logger.info(
+                f"Successfully moved {moved_count}/{len(new_chunks)} chunks "
+                f"from {old_doc_id} to {new_doc_id}"
+            )
+            return True
+
+        except Exception as e:
+            logger.warning(
+                f"Move operation failed for {old_doc_id} -> {new_doc_id}: {e}. "
+                "Falling back to full re-index.",
+                exc_info=True,
+            )
+            return False
+
+    def index_document(self, file_path: str, force: bool = False):
         try:
             parser = dispatch_parser(file_path, self._config)
             document = parser.parse(file_path)
 
-            document.id = self._compute_doc_id(file_path)
+            docs_path = Path(self._config.indexing.documents_path)
+            document.id = compute_doc_id(Path(file_path).resolve(), docs_path.resolve())
 
             chunks = self._chunker.chunk_document(document)
             document.chunks = chunks
 
-            for chunk in chunks:
-                self.vector.add_chunk(chunk)
-                self.keyword.add_chunk(chunk)
+            # Delta indexing logic
+            if force or not self._config.indexing.enable_delta_indexing:
+                # Force full re-index or delta disabled
+                self._full_reindex_document(document.id, chunks)
+            else:
+                # Delta detection
+                changed_chunks, unchanged_chunk_ids = self._detect_changed_chunks(chunks)
 
+                if not changed_chunks:
+                    logger.info(f"No changes in {file_path}, skipping re-index")
+                    return
+
+                # Decide: delta or full re-index?
+                if not self._should_use_delta_indexing(changed_chunks, len(chunks)):
+                    self._full_reindex_document(document.id, chunks)
+                else:
+                    logger.info(
+                        f"Delta index {file_path}: "
+                        f"{len(changed_chunks)} changed, {len(unchanged_chunk_ids)} unchanged"
+                    )
+
+                    # Update only changed chunks
+                    self._update_chunks(document.id, changed_chunks)
+
+                    # Update hash store for all chunks (even unchanged, to handle ID shifts)
+                    for chunk in chunks:
+                        self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
+                    self._hash_store.persist()
+
+            # Add document node to graph (for links/metadata)
             # Pass full metadata including tags and file_path to the graph
             # This is crucial for ImplicitGraphBuilder to work correctly
             graph_metadata = {
@@ -264,6 +522,11 @@ class IndexManager:
                 f"Document {doc_id} removal completed with {len(errors)} index failures"
             )
 
+        # Remove from hash store
+        if self._config.indexing.enable_delta_indexing:
+            self._hash_store.remove_document(doc_id)
+            self._hash_store.persist()
+
     def persist(self):
         """Persist all indices with retry logic for transient failures.
 
@@ -309,6 +572,10 @@ class IndexManager:
             self.graph.persist(index_path / "graph")
             if self.code is not None:
                 self.code.persist(index_path / "code")
+
+            # Persist hash store for delta indexing
+            if self._config.indexing.enable_delta_indexing:
+                self._hash_store.persist()
         except Exception as e:
             logger.error(f"Failed to persist indices: {e}", exc_info=True)
             raise
@@ -351,3 +618,125 @@ class IndexManager:
             {"path": f.path, "error": f.error, "timestamp": f.timestamp}
             for f in self._failed_files
         ]
+
+    def reconcile_indices(
+        self,
+        discovered_files: list[str],
+        docs_path: Path,
+    ):
+        """Reconcile indices with filesystem state, detecting file moves.
+
+        Returns:
+            ReconciliationResult with counts of operations performed
+        """
+        from src.indexing.manifest import load_manifest
+        from src.indexing.reconciler import reconcile_indices
+        from src.models import ReconciliationResult
+        from src.parsers.dispatcher import dispatch_parser
+
+        index_path = Path(self._config.indexing.index_path)
+        saved_manifest = load_manifest(index_path)
+
+        if not saved_manifest:
+            logger.warning("No manifest found during reconciliation")
+            return ReconciliationResult()
+
+        files_to_add, doc_ids_to_remove, _ = reconcile_indices(
+            discovered_files,
+            saved_manifest,
+            docs_path,
+        )
+
+        result = ReconciliationResult()
+
+        # Detect file moves if enabled
+        moved_files: dict[str, str] = {}
+        if (
+            self._config.indexing.enable_move_detection
+            and self._config.indexing.enable_delta_indexing
+            and files_to_add
+            and doc_ids_to_remove
+        ):
+            logger.info(
+                f"Move detection: Comparing {len(doc_ids_to_remove)} removed "
+                f"and {len(files_to_add)} added files"
+            )
+
+            # Parse new files to get chunks for comparison
+            added_docs: dict[str, list[Chunk]] = {}
+            for file_path in files_to_add:
+                try:
+                    parser = dispatch_parser(file_path, self._config)
+                    document = parser.parse(file_path)
+                    doc_id = compute_doc_id(Path(file_path).resolve(), docs_path.resolve())
+                    document.id = doc_id
+                    chunks = self._chunker.chunk_document(document)
+                    added_docs[doc_id] = chunks
+                except Exception as e:
+                    logger.warning(f"Failed to parse {file_path} for move detection: {e}")
+                    continue
+
+            # Detect moves
+            moved_files = self._detect_file_moves(
+                set(doc_ids_to_remove),
+                added_docs,
+            )
+
+            logger.info(
+                f"Detected {len(moved_files)} file moves "
+                f"(threshold: {self._config.indexing.move_detection_threshold})"
+            )
+
+            # Apply moves
+            for old_doc_id, new_doc_id in moved_files.items():
+                logger.info(f"Applying file move: {old_doc_id} → {new_doc_id}")
+
+                new_chunks = added_docs.get(new_doc_id, [])
+                if not new_chunks:
+                    logger.warning(f"No chunks found for moved file {new_doc_id}, skipping")
+                    continue
+
+                success = self._apply_file_move(old_doc_id, new_doc_id, new_chunks)
+
+                if success:
+                    # Remove from to_add and to_remove sets
+                    if old_doc_id in doc_ids_to_remove:
+                        doc_ids_to_remove.remove(old_doc_id)
+
+                    # Find and remove the file path from files_to_add
+                    for file_path in list(files_to_add):
+                        if compute_doc_id(Path(file_path).resolve(), docs_path.resolve()) == new_doc_id:
+                            files_to_add.remove(file_path)
+                            break
+
+                    result.moved_count += 1
+                else:
+                    logger.info(f"Move operation failed for {old_doc_id} → {new_doc_id}, using full reindex")
+
+        # Process remaining removals
+        for doc_id in doc_ids_to_remove:
+            try:
+                self.remove_document(doc_id)
+                result.removed_count += 1
+            except Exception as e:
+                logger.error(f"Failed to remove {doc_id}: {e}", exc_info=True)
+                result.failed_count += 1
+
+        # Process remaining additions
+        for file_path in files_to_add:
+            try:
+                self.index_document(file_path)
+                result.added_count += 1
+            except Exception as e:
+                logger.error(f"Failed to index {file_path}: {e}", exc_info=True)
+                result.failed_count += 1
+
+        logger.info(
+            f"Reconciliation complete: "
+            f"added={result.added_count}, "
+            f"removed={result.removed_count}, "
+            f"moved={result.moved_count}, "
+            f"failed={result.failed_count}"
+        )
+
+        return result

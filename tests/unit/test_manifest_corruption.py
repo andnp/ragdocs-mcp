@@ -113,7 +113,7 @@ def test_reconcile_with_corrupted_indexed_files_handles_gracefully(docs_path):
     discovered = [str(docs_path / "doc1.md")]
 
     # Should handle None indexed_files
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
         discovered,
         manifest,
         docs_path
@@ -144,7 +144,7 @@ def test_reconcile_with_empty_strings_in_indexed_files(docs_path):
     discovered = [str(docs_path / "valid.md")]
 
     # Should handle empty doc_id gracefully
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
         discovered,
         manifest,
         docs_path
@@ -232,7 +232,7 @@ def test_reconcile_with_absolute_and_relative_path_mix(docs_path, tmp_path):
         str(docs_path / "doc2.md"),
     ]
 
-    files_to_add, doc_ids_to_remove = reconcile_indices(
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
         discovered,
         manifest,
         docs_path

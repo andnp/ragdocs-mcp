@@ -3,18 +3,15 @@ Unit tests for variance calculation and dynamic weight adjustment.
 
 Tests cover:
 - Variance calculation for score distributions
-- Standard deviation calculation
 - Dynamic weight computation based on variance
 - Edge cases: single score, zero variance, empty lists
 - Weight adjustment bounds and normalization
 """
 
 import pytest
-import math
 
 from src.search.variance import (
     calculate_variance,
-    calculate_std_dev,
     compute_dynamic_weights,
 )
 
@@ -109,43 +106,6 @@ class TestCalculateVarianceEdgeCases:
 
         expected = 2 / 3
         assert variance == pytest.approx(expected)
-
-
-# ============================================================================
-# Standard Deviation Tests
-# ============================================================================
-
-
-class TestCalculateStdDev:
-    """Tests for the calculate_std_dev function."""
-
-    def test_std_dev_is_sqrt_variance(self):
-        """
-        Standard deviation should be square root of variance.
-        """
-        scores = [1.0, 2.0, 3.0]
-        std_dev = calculate_std_dev(scores)
-        variance = calculate_variance(scores)
-
-        assert std_dev == pytest.approx(math.sqrt(variance))
-
-    def test_zero_variance_zero_std_dev(self):
-        """
-        Zero variance should result in zero standard deviation.
-        """
-        scores = [0.5, 0.5, 0.5]
-        std_dev = calculate_std_dev(scores)
-
-        assert std_dev == 0.0
-
-    def test_empty_list_zero_std_dev(self):
-        """
-        Empty list should return zero standard deviation.
-        """
-        scores = []
-        std_dev = calculate_std_dev(scores)
-
-        assert std_dev == 0.0
 
 
 # ============================================================================

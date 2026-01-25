@@ -1259,46 +1259,58 @@ Controls the AI Memory Management System for persistent cross-session storage.
   - Decay formula: `calibrated_score × max(floor, decay_rate^days_old)`
   - See [Memory Search Scoring](memory.md#search-scoring--calibration) for details
 
-### [memory.decay_*]
+### [memory.recency_*]
 
-Per-memory-type exponential decay configuration. Memory search applies exponential decay to scores based on age: `adjusted_score = original_score × max(floor_multiplier, decay_rate^days_old)`.
+Per-memory-type exponential additive recency boost configuration. Memory search adds exponential bonus to recent memories: `final_score = base_score + (boost_rate^days × max_boost)` for memories within the boost window. Old memories retain base score (no penalty).
 
-**Available types:** `decay_journal`, `decay_plan`, `decay_fact`, `decay_observation`, `decay_reflection`
+**Available types:** `recency_journal`, `recency_plan`, `recency_fact`, `recency_observation`, `recency_reflection`
 
-#### `decay_rate`
+#### `boost_window_days`
+
+- **Type:** integer
+- **Default:** Type-dependent (see table below)
+- **Description:** Number of days within which to apply recency boost. Memories older than this retain base score without penalty.
+- **Range:** 7 to 60 days (typical: 14 to 30 days)
+- **Example:**
+  ```toml
+  [memory.recency_journal]
+  boost_window_days = 14  # Boost journals created in last 14 days
+  ```
+
+#### `max_boost_amount`
 
 - **Type:** float
 - **Default:** Type-dependent (see table below)
-- **Description:** Exponential decay rate per day. Lower values = faster decay.
-- **Range:** 0.5 to 1.0 (typical: 0.85 to 0.98)
-- **Formula:** Score is multiplied by `decay_rate^days_old` each day
+- **Description:** Maximum bonus added to score at age 0. Decays exponentially as memory ages.
+- **Range:** 0.0 to 0.5 (typical: 0.1 to 0.2)
 - **Example:**
   ```toml
-  [memory.decay_journal]
-  decay_rate = 0.90  # 7-day half-life
+  [memory.recency_journal]
+  max_boost_amount = 0.2  # Add up to 0.2 to base score
   ```
 
-#### `floor_multiplier`
+#### `boost_decay_rate`
 
 - **Type:** float
 - **Default:** Type-dependent (see table below)
-- **Description:** Minimum score multiplier. Prevents scores from decaying to zero, ensuring old memories remain discoverable.
-- **Range:** 0.05 to 0.3 (typical: 0.1 to 0.2)
+- **Description:** Exponential decay rate for boost amount. Higher values = slower decay of boost.
+- **Range:** 0.85 to 0.99 (typical: 0.90 to 0.98)
+- **Formula:** Bonus is `(boost_decay_rate^age_days) × max_boost_amount`
 - **Example:**
   ```toml
-  [memory.decay_journal]
-  floor_multiplier = 0.1  # Never decay below 10% of original
+  [memory.recency_journal]
+  boost_decay_rate = 0.95  # Boost decays by 5% per day
   ```
 
-**Default Decay Configurations:**
+**Default Recency Boost Configurations:**
 
-| Memory Type | Decay Rate | Half-Life | Floor | Section |
-|------------|------------|-----------|-------|----------|
-| `journal` | 0.90 | 7 days | 0.1 | `[memory.decay_journal]` |
-| `plan` | 0.85 | 4.5 days | 0.1 | `[memory.decay_plan]` |
-| `fact` | 0.98 | 35 days | 0.2 | `[memory.decay_fact]` |
-| `observation` | 0.92 | 8.3 days | 0.15 | `[memory.decay_observation]` |
-| `reflection` | 0.95 | 14 days | 0.2 | `[memory.decay_reflection]` |
+| Memory Type | Window | Max Boost | Decay Rate | Section |
+|------------|--------|-----------|------------|----------|
+| `journal` | 14 days | 0.2 | 0.95 | `[memory.recency_journal]` |
+| `plan` | 21 days | 0.15 | 0.93 | `[memory.recency_plan]` |
+| `fact` | 7 days | 0.1 | 0.98 | `[memory.recency_fact]` |
+| `observation` | 14 days | 0.2 | 0.92 | `[memory.recency_observation]` |
+| `reflection` | 30 days | 0.15 | 0.98 | `[memory.recency_reflection]` |
 
 **Example configuration:**
 
@@ -1306,20 +1318,22 @@ Per-memory-type exponential decay configuration. Memory search applies exponenti
 [memory]
 enabled = true
 storage_strategy = "project"
-score_threshold = 0.2  # Filter results below 20% confidence
+score_threshold = 0.1  # Filter results below 10% confidence
 
-# Fast decay for ephemeral journals
-[memory.decay_journal]
-decay_rate = 0.85  # 4.5-day half-life (faster than default)
-floor_multiplier = 0.05  # Lower floor for aggressive filtering
+# Aggressive boost for ephemeral journals
+[memory.recency_journal]
+boost_window_days = 7  # Shorter window
+max_boost_amount = 0.3  # Higher boost
+boost_decay_rate = 0.90  # Faster decay
 
-# Slow decay for evergreen facts
-[memory.decay_fact]
-decay_rate = 0.99  # 70-day half-life (slower than default)
-floor_multiplier = 0.3  # Higher floor for long-term preservation
+# Minimal boost for evergreen facts
+[memory.recency_fact]
+boost_window_days = 30  # Longer window
+max_boost_amount = 0.05  # Small boost
+boost_decay_rate = 0.99  # Very slow decay
 ```
 
-**Deprecated fields:** `recency_boost_days` and `recency_boost_factor` are deprecated and ignored if present. Use per-type decay configs instead. Deprecation warnings logged at startup.
+**Deprecated fields:** `recency_boost_days` and `recency_boost_factor` are deprecated and ignored if present. Use per-type recency configs instead. Deprecation warnings logged at startup.
 
 ## Complete Example Configuration
 

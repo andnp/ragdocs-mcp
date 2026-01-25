@@ -40,7 +40,10 @@ class ReadOnlyContext:
         if embedding_model_name == "local":
             embedding_model_name = "BAAI/bge-small-en-v1.5"
 
-        vector = VectorIndex(embedding_model_name=embedding_model_name)
+        vector = VectorIndex(
+            embedding_model_name=embedding_model_name,
+            embedding_workers=config.indexing.embedding_workers,
+        )
         keyword = KeywordIndex()
         graph = GraphStore()
 
@@ -68,7 +71,10 @@ class ReadOnlyContext:
 
             memory_path = resolve_memory_path(config)
 
-            memory_vector = VectorIndex(embedding_model_name=embedding_model_name)
+            memory_vector = VectorIndex(
+                embedding_model_name=embedding_model_name,
+                embedding_workers=config.indexing.embedding_workers,
+            )
             memory_keyword = KeywordIndex()
             memory_graph = GraphStore()
 

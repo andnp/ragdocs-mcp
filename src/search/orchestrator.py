@@ -12,6 +12,7 @@ from src.indexing.manager import IndexManager
 from src.models import ChunkResult, CompressionStats, SearchStrategyStats
 from src.search.base_orchestrator import BaseSearchOrchestrator
 from src.search.classifier import classify_query, get_adaptive_weights
+from src.search.path_utils import extract_doc_id_from_chunk_id
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
 from src.search.score_pipeline import ScorePipeline, ScorePipelineConfig
 from src.search.tag_expansion import expand_query_with_tags
@@ -310,7 +311,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 missing_chunk_ids.append(chunk_id)
                 chunk_results.append(ChunkResult(
                     chunk_id=chunk_id,
-                    doc_id=chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else "",
+                    doc_id=extract_doc_id_from_chunk_id(chunk_id),
                     score=score,
                     header_path="",
                     file_path="",
@@ -462,14 +463,9 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         return modified_times
 
-    def _extract_doc_id_from_chunk_id(self, chunk_id: str):
-        if "_chunk_" in chunk_id:
-            return chunk_id.split("_chunk_", 1)[0]
-        return chunk_id
-
     def _queue_reindex_for_chunks(self, chunk_ids: list[str], reason: str):
         doc_ids = {
-            self._extract_doc_id_from_chunk_id(chunk_id)
+            extract_doc_id_from_chunk_id(chunk_id)
             for chunk_id in chunk_ids
             if chunk_id
         }
@@ -667,7 +663,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 missing_chunk_ids.append(chunk_id)
                 chunk_results.append(ChunkResult(
                     chunk_id=chunk_id,
-                    doc_id=chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else "",
+                    doc_id=extract_doc_id_from_chunk_id(chunk_id),
                     score=score,
                     header_path="",
                     file_path="",

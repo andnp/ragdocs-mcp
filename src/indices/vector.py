@@ -3,6 +3,7 @@ import logging
 import re
 import threading
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
@@ -38,11 +39,12 @@ class EmbeddingModel(Protocol):
 
 
 class VectorIndex:
-    def __init__(self, embedding_model_name: str = "BAAI/bge-small-en-v1.5", embedding_model: EmbeddingModel | None = None):
+    def __init__(self, embedding_model_name: str = "BAAI/bge-small-en-v1.5", embedding_model: EmbeddingModel | None = None, embedding_workers: int = 4):
         self._embedding_model_name = embedding_model_name
         self._embedding_model: EmbeddingModel | None = embedding_model
         self._model_lock = threading.Lock()
         self._model_loaded = embedding_model is not None
+        self._embedding_workers = max(1, embedding_workers)
 
         # Circuit breaker for embedding model failure protection
         self._embedding_circuit_breaker = CircuitBreaker(
@@ -202,6 +204,78 @@ class VectorIndex:
         # Register terms for incremental vocabulary update
         self.register_document_terms(embedding_text)
 
+    def add_chunks(self, chunks: list[Chunk]) -> None:
+        if not chunks:
+            return
+
+        if self._embedding_workers <= 1:
+            for chunk in chunks:
+                self.add_chunk(chunk)
+            return
+
+        self._add_chunks_parallel(chunks)
+
+    def _add_chunks_parallel(self, chunks: list[Chunk]) -> None:
+        from llama_index.core import Document as LlamaDocument
+
+        self._ensure_model_loaded()
+        if self._index is None:
+            self._initialize_index()
+
+        assert self._index is not None
+
+        def create_llama_doc(chunk: Chunk) -> LlamaDocument:
+            embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
+            return LlamaDocument(
+                text=embedding_text,
+                metadata={
+                    "chunk_id": chunk.chunk_id,
+                    "doc_id": chunk.doc_id,
+                    "chunk_index": chunk.chunk_index,
+                    "header_path": chunk.header_path,
+                    "file_path": chunk.file_path,
+                    "tags": chunk.metadata.get("tags", []),
+                    "links": chunk.metadata.get("links", []),
+                    "parent_chunk_id": chunk.parent_chunk_id,
+                    **chunk.metadata,
+                },
+                id_=chunk.chunk_id,
+            )
+
+        with ThreadPoolExecutor(max_workers=self._embedding_workers) as executor:
+            future_to_chunk = {
+                executor.submit(create_llama_doc, chunk): chunk
+                for chunk in chunks
+            }
+
+            llama_docs = []
+            for future in as_completed(future_to_chunk):
+                chunk = future_to_chunk[future]
+                try:
+                    llama_doc = future.result()
+                    llama_docs.append((llama_doc, chunk))
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create document for chunk {chunk.chunk_id}: {e}",
+                        exc_info=True,
+                    )
+
+        with self._index_lock:
+            for llama_doc, chunk in llama_docs:
+                node_id = llama_doc.id_
+                self._tombstoned_docs.discard(chunk.doc_id)
+                self._chunk_id_to_node_id[chunk.chunk_id] = node_id
+
+                if chunk.doc_id not in self._doc_id_to_node_ids:
+                    self._doc_id_to_node_ids[chunk.doc_id] = []
+                self._doc_id_to_node_ids[chunk.doc_id].append(node_id)
+
+            self._index.insert_nodes([doc for doc, _ in llama_docs])
+
+        for _, chunk in llama_docs:
+            embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
+            self.register_document_terms(embedding_text)
+
     def remove(self, document_id: str) -> None:
         if self._index is None:
             return
@@ -211,6 +285,126 @@ class VectorIndex:
             if document_id not in self._doc_id_to_node_ids:
                 return
             del self._doc_id_to_node_ids[document_id]
+
+    def remove_chunk(self, chunk_id: str) -> None:
+        """Remove a specific chunk from the vector index.
+
+        Thread-safe operation that removes chunk from mappings.
+        Handles missing chunks gracefully (logs warning, doesn't raise).
+
+        Note: Due to FAISS limitations, the actual vectors remain in the index,
+        but the chunk becomes inaccessible through search by removing its mapping.
+        """
+        if self._index is None:
+            logger.warning(f"Cannot remove chunk {chunk_id}: index not initialized")
+            return
+
+        with self._index_lock:
+            try:
+                # FAISS doesn't support deletion, so we only remove mappings
+                # The vectors remain in the index but become inaccessible
+                # This is consistent with the existing prune_document() behavior
+
+                # Remove from chunk_id mapping
+                self._chunk_id_to_node_id.pop(chunk_id, None)
+
+                # Remove from doc_id mapping
+                for doc_id, node_ids in list(self._doc_id_to_node_ids.items()):
+                    if chunk_id in node_ids:
+                        node_ids.remove(chunk_id)
+                        if not node_ids:
+                            del self._doc_id_to_node_ids[doc_id]
+                        break
+
+                logger.debug(f"Removed chunk {chunk_id} from vector index mappings")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to remove chunk {chunk_id} from vector index: {e}",
+                    exc_info=True,
+                )
+
+    def update_chunk_path(self, old_chunk_id: str, new_chunk_id: str, new_metadata: dict) -> bool:
+        """Update chunk by re-adding with new path (avoids parse/chunking overhead).
+
+        Note: Due to FAISS limitations, this re-computes the embedding but reuses the content.
+        The main speedup comes from avoiding file parsing and chunking, not embedding reuse.
+
+        Returns:
+            True if update successful, False otherwise
+        """
+        if self._index is None:
+            logger.warning("Cannot update chunk path: index not initialized")
+            return False
+
+        with self._index_lock:
+            try:
+                from llama_index.core import Document as LlamaDocument
+
+                # Get old node content
+                docstore = self._index.docstore
+                old_node = docstore.get_document(old_chunk_id)
+                if old_node is None:
+                    logger.debug(f"Node {old_chunk_id} not found in docstore")
+                    return False
+
+                # Extract content
+                text_content = old_node.get_content() if hasattr(old_node, "get_content") else getattr(old_node, "text", "")
+                if not text_content:
+                    logger.warning(f"No content for {old_chunk_id}")
+                    return False
+
+                # Create new node with same content but new metadata
+                # Let LlamaIndex handle embedding (still faster than full parse/chunk)
+                new_node = LlamaDocument(
+                    text=text_content,
+                    metadata=new_metadata,
+                    id_=new_chunk_id,
+                )
+
+                # Add new node (will compute embedding)
+                self._index.insert_nodes([new_node])
+
+                # Update internal mappings
+                new_node_id = new_node.id_
+                self._chunk_id_to_node_id[new_chunk_id] = new_node_id
+
+                # Update doc_id -> node_ids mapping
+                old_doc_id = old_chunk_id.split("_chunk_")[0] if "_chunk_" in old_chunk_id else old_chunk_id.split("#")[0]
+                new_doc_id = new_metadata.get("doc_id", new_chunk_id.split("_chunk_")[0] if "_chunk_" in new_chunk_id else new_chunk_id.split("#")[0])
+
+                if old_doc_id in self._doc_id_to_node_ids:
+                    if old_doc_id != new_doc_id:
+                        old_node_id = self._chunk_id_to_node_id.get(old_chunk_id)
+                        if old_node_id:
+                            try:
+                                self._doc_id_to_node_ids[old_doc_id].remove(old_node_id)
+                                if not self._doc_id_to_node_ids[old_doc_id]:
+                                    del self._doc_id_to_node_ids[old_doc_id]
+                            except ValueError:
+                                pass
+
+                if new_doc_id not in self._doc_id_to_node_ids:
+                    self._doc_id_to_node_ids[new_doc_id] = []
+                if new_node_id not in self._doc_id_to_node_ids[new_doc_id]:
+                    self._doc_id_to_node_ids[new_doc_id].append(new_node_id)
+
+                # Remove old chunk mappings and docstore entry
+                try:
+                    docstore.delete_document(old_chunk_id)
+                except Exception as e:
+                    logger.debug(f"Could not delete old docstore entry {old_chunk_id}: {e}")
+
+                self._chunk_id_to_node_id.pop(old_chunk_id, None)
+
+                logger.debug(f"Moved chunk (re-embedded): {old_chunk_id} -> {new_chunk_id}")
+                return True
+
+            except Exception as e:
+                logger.warning(
+                    f"Failed to update chunk path {old_chunk_id} -> {new_chunk_id}: {e}",
+                    exc_info=True,
+                )
+                return False
 
     def prune_document(self, doc_id: str):
         if self._index is None:

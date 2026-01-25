@@ -6,13 +6,12 @@ import numpy as np
 import pytest
 
 from src.search.dedup import (
-    cosine_similarity,
     deduplicate_by_content_hash,
     deduplicate_by_ngram,
     deduplicate_by_similarity,
     get_ngrams,
-    jaccard_similarity,
 )
+from src.utils.similarity import cosine_similarity
 
 
 class TestGetNgrams:
@@ -52,38 +51,6 @@ class TestGetNgrams:
         """Works with different n values."""
         ngrams = get_ngrams("hello", n=2)
         assert ngrams == {"he", "el", "ll", "lo"}
-
-
-class TestJaccardSimilarity:
-    """Tests for jaccard_similarity function."""
-
-    def test_identical_texts_returns_one(self):
-        """Identical texts have similarity 1.0."""
-        sim = jaccard_similarity("hello world", "hello world")
-        assert sim == pytest.approx(1.0)
-
-    def test_completely_different_returns_zero(self):
-        """Completely different texts have similarity 0.0."""
-        sim = jaccard_similarity("aaa", "bbb", n=3)
-        assert sim == pytest.approx(0.0)
-
-    def test_partial_overlap(self):
-        """Texts with partial overlap have intermediate similarity."""
-        sim = jaccard_similarity("hello", "hella", n=3)
-        # "hel", "ell" overlap; "llo" vs "lla" differ
-        # hello: {hel, ell, llo}, hella: {hel, ell, lla}
-        # intersection = 2, union = 4
-        assert sim == pytest.approx(0.5)
-
-    def test_empty_text_returns_zero(self):
-        """Empty text returns similarity 0.0."""
-        sim = jaccard_similarity("", "hello")
-        assert sim == pytest.approx(0.0)
-
-    def test_both_empty_returns_zero(self):
-        """Both empty texts return 0.0."""
-        sim = jaccard_similarity("", "")
-        assert sim == pytest.approx(0.0)
 
 
 class TestDeduplicateByNgram:
