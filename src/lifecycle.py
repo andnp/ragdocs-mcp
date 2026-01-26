@@ -303,16 +303,35 @@ class LifecycleCoordinator:
     async def wait_ready(self, timeout: float = 60.0) -> None:
         if self._state == LifecycleState.READY:
             return
-        if self._state not in (LifecycleState.INITIALIZING, LifecycleState.DEGRADED):
+
+        allowed_states = (
+            LifecycleState.STARTING,
+            LifecycleState.INITIALIZING,
+            LifecycleState.DEGRADED,
+        )
+        if self._state not in allowed_states:
             raise RuntimeError(f"Cannot wait for ready from state {self._state}")
 
+        start = time.monotonic()
+
+        # Wait for STARTING to transition to INITIALIZING/READY first
+        while self._state == LifecycleState.STARTING:
+            if time.monotonic() - start > timeout:
+                raise RuntimeError(f"Wait for ready timed out after {timeout}s (stuck in STARTING)")
+            await asyncio.sleep(0.1)
+
+        if self._state == LifecycleState.READY:
+            return
+
         if self._ctx is not None:
-            await self._ctx.ensure_ready(timeout=timeout)
+            remaining = timeout - (time.monotonic() - start)
+            if remaining <= 0:
+                raise RuntimeError(f"Wait for ready timed out after {timeout}s")
+            await self._ctx.ensure_ready(timeout=remaining)
             self._state = LifecycleState.READY
             logger.info("Lifecycle: READY (initialization complete)")
             return
 
-        start = time.monotonic()
         while time.monotonic() - start < timeout:
             if self._state == LifecycleState.READY:
                 return
