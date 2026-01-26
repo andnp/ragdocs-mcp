@@ -832,7 +832,7 @@ class TestMemoryToolsOrderedDictRegression:
     ):
         """
         Test that create_memory works correctly after persisting and loading indices.
-        
+
         This was the original bug: After loading indices from disk, _term_counts was a
         plain dict instead of OrderedDict, causing AttributeError when add_chunk called
         register_document_terms which called _term_counts.move_to_end().
@@ -920,7 +920,7 @@ class TestMemoryToolsOrderedDictRegression:
             tags=["python", "fastapi"],
             memory_type="journal",
         )
-        
+
         # Should succeed without AttributeError
         assert result2["status"] == "created", \
             f"create_memory should succeed after load, got: {result2}"

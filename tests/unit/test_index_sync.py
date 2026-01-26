@@ -188,12 +188,12 @@ class TestPublisherReceiverIntegration:
         This tests the full publish -> check -> reload cycle.
         """
         publisher = IndexSyncPublisher(snapshot_base)
-        
+
         loaded_content: list[str] = []
-        
+
         def read_content(path: Path, version: int) -> None:
             loaded_content.append((path / "data.txt").read_text())
-        
+
         receiver = IndexSyncReceiver(snapshot_base, reload_callback=read_content)
 
         # Initial state: no updates

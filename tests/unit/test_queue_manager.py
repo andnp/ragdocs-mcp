@@ -33,7 +33,7 @@ class TestQueueManagerPut:
         """Verify messages are put into the underlying queue."""
         cmd = ShutdownCommand()
         await queue_manager.put(cmd)
-        
+
         # Verify message arrived in underlying queue
         result = mp_queue.get(timeout=1.0)
         assert isinstance(result, ShutdownCommand)
@@ -44,10 +44,10 @@ class TestQueueManagerPut:
         """Verify multiple messages maintain order."""
         await queue_manager.put(ShutdownCommand(graceful=True))
         await queue_manager.put(ShutdownCommand(graceful=False))
-        
+
         msg1 = mp_queue.get(timeout=1.0)
         msg2 = mp_queue.get(timeout=1.0)
-        
+
         assert msg1.graceful is True
         assert msg2.graceful is False
 
@@ -60,7 +60,7 @@ class TestQueueManagerGet:
         """Verify messages can be retrieved asynchronously."""
         cmd = HealthCheckCommand()
         mp_queue.put(cmd)
-        
+
         result = await queue_manager.get(timeout=1.0)
         assert isinstance(result, HealthCheckCommand)
 
@@ -78,7 +78,7 @@ class TestQueueManagerPutNowait:
         """Verify put_nowait returns True on success."""
         result = queue_manager.put_nowait(ShutdownCommand())
         assert result is True
-        
+
         # Verify message was queued
         msg = mp_queue.get(timeout=1.0)
         assert isinstance(msg, ShutdownCommand)
@@ -117,9 +117,9 @@ class TestQueueManagerDrain:
         mp_queue.put(HealthCheckCommand())
         mp_queue.put(ShutdownCommand(graceful=False))
         time.sleep(0.01)  # Allow messages to propagate
-        
+
         result = queue_manager.drain()
-        
+
         assert len(result) == 3
         assert isinstance(result[0], ShutdownCommand)
         assert isinstance(result[1], HealthCheckCommand)
@@ -132,9 +132,9 @@ class TestQueueManagerDrain:
         mp_queue.put(ShutdownCommand())
         mp_queue.put(HealthCheckCommand())
         time.sleep(0.01)  # Allow messages to propagate
-        
+
         queue_manager.drain()
-        
+
         # Queue should now be empty
         result = queue_manager.get_nowait()
         assert result is None
@@ -147,7 +147,7 @@ class TestQueueManagerConcurrency:
     async def test_concurrent_put_get(self, queue_manager: QueueManager):
         """
         Verify concurrent put and get operations don't deadlock.
-        
+
         This test ensures the async wrapper handles concurrent access
         without issues.
         """
@@ -155,7 +155,7 @@ class TestQueueManagerConcurrency:
             for i in range(10):
                 await queue_manager.put(ShutdownCommand(timeout=float(i)))
                 await asyncio.sleep(0.01)
-        
+
         async def consumer():
             received = []
             for _ in range(10):
@@ -164,12 +164,12 @@ class TestQueueManagerConcurrency:
                     received.append(msg)
                 await asyncio.sleep(0.005)
             return received
-        
+
         producer_task = asyncio.create_task(producer())
         consumer_task = asyncio.create_task(consumer())
-        
+
         await producer_task
         received = await consumer_task
-        
+
         # Should receive all 10 messages
         assert len(received) == 10

@@ -19,14 +19,14 @@ class TestReadOnlyContextCreation:
     async def test_create_with_no_snapshot(self, tmp_path: Path):
         """
         Verify create() works with empty snapshot directory.
-        
+
         When no snapshot exists, indices start empty.
         """
         from src.reader.context import ReadOnlyContext
 
         snapshot_base = tmp_path / "snapshots"
         snapshot_base.mkdir()
-        
+
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
 
@@ -43,7 +43,7 @@ class TestReadOnlyContextCreation:
             config=config,
             snapshot_base=snapshot_base,
         )
-        
+
         # Should create successfully with empty indices
         assert ctx.config == config
         assert ctx.vector is not None
@@ -60,15 +60,15 @@ class TestReadOnlyContextCreation:
 
         snapshot_base = tmp_path / "snapshots"
         snapshot_base.mkdir()
-        
+
         # Create version file pointing to v1
         version_file = snapshot_base / "version"
         version_file.write_bytes(struct.pack("<I", 1))
-        
+
         # Create minimal snapshot directory
         snapshot_dir = snapshot_base / "v1"
         snapshot_dir.mkdir()
-        
+
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
 
@@ -85,7 +85,7 @@ class TestReadOnlyContextCreation:
             config=config,
             snapshot_base=snapshot_base,
         )
-        
+
         assert ctx is not None
         assert ctx.sync_receiver is not None
 
@@ -100,7 +100,7 @@ class TestReadOnlyContextIsReady:
 
         snapshot_base = tmp_path / "snapshots"
         snapshot_base.mkdir()
-        
+
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
 
@@ -117,7 +117,7 @@ class TestReadOnlyContextIsReady:
             config=config,
             snapshot_base=snapshot_base,
         )
-        
+
         # Verify context was created with all components
         assert ctx.orchestrator is not None
         assert ctx.vector is not None
@@ -135,7 +135,7 @@ class TestReadOnlyContextAttributes:
 
         snapshot_base = tmp_path / "snapshots"
         snapshot_base.mkdir()
-        
+
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
 
@@ -170,7 +170,7 @@ class TestReadOnlyContextAttributes:
 
         snapshot_base = tmp_path / "snapshots"
         snapshot_base.mkdir()
-        
+
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
 
