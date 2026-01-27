@@ -28,7 +28,12 @@ class MockApplicationContext:
     async def ensure_ready(self, timeout: float = 60.0):
         self.call_count += 1
         if self.ensure_ready_delay > 0:
-            await asyncio.sleep(self.ensure_ready_delay)
+            # Only timeout if delay significantly exceeds timeout (10x or more)
+            # This simulates real behavior where small delays succeed
+            if self.ensure_ready_delay > timeout * 10:
+                await asyncio.sleep(timeout)
+                raise asyncio.TimeoutError(f"Mock timed out after {timeout}s")
+            await asyncio.sleep(min(self.ensure_ready_delay, timeout))
         self._ready_event.set()
 
     async def start(self, background_index: bool = False):

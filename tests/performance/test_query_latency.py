@@ -129,7 +129,7 @@ async def test_query_latency_cold_start(config, orchestrator, indexed_corpus):
     query = "machine learning algorithms and neural networks"
 
     start_time = time.perf_counter()
-    results, compression_stats = await orchestrator.query(query, top_k=10, top_n=10)
+    results, compression_stats, _ = await orchestrator.query(query, top_k=10, top_n=10)
     end_time = time.perf_counter()
 
     latency = (end_time - start_time) * 1000  # Convert to milliseconds
@@ -287,8 +287,8 @@ async def test_query_latency_concurrent_queries(config, orchestrator, indexed_co
     total_time = (end_time - start_time) * 1000
     avg_time_per_query = total_time / len(queries)
 
-    # Verify all queries completed (results_list contains tuples of (results, stats))
-    for i, (results, _) in enumerate(results_list):
+    # Verify all queries completed (results_list contains tuples of (results, stats, strategy_stats))
+    for i, (results, _, _) in enumerate(results_list):
         assert len(results) > 0, f"Expected results for query {i}: '{queries[i]}'"
         assert len(results) <= 10, f"Expected at most 10 results for query {i}"
 

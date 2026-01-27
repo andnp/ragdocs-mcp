@@ -42,20 +42,11 @@ def test_all_src_modules_importable(src_modules):
         pytest.fail(f"Failed to import {len(failed_imports)} modules:\n{error_msg}")
 
 
-def test_git_watcher_imports():
-    try:
-        pass
-    except NameError as e:
-        pytest.fail(f"NameError in git.watcher: {e}")
-    except AttributeError as e:
-        pytest.fail(f"AttributeError in git.watcher: {e}")
-
-
 def test_critical_modules_import_without_error():
     critical_modules = [
         "src.config",
         "src.context",
-        "src.mcp_server",
+        "src.mcp.server",
         "src.server",
         "src.git.watcher",
         "src.git.commit_indexer",
