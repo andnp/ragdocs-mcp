@@ -214,13 +214,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         if code_search_enabled and code_results:
             results_dict["code"] = [r["chunk_id"] for r in code_results]
 
-        # Collect file modified times using asyncio.to_thread to avoid blocking event loop
-        # NOTE: modified_times collected for future recency boosting but not currently used
-        _modified_times = await asyncio.to_thread(
-            self._collect_modified_times,
-            all_doc_ids | set(graph_neighbors)
-        )
-
         base_semantic = self._config.search.semantic_weight
         base_keyword = self._config.search.keyword_weight
         base_graph = 1.0
@@ -443,22 +436,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             boosted.append((chunk_id, min(1.0, score * boost)))
 
         return sorted(boosted, key=lambda x: x[1], reverse=True)
-
-    def _collect_modified_times(self, doc_ids: set[str]):
-        modified_times = {}
-        docs_path = self._documents_path
-
-        for doc_id in doc_ids:
-            # doc_id is now relative path without extension (e.g., "dir/subdir/filename")
-            md_file = docs_path / f"{doc_id}.md"
-            if md_file.exists():
-                modified_times[doc_id] = md_file.stat().st_mtime
-            else:
-                markdown_file = docs_path / f"{doc_id}.markdown"
-                if markdown_file.exists():
-                    modified_times[doc_id] = markdown_file.stat().st_mtime
-
-        return modified_times
 
     def _queue_reindex_for_chunks(self, chunk_ids: list[str], reason: str):
         doc_ids = {
