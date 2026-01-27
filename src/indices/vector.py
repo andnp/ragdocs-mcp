@@ -10,6 +10,7 @@ from typing import Any, Final, Protocol, cast
 import numpy as np
 
 from src.models import Chunk, Document
+from src.search.types import SearchResultDict
 from src.utils.atomic_io import atomic_write_json, fsync_path
 from src.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from src.utils.similarity import cosine_similarity
@@ -423,7 +424,7 @@ class VectorIndex:
                     docstore.delete(chunk_id)  # type: ignore[attr-defined]
                     removed += 1
             except Exception:
-                pass
+                logger.debug("Docstore delete failed during prune, continuing", exc_info=True)
 
             try:
                 if hasattr(self._index, "index_store"):
@@ -431,13 +432,13 @@ class VectorIndex:
                     if hasattr(index_store, "delete"):
                         index_store.delete(chunk_id)
             except Exception:
-                pass
+                logger.debug("Index store delete failed during prune, continuing", exc_info=True)
 
             try:
                 if self._vector_store is not None and hasattr(self._vector_store, "delete"):
                     self._vector_store.delete(chunk_id)
             except Exception:
-                pass
+                logger.debug("Vector store delete failed during prune, continuing", exc_info=True)
 
             self._chunk_id_to_node_id.pop(chunk_id, None)
 
@@ -445,12 +446,12 @@ class VectorIndex:
             if hasattr(self._index, "delete_ref_doc"):
                 self._index.delete_ref_doc(doc_id, delete_from_docstore=True)
         except Exception:
-            pass
+            logger.debug("delete_ref_doc failed during prune, continuing", exc_info=True)
 
         self._doc_id_to_node_ids.pop(doc_id, None)
         return removed
 
-    def search(self, query: str, top_k: int = 10, excluded_files: set[str] | None = None, docs_root: Path | None = None) -> list[dict]:
+    def search(self, query: str, top_k: int = 10, excluded_files: set[str] | None = None, docs_root: Path | None = None) -> list[SearchResultDict]:
         if self._index is None or not query.strip():
             return []
 
@@ -598,6 +599,7 @@ class VectorIndex:
                     if len(token) >= min_term_length and token not in STOPWORDS:
                         term_counts[token] = term_counts.get(token, 0) + 1
             except Exception:
+                logger.debug("Failed to extract terms from chunk %s, continuing", chunk_id, exc_info=True)
                 continue
 
         # Store term counts for future incremental updates (convert to OrderedDict)
@@ -731,6 +733,7 @@ class VectorIndex:
                 self._pending_terms.discard(term)
                 embedded_count += 1
             except Exception:
+                logger.debug("Failed to embed term '%s', continuing", term, exc_info=True)
                 self._pending_terms.discard(term)
                 continue
 

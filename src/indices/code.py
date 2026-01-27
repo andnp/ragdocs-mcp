@@ -14,6 +14,7 @@ from whoosh.qparser import MultifieldParser
 from whoosh.scoring import BM25F
 
 from src.models import CodeBlock
+from src.search.types import CodeSearchResultDict
 
 
 _temp_dirs: set[Path] = set()
@@ -110,7 +111,8 @@ class CodeIndex:
                     language=code_block.language,
                 )
                 writer.commit()
-            except Exception:
+            except Exception as e:
+                logger.warning("Writer operation failed in add_code_block(), cancelling: %s", e, exc_info=True)
                 writer.cancel()
                 raise
 
@@ -124,7 +126,8 @@ class CodeIndex:
                 try:
                     writer.delete_by_term("doc_id", doc_id)
                     writer.commit()
-                except Exception:
+                except Exception as e:
+                    logger.warning("Writer operation failed in remove_by_doc_id(), cancelling: %s", e, exc_info=True)
                     writer.cancel()
                     raise
             except (FileNotFoundError, OSError) as e:
@@ -135,7 +138,7 @@ class CodeIndex:
                 )
                 self._reinitialize_after_corruption()
 
-    def search(self, query: str, top_k: int = 10) -> list[dict[str, Any]]:
+    def search(self, query: str, top_k: int = 10) -> list[CodeSearchResultDict]:
         with self._lock:
             if self._index is None or not query.strip():
                 return []

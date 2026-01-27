@@ -14,6 +14,7 @@ from whoosh.qparser import MultifieldParser
 from whoosh.scoring import BM25F
 
 from src.models import Chunk, Document
+from src.search.types import SearchResultDict
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +271,8 @@ class KeywordIndex:
                     category=category,
                 )
                 writer.commit()
-            except Exception:
+            except Exception as e:
+                logger.warning("Writer operation failed in add(), cancelling: %s", e, exc_info=True)
                 writer.cancel()
                 raise
 
@@ -319,7 +321,8 @@ class KeywordIndex:
                     category=category,
                 )
                 writer.commit()
-            except Exception:
+            except Exception as e:
+                logger.warning("Writer operation failed in add_chunk(), cancelling: %s", e, exc_info=True)
                 writer.cancel()
                 raise
 
@@ -372,7 +375,8 @@ class KeywordIndex:
                         category=category,
                     )
                 writer.commit()
-            except Exception:
+            except Exception as e:
+                logger.warning("Writer operation failed in add_chunks(), cancelling: %s", e, exc_info=True)
                 writer.cancel()
                 raise
 
@@ -387,7 +391,8 @@ class KeywordIndex:
                     writer.delete_by_term("id", document_id)
                     writer.delete_by_term("doc_id", document_id)
                     writer.commit()
-                except Exception:
+                except Exception as e:
+                    logger.warning("Writer operation failed in remove(), cancelling: %s", e, exc_info=True)
                     writer.cancel()
                     raise
             except (FileNotFoundError, OSError) as e:
@@ -413,7 +418,8 @@ class KeywordIndex:
                     writer.delete_by_term("id", chunk_id)
                     writer.commit()
                     logger.debug(f"Removed chunk {chunk_id} from keyword index")
-                except Exception:
+                except Exception as e:
+                    logger.warning("Writer operation failed in remove_chunk(), cancelling: %s", e, exc_info=True)
                     writer.cancel()
                     raise
             except (FileNotFoundError, OSError) as e:
@@ -499,7 +505,8 @@ class KeywordIndex:
                         category=category,
                     )
                     writer.commit()
-                except Exception:
+                except Exception as e:
+                    logger.warning("Writer operation failed in move_chunk() (add), cancelling: %s", e, exc_info=True)
                     writer.cancel()
                     raise
 
@@ -510,7 +517,8 @@ class KeywordIndex:
                     writer.commit()
                     logger.debug(f"Moved chunk in keyword index: {old_chunk_id} -> {new_chunk.chunk_id}")
                     return True
-                except Exception:
+                except Exception as e:
+                    logger.warning("Writer operation failed in move_chunk() (delete), cancelling: %s", e, exc_info=True)
                     writer.cancel()
                     raise
 
@@ -535,7 +543,7 @@ class KeywordIndex:
         top_k: int = 10,
         excluded_files: set[str] | None = None,
         docs_root: Path | None = None,
-    ) -> list[dict]:
+    ) -> list[SearchResultDict]:
         with self._lock:
             if self._index is None or not query.strip():
                 return []
@@ -726,7 +734,8 @@ class KeywordIndex:
                     tags=tags_text,
                 )
                 writer.commit()
-            except Exception:
+            except Exception as e:
+                logger.warning("Writer operation failed in add_document(), cancelling: %s", e, exc_info=True)
                 writer.cancel()
                 raise
 
