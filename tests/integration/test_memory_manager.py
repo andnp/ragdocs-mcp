@@ -47,8 +47,6 @@ def memory_config(tmp_path: Path):
         memory=MemoryConfig(
             enabled=True,
             storage_strategy="project",
-            recency_boost_days=7,
-            recency_boost_factor=1.2,
         ),
         search=SearchConfig(),
         document_chunking=ChunkingConfig(),

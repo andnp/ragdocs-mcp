@@ -68,8 +68,6 @@ def memory_config(tmp_path: Path):
             enabled=True,
             storage_strategy="project",
             score_threshold=0.001,
-            recency_boost_days=7,
-            recency_boost_factor=1.2,
         ),
         search=SearchConfig(),
         document_chunking=ChunkingConfig(),
