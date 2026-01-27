@@ -5,10 +5,10 @@ import glob
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from src.config import Config, load_config, detect_project, resolve_index_path, resolve_documents_path, resolve_memory_path
 from src.coordination import SingletonGuard
+from src.git.commit_indexer import CommitIndexer
 from src.indexing.manager import IndexManager
 from src.indexing.manifest import IndexManifest, load_manifest, save_manifest, should_rebuild
 from src.indexing.reconciler import build_indexed_files_map
@@ -16,13 +16,10 @@ from src.indexing.watcher import FileWatcher
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
+from src.memory.manager import MemoryIndexManager
+from src.memory.search import MemorySearchOrchestrator
 from src.search.orchestrator import SearchOrchestrator
 from src.utils import should_include_file
-
-if TYPE_CHECKING:
-    from src.git.commit_indexer import CommitIndexer
-    from src.memory.manager import MemoryIndexManager
-    from src.memory.search import MemorySearchOrchestrator
 
 logger = logging.getLogger(__name__)
 

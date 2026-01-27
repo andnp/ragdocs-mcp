@@ -10,19 +10,17 @@ Works transparently for both document and memory search.
 """
 
 import logging
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from src.indices.graph import GraphStore
-    from src.indices.vector import VectorIndex
+from src.indices.graph import GraphStore
+from src.indices.vector import VectorIndex
 
 logger = logging.getLogger(__name__)
 
 
 def expand_query_with_tags(
     initial_results: list[dict],
-    graph: "GraphStore",
-    vector: "VectorIndex",
+    graph: GraphStore,
+    vector: VectorIndex,
     top_k: int = 20,
     max_related_tags: int = 3,
     max_depth: int = 2,
@@ -123,7 +121,7 @@ def expand_query_with_tags(
 
 def _find_related_tags(
     seed_tags: list[str],
-    graph: "GraphStore",
+    graph: GraphStore,
     max_tags: int,
     max_depth: int,
 ) -> list[str]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from mcp.types import Tool, TextContent
 
 from src.mcp.handlers import HandlerContext, tool_handler, MIN_TOP_N, MAX_TOP_N
+from src.mcp.tools import text_response
 from src.mcp.validation import (
     ValidationError,
     validate_query,
@@ -14,10 +15,6 @@ from src.mcp.validation import (
     validate_timestamp,
 )
 from src.memory import tools as memory_tools_impl
-
-
-def _text_response(text: str) -> list[TextContent]:
-    return [TextContent(type="text", text=text)]
 
 
 def get_memory_tools() -> list[Tool]:
@@ -185,7 +182,7 @@ async def handle_create_memory(
     result = await memory_tools_impl.create_memory(
         ctx, filename, content, tags, memory_type
     )
-    return _text_response(str(result))
+    return text_response(str(result))
 
 
 @tool_handler("append_memory")
@@ -198,7 +195,7 @@ async def handle_append_memory(
     content = arguments.get("content", "")
 
     result = await memory_tools_impl.append_memory(ctx, filename, content)
-    return _text_response(str(result))
+    return text_response(str(result))
 
 
 @tool_handler("read_memory")
@@ -211,8 +208,8 @@ async def handle_read_memory(
     result = await memory_tools_impl.read_memory(ctx, filename)
 
     if "error" in result:
-        return _text_response(str(result))
-    return _text_response(result.get("content", ""))
+        return text_response(str(result))
+    return text_response(result.get("content", ""))
 
 
 @tool_handler("update_memory")
@@ -225,7 +222,7 @@ async def handle_update_memory(
     content = arguments.get("content", "")
 
     result = await memory_tools_impl.update_memory(ctx, filename, content)
-    return _text_response(str(result))
+    return text_response(str(result))
 
 
 @tool_handler("delete_memory")
@@ -236,7 +233,7 @@ async def handle_delete_memory(
 
     filename = arguments.get("filename", "")
     result = await memory_tools_impl.delete_memory(ctx, filename)
-    return _text_response(str(result))
+    return text_response(str(result))
 
 
 @tool_handler("search_memories")
@@ -274,7 +271,7 @@ async def handle_search_memories(
                 )
 
     except ValidationError as e:
-        return _text_response(f"Validation error: {e}")
+        return text_response(f"Validation error: {e}")
 
     results = await memory_tools_impl.search_memories(
         ctx,
@@ -288,7 +285,7 @@ async def handle_search_memories(
     )
 
     if results and "error" in results[0]:
-        return _text_response(str(results[0]))
+        return text_response(str(results[0]))
 
     output_lines = ["# Memory Search Results", ""]
 
@@ -305,4 +302,4 @@ async def handle_search_memories(
             ]
         )
 
-    return _text_response("\n".join(output_lines))
+    return text_response("\n".join(output_lines))
