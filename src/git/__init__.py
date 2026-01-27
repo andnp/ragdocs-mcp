@@ -1,1 +1,6 @@
-"""Git history search module."""
+__all__ = [
+    "CommitIndexer",
+    "CommitResult",
+    "GitSearchResponse",
+    "search_git_history",
+]

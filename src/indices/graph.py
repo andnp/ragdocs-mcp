@@ -139,7 +139,7 @@ class GraphStore:
             logger.debug(f"Renamed node in graph: {old_id} -> {new_id}")
             return True
 
-    def get_neighbors(self, doc_id: str, depth: int = 1):
+    def get_neighbors(self, doc_id: str, depth: int = 1) -> list[str]:
         """Get neighbors up to specified depth using snapshot pattern.
 
         Takes a shallow copy of the graph under lock, then performs BFS

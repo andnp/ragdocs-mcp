@@ -31,7 +31,7 @@ class MarkdownParser(DocumentParser):
     def __init__(self):
         self.parser = Parser(Language(language()))
 
-    def parse(self, file_path: str):
+    def parse(self, file_path: str) -> Document:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 

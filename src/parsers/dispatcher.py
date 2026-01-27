@@ -1,11 +1,12 @@
 from pathlib import PurePosixPath
 
 from src.config import Config
+from src.parsers.base import DocumentParser
 from src.parsers.markdown import MarkdownParser
 from src.parsers.plaintext import PlainTextParser
 
 
-def dispatch_parser(file_path: str, config: Config):
+def dispatch_parser(file_path: str, config: Config) -> DocumentParser:
     path = PurePosixPath(file_path)
 
     for pattern in config.parsers.keys():
@@ -32,7 +33,7 @@ def dispatch_parser(file_path: str, config: Config):
     raise ValueError(f"No parser registered for file: {file_path}")
 
 
-def _instantiate_parser(parser_name: str, file_path: str):
+def _instantiate_parser(parser_name: str, file_path: str) -> DocumentParser:
     if parser_name == "MarkdownParser":
         return MarkdownParser()
     elif parser_name == "PlainTextParser":
