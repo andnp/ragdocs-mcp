@@ -235,6 +235,55 @@ def test_hash_store_unicode_chunk_ids(temp_hash_store):
     assert temp_hash_store.get_hash("文档#chunk-0") == "hash1"
     assert temp_hash_store.get_hash("документ#chunk-0") == "hash2"
 
+def test_hash_store_persist_skips_when_not_dirty(tmp_path):
+    """Test persist skips write when nothing has changed."""
+    storage_path = tmp_path / "chunk_hashes.json"
+    store = ChunkHashStore(storage_path)
+
+    # Add some data and persist
+    store.set_hash("chunk1", "hash1")
+    store.persist()
+    assert storage_path.exists()
+    initial_mtime = storage_path.stat().st_mtime
+
+    # Touch file with delay to ensure mtime would change
+    import time
+    time.sleep(0.01)
+
+    # Call persist again without changes - should skip
+    store.persist()
+
+    # mtime should be unchanged (no write occurred)
+    assert storage_path.stat().st_mtime == initial_mtime
+
+
+def test_hash_store_dirty_tracking_after_operations(tmp_path):
+    """Test dirty tracking across set, remove, and persist operations."""
+    storage_path = tmp_path / "chunk_hashes.json"
+    store = ChunkHashStore(storage_path)
+
+    # Initial persist with data - use proper chunk ID format (doc_id#chunk-N)
+    store.set_hash("doc1#chunk-0", "hash1")
+    store.set_hash("doc2#chunk-0", "hash2")
+    store.persist()
+
+    # After persist, dirty should be empty, so persist should be no-op
+    assert not store._dirty
+
+    # set_hash marks dirty
+    store.set_hash("doc3#chunk-0", "hash3")
+    assert "doc3#chunk-0" in store._dirty
+
+    # remove_document marks dirty
+    store.persist()
+    store.remove_document("doc1")
+    assert store._dirty  # Should have entries for removed chunks
+
+    # remove_chunk marks dirty
+    store.persist()
+    store.remove_chunk("doc2#chunk-0")
+    assert "doc2#chunk-0" in store._dirty
+
 
 def test_hash_store_persist_io_error_handling(tmp_path, monkeypatch):
     """Test persist handles I/O errors gracefully."""

@@ -10,12 +10,11 @@ logger = logging.getLogger(__name__)
 
 
 class ChunkHashStore:
-    """Store and retrieve chunk content hashes for delta detection."""
-
     def __init__(self, storage_path: Path):
         self._storage_path = storage_path
         self._hashes: dict[str, str] = {}  # chunk_id -> content_hash
         self._reverse_hashes: dict[str, list[str]] = {}  # content_hash -> [chunk_ids]
+        self._dirty: set[str] = set()
         self._load()
 
     def _load(self) -> None:
@@ -45,12 +44,15 @@ class ChunkHashStore:
             self._reverse_hashes[content_hash].append(chunk_id)
 
     def persist(self) -> None:
-        """Persist hashes to storage."""
+        if not self._dirty:
+            return
+
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with open(self._storage_path, "w") as f:
                 json.dump(self._hashes, f)
             logger.debug(f"Persisted {len(self._hashes)} chunk hashes")
+            self._dirty.clear()
         except OSError as e:
             logger.error(f"Failed to persist hash store: {e}", exc_info=True)
 
@@ -76,14 +78,9 @@ class ChunkHashStore:
             self._reverse_hashes[content_hash] = []
         if chunk_id not in self._reverse_hashes[content_hash]:
             self._reverse_hashes[content_hash].append(chunk_id)
+        self._dirty.add(chunk_id)
 
     def remove_document(self, doc_id: str) -> None:
-        """Remove all hashes for a document.
-
-        Handles both chunk ID formats:
-        - {doc_id}_chunk_{index} (HeaderBasedChunker format)
-        - {doc_id}#{separator}{index} (custom formats)
-        """
         to_remove = [
             cid
             for cid in self._hashes
@@ -101,9 +98,9 @@ class ChunkHashStore:
                     pass
             # Remove from forward lookup
             del self._hashes[cid]
+            self._dirty.add(cid)
 
     def remove_chunk(self, chunk_id: str) -> None:
-        """Remove hash for a specific chunk."""
         content_hash = self._hashes.get(chunk_id)
         if content_hash and content_hash in self._reverse_hashes:
             try:
@@ -113,6 +110,7 @@ class ChunkHashStore:
             except ValueError:
                 pass
         self._hashes.pop(chunk_id, None)
+        self._dirty.add(chunk_id)
 
     def has_changed(self, chunk: Chunk) -> bool:
         """Check if chunk content has changed since last index.
