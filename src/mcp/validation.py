@@ -254,35 +254,3 @@ def validate_timestamp(
         raise ValidationError(f"{param_name} must be a positive Unix timestamp, got {value}")
 
     return value
-
-
-def validate_optional_string(
-    arguments: dict,
-    param_name: str,
-    allow_empty: bool = False,
-) -> str | None:
-    """Validate and extract an optional string parameter.
-
-    Args:
-        arguments: MCP tool arguments dict
-        param_name: Name of the parameter
-        allow_empty: Whether empty strings are allowed (default: False)
-
-    Returns:
-        Validated string or None
-
-    Raises:
-        ValidationError: If value is provided but not a string, or is empty when not allowed
-    """
-    value = arguments.get(param_name)
-
-    if value is None:
-        return None
-
-    if not isinstance(value, str):
-        raise ValidationError(f"{param_name} must be a string, got {type(value).__name__}")
-
-    if not allow_empty and not value.strip():
-        raise ValidationError(f"{param_name} cannot be empty")
-
-    return value.strip() if not allow_empty else value

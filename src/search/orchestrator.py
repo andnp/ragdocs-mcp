@@ -386,17 +386,15 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         else:
             expanded_query = query_text
 
-        loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(
-            None, self._vector.search, expanded_query, top_k, excluded_files, docs_root
+        results = await asyncio.to_thread(
+            self._vector.search, expanded_query, top_k, excluded_files, docs_root
         )
         logger.info(f"Vector search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
         return results
 
     async def _search_keyword(self, query_text: str, top_k: int, excluded_files: set[str] | None, docs_root: Path):
-        loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(
-            None, self._keyword.search, query_text, top_k, excluded_files, docs_root
+        results = await asyncio.to_thread(
+            self._keyword.search, query_text, top_k, excluded_files, docs_root
         )
         logger.info(f"Keyword search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
         return results
@@ -405,9 +403,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         if self._code is None:
             return []
 
-        loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(
-            None, self._code.search, query_text, top_k
+        results = await asyncio.to_thread(
+            self._code.search, query_text, top_k
         )
         logger.info(f"Code search returned {len(results)} results")
         return results
@@ -532,43 +529,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             except TimeoutError as e:
                 logger.warning("Reindex persist skipped (lock busy): %s", e)
 
-    def get_documents(self, doc_ids: list[str]):
-        docs_path = self._documents_path
-        documents = []
-
-        for doc_id in doc_ids:
-            # doc_id is now relative path without extension
-            md_file = docs_path / f"{doc_id}.md"
-            if not md_file.exists():
-                md_file = docs_path / f"{doc_id}.markdown"
-
-            if md_file.exists():
-                try:
-                    from src.parsers.dispatcher import dispatch_parser
-                    parser = dispatch_parser(str(md_file), self._config)
-                    document = parser.parse(str(md_file))
-                    documents.append(document)
-                except Exception:
-                    pass
-
-        return documents
-
-    def _get_chunks(self, chunk_ids: list[str]) -> list[dict]:
-        chunks = []
-        logger.info(f"_get_chunks called with {len(chunk_ids)} chunk_ids: {chunk_ids[:3] if len(chunk_ids) > 3 else chunk_ids}")
-
-        for chunk_id in chunk_ids:
-            chunk_data = self._vector.get_chunk_by_id(chunk_id)
-            if chunk_data:
-                chunks.append(chunk_data)
-                logger.info(f"Successfully retrieved chunk {chunk_id}")
-            else:
-                logger.warning(f"Failed to retrieve chunk {chunk_id}")
-                self._queue_reindex_for_chunks([chunk_id], "docstore lookup failed during chunk fetch")
-
-        logger.info(f"_get_chunks returning {len(chunks)} chunks")
-        return chunks
-
     async def query_with_hypothesis(
         self,
         hypothesis: str,
@@ -594,9 +554,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         docs_root = self._documents_path
 
         from src.search.hyde import search_with_hypothesis
-        loop = asyncio.get_event_loop()
-        vector_results = await loop.run_in_executor(
-            None,
+        vector_results = await asyncio.to_thread(
             search_with_hypothesis,
             self._vector,
             hypothesis,

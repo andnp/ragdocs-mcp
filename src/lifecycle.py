@@ -13,19 +13,17 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from multiprocessing import Queue
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from src.context import ApplicationContext
+from src.git.watcher import GitWatcher
 from src.ipc.commands import (
     HealthCheckCommand,
     HealthStatusResponse,
     InitCompleteNotification,
     ShutdownCommand,
 )
-
-if TYPE_CHECKING:
-    from src.context import ApplicationContext
-    from src.git.watcher import GitWatcher
-    from src.reader.context import ReadOnlyContext
+from src.reader.context import ReadOnlyContext
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +59,6 @@ class LifecycleCoordinator:
     @property
     def state(self) -> LifecycleState:
         return self._state
-
-    def is_running(self) -> bool:
-        return self._state in (LifecycleState.INITIALIZING, LifecycleState.READY, LifecycleState.DEGRADED)
 
     async def start(self, ctx: ApplicationContext, *, background_index: bool = False) -> None:
         if self._state != LifecycleState.UNINITIALIZED:
