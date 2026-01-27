@@ -20,6 +20,7 @@ class GraphStore:
         self._lock = Lock()
         self._communities: dict[str, int] = {}
         self._community_detection_enabled = True
+        self._last_community_node_count = 0
 
     def add_node(self, doc_id: str, metadata: dict) -> None:
         with self._lock:
@@ -203,6 +204,16 @@ class GraphStore:
     def set_community_detection_enabled(self, enabled: bool) -> None:
         self._community_detection_enabled = enabled
 
+    def _should_recompute_communities(self) -> bool:
+        current_count = self._graph.number_of_nodes()
+        last_count = self._last_community_node_count
+
+        if last_count == 0:
+            return True
+
+        change_ratio = abs(current_count - last_count) / max(last_count, 1)
+        return change_ratio > 0.1
+
     def persist(self, path: Path) -> None:
         with self._lock:
             path.mkdir(parents=True, exist_ok=True)
@@ -213,9 +224,14 @@ class GraphStore:
             atomic_write_json(graph_file, graph_data)
 
             if self._community_detection_enabled and self._graph.number_of_nodes() > 0:
-                detector = get_community_detector("louvain")
-                self._communities = detector.detect(self._graph)
-                logger.info(f"Persisting {len(set(self._communities.values()))} communities")
+                if self._should_recompute_communities():
+                    detector = get_community_detector("louvain")
+                    self._communities = detector.detect(self._graph)
+                    self._last_community_node_count = self._graph.number_of_nodes()
+                    logger.info(
+                        "Recomputed communities: %d detected",
+                        len(set(self._communities.values()))
+                    )
 
             if self._communities:
                 communities_file = path / "communities.json"

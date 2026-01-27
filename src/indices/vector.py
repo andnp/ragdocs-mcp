@@ -887,64 +887,73 @@ class VectorIndex:
 
         self._index = cast(VectorStoreIndex, load_index_from_storage(storage_context))
 
-        mapping_file = path / "doc_id_mapping.json"
-        if mapping_file.exists():
+        def load_json_file(filepath: Path) -> dict | list | None:
+            if not filepath.exists():
+                return None
             try:
-                with open(mapping_file, "r") as f:
-                    self._doc_id_to_node_ids = json.load(f)
+                with open(filepath, "r") as f:
+                    return json.load(f)
             except json.JSONDecodeError as e:
-                logger.warning(f"Failed to load doc_id mapping (corrupted JSON): {e}")
-                logger.info("Rebuilding doc_id mapping from index")
-                self._doc_id_to_node_ids = {}
+                logger.warning(f"Failed to load {filepath.name} (corrupted JSON): {e}")
+                return None
+
+        def load_json_ordered(filepath: Path) -> OrderedDict | None:
+            if not filepath.exists():
+                return None
+            try:
+                with open(filepath, "r") as f:
+                    return json.load(f, object_pairs_hook=OrderedDict)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to load {filepath.name} (corrupted JSON): {e}")
+                return None
+
+        files_to_load = {
+            "doc_id_mapping": path / "doc_id_mapping.json",
+            "chunk_id_mapping": path / "chunk_id_mapping.json",
+            "tombstones": path / "tombstones.json",
+        }
+        ordered_files = {
+            "concept_vocabulary": path / "concept_vocabulary.json",
+            "term_counts": path / "term_counts.json",
+        }
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                name: executor.submit(load_json_file, fp)
+                for name, fp in files_to_load.items()
+            }
+            ordered_futures = {
+                name: executor.submit(load_json_ordered, fp)
+                for name, fp in ordered_files.items()
+            }
+            results = {name: future.result() for name, future in futures.items()}
+            ordered_results = {name: future.result() for name, future in ordered_futures.items()}
+
+        doc_mapping = results["doc_id_mapping"]
+        if isinstance(doc_mapping, dict):
+            self._doc_id_to_node_ids = doc_mapping
         else:
             self._doc_id_to_node_ids = {}
 
-        chunk_mapping_file = path / "chunk_id_mapping.json"
-        if chunk_mapping_file.exists():
-            try:
-                with open(chunk_mapping_file, "r") as f:
-                    self._chunk_id_to_node_id = json.load(f)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to load chunk_id mapping (corrupted JSON): {e}")
-                logger.info("Rebuilding chunk_id mapping from index")
-                self._chunk_id_to_node_id = {}
+        chunk_mapping = results["chunk_id_mapping"]
+        if isinstance(chunk_mapping, dict):
+            self._chunk_id_to_node_id = chunk_mapping
         else:
             self._chunk_id_to_node_id = {}
 
-        vocab_file = path / "concept_vocabulary.json"
-        if vocab_file.exists():
-            try:
-                with open(vocab_file, "r") as f:
-                    self._concept_vocabulary = json.load(f, object_pairs_hook=OrderedDict)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to load concept vocabulary (corrupted JSON): {e}")
-                logger.info("Rebuilding concept vocabulary from scratch")
-                self._concept_vocabulary = OrderedDict()
+        if ordered_results["concept_vocabulary"] is not None:
+            self._concept_vocabulary = ordered_results["concept_vocabulary"]
         else:
             self._concept_vocabulary = OrderedDict()
 
-        term_counts_file = path / "term_counts.json"
-        if term_counts_file.exists():
-            try:
-                with open(term_counts_file, "r") as f:
-                    self._term_counts = json.load(f, object_pairs_hook=OrderedDict)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to load term counts (corrupted JSON): {e}")
-                logger.info("Rebuilding term counts from scratch")
-                self._term_counts = OrderedDict()
+        if ordered_results["term_counts"] is not None:
+            self._term_counts = ordered_results["term_counts"]
         else:
             self._term_counts = OrderedDict()
 
-        tombstone_file = path / "tombstones.json"
-        if tombstone_file.exists():
-            try:
-                with open(tombstone_file, "r") as f:
-                    tombstones = json.load(f)
-                    if isinstance(tombstones, list):
-                        self._tombstoned_docs = set(tombstones)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to load tombstones (corrupted JSON): {e}")
-                self._tombstoned_docs = set()
+        tombstones = results["tombstones"]
+        if tombstones is not None and isinstance(tombstones, list):
+            self._tombstoned_docs = set(tombstones)
         else:
             self._tombstoned_docs = set()
 
