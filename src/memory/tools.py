@@ -408,51 +408,6 @@ async def get_memory_relationships(
         return {"error": str(e)}
 
 
-async def get_memory_versions(
-    ctx: ContextType,
-    filename: str,
-) -> dict:
-    if ctx.memory_manager is None or ctx.memory_search is None:
-        return {"error": "Memory system is not enabled"}
-
-    try:
-        memory_id = f"memory:{Path(filename).stem}"
-        return ctx.memory_search.get_memory_versions(memory_id)
-    except Exception as e:
-        logger.error(f"Failed to get memory versions: {e}", exc_info=True)
-        return {"error": str(e)}
-
-
-async def get_memory_dependencies(
-    ctx: ContextType,
-    filename: str,
-) -> list[dict]:
-    if ctx.memory_manager is None or ctx.memory_search is None:
-        return [{"error": "Memory system is not enabled"}]
-
-    try:
-        memory_id = f"memory:{Path(filename).stem}"
-        return ctx.memory_search.get_memory_dependencies(memory_id)
-    except Exception as e:
-        logger.error(f"Failed to get memory dependencies: {e}", exc_info=True)
-        return [{"error": str(e)}]
-
-
-async def detect_contradictions(
-    ctx: ContextType,
-    filename: str,
-) -> list[dict]:
-    if ctx.memory_manager is None or ctx.memory_search is None:
-        return [{"error": "Memory system is not enabled"}]
-
-    try:
-        memory_id = f"memory:{Path(filename).stem}"
-        return ctx.memory_search.detect_contradictions(memory_id)
-    except Exception as e:
-        logger.error(f"Failed to detect contradictions: {e}", exc_info=True)
-        return [{"error": str(e)}]
-
-
 async def merge_memories(
     ctx: ContextType,
     source_files: list[str],
