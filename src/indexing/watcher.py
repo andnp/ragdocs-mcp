@@ -23,6 +23,18 @@ EventType: TypeAlias = Literal["created", "modified", "deleted"]
 MAX_QUEUE_SIZE = 1000
 
 
+def _count_directories(path: Path) -> int:
+    """Count directories under path for inotify limit estimation."""
+    try:
+        count = 1  # Include the root
+        for item in path.rglob("*"):
+            if item.is_dir():
+                count += 1
+        return count
+    except OSError:
+        return -1  # Can't count, likely permission issue
+
+
 class FileWatcher:
     def __init__(
         self, documents_path: str, index_manager: IndexManager, cooldown: float = 0.5
@@ -40,6 +52,16 @@ class FileWatcher:
     def start(self):
         if self._running:
             return
+
+        dir_count = _count_directories(self._documents_path)
+        if dir_count > 1000:
+            logger.warning(
+                "Large directory tree detected (%d dirs). "
+                "May exhaust inotify watches. Consider setting "
+                "[tool.ragdocs.worker] enabled = true in pyproject.toml "
+                "to use multiprocess mode with reduced watching.",
+                dir_count
+            )
 
         self._running = True
         event_handler = _MarkdownEventHandler(self._event_queue)

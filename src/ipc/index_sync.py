@@ -124,15 +124,34 @@ class IndexSyncReceiver:
             logger.exception("Failed to reload index from snapshot v%d", published_version)
             return False
 
-    async def watch(self, poll_interval: float = 0.1) -> None:
-        while True:
-            try:
-                if self.check_for_update():
-                    await asyncio.to_thread(self.reload_if_needed)
-            except Exception:
-                logger.exception("Error checking for index updates")
+    async def watch(self) -> None:
+        """Watch for index updates using filesystem events."""
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
 
-            await asyncio.sleep(poll_interval)
+        event_queue: asyncio.Queue[None] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        class VersionHandler(FileSystemEventHandler):
+            def on_modified(self, event):
+                if not event.is_directory and str(event.src_path).endswith("version.bin"):
+                    loop.call_soon_threadsafe(event_queue.put_nowait, None)
+
+        observer = Observer()
+        observer.schedule(VersionHandler(), str(self._snapshot_base), recursive=False)
+        observer.start()
+
+        try:
+            while True:
+                await event_queue.get()
+                try:
+                    if self.check_for_update():
+                        await asyncio.to_thread(self.reload_if_needed)
+                except Exception:
+                    logger.exception("Error checking for index updates")
+        finally:
+            observer.stop()
+            observer.join(timeout=1.0)
 
     @property
     def current_version(self) -> int:

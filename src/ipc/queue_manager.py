@@ -30,37 +30,20 @@ class QueueManager:
             return None
 
     async def get(self, timeout: float = 1.0) -> IPCMessage | None:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-        poll_interval = 0.01
-
-        while True:
-            message = self.get_nowait()
-            if message is not None:
-                return message
-
-            now = loop.time()
-            if now >= deadline:
-                return None
-
-            remaining = min(poll_interval, deadline - now)
-            await asyncio.sleep(remaining)
+        """Get a message from the queue, blocking up to timeout seconds."""
+        try:
+            return await asyncio.to_thread(self._queue.get, True, timeout)
+        except Empty:
+            return None
 
     async def put(self, message: IPCMessage, timeout: float = 1.0) -> bool:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-        poll_interval = 0.01
-
-        while True:
-            if self.put_nowait(message):
-                return True
-
-            now = loop.time()
-            if now >= deadline:
-                return False
-
-            remaining = min(poll_interval, deadline - now)
-            await asyncio.sleep(remaining)
+        """Put a message on the queue, blocking up to timeout seconds."""
+        try:
+            await asyncio.to_thread(self._queue.put, message, True, timeout)
+            return True
+        except Full:
+            logger.warning("Queue %s is full after %ss", self._name, timeout)
+            return False
 
     def drain(self) -> list[IPCMessage]:
         messages: list[IPCMessage] = []
