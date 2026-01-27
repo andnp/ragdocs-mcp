@@ -141,7 +141,8 @@ class VectorIndex:
         if self._index is None:
             self._initialize_index()
 
-        assert self._index is not None
+        if self._index is None:
+            raise RuntimeError("VectorIndex not initialized - call load() or add_chunks() first")
 
         llama_doc = LlamaDocument(
             text=document.content,
@@ -169,7 +170,8 @@ class VectorIndex:
         if self._index is None:
             self._initialize_index()
 
-        assert self._index is not None
+        if self._index is None:
+            raise RuntimeError("VectorIndex not initialized - call load() or add_chunks() first")
 
         embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
 
@@ -223,7 +225,8 @@ class VectorIndex:
         if self._index is None:
             self._initialize_index()
 
-        assert self._index is not None
+        if self._index is None:
+            raise RuntimeError("VectorIndex not initialized - call load() or add_chunks() first")
 
         def create_llama_doc(chunk: Chunk) -> LlamaDocument:
             embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
@@ -610,7 +613,8 @@ class VectorIndex:
         top_terms = [term for term, count in sorted_terms if count >= min_frequency][:max_terms]
 
         self._ensure_model_loaded()
-        assert self._embedding_model is not None
+        if self._embedding_model is None:
+            raise RuntimeError("Embedding model not initialized - call warm_up() first")
         self._concept_vocabulary = OrderedDict()
 
         # Batch embed terms using thread pool for parallelism
@@ -723,7 +727,8 @@ class VectorIndex:
             return 0
 
         self._ensure_model_loaded()
-        assert self._embedding_model is not None
+        if self._embedding_model is None:
+            raise RuntimeError("Embedding model not initialized - call warm_up() first")
 
         embedded_count = 0
         for term in terms_to_embed:
@@ -748,7 +753,8 @@ class VectorIndex:
 
     def get_text_embedding(self, text: str) -> list[float]:
         self._ensure_model_loaded()
-        assert self._embedding_model is not None
+        if self._embedding_model is None:
+            raise RuntimeError("Embedding model not initialized - call warm_up() first")
         return self._embedding_model.get_text_embedding(text)
 
     def is_ready(self) -> bool:
@@ -786,7 +792,8 @@ class VectorIndex:
             return query
 
         self._ensure_model_loaded()
-        assert self._embedding_model is not None
+        if self._embedding_model is None:
+            raise RuntimeError("Embedding model not initialized - call warm_up() first")
         query_embedding = np.array(
             self._embedding_model.get_text_embedding(query),
             dtype=np.float64,

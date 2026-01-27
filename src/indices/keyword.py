@@ -213,7 +213,8 @@ class KeywordIndex:
         self._lock = Lock()
 
     def _get_writer(self):
-        assert self._index is not None
+        if self._index is None:
+            raise RuntimeError("KeywordIndex not initialized - call load() or add() first")
         for attempt in range(WRITER_MAX_RETRIES):
             try:
                 return self._index.writer(timeout=WRITER_TIMEOUT)
@@ -231,7 +232,8 @@ class KeywordIndex:
             if self._index is None:
                 self._initialize_index()
 
-            assert self._index is not None
+            if self._index is None:
+                raise RuntimeError("KeywordIndex not initialized - call load() or add() first")
 
             aliases = document.metadata.get("aliases", [])
             if isinstance(aliases, str):
@@ -281,7 +283,8 @@ class KeywordIndex:
             if self._index is None:
                 self._initialize_index()
 
-            assert self._index is not None
+            if self._index is None:
+                raise RuntimeError("KeywordIndex not initialized - call load() or add_chunk() first")
 
             metadata = chunk.metadata
             tags_text = ",".join(metadata.get("tags", []))
@@ -334,7 +337,8 @@ class KeywordIndex:
             if self._index is None:
                 self._initialize_index()
 
-            assert self._index is not None
+            if self._index is None:
+                raise RuntimeError("KeywordIndex not initialized - call load() or add_chunks() first")
 
             writer = self._get_writer()
             try:
@@ -702,7 +706,8 @@ class KeywordIndex:
             if self._index is None:
                 self._initialize_index()
 
-            assert self._index is not None
+            if self._index is None:
+                raise RuntimeError("KeywordIndex not initialized - call load() or add_document() first")
 
             tags = metadata.get("tags", [])
             tags_text = ",".join(tags) if isinstance(tags, list) else str(tags)
