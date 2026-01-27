@@ -49,6 +49,14 @@ class SearchPipeline:
                 clusters_merged=0,
             )
 
+        # Pre-populate content cache to avoid repeated docstore lookups
+        content_cache: dict[str, str | None] = {}
+        for chunk_id, _ in fused_results:
+            content_cache[chunk_id] = get_content(chunk_id)
+
+        def cached_get_content(chunk_id: str) -> str | None:
+            return content_cache.get(chunk_id)
+
         # Scores are already calibrated by orchestrator
         original_count = len(fused_results)
 
@@ -56,7 +64,7 @@ class SearchPipeline:
         after_threshold = len(filtered)
 
         # Content hash dedup (exact text match)
-        content_deduped, _ = deduplicate_by_content_hash(filtered, get_content)
+        content_deduped, _ = deduplicate_by_content_hash(filtered, cached_get_content)
         after_content_dedup = len(content_deduped)
 
         # N-gram dedup (fast character-level similarity pre-filter)
@@ -65,7 +73,7 @@ class SearchPipeline:
         if self._config.ngram_dedup_enabled and len(content_deduped) > 1:
             ngram_deduped, _ = deduplicate_by_ngram(
                 content_deduped,
-                get_content,
+                cached_get_content,
                 self._config.ngram_dedup_threshold,
             )
             after_ngram_dedup = len(ngram_deduped)
@@ -98,7 +106,7 @@ class SearchPipeline:
             limited = reranker.rerank(
                 query,
                 limited,
-                get_content,
+                cached_get_content,
                 self._config.rerank_top_n,
             )
 

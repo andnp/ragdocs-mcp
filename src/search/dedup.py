@@ -95,9 +95,13 @@ def deduplicate_by_similarity(
     if len(results) <= 1:
         return results, 0
 
+    # Pre-fetch all embeddings at once to avoid repeated lookups
+    chunk_ids = [chunk_id for chunk_id, _ in results]
+    all_embeddings = [get_embedding(cid) for cid in chunk_ids]
+
+    # Build embeddings dict from pre-fetched data
     embeddings: dict[str, NDArray[np.floating]] = {}
-    for chunk_id, _ in results:
-        emb = get_embedding(chunk_id)
+    for chunk_id, emb in zip(chunk_ids, all_embeddings):
         if emb is not None:
             embeddings[chunk_id] = np.array(emb, dtype=np.float64)
 
