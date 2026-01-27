@@ -294,30 +294,49 @@ def reload_callback(snapshot_dir: Path, version: int) -> None:
 
 ---
 
-## 6. Background Polling
+## 6. Event-Driven Index Sync
 
 ### 6.1. IndexSyncReceiver.watch()
 
-**Implementation:** [src/ipc/index_sync.py#L124-L133](../../src/ipc/index_sync.py)
+**Implementation:** [src/ipc/index_sync.py#L127-L157](../../src/ipc/index_sync.py)
 
 ```python
-async def watch(self, poll_interval: float = 0.1) -> None:
-    """Poll for index updates at configurable interval."""
-    while True:
-        try:
-            if self.check_for_update():
-                await asyncio.to_thread(self.reload_if_needed)
-        except Exception:
-            logger.exception("Error checking for index updates")
+async def watch(self) -> None:
+    """Watch for index updates using filesystem events."""
+    from watchdog.events import FileSystemEventHandler
+    from watchdog.observers import Observer
 
-        await asyncio.sleep(poll_interval)
+    event_queue: asyncio.Queue[None] = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    class VersionHandler(FileSystemEventHandler):
+        def on_modified(self, event):
+            if not event.is_directory and str(event.src_path).endswith("version.bin"):
+                loop.call_soon_threadsafe(event_queue.put_nowait, None)
+
+    observer = Observer()
+    observer.schedule(VersionHandler(), str(self._snapshot_base), recursive=False)
+    observer.start()
+
+    try:
+        while True:
+            await event_queue.get()
+            try:
+                if self.check_for_update():
+                    await asyncio.to_thread(self.reload_if_needed)
+            except Exception:
+                logger.exception("Error checking for index updates")
+    finally:
+        observer.stop()
+        observer.join(timeout=1.0)
 ```
 
 **Characteristics:**
-- **Interval:** 100ms default (configurable)
+- **Event-driven:** Uses watchdog inotify (Linux) / FSEvents (macOS) / ReadDirectoryChangesW (Windows)
+- **Zero CPU when idle:** No polling loop, blocks on filesystem events
 - **Non-blocking:** Runs as asyncio task
-- **Error tolerance:** Exceptions logged, polling continues
-- **Graceful shutdown:** Task cancelled on `ReadOnlyContext.stop()`
+- **Error tolerance:** Exceptions logged, watching continues
+- **Graceful shutdown:** Task cancelled on `ReadOnlyContext.stop()`, observer cleaned up in finally block
 
 **Latency analysis:**
 
@@ -325,9 +344,9 @@ async def watch(self, poll_interval: float = 0.1) -> None:
 |-------|---------|-------------|
 | File change → Worker index | ~100ms | Debounced file watcher |
 | Index → Snapshot publish | ~50-500ms | Depends on index size |
-| Snapshot → Main poll detect | 0-100ms | Polling interval |
+| Snapshot → Event delivery | <10ms | inotify/FSEvents instant notification |
 | Detect → Reload complete | ~50-200ms | Index loading |
-| **Total:** | **~200-900ms** | End-to-end propagation |
+| **Total:** | **~200-800ms** | End-to-end propagation |
 
 ---
 
