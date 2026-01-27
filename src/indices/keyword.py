@@ -323,6 +323,59 @@ class KeywordIndex:
                 writer.cancel()
                 raise
 
+    def add_chunks(self, chunks: list[Chunk]) -> None:
+        if not chunks:
+            return
+
+        with self._lock:
+            if self._index is None:
+                self._initialize_index()
+
+            assert self._index is not None
+
+            writer = self._get_writer()
+            try:
+                for chunk in chunks:
+                    metadata = chunk.metadata
+                    tags_text = ",".join(metadata.get("tags", []))
+                    title = str(metadata.get("title", ""))
+                    headers = chunk.header_path or ""
+                    description = str(
+                        metadata.get("description", "") or metadata.get("summary", "")
+                    )
+                    keywords_list = metadata.get("keywords", [])
+                    keywords_text = (
+                        " ".join(keywords_list)
+                        if isinstance(keywords_list, list)
+                        else str(keywords_list)
+                    )
+                    aliases_list = metadata.get("aliases", [])
+                    aliases_text = (
+                        " ".join(str(a) for a in aliases_list)
+                        if isinstance(aliases_list, list)
+                        else str(aliases_list)
+                    )
+                    author = str(metadata.get("author", ""))
+                    category = str(metadata.get("category", ""))
+
+                    writer.update_document(
+                        id=chunk.chunk_id,
+                        doc_id=chunk.doc_id,
+                        content=chunk.content,
+                        title=title,
+                        headers=headers,
+                        description=description,
+                        keywords=keywords_text,
+                        aliases=aliases_text,
+                        tags=tags_text,
+                        author=author,
+                        category=category,
+                    )
+                writer.commit()
+            except Exception:
+                writer.cancel()
+                raise
+
     def remove(self, document_id: str) -> None:
         with self._lock:
             if self._index is None:

@@ -608,14 +608,23 @@ class VectorIndex:
         top_terms = [term for term, count in sorted_terms if count >= min_frequency][:max_terms]
 
         self._ensure_model_loaded()
+        assert self._embedding_model is not None
         self._concept_vocabulary = OrderedDict()
-        for term in top_terms:
+
+        # Batch embed terms using thread pool for parallelism
+        def embed_term(term: str) -> tuple[str, list[float] | None]:
             try:
                 assert self._embedding_model is not None
-                embedding = self._embedding_model.get_text_embedding(term)
-                self._concept_vocabulary[term] = embedding
+                return term, self._embedding_model.get_text_embedding(term)
             except Exception:
-                continue
+                return term, None
+
+        with ThreadPoolExecutor(max_workers=self._embedding_workers) as executor:
+            results = list(executor.map(embed_term, top_terms))
+
+        for term, embedding in results:
+            if embedding is not None:
+                self._concept_vocabulary[term] = embedding
 
         self._pending_terms.clear()
         logger.info(f"Built concept vocabulary with {len(self._concept_vocabulary)} terms")

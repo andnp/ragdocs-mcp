@@ -187,8 +187,8 @@ class IndexManager:
 
         # Add new versions
         self.vector.add_chunks(chunks)
+        self.keyword.add_chunks(chunks)
         for chunk in chunks:
-            self.keyword.add_chunk(chunk)
             self.graph.add_node(chunk.chunk_id, chunk.metadata)
 
         logger.debug(f"Updated {len(chunks)} chunks for {doc_id}")
@@ -202,8 +202,8 @@ class IndexManager:
 
         # Add all new chunks
         self.vector.add_chunks(chunks)
+        self.keyword.add_chunks(chunks)
         for chunk in chunks:
-            self.keyword.add_chunk(chunk)
             self.graph.add_node(chunk.chunk_id, chunk.metadata)
 
         # Update hash store (clear old hashes first)
