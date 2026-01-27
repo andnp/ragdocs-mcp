@@ -125,13 +125,11 @@ class BaseSearchOrchestrator(ABC, Generic[ResultT]):
         ...
 
     async def _search_vector_base(self, query: str, top_k: int) -> list[dict]:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, self._vector.search, query, top_k, None, self._documents_path
+        return await asyncio.to_thread(
+            self._vector.search, query, top_k, None, self._documents_path
         )
 
     async def _search_keyword_base(self, query: str, top_k: int) -> list[dict]:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, self._keyword.search, query, top_k, None, self._documents_path
+        return await asyncio.to_thread(
+            self._keyword.search, query, top_k, None, self._documents_path
         )

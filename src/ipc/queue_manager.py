@@ -30,7 +30,8 @@ class QueueManager:
             return None
 
     async def get(self, timeout: float = 1.0) -> IPCMessage | None:
-        deadline = asyncio.get_event_loop().time() + timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         poll_interval = 0.01
 
         while True:
@@ -38,7 +39,7 @@ class QueueManager:
             if message is not None:
                 return message
 
-            now = asyncio.get_event_loop().time()
+            now = loop.time()
             if now >= deadline:
                 return None
 
@@ -46,14 +47,15 @@ class QueueManager:
             await asyncio.sleep(remaining)
 
     async def put(self, message: IPCMessage, timeout: float = 1.0) -> bool:
-        deadline = asyncio.get_event_loop().time() + timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         poll_interval = 0.01
 
         while True:
             if self.put_nowait(message):
                 return True
 
-            now = asyncio.get_event_loop().time()
+            now = loop.time()
             if now >= deadline:
                 return False
 
