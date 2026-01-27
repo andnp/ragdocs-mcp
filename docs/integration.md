@@ -72,19 +72,19 @@ Controls whether multiple chunks from the same document can appear in results:
 // Returns: auth.md (best section), api.md (best section), config.md (best section), security.md (best section)...
 ```
 
-#### Deprecation Notice
+#### Migration from query_unique_documents
 
-**`query_unique_documents` is now deprecated.** Use `query_documents` with `uniqueness_mode="one_per_document"` instead:
+**`query_unique_documents` has been removed.** Use `query_documents` with `uniqueness_mode="one_per_document"` instead:
 
 ```typescript
-// Old approach (deprecated)
+// Old approach (removed)
 {
   "tool": "query_unique_documents",
   "query": "authentication",
   "top_n": 5
 }
 
-// New approach (recommended)
+// New approach
 {
   "tool": "query_documents",
   "query": "authentication",
@@ -92,8 +92,6 @@ Controls whether multiple chunks from the same document can appear in results:
   "uniqueness_mode": "one_per_document"
 }
 ```
-
-The deprecated `query_unique_documents` tool will be removed in a future release.
 
 ## Integration with VS Code
 
@@ -1043,10 +1041,7 @@ The server exposes tools for managing persistent AI memories when `memory.enable
 | `search_linked_memories` | Find memories linking to a document |
 | `get_memory_stats` | Memory bank statistics |
 | `merge_memories` | Consolidate multiple memories |
-| `get_memory_relationships` | **NEW:** Query memory relationships (versions/dependencies/contradictions) |
-| ~~`get_memory_versions`~~ | **DEPRECATED:** Use `get_memory_relationships(filename, "supersedes")` |
-| ~~`get_memory_dependencies`~~ | **DEPRECATED:** Use `get_memory_relationships(filename, "depends_on")` |
-| ~~`detect_contradictions`~~ | **DEPRECATED:** Use `get_memory_relationships(filename, "contradicts")` |
+| `get_memory_relationships` | Query memory relationships (versions/dependencies/contradictions) |
 
 ### Tool Parameters
 

@@ -322,8 +322,6 @@ The server exposes two MCP tools:
 - `similarity_threshold` (optional): Semantic deduplication threshold (0.5-1.0, default: 0.85)
 - `show_stats` (optional): Show compression statistics (default: false)
 
-**Note:** `query_unique_documents` is deprecated. Use `uniqueness_mode="document"` instead.
-
 **Note:** Compression is enabled by default (`min_score=0.3`, `max_chunks_per_doc=2`, `dedup_enabled=true`) to reduce token overhead by 40-60%. Results use compact format: `[N] file § section (score)\ncontent`
 
 **Usage Pattern:**

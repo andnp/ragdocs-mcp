@@ -107,7 +107,6 @@ Disable multiprocess mode with `[tool.ragdocs.worker] enabled = false` for simpl
 Use these to **search and read** existing project documentation:
 
 - `query_documents`: Search documentation using hybrid search
-- `query_unique_documents`: Search with one result per document
 - `search_git_history`: Search commit history
 - `search_with_hypothesis`: Search using HyDE technique
 
