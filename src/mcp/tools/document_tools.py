@@ -89,57 +89,6 @@ def get_document_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="query_unique_documents",
-            description=(
-                "**DEPRECATED: Use query_documents(query, uniqueness_mode='one_per_document') instead.** "
-                + "Search local documentation using hybrid search with strict document uniqueness. "
-                + "Returns at most ONE chunk per document, ensuring results span multiple files. "
-                + "Use when you want breadth across documentation rather than depth within files."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural language query or question about the documentation",
-                    },
-                    "top_n": {
-                        "type": "integer",
-                        "description": f"Maximum number of unique documents to return (default: 5, max: {MAX_TOP_N})",
-                        "default": 5,
-                        "minimum": MIN_TOP_N,
-                        "maximum": MAX_TOP_N,
-                    },
-                    "min_score": {
-                        "type": "number",
-                        "description": "Minimum relevance score threshold (default: 0.3)",
-                        "default": 0.3,
-                        "minimum": 0.0,
-                        "maximum": 1.0,
-                    },
-                    "similarity_threshold": {
-                        "type": "number",
-                        "description": "Cosine similarity threshold for deduplication (default: 0.85)",
-                        "default": 0.85,
-                        "minimum": 0.5,
-                        "maximum": 1.0,
-                    },
-                    "show_stats": {
-                        "type": "boolean",
-                        "description": "Whether to show compression stats in response (default: false)",
-                        "default": False,
-                    },
-                    "excluded_files": {
-                        "type": "array",
-                        "description": "List of file paths to exclude from results (supports filename, relative path, or absolute path)",
-                        "items": {"type": "string"},
-                        "default": [],
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
             name="search_with_hypothesis",
             description=(
                 "Search documentation using a hypothesis about what the answer might look like. "
@@ -344,18 +293,6 @@ async def handle_query_documents(
         arguments,
         max_chunks_per_doc=max_chunks_per_doc,
         result_header=result_header,
-    )
-
-
-@tool_handler("query_unique_documents")
-async def handle_query_unique_documents(
-    hctx: HandlerContext, arguments: dict
-) -> list[TextContent]:
-    return await _query_documents_impl(
-        hctx,
-        arguments,
-        max_chunks_per_doc=1,
-        result_header="Search Results (Unique Documents)",
     )
 
 

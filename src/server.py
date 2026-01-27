@@ -119,16 +119,6 @@ def create_app():
         )
         return QueryResponse(results=results_dict)
 
-    @app.post("/query_unique_documents")
-    async def query_unique_documents(request: QueryRequest):
-        results_dict = await _execute_query(
-            app.state.orchestrator,
-            request.query,
-            request.top_n,
-            max_chunks_per_doc=1,
-        )
-        return QueryResponse(results=results_dict)
-
     @app.get("/health")
     async def health():
         return HealthResponse(status="ok")
