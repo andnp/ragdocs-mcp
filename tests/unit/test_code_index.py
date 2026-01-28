@@ -158,3 +158,64 @@ class TestCodeIndex:
         results = index.search("main", top_k=5)
         assert len(results) == 1
         assert results[0]["language"] == "rust"
+
+
+# ============================================================================
+# Missing MAIN Index Regression Tests (Issue: whoosh.index.IndexError)
+# ============================================================================
+
+
+def test_code_index_load_handles_missing_main_index(tmp_path):
+    """
+    load() gracefully handles directory with missing MAIN index segment.
+
+    When the index directory exists but lacks valid index files (e.g., only
+    contains partial files or is empty), whoosh raises IndexError with message
+    "Index 'MAIN' does not exist". The index should reinitialize rather than crash.
+    """
+    index_dir = tmp_path / "incomplete_code_index"
+    index_dir.mkdir()
+
+    # Create an incomplete index structure (directory exists but no MAIN segment)
+    (index_dir / "WRITELOCK").touch()
+
+    code_index = CodeIndex()
+    code_index.load(index_dir)
+
+    # Should have reinitialized - verify by adding and searching
+    code_block = CodeBlock(
+        id="recovery_code_0",
+        doc_id="recovery_doc",
+        chunk_id="recovery_chunk_0",
+        content="def recovered_function(): pass",
+        language="python",
+    )
+    code_index.add_code_block(code_block)
+    results = code_index.search("recovered_function", top_k=5)
+    assert len(results) == 1
+    assert results[0]["doc_id"] == "recovery_doc"
+
+
+def test_code_index_load_handles_empty_directory(tmp_path):
+    """
+    load() handles completely empty directory that passes exists() check.
+
+    Edge case where directory exists but is completely empty - no index files at all.
+    """
+    empty_dir = tmp_path / "empty_code_index"
+    empty_dir.mkdir()
+
+    code_index = CodeIndex()
+    code_index.load(empty_dir)
+
+    # Should work normally after reinitialization
+    code_block = CodeBlock(
+        id="empty_recovery_code_0",
+        doc_id="empty_recovery_doc",
+        chunk_id="empty_recovery_chunk_0",
+        content="class EmptyRecovery:\n    pass",
+        language="python",
+    )
+    code_index.add_code_block(code_block)
+    results = code_index.search("EmptyRecovery", top_k=5)
+    assert len(results) == 1

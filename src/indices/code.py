@@ -10,6 +10,7 @@ from typing import Any
 from whoosh import index as whoosh_index
 from whoosh.analysis import Filter, RegexTokenizer
 from whoosh.fields import ID, TEXT, Schema
+from whoosh.index import IndexError as WhooshIndexError
 from whoosh.qparser import MultifieldParser
 from whoosh.scoring import BM25F
 
@@ -213,7 +214,7 @@ class CodeIndex:
 
                 self._index = existing_index
                 self._index_path = path
-            except (whoosh_index.EmptyIndexError, FileNotFoundError):
+            except (whoosh_index.EmptyIndexError, WhooshIndexError, FileNotFoundError):
                 self._initialize_index()
 
     def _initialize_index(self) -> None:

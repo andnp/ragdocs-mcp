@@ -1018,3 +1018,99 @@ def test_remove_chunk_thread_safe():
     for i in range(1, 10, 2):
         results = keyword_index.search(f"term{i}", top_k=5)
         assert f"concurrent#chunk#{i}" in _extract_chunk_ids(results)
+
+
+# ============================================================================
+# Missing MAIN Index Regression Tests (Issue: whoosh.index.IndexError)
+# ============================================================================
+
+
+def test_load_handles_missing_main_index(tmp_path):
+    """
+    load() gracefully handles directory with missing MAIN index segment.
+
+    When the index directory exists but lacks valid index files (e.g., only
+    contains partial files or is empty), whoosh raises IndexError with message
+    "Index 'MAIN' does not exist". The index should reinitialize rather than crash.
+    """
+    index_dir = tmp_path / "incomplete_index"
+    index_dir.mkdir()
+
+    # Create an incomplete index structure (directory exists but no MAIN segment)
+    (index_dir / "WRITELOCK").touch()
+
+    keyword_index = KeywordIndex()
+    keyword_index.load(index_dir)
+
+    # Should have reinitialized - verify by adding and searching
+    doc = Document(
+        id="test-doc",
+        content="Test content after recovery from missing MAIN.",
+        metadata={},
+        links=[],
+        tags=[],
+        file_path="/tmp/test.md",
+        modified_time=datetime.now(),
+    )
+    keyword_index.add(doc)
+    results = keyword_index.search("test content", top_k=5)
+    assert "test-doc" in _extract_chunk_ids(results)
+
+
+def test_load_from_handles_missing_main_index(tmp_path):
+    """
+    load_from() returns False for directory with missing MAIN index segment.
+
+    This tests the snapshot loading path where a directory exists but lacks
+    valid index files. Should return False to signal snapshot is unusable.
+    """
+    index_dir = tmp_path / "incomplete_snapshot"
+    index_dir.mkdir()
+
+    # Create an incomplete index structure
+    (index_dir / "WRITELOCK").touch()
+
+    keyword_index = KeywordIndex()
+    result = keyword_index.load_from(index_dir)
+
+    assert result is False
+
+
+def test_load_handles_empty_directory(tmp_path):
+    """
+    load() handles completely empty directory that passes exists() check.
+
+    Edge case where directory exists but is completely empty - no index files at all.
+    """
+    empty_dir = tmp_path / "empty_index"
+    empty_dir.mkdir()
+
+    keyword_index = KeywordIndex()
+    keyword_index.load(empty_dir)
+
+    # Should work normally after reinitialization
+    doc = Document(
+        id="empty-recovery",
+        content="Content indexed after empty directory recovery.",
+        metadata={},
+        links=[],
+        tags=[],
+        file_path="/tmp/test.md",
+        modified_time=datetime.now(),
+    )
+    keyword_index.add(doc)
+    results = keyword_index.search("empty directory recovery", top_k=5)
+    assert "empty-recovery" in _extract_chunk_ids(results)
+
+
+def test_load_from_handles_empty_directory(tmp_path):
+    """
+    load_from() returns False for completely empty directory.
+    """
+    empty_dir = tmp_path / "empty_snapshot"
+    empty_dir.mkdir()
+
+    keyword_index = KeywordIndex()
+    result = keyword_index.load_from(empty_dir)
+
+    assert result is False

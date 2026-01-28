@@ -9,7 +9,7 @@ from typing import Any, cast
 from whoosh import index as whoosh_index
 from whoosh.analysis import StemmingAnalyzer
 from whoosh.fields import ID, KEYWORD, TEXT, Schema
-from whoosh.index import LockError
+from whoosh.index import IndexError as WhooshIndexError, LockError
 from whoosh.qparser import MultifieldParser
 from whoosh.scoring import BM25F
 
@@ -650,7 +650,7 @@ class KeywordIndex:
                 self._index = existing_index
                 self._index_path = snapshot_dir
                 return True
-        except (whoosh_index.EmptyIndexError, FileNotFoundError):
+        except (whoosh_index.EmptyIndexError, WhooshIndexError, FileNotFoundError):
             return False
 
     def load(self, path: Path) -> None:
@@ -680,7 +680,7 @@ class KeywordIndex:
 
                 self._index = existing_index
                 self._index_path = path
-            except (whoosh_index.EmptyIndexError, FileNotFoundError):
+            except (whoosh_index.EmptyIndexError, WhooshIndexError, FileNotFoundError):
                 self._initialize_index()
 
     def _initialize_index(self) -> None:
