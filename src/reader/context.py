@@ -69,7 +69,7 @@ class ReadOnlyContext:
             from src.memory.manager import MemoryIndexManager
             from src.memory.search import MemorySearchOrchestrator
 
-            memory_path = resolve_memory_path(config)
+            memory_path = resolve_memory_path(config, config.detected_project, config.projects)
 
             memory_vector = VectorIndex(
                 embedding_model_name=embedding_model_name,

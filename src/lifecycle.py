@@ -5,6 +5,7 @@ import logging
 import multiprocessing
 import multiprocessing.synchronize
 import os
+import queue
 import signal
 import sys
 import threading
@@ -227,8 +228,8 @@ class LifecycleCoordinator:
                                     self._state = LifecycleState.DEGRADED
                                 elif self._state == LifecycleState.DEGRADED:
                                     self._state = LifecycleState.READY
-                        except asyncio.TimeoutError:
-                            logger.warning("Health check response timeout")
+                        except (asyncio.TimeoutError, queue.Empty):
+                            logger.debug("Health check: no response (worker busy)")
 
             except asyncio.CancelledError:
                 break

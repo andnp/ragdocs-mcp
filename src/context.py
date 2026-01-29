@@ -63,6 +63,7 @@ class ApplicationContext:
 
         config.indexing.index_path = str(index_path)
         config.indexing.documents_path = documents_path
+        config.detected_project = detected_project
 
         embedding_model_name = config.llm.embedding_model
         if embedding_model_name == "local":

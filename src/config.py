@@ -265,6 +265,7 @@ class Config:
     document_chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     memory_chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     projects: list[ProjectConfig] = field(default_factory=list)
+    detected_project: str | None = None
 
 
 def _expand_path(path_str: str):
