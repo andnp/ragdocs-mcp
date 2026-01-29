@@ -209,12 +209,16 @@ async def search_memories(
     after_timestamp: int | None = None,
     before_timestamp: int | None = None,
     relative_days: int | None = None,
-) -> list[dict]:
+    include_stats: bool = False,
+) -> list[dict] | tuple[list[dict], dict]:
+    """Search memories with optional stats about filtering."""
     if ctx.memory_manager is None or ctx.memory_search is None:
+        if include_stats:
+            return [{"error": "Memory system is not enabled"}], {}
         return [{"error": "Memory system is not enabled"}]
 
     try:
-        results = await ctx.memory_search.search_memories(
+        result = await ctx.memory_search.search_memories(
             query=query,
             limit=limit,
             filter_type=filter_type,
@@ -222,7 +226,39 @@ async def search_memories(
             after_timestamp=after_timestamp,
             before_timestamp=before_timestamp,
             relative_days=relative_days,
+            include_stats=include_stats,
         )
+
+        if include_stats:
+            results, stats = result
+            results_list = [
+                {
+                    "memory_id": r.memory_id,
+                    "score": r.score,
+                    "content": r.content,
+                    "type": r.frontmatter.type,
+                    "status": r.frontmatter.status,
+                    "tags": r.frontmatter.tags,
+                    "file_path": r.file_path,
+                    "header_path": r.header_path,
+                }
+                for r in results
+            ]
+            stats_dict = {
+                "total_indexed": stats.total_indexed,
+                "vector_candidates": stats.vector_candidates,
+                "keyword_candidates": stats.keyword_candidates,
+                "after_fusion": stats.after_fusion,
+                "filtered_missing_chunk": stats.filtered_missing_chunk,
+                "filtered_type_mismatch": stats.filtered_type_mismatch,
+                "filtered_time_range": stats.filtered_time_range,
+                "filtered_below_threshold": stats.filtered_below_threshold,
+                "score_threshold": stats.score_threshold,
+                "min_score_seen": stats.min_score_seen,
+                "max_score_seen": stats.max_score_seen,
+                "returned": stats.returned,
+            }
+            return results_list, stats_dict
 
         return [
             {
@@ -235,10 +271,12 @@ async def search_memories(
                 "file_path": r.file_path,
                 "header_path": r.header_path,
             }
-            for r in results
+            for r in result
         ]
     except Exception as e:
         logger.error(f"Failed to search memories: {e}", exc_info=True)
+        if include_stats:
+            return [{"error": str(e)}], {}
         return [{"error": str(e)}]
 
 

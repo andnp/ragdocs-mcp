@@ -95,6 +95,9 @@ class ApplicationContext:
             watcher = FileWatcher(
                 documents_path=config.indexing.documents_path,
                 index_manager=manager,
+                include_patterns=config.indexing.include,
+                exclude_patterns=config.indexing.exclude,
+                exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
             )
 
         # Initialize commit indexer if enabled and git available

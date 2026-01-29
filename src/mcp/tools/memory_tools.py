@@ -273,7 +273,8 @@ async def handle_search_memories(
     except ValidationError as e:
         return text_response(f"Validation error: {e}")
 
-    results = await memory_tools_impl.search_memories(
+    # Always include stats for visibility into filtering
+    results, stats = await memory_tools_impl.search_memories(
         ctx,
         query,
         limit=limit,
@@ -282,12 +283,31 @@ async def handle_search_memories(
         after_timestamp=after_timestamp,
         before_timestamp=before_timestamp,
         relative_days=relative_days,
+        include_stats=True,
     )
 
     if results and "error" in results[0]:
         return text_response(str(results[0]))
 
     output_lines = ["# Memory Search Results", ""]
+
+    # Add stats summary for visibility
+    output_lines.extend([
+        "## Search Stats",
+        f"- **Total indexed memories:** {stats.get('total_indexed', 0)}",
+        f"- **Candidates:** vector={stats.get('vector_candidates', 0)}, keyword={stats.get('keyword_candidates', 0)}",
+        f"- **After fusion:** {stats.get('after_fusion', 0)}",
+        f"- **Filtered out:**",
+        f"  - Missing chunk data: {stats.get('filtered_missing_chunk', 0)}",
+        f"  - Type mismatch: {stats.get('filtered_type_mismatch', 0)}",
+        f"  - Time range: {stats.get('filtered_time_range', 0)}",
+        f"  - Below threshold ({stats.get('score_threshold', 0.1):.2f}): {stats.get('filtered_below_threshold', 0)}",
+        f"- **Score range:** min={stats.get('min_score_seen', 0):.3f}, max={stats.get('max_score_seen', 0):.3f}",
+        f"- **Returned:** {stats.get('returned', 0)}",
+        "",
+        "---",
+        "",
+    ])
 
     for i, r in enumerate(results, 1):
         output_lines.extend(

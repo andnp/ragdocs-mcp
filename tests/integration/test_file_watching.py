@@ -75,6 +75,9 @@ def watcher(config, manager):
         documents_path=config.indexing.documents_path,
         index_manager=manager,
         cooldown=0.2,
+        include_patterns=config.indexing.include,
+        exclude_patterns=config.indexing.exclude,
+        exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
     )
 
 
@@ -275,6 +278,80 @@ async def test_watcher_handles_non_markdown_files(watcher, manager, config, tmp_
         await asyncio.sleep(1.0)
 
         # Verify only markdown file was indexed (count == 1)
+        doc_count = manager.get_document_count()
+        assert doc_count == 1
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_watcher_excludes_venv_directories(watcher, manager, config, tmp_path):
+    """
+    Test that FileWatcher ignores files in excluded directories like .venv.
+
+    Validates exclude pattern filtering: markdown files inside .venv, venv,
+    node_modules, etc. should not be indexed even if they're valid markdown.
+    """
+    docs_path = Path(config.indexing.documents_path)
+
+    # Start watcher
+    watcher.start()
+
+    try:
+        # Create markdown file in normal location (should be indexed)
+        normal_file = docs_path / "normal.md"
+        normal_file.write_text("# Normal Document\n\nShould be indexed.")
+
+        # Create markdown file in .venv (should be excluded)
+        venv_dir = docs_path / ".venv" / "lib" / "python3.13" / "site-packages"
+        venv_dir.mkdir(parents=True)
+        venv_file = venv_dir / "README.md"
+        venv_file.write_text("# Venv Package\n\nShould NOT be indexed.")
+
+        # Create markdown file in node_modules (should be excluded)
+        node_dir = docs_path / "node_modules" / "some-package"
+        node_dir.mkdir(parents=True)
+        node_file = node_dir / "README.md"
+        node_file.write_text("# Node Package\n\nShould NOT be indexed.")
+
+        # Wait for debounce + processing
+        await asyncio.sleep(1.0)
+
+        # Verify only normal file was indexed (count == 1)
+        doc_count = manager.get_document_count()
+        assert doc_count == 1
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_watcher_excludes_hidden_directories(watcher, manager, config, tmp_path):
+    """
+    Test that FileWatcher ignores files in hidden directories.
+
+    Validates exclude_hidden_dirs option: files in directories starting
+    with '.' should be excluded by default.
+    """
+    docs_path = Path(config.indexing.documents_path)
+
+    # Start watcher
+    watcher.start()
+
+    try:
+        # Create markdown file in normal location (should be indexed)
+        normal_file = docs_path / "visible.md"
+        normal_file.write_text("# Visible Document\n\nShould be indexed.")
+
+        # Create markdown file in hidden directory (should be excluded)
+        hidden_dir = docs_path / ".hidden"
+        hidden_dir.mkdir()
+        hidden_file = hidden_dir / "secret.md"
+        hidden_file.write_text("# Hidden Document\n\nShould NOT be indexed.")
+
+        # Wait for debounce + processing
+        await asyncio.sleep(1.0)
+
+        # Verify only visible file was indexed (count == 1)
         doc_count = manager.get_document_count()
         assert doc_count == 1
     finally:

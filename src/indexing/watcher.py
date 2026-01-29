@@ -11,6 +11,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from src.indexing.manager import IndexManager
+from src.utils import should_include_file
 
 if TYPE_CHECKING:
     from watchdog.observers.api import BaseObserver
@@ -37,11 +38,20 @@ def _count_directories(path: Path) -> int:
 
 class FileWatcher:
     def __init__(
-        self, documents_path: str, index_manager: IndexManager, cooldown: float = 0.5
+        self,
+        documents_path: str,
+        index_manager: IndexManager,
+        cooldown: float = 0.5,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        exclude_hidden_dirs: bool = True,
     ):
         self._documents_path = Path(documents_path)
         self._index_manager = index_manager
         self._cooldown = cooldown
+        self._include_patterns = include_patterns or ["**/*"]
+        self._exclude_patterns = exclude_patterns or []
+        self._exclude_hidden_dirs = exclude_hidden_dirs
         self._observer: BaseObserver | None = None
         # Bounded queue prevents memory exhaustion during high file change rates
         self._event_queue = queue.Queue[tuple[EventType, str]](maxsize=MAX_QUEUE_SIZE)
@@ -166,6 +176,16 @@ class FileWatcher:
 
     async def _batch_process(self, events: dict[str, EventType]):
         for file_path, event_type in events.items():
+            # Filter out excluded files before processing
+            if not should_include_file(
+                file_path,
+                self._include_patterns,
+                self._exclude_patterns,
+                self._exclude_hidden_dirs,
+            ):
+                logger.debug(f"Skipping excluded file: {file_path}")
+                continue
+
             try:
                 if event_type in ("created", "modified"):
                     await asyncio.to_thread(

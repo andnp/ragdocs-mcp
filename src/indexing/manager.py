@@ -645,6 +645,9 @@ class IndexManager:
             discovered_files,
             saved_manifest,
             docs_path,
+            include_patterns=self._config.indexing.include,
+            exclude_patterns=self._config.indexing.exclude,
+            exclude_hidden_dirs=self._config.indexing.exclude_hidden_dirs,
         )
 
         result = ReconciliationResult()

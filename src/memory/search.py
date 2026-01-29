@@ -12,6 +12,7 @@ from src.memory.models import (
     LinkedMemoryResult,
     MemoryFrontmatter,
     MemorySearchResult,
+    MemorySearchStats,
 )
 from src.search.base_orchestrator import BaseSearchOrchestrator
 from src.search.score_pipeline import ScorePipelineConfig
@@ -202,8 +203,31 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
         after_timestamp: int | None = None,
         before_timestamp: int | None = None,
         relative_days: int | None = None,
-    ) -> list[MemorySearchResult]:
+        include_stats: bool = False,
+    ) -> list[MemorySearchResult] | tuple[list[MemorySearchResult], MemorySearchStats]:
+        """Search memories with hybrid search (semantic + keyword).
+
+        Args:
+            query: Natural language search query
+            limit: Maximum number of results to return
+            filter_type: Only return memories of this type
+            load_full_memory: Load complete file content instead of chunks
+            after_timestamp: Only return memories after this Unix timestamp
+            before_timestamp: Only return memories before this Unix timestamp
+            relative_days: Only return memories from last N days (overrides timestamps)
+            include_stats: If True, return (results, stats) tuple for debugging
+
+        Returns:
+            List of MemorySearchResult, or tuple of (results, stats) if include_stats=True
+        """
+        stats = MemorySearchStats(
+            score_threshold=self._config.memory.score_threshold,
+            total_indexed=len(self._vector.get_document_ids()),
+        )
+
         if not query or not query.strip():
+            if include_stats:
+                return [], stats
             return []
 
         after_timestamp, before_timestamp = _normalize_time_filters(
@@ -214,6 +238,10 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
 
         ctx = await self._execute_parallel_search(query, top_k)
 
+        # Track search strategy candidates
+        stats.vector_candidates = len(ctx.vector_results)
+        stats.keyword_candidates = len(ctx.keyword_results)
+
         self._apply_tag_expansion(ctx, top_k)
 
         strategy_results = self._build_strategy_results(ctx)
@@ -221,29 +249,40 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
         weights = self._get_base_weights()
 
         fused = self._apply_score_pipeline(strategy_results, weights)
+        stats.after_fusion = len(fused)
 
         memory_results: list[MemorySearchResult] = []
 
         missing_chunk_ids: list[str] = []
         for chunk_id, score in fused:
+            # Track score range for debugging
+            if score < stats.min_score_seen:
+                stats.min_score_seen = score
+            if score > stats.max_score_seen:
+                stats.max_score_seen = score
+
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if not chunk_data:
                 missing_chunk_ids.append(chunk_id)
+                stats.filtered_missing_chunk += 1
                 continue
 
             metadata = chunk_data.get("metadata", {})
 
             # Type guard: ensure metadata is a dict
             if not isinstance(metadata, dict):
+                stats.filtered_missing_chunk += 1
                 continue
 
             if filter_type and metadata.get("memory_type") != filter_type:
+                stats.filtered_type_mismatch += 1
                 continue
 
             # Time filtering (with fallback to file mtime)
             if after_timestamp is not None or before_timestamp is not None:
                 filtering_timestamp = _get_filtering_timestamp(chunk_data)
                 if not _passes_time_filter(filtering_timestamp, after_timestamp, before_timestamp):
+                    stats.filtered_time_range += 1
                     continue
 
             # Extract created_at for recency boost
@@ -268,6 +307,7 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
 
             # Apply threshold filtering (post-boost)
             if boosted_score < self._config.memory.score_threshold:
+                stats.filtered_below_threshold += 1
                 continue
 
             frontmatter = MemoryFrontmatter(
@@ -300,9 +340,15 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
                 break
 
         memory_results.sort(key=lambda r: r.score, reverse=True)
+        final_results = memory_results[:limit]
+        stats.returned = len(final_results)
+
         if missing_chunk_ids:
             self._queue_reindex_for_chunks(missing_chunk_ids, "docstore lookup failed")
-        return memory_results[:limit]
+
+        if include_stats:
+            return final_results, stats
+        return final_results
 
     async def search_linked_memories(
         self,

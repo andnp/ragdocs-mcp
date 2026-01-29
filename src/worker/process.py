@@ -365,6 +365,9 @@ async def _start_watchers(state: WorkerState) -> None:
     state.file_watcher = FileWatcher(
         documents_path=state.config.indexing.documents_path,
         index_manager=state.index_manager,
+        include_patterns=state.config.indexing.include,
+        exclude_patterns=state.config.indexing.exclude,
+        exclude_hidden_dirs=state.config.indexing.exclude_hidden_dirs,
     )
 
     if not state._watcher_callback_registered:
