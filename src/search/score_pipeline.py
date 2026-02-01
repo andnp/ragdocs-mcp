@@ -55,9 +55,11 @@ class ScorePipeline:
     ) -> list[tuple[str, float]]:
         fused = self.fuse(strategy_results)
 
-        normalized = self.normalize(fused)
-
-        calibrated = self.calibrate(normalized)
+        # NOTE: We skip normalization here. Calibration is designed to convert
+        # raw RRF scores (~0.01-0.1 range) directly to [0,1] confidence scores.
+        # Normalizing first destroys discrimination (top score always becomes 1.0,
+        # then calibrate(1.0) ≈ 1.0 for all high scores).
+        calibrated = self.calibrate(fused)
 
         if timestamps is not None and self.config.time_scoring_mode is not None:
             return self.boost(calibrated, timestamps)

@@ -105,13 +105,53 @@ class SearchConfig:
     tag_expansion_enabled: bool = True
     tag_expansion_max_tags: int = 5
     tag_expansion_depth: int = 2
-    score_calibration_threshold: float = 0.035
+    # Calibration converts RRF scores to [0,1] confidence via sigmoid.
+    # threshold=0.02 means RRF scores at ~0.02 map to ~0.5 confidence.
+    # Single-strategy rank-0 (RRF≈0.017) → ~0.43 confidence
+    # Two-strategy rank-0 (RRF≈0.033) → ~0.87 confidence
+    score_calibration_threshold: float = 0.02
     score_calibration_steepness: float = 150.0
 
 
 @dataclass
 class LLMConfig:
     embedding_model: str = "local"
+
+    DEFAULT_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
+
+    @property
+    def resolved_embedding_model(self) -> str:
+        """Return actual embedding model name, resolving 'local' to default.
+
+        This centralizes the embedding model resolution logic that was
+        previously duplicated across ApplicationContext, ReadOnlyContext,
+        worker process, and memory init.
+        """
+        if self.embedding_model == "local":
+            return self.DEFAULT_LOCAL_MODEL
+        return self.embedding_model
+
+
+def resolve_embedding_model(config: "Config") -> str:
+    """Resolve embedding model name from config with fallback.
+
+    This function provides a robust way to get the embedding model name,
+    handling edge cases where the LLMConfig.resolved_embedding_model property
+    might not be accessible (e.g., in subprocess environments with module
+    loading edge cases).
+
+    Use this function instead of accessing config.llm.resolved_embedding_model
+    directly in contexts where module loading may be unreliable (subprocess,
+    worker processes).
+    """
+    try:
+        return config.llm.resolved_embedding_model
+    except AttributeError:
+        # Fallback: resolve manually if property not accessible
+        model = config.llm.embedding_model
+        if model == "local":
+            return LLMConfig.DEFAULT_LOCAL_MODEL
+        return model
 
 
 @dataclass

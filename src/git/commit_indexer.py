@@ -83,6 +83,8 @@ class CommitIndexer:
                     timeout=10.0,
                 )
                 self._conn.row_factory = sqlite3.Row
+                # Handle non-UTF-8 content in TEXT columns (e.g., binary diff content)
+                self._conn.text_factory = lambda x: x.decode("utf-8", errors="replace")
                 self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA synchronous=NORMAL")
                 self._conn.execute("PRAGMA integrity_check(1)").fetchone()
@@ -262,6 +264,9 @@ class CommitIndexer:
 
             for row in rows:
                 embedding = self._deserialize_embedding(row["embedding"])
+                if embedding is None:
+                    logger.warning(f"Skipping commit {row['hash'][:8]}: missing embedding")
+                    continue
                 score = self._cosine_similarity(query_vec, embedding)
 
                 try:
@@ -327,8 +332,10 @@ class CommitIndexer:
         return np.array(embedding, dtype=np.float32).tobytes()
 
     @staticmethod
-    def _deserialize_embedding(blob: bytes) -> NDArray[np.float32]:
-        """Convert BLOB to numpy array."""
+    def _deserialize_embedding(blob: bytes | None) -> NDArray[np.float32] | None:
+        """Convert BLOB to numpy array. Returns None if blob is None or empty."""
+        if blob is None or len(blob) == 0:
+            return None
         return np.frombuffer(blob, dtype=np.float32)
 
     @staticmethod

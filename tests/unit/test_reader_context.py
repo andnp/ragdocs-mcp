@@ -293,3 +293,177 @@ class TestReadOnlyContextAttributes:
 
         assert ctx.memory_manager is None
         assert ctx.memory_search is None
+
+    @pytest.mark.asyncio
+    async def test_memory_loaded_when_enabled(self, tmp_path: Path, monkeypatch):
+        """Verify memory indices are loaded/rebuilt when enabled."""
+        from src.config import MemoryConfig
+        from src.reader.context import ReadOnlyContext
+
+        snapshot_base = tmp_path / "snapshots"
+        snapshot_base.mkdir()
+
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+
+        memory_path = tmp_path / "memories"
+        memory_path.mkdir()
+        (memory_path / "indices").mkdir()
+
+        # Create a memory file to be indexed
+        memory_file = memory_path / "test-memory.md"
+        memory_file.write_text(
+            "---\ntype: observation\nstatus: active\ntags: [test]\n---\n\n"
+            "# Test Memory\n\nThis is test content for memory indexing."
+        )
+
+        # Patch resolve_memory_path to return our test directory
+        monkeypatch.setattr(
+            "src.config.resolve_memory_path",
+            lambda config, detected_project, projects: memory_path,
+        )
+
+        config = Config(
+            server=ServerConfig(),
+            indexing=IndexingConfig(
+                documents_path=str(docs_path),
+                index_path=str(tmp_path / "indices"),
+            ),
+            llm=LLMConfig(embedding_model="local"),
+            memory=MemoryConfig(enabled=True),
+        )
+
+        ctx = await ReadOnlyContext.create(
+            config=config,
+            snapshot_base=snapshot_base,
+        )
+
+        assert ctx.memory_manager is not None
+        assert ctx.memory_search is not None
+        # Verify memory was indexed (rebuilt from files since no indices existed)
+        assert ctx.memory_manager.get_memory_count() == 1
+
+
+class TestFindLatestSnapshotResilience:
+    """Tests for _find_latest_snapshot fallback behavior."""
+
+    def test_find_latest_snapshot_normal_case(self, tmp_path: Path):
+        """Verify normal case where version.bin points to existing snapshot."""
+        from src.reader.context import _find_latest_snapshot
+
+        snapshot_base = tmp_path / "snapshots"
+        snapshot_base.mkdir()
+
+        # version.bin points to v5
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 5))
+
+        # v5 exists
+        (snapshot_base / "v5").mkdir()
+
+        result = _find_latest_snapshot(snapshot_base)
+
+        assert result == snapshot_base / "v5"
+
+    def test_find_latest_snapshot_falls_back_to_highest_available(self, tmp_path: Path):
+        """
+        Verify fallback to highest available snapshot when
+        version.bin points to non-existent directory.
+        """
+        from src.reader.context import _find_latest_snapshot
+
+        snapshot_base = tmp_path / "snapshots"
+        snapshot_base.mkdir()
+
+        # version.bin points to v999 (doesn't exist)
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 999))
+
+        # But v100 and v150 exist on disk
+        (snapshot_base / "v100").mkdir()
+        (snapshot_base / "v150").mkdir()
+
+        result = _find_latest_snapshot(snapshot_base)
+
+        # Should fall back to v150 (highest available)
+        assert result == snapshot_base / "v150"
+
+    def test_find_latest_snapshot_returns_none_when_no_snapshots(self, tmp_path: Path):
+        """
+        Verify returns None when version.bin points to missing snapshot
+        and no other snapshots exist.
+        """
+        from src.reader.context import _find_latest_snapshot
+
+        snapshot_base = tmp_path / "snapshots"
+        snapshot_base.mkdir()
+
+        # version.bin points to v42 (doesn't exist)
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 42))
+
+        result = _find_latest_snapshot(snapshot_base)
+
+        assert result is None
+
+    def test_find_latest_snapshot_uses_fallback_when_no_version_file(
+        self, tmp_path: Path
+    ):
+        """Verify uses highest snapshot when version.bin is missing."""
+        from src.reader.context import _find_latest_snapshot
+
+        snapshot_base = tmp_path / "snapshots"
+        snapshot_base.mkdir()
+
+        # No version.bin, but snapshots exist
+        (snapshot_base / "v10").mkdir()
+        (snapshot_base / "v20").mkdir()
+        (snapshot_base / "v5").mkdir()
+
+        result = _find_latest_snapshot(snapshot_base)
+
+        # Should use v20 (highest available)
+        assert result == snapshot_base / "v20"
+
+
+class TestFindAvailableSnapshots:
+    """Tests for _find_available_snapshots helper."""
+
+    def test_find_available_snapshots_returns_sorted_list(self, tmp_path: Path):
+        """Verify returns versions sorted descending."""
+        from src.reader.context import _find_available_snapshots
+
+        snapshot_base = tmp_path / "snapshots"
+        snapshot_base.mkdir()
+
+        (snapshot_base / "v10").mkdir()
+        (snapshot_base / "v5").mkdir()
+        (snapshot_base / "v200").mkdir()
+        (snapshot_base / "v50").mkdir()
+        (snapshot_base / "not-a-version").mkdir()  # Should be ignored
+
+        available = _find_available_snapshots(snapshot_base)
+
+        versions = [v for v, _ in available]
+        assert versions == [200, 50, 10, 5]
+
+    def test_find_available_snapshots_empty_when_no_snapshots(self, tmp_path: Path):
+        """Verify returns empty list when no snapshots exist."""
+        from src.reader.context import _find_available_snapshots
+
+        snapshot_base = tmp_path / "snapshots"
+        snapshot_base.mkdir()
+
+        available = _find_available_snapshots(snapshot_base)
+
+        assert available == []
+
+    def test_find_available_snapshots_empty_when_base_missing(self, tmp_path: Path):
+        """Verify returns empty list when snapshot base doesn't exist."""
+        from src.reader.context import _find_available_snapshots
+
+        snapshot_base = tmp_path / "nonexistent"
+
+        available = _find_available_snapshots(snapshot_base)
+
+        assert available == []

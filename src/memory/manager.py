@@ -36,6 +36,24 @@ class FailedMemory:
 
 
 class MemoryIndexManager:
+    """Manages memory file indexing and persistence.
+
+    OWNERSHIP: Memory indices are owned by the main process, not the worker.
+    In multiprocess mode, the worker handles document indexing via snapshots,
+    but memory operations are handled directly by the main process.
+
+    Index Storage: Indices are stored at `memory_path/indices/`, NOT in the
+    document snapshot directory. This is intentional - memories don't
+    participate in snapshot-based sync.
+
+    Typical lifecycle:
+        1. Create manager with indices (empty or loaded)
+        2. Call load() to restore persisted indices
+        3. Call reconcile() to detect new/modified files
+        4. Call persist() if reconcile() made changes
+        5. Use index_memory()/remove_memory() for incremental updates
+    """
+
     def __init__(
         self,
         config: Config,

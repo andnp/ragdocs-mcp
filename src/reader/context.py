@@ -36,9 +36,7 @@ class ReadOnlyContext:
 
     @classmethod
     async def create(cls, config: Config, snapshot_base: Path) -> ReadOnlyContext:
-        embedding_model_name = config.llm.embedding_model
-        if embedding_model_name == "local":
-            embedding_model_name = "BAAI/bge-small-en-v1.5"
+        embedding_model_name = config.llm.resolved_embedding_model
 
         vector = VectorIndex(
             embedding_model_name=embedding_model_name,
@@ -70,46 +68,25 @@ class ReadOnlyContext:
         )
 
         memory_search = None
+        memory_manager = None
         if config.memory.enabled:
             from src.config import resolve_memory_path
-            from src.memory.manager import MemoryIndexManager
-            from src.memory.search import MemorySearchOrchestrator
+            from src.memory.init import (
+                create_memory_system,
+                load_or_rebuild_memory_indices,
+            )
 
             memory_path = resolve_memory_path(config, config.detected_project, config.projects)
 
-            memory_vector = VectorIndex(
-                embedding_model_name=embedding_model_name,
-                embedding_workers=config.indexing.embedding_workers,
-            )
-            memory_keyword = KeywordIndex()
-            memory_graph = GraphStore()
-
-            memory_index_path = snapshot_base / "memory"
-            if memory_index_path.exists():
-                await asyncio.to_thread(
-                    _load_indices_from_snapshot,
-                    memory_vector,
-                    memory_keyword,
-                    memory_graph,
-                    memory_index_path,
-                )
-
-            memory_manager = MemoryIndexManager(
+            # Memory system is owned by main process, indices at memory_path/indices/
+            # NOT in document snapshots (see ADR-022)
+            memory_manager, memory_search = create_memory_system(
                 config=config,
                 memory_path=memory_path,
-                vector=memory_vector,
-                keyword=memory_keyword,
-                graph=memory_graph,
+                embedding_model_name=embedding_model_name,
             )
 
-            memory_search = MemorySearchOrchestrator(
-                vector=memory_vector,
-                keyword=memory_keyword,
-                graph=memory_graph,
-                config=config,
-                manager=memory_manager,
-                documents_path=Path(memory_path),
-            )
+            await asyncio.to_thread(load_or_rebuild_memory_indices, memory_manager)
 
         def reload_callback(snapshot_dir: Path, version: int) -> None:
             _load_indices_from_snapshot(vector, keyword, graph, snapshot_dir)
@@ -137,10 +114,6 @@ class ReadOnlyContext:
                     )
                     logger.info("Commit indexer loaded for read-only access")
 
-        memory_manager_instance = None
-        if config.memory.enabled and memory_search is not None:
-            memory_manager_instance = memory_search._manager
-
         ctx = cls(
             config=config,
             vector=vector,
@@ -150,7 +123,7 @@ class ReadOnlyContext:
             memory_search=memory_search,
             sync_receiver=sync_receiver,
             commit_indexer=commit_indexer,
-            memory_manager=memory_manager_instance,
+            memory_manager=memory_manager,
         )
 
         return ctx
@@ -181,27 +154,64 @@ class ReadOnlyContext:
         return self.sync_receiver.current_version > 0
 
 
-def _find_latest_snapshot(snapshot_base: Path) -> Path | None:
+def _find_available_snapshots(snapshot_base: Path) -> list[tuple[int, Path]]:
+    """Return sorted list of (version, path) tuples for existing snapshots, newest first."""
     if not snapshot_base.exists():
-        return None
+        return []
 
-    version_file = snapshot_base / "version.bin"
-    if not version_file.exists():
+    snapshots = []
+    for item in snapshot_base.iterdir():
+        if item.is_dir() and item.name.startswith("v"):
+            try:
+                version = int(item.name[1:])
+                snapshots.append((version, item))
+            except ValueError:
+                continue
+
+    return sorted(snapshots, key=lambda x: x[0], reverse=True)
+
+
+def _find_latest_snapshot(snapshot_base: Path) -> Path | None:
+    """Find the latest valid snapshot, with fallback if version.bin is inconsistent."""
+    if not snapshot_base.exists():
         return None
 
     import struct
 
-    try:
-        data = version_file.read_bytes()
-        if len(data) >= 4:
-            version = struct.unpack("<I", data[:4])[0]
-            snapshot_dir = snapshot_base / f"v{version}"
-            if snapshot_dir.exists():
-                return snapshot_dir
-    except (OSError, struct.error):
-        pass
+    version_file = snapshot_base / "version.bin"
+    pointed_version: int | None = None
 
-    return None
+    # Try to read the version pointer
+    if version_file.exists():
+        try:
+            data = version_file.read_bytes()
+            if len(data) >= 4:
+                pointed_version = struct.unpack("<I", data[:4])[0]
+                snapshot_dir = snapshot_base / f"v{pointed_version}"
+                if snapshot_dir.exists():
+                    return snapshot_dir
+        except (OSError, struct.error):
+            pass
+
+    # Fallback: find highest available snapshot on disk
+    available = _find_available_snapshots(snapshot_base)
+    if not available:
+        return None
+
+    highest_version, highest_path = available[0]
+
+    if pointed_version is not None:
+        logger.warning(
+            "version.bin points to v%d but directory missing. "
+            "Available snapshots: %s. Falling back to v%d.",
+            pointed_version,
+            [v for v, _ in available],
+            highest_version,
+        )
+    else:
+        logger.info("No version.bin found, using highest available snapshot v%d", highest_version)
+
+    return highest_path
 
 
 def _load_indices_from_snapshot(

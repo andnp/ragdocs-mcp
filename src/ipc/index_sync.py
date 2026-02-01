@@ -105,6 +105,22 @@ class IndexSyncReceiver:
         except (OSError, struct.error):
             return None
 
+    def _find_available_snapshots(self) -> list[tuple[int, Path]]:
+        """Return sorted list of (version, path) tuples for existing snapshots, newest first."""
+        if not self._snapshot_base.exists():
+            return []
+
+        snapshots = []
+        for item in self._snapshot_base.iterdir():
+            if item.is_dir() and item.name.startswith("v"):
+                try:
+                    version = int(item.name[1:])
+                    snapshots.append((version, item))
+                except ValueError:
+                    continue
+
+        return sorted(snapshots, key=lambda x: x[0], reverse=True)
+
     def check_for_update(self) -> bool:
         published_version = self._read_published_version()
         if published_version is None:
@@ -113,24 +129,46 @@ class IndexSyncReceiver:
 
     def reload_if_needed(self) -> bool:
         published_version = self._read_published_version()
-        if published_version is None:
+        target_version = published_version
+
+        # Determine snapshot directory, with fallback if pointed version is missing
+        snapshot_dir: Path | None = None
+        if published_version is not None:
+            snapshot_dir = self._snapshot_base / f"v{published_version}"
+            if not snapshot_dir.exists():
+                # Fallback to highest available snapshot
+                available = self._find_available_snapshots()
+                if available:
+                    highest_version, highest_path = available[0]
+                    logger.warning(
+                        "version.bin points to v%d but directory missing. "
+                        "Available: %s. Falling back to v%d.",
+                        published_version,
+                        [v for v, _ in available],
+                        highest_version,
+                    )
+                    snapshot_dir = highest_path
+                    target_version = highest_version
+                else:
+                    logger.warning(
+                        "Snapshot v%d not found and no fallback available",
+                        published_version,
+                    )
+                    return False
+
+        if target_version is None or snapshot_dir is None:
             return False
 
-        if published_version <= self._current_version:
-            return False
-
-        snapshot_dir = self._snapshot_base / f"v{published_version}"
-        if not snapshot_dir.exists():
-            logger.warning("Snapshot directory for v%d not found", published_version)
+        if target_version <= self._current_version:
             return False
 
         try:
-            self._reload_callback(snapshot_dir, published_version)
-            self._current_version = published_version
-            logger.info("Reloaded index from snapshot v%d", published_version)
+            self._reload_callback(snapshot_dir, target_version)
+            self._current_version = target_version
+            logger.info("Reloaded index from snapshot v%d", target_version)
             return True
         except Exception:
-            logger.exception("Failed to reload index from snapshot v%d", published_version)
+            logger.exception("Failed to reload index from snapshot v%d", target_version)
             return False
 
     async def watch(self) -> None:

@@ -270,3 +270,98 @@ class TestPublisherReceiverIntegration:
         loaded_content.clear()
         receiver.reload_if_needed()
         assert loaded_content == ["version 2"]
+
+
+class TestSnapshotFallbackResilience:
+    """Tests for snapshot version mismatch fallback behavior."""
+
+    def test_reload_falls_back_when_pointed_version_missing(self, snapshot_base: Path):
+        """
+        Verify reload falls back to highest available snapshot when
+        version.bin points to non-existent directory.
+        """
+        # version.bin points to v999 (doesn't exist)
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 999))
+
+        # But v100 and v150 exist on disk
+        (snapshot_base / "v100").mkdir()
+        (snapshot_base / "v100" / "data.txt").write_text("old")
+        (snapshot_base / "v150").mkdir()
+        (snapshot_base / "v150" / "data.txt").write_text("newer")
+
+        loaded_info: list[tuple[Path, int]] = []
+
+        def capture_load(path: Path, version: int) -> None:
+            loaded_info.append((path, version))
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=capture_load)
+
+        result = receiver.reload_if_needed()
+
+        # Should succeed using fallback to v150 (highest available)
+        assert result is True
+        assert len(loaded_info) == 1
+        assert loaded_info[0][0] == snapshot_base / "v150"
+        assert loaded_info[0][1] == 150
+        assert receiver._current_version == 150
+
+    def test_reload_returns_false_when_no_snapshots_available(
+        self, snapshot_base: Path
+    ):
+        """
+        Verify reload returns False when version.bin points to missing
+        snapshot and no other snapshots exist.
+        """
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 42))
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=lambda p, v: None)
+
+        result = receiver.reload_if_needed()
+
+        assert result is False
+        assert receiver._current_version == 0
+
+    def test_find_available_snapshots_returns_sorted_list(self, snapshot_base: Path):
+        """Verify _find_available_snapshots returns versions sorted descending."""
+        (snapshot_base / "v10").mkdir()
+        (snapshot_base / "v5").mkdir()
+        (snapshot_base / "v200").mkdir()
+        (snapshot_base / "v50").mkdir()
+        (snapshot_base / "not-a-version").mkdir()  # Should be ignored
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=lambda p, v: None)
+        available = receiver._find_available_snapshots()
+
+        versions = [v for v, _ in available]
+        assert versions == [200, 50, 10, 5]
+
+    def test_find_available_snapshots_empty_when_no_snapshots(
+        self, snapshot_base: Path
+    ):
+        """Verify _find_available_snapshots returns empty list when no snapshots."""
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=lambda p, v: None)
+        available = receiver._find_available_snapshots()
+        assert available == []
+
+    def test_reload_skips_fallback_if_already_loaded_higher(self, snapshot_base: Path):
+        """
+        Verify fallback doesn't downgrade if current version is higher than
+        available fallback snapshots.
+        """
+        # version.bin points to v999 (doesn't exist)
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 999))
+
+        # v50 exists but is lower than already-loaded version
+        (snapshot_base / "v50").mkdir()
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=lambda p, v: None)
+        receiver._current_version = 100  # Already loaded v100
+
+        result = receiver.reload_if_needed()
+
+        # Should return False since fallback (v50) < current (v100)
+        assert result is False
+        assert receiver._current_version == 100

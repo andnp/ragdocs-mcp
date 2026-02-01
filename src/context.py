@@ -65,9 +65,7 @@ class ApplicationContext:
         config.indexing.documents_path = documents_path
         config.detected_project = detected_project
 
-        embedding_model_name = config.llm.embedding_model
-        if embedding_model_name == "local":
-            embedding_model_name = "BAAI/bge-small-en-v1.5"
+        embedding_model_name = config.llm.resolved_embedding_model
 
         if lazy_embeddings:
             vector = VectorIndex(
@@ -120,33 +118,16 @@ class ApplicationContext:
         memory_manager = None
         memory_search = None
         if config.memory.enabled:
-            from src.memory.manager import MemoryIndexManager
-            from src.memory.search import MemorySearchOrchestrator
+            from src.memory.init import create_memory_system
 
             memory_path = resolve_memory_path(config, detected_project, config.projects)
 
-            memory_vector = VectorIndex(
-                embedding_model_name=embedding_model_name,
-                embedding_workers=config.indexing.embedding_workers,
-            )
-            memory_keyword = KeywordIndex()
-            memory_graph = GraphStore()
-
-            memory_manager = MemoryIndexManager(
+            # Memory system is owned by main process, uses memory_path/indices/ for storage
+            # NOT document snapshots (see ADR-022)
+            memory_manager, memory_search = create_memory_system(
                 config=config,
                 memory_path=memory_path,
-                vector=memory_vector,
-                keyword=memory_keyword,
-                graph=memory_graph,
-            )
-
-            memory_search = MemorySearchOrchestrator(
-                vector=memory_vector,
-                keyword=memory_keyword,
-                graph=memory_graph,
-                config=config,
-                manager=memory_manager,
-                documents_path=Path(memory_path),
+                embedding_model_name=embedding_model_name,
             )
 
             logger.info(f"Memory system initialized: {memory_path}")
@@ -259,14 +240,12 @@ class ApplicationContext:
             )
 
         if self.memory_manager is not None:
+            from src.memory.init import load_or_rebuild_memory_indices
+
             try:
-                self.memory_manager.load()
-                reindexed = self.memory_manager.reconcile()
-                if reindexed > 0:
-                    self.memory_manager.persist()
-                logger.info("Memory system loaded")
+                load_or_rebuild_memory_indices(self.memory_manager)
             except Exception as e:
-                logger.warning(f"Failed to load memory indices: {e}")
+                logger.warning(f"Memory system initialization failed: {e}")
 
     def _full_index(self) -> None:
         files_to_index = self.discover_files()

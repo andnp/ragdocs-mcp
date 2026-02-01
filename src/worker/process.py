@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import glob
 import logging
+import os
 import signal
 from dataclasses import dataclass, field
 from multiprocessing import Queue
@@ -10,7 +11,11 @@ from multiprocessing.synchronize import Event as EventType
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.config import Config, load_config
+# Prevent tokenizers parallelism warning in worker process.
+# This may already be set by parent, but ensure it for direct invocations.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+from src.config import Config, load_config, resolve_embedding_model
 from src.ipc.commands import (
     HealthCheckCommand,
     HealthStatusResponse,
@@ -188,9 +193,7 @@ async def _create_indices(config: Config) -> tuple[VectorIndex, KeywordIndex, Gr
     from src.indices.keyword import KeywordIndex
     from src.indices.vector import VectorIndex
 
-    embedding_model_name = config.llm.embedding_model
-    if embedding_model_name == "local":
-        embedding_model_name = "BAAI/bge-small-en-v1.5"
+    embedding_model_name = resolve_embedding_model(config)
 
     logger.info("Loading embedding model: %s", embedding_model_name)
     vector = VectorIndex(

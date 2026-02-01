@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 
-from src.config import load_config
+from src.config import load_config, LLMConfig, Config, resolve_embedding_model
 
 
 def test_load_from_project_local_config(tmp_path):
@@ -486,3 +486,112 @@ include = ["**/*.md", "**/*.rst"]
         ]
     finally:
         os.chdir(original_cwd)
+
+
+# =============================================================================
+# LLMConfig embedding model resolution tests
+# =============================================================================
+
+
+def test_llm_config_resolved_embedding_model_local():
+    """Property resolves 'local' to default model name."""
+    llm = LLMConfig(embedding_model="local")
+
+    result = llm.resolved_embedding_model
+
+    assert result == LLMConfig.DEFAULT_LOCAL_MODEL
+    assert result == "BAAI/bge-small-en-v1.5"
+
+
+def test_llm_config_resolved_embedding_model_custom():
+    """Property returns custom model name unchanged."""
+    custom_model = "sentence-transformers/all-MiniLM-L6-v2"
+    llm = LLMConfig(embedding_model=custom_model)
+
+    result = llm.resolved_embedding_model
+
+    assert result == custom_model
+
+
+def test_llm_config_resolved_embedding_model_default():
+    """Default LLMConfig uses 'local' which resolves to default model."""
+    llm = LLMConfig()
+
+    assert llm.embedding_model == "local"
+    assert llm.resolved_embedding_model == LLMConfig.DEFAULT_LOCAL_MODEL
+
+
+def test_resolve_embedding_model_with_local(tmp_path):
+    """resolve_embedding_model resolves 'local' to default model."""
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+        config.llm = LLMConfig(embedding_model="local")
+
+        result = resolve_embedding_model(config)
+
+        assert result == LLMConfig.DEFAULT_LOCAL_MODEL
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_resolve_embedding_model_with_custom(tmp_path):
+    """resolve_embedding_model returns custom model name unchanged."""
+    custom_model = "BAAI/bge-large-en-v1.5"
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+        config.llm = LLMConfig(embedding_model=custom_model)
+
+        result = resolve_embedding_model(config)
+
+        assert result == custom_model
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_resolve_embedding_model_fallback_when_property_missing():
+    """resolve_embedding_model falls back when property not accessible.
+
+    This is a regression test for the worker subprocess bug where accessing
+    config.llm.resolved_embedding_model raised AttributeError.
+    """
+    # Create a mock config with an LLMConfig that has no resolved_embedding_model
+    # property (simulating the edge case that caused the bug)
+    class BrokenLLMConfig:
+        def __init__(self):
+            self.embedding_model = "local"
+        # No resolved_embedding_model property!
+
+    class MockConfig:
+        def __init__(self):
+            self.llm = BrokenLLMConfig()
+
+    mock_config = MockConfig()
+
+    # resolve_embedding_model should handle this gracefully
+    result = resolve_embedding_model(mock_config)
+
+    # Should still resolve to the default model
+    assert result == LLMConfig.DEFAULT_LOCAL_MODEL
+
+
+def test_resolve_embedding_model_fallback_with_custom_model():
+    """resolve_embedding_model fallback works with custom model names."""
+    class BrokenLLMConfig:
+        def __init__(self):
+            self.embedding_model = "custom/model"
+        # No resolved_embedding_model property!
+
+    class MockConfig:
+        def __init__(self):
+            self.llm = BrokenLLMConfig()
+
+    mock_config = MockConfig()
+
+    result = resolve_embedding_model(mock_config)
+
+    assert result == "custom/model"
+

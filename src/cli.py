@@ -1,8 +1,14 @@
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
+
+# Prevent tokenizers parallelism warning when forking worker process.
+# Must be set before any HuggingFace/sentence-transformers imports.
+# See: https://github.com/huggingface/tokenizers/issues/993
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import click
 import uvicorn
