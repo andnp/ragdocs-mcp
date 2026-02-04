@@ -84,7 +84,15 @@ def create_test_document(docs_dir: Path | str, doc_id: str, content: str):
 
 @pytest.fixture(scope="session")
 def shared_embedding_model():
-    return HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+    """Session-scoped embedding model shared across all tests.
+    
+    Pre-warms the model with a dummy embedding call to avoid first-call
+    overhead (~1-2s) during actual tests.
+    """
+    model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+    # Pre-warm: trigger model initialization and cache warmup
+    _ = model.get_text_embedding("warmup")
+    return model
 
 
 @pytest.fixture(scope="module")
