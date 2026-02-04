@@ -143,13 +143,14 @@ class TestIndexSyncReceiver:
 
     def test_reload_if_needed_calls_reload_callback(self, snapshot_base: Path):
         """Verify reload_if_needed calls reload_callback with snapshot path."""
-        # Setup: create version file and snapshot directory
+        # Setup: create version file and snapshot directory with marker
         version_file = snapshot_base / "version.bin"
         version_file.write_bytes(struct.pack("<I", 7))
 
         snapshot_dir = snapshot_base / "v7"
         snapshot_dir.mkdir()
         (snapshot_dir / "index.dat").write_text("data")
+        (snapshot_dir / "complete.marker").write_text("7")
 
         loaded_info: list[tuple[Path, int]] = []
 
@@ -172,6 +173,7 @@ class TestIndexSyncReceiver:
 
         snapshot_dir = snapshot_base / "v99"
         snapshot_dir.mkdir()
+        (snapshot_dir / "complete.marker").write_text("99")
 
         receiver = IndexSyncReceiver(snapshot_base, reload_callback=lambda p, v: None)
         assert receiver._current_version == 0
@@ -411,6 +413,132 @@ class TestAtomicPublishBehavior:
         assert (final_dir / "fresh.txt").read_text() == "fresh"
 
 
+class TestMarkerFileValidation:
+    """Tests for complete.marker two-phase commit validation."""
+
+    def test_publish_creates_marker_file_with_version(self, snapshot_base: Path):
+        """Verify publish creates complete.marker with correct version number."""
+        publisher = IndexSyncPublisher(snapshot_base)
+
+        def persist_callback(path: Path) -> None:
+            (path / "data.txt").write_text("content")
+
+        version = publisher.publish(persist_callback)
+
+        marker_file = snapshot_base / f"v{version}" / "complete.marker"
+        assert marker_file.exists()
+        assert marker_file.read_text() == str(version)
+
+    def test_reload_skips_snapshot_if_marker_missing(self, snapshot_base: Path):
+        """Verify reload_if_needed skips snapshot when marker file is missing."""
+        # Setup: version file points to v5, directory exists but no marker
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 5))
+
+        snapshot_dir = snapshot_base / "v5"
+        snapshot_dir.mkdir()
+        (snapshot_dir / "data.txt").write_text("data")
+        # Note: no complete.marker file
+
+        loaded_info: list[tuple[Path, int]] = []
+
+        def capture_load(path: Path, version: int) -> None:
+            loaded_info.append((path, version))
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=capture_load)
+        result = receiver.reload_if_needed()
+
+        # Should return False since marker is missing and no fallback
+        assert result is False
+        assert len(loaded_info) == 0
+
+    def test_reload_skips_snapshot_if_marker_version_mismatch(self, snapshot_base: Path):
+        """Verify reload_if_needed skips snapshot when marker version doesn't match."""
+        # Setup: version file points to v10, directory exists but marker says v9
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 10))
+
+        snapshot_dir = snapshot_base / "v10"
+        snapshot_dir.mkdir()
+        (snapshot_dir / "data.txt").write_text("data")
+        (snapshot_dir / "complete.marker").write_text("9")  # Wrong version!
+
+        loaded_info: list[tuple[Path, int]] = []
+
+        def capture_load(path: Path, version: int) -> None:
+            loaded_info.append((path, version))
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=capture_load)
+        result = receiver.reload_if_needed()
+
+        # Should return False since marker version doesn't match
+        assert result is False
+        assert len(loaded_info) == 0
+
+    def test_reload_uses_fallback_when_primary_marker_invalid(self, snapshot_base: Path):
+        """Verify reload falls back to valid snapshot when primary has invalid marker."""
+        # Setup: version.bin points to v10 (invalid), but v8 is valid
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 10))
+
+        # v10 exists but has wrong marker
+        snapshot_v10 = snapshot_base / "v10"
+        snapshot_v10.mkdir()
+        (snapshot_v10 / "data.txt").write_text("v10 data")
+        (snapshot_v10 / "complete.marker").write_text("9")  # Wrong!
+
+        # v8 exists with valid marker
+        snapshot_v8 = snapshot_base / "v8"
+        snapshot_v8.mkdir()
+        (snapshot_v8 / "data.txt").write_text("v8 data")
+        (snapshot_v8 / "complete.marker").write_text("8")  # Correct
+
+        loaded_info: list[tuple[Path, int]] = []
+
+        def capture_load(path: Path, version: int) -> None:
+            loaded_info.append((path, version))
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=capture_load)
+        result = receiver.reload_if_needed()
+
+        # Should succeed using fallback to v8
+        assert result is True
+        assert len(loaded_info) == 1
+        assert loaded_info[0][0] == snapshot_v8
+        assert loaded_info[0][1] == 8
+
+    def test_validate_snapshot_returns_true_for_valid_marker(self, snapshot_base: Path):
+        """Verify _validate_snapshot returns True when marker matches."""
+        snapshot_dir = snapshot_base / "v42"
+        snapshot_dir.mkdir()
+        (snapshot_dir / "complete.marker").write_text("42")
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=lambda p, v: None)
+        assert receiver._validate_snapshot(snapshot_dir, 42) is True
+
+    def test_validate_snapshot_returns_false_for_missing_marker(
+        self, snapshot_base: Path
+    ):
+        """Verify _validate_snapshot returns False when marker is missing."""
+        snapshot_dir = snapshot_base / "v42"
+        snapshot_dir.mkdir()
+        # No marker file
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=lambda p, v: None)
+        assert receiver._validate_snapshot(snapshot_dir, 42) is False
+
+    def test_validate_snapshot_returns_false_for_wrong_version(
+        self, snapshot_base: Path
+    ):
+        """Verify _validate_snapshot returns False when marker version differs."""
+        snapshot_dir = snapshot_base / "v42"
+        snapshot_dir.mkdir()
+        (snapshot_dir / "complete.marker").write_text("41")
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=lambda p, v: None)
+        assert receiver._validate_snapshot(snapshot_dir, 42) is False
+
+
 class TestSnapshotFallbackResilience:
     """Tests for snapshot version mismatch fallback behavior."""
 
@@ -423,11 +551,13 @@ class TestSnapshotFallbackResilience:
         version_file = snapshot_base / "version.bin"
         version_file.write_bytes(struct.pack("<I", 999))
 
-        # But v100 and v150 exist on disk
+        # But v100 and v150 exist on disk with valid markers
         (snapshot_base / "v100").mkdir()
         (snapshot_base / "v100" / "data.txt").write_text("old")
+        (snapshot_base / "v100" / "complete.marker").write_text("100")
         (snapshot_base / "v150").mkdir()
         (snapshot_base / "v150" / "data.txt").write_text("newer")
+        (snapshot_base / "v150" / "complete.marker").write_text("150")
 
         loaded_info: list[tuple[Path, int]] = []
 

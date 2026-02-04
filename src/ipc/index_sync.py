@@ -68,6 +68,11 @@ class IndexSyncPublisher:
             temp_snapshot_dir.rename(snapshot_dir)
             temp_version_file.replace(self._version_file)
 
+            # Phase 4: Write completion marker for two-phase commit validation
+            # Readers verify this marker before loading to ensure consistency
+            marker_file = snapshot_dir / "complete.marker"
+            marker_file.write_text(str(new_version))
+
             self._version = new_version
             logger.info("Published index snapshot v%d to %s", new_version, snapshot_dir)
 
@@ -153,6 +158,14 @@ class IndexSyncReceiver:
 
         return sorted(snapshots, key=lambda x: x[0], reverse=True)
 
+    def _validate_snapshot(self, snapshot_dir: Path, expected_version: int) -> bool:
+        """Validate that a snapshot has a complete.marker with the expected version."""
+        marker = snapshot_dir / "complete.marker"
+        try:
+            return marker.read_text().strip() == str(expected_version)
+        except (OSError, ValueError):
+            return False
+
     def check_for_update(self) -> bool:
         published_version = self._read_published_version()
         if published_version is None:
@@ -163,27 +176,39 @@ class IndexSyncReceiver:
         published_version = self._read_published_version()
         target_version = published_version
 
-        # Determine snapshot directory, with fallback if pointed version is missing
+        # Determine snapshot directory, with fallback if pointed version is missing or invalid
         snapshot_dir: Path | None = None
         if published_version is not None:
             snapshot_dir = self._snapshot_base / f"v{published_version}"
-            if not snapshot_dir.exists():
-                # Fallback to highest available snapshot
+            # Check both existence and marker validation
+            if not snapshot_dir.exists() or not self._validate_snapshot(
+                snapshot_dir, published_version
+            ):
+                # Fallback to highest available valid snapshot
                 available = self._find_available_snapshots()
-                if available:
-                    highest_version, highest_path = available[0]
+                fallback_found = False
+                for version, path in available:
+                    if self._validate_snapshot(path, version):
+                        if not snapshot_dir.exists():
+                            logger.warning(
+                                "version.bin points to v%d but directory missing. "
+                                "Falling back to v%d.",
+                                published_version,
+                                version,
+                            )
+                        else:
+                            logger.warning(
+                                "Snapshot v%d has invalid marker. Falling back to v%d.",
+                                published_version,
+                                version,
+                            )
+                        snapshot_dir = path
+                        target_version = version
+                        fallback_found = True
+                        break
+                if not fallback_found:
                     logger.warning(
-                        "version.bin points to v%d but directory missing. "
-                        "Available: %s. Falling back to v%d.",
-                        published_version,
-                        [v for v, _ in available],
-                        highest_version,
-                    )
-                    snapshot_dir = highest_path
-                    target_version = highest_version
-                else:
-                    logger.warning(
-                        "Snapshot v%d not found and no fallback available",
+                        "Snapshot v%d not valid and no fallback available",
                         published_version,
                     )
                     return False
