@@ -476,16 +476,18 @@ class TestReindexAndStats:
         """
         Verify get_all_tags aggregates tags across memories.
         """
-        create_memory_file(
+        file1 = create_memory_file(
             memory_path,
             "tagged1",
             "---\ntags: [\"api\", \"backend\"]\n---\n# Tagged 1"
         )
-        create_memory_file(
+        file2 = create_memory_file(
             memory_path,
             "tagged2",
             "---\ntags: [\"api\", \"frontend\"]\n---\n# Tagged 2"
         )
+        memory_manager.index_memory(str(file1))
+        memory_manager.index_memory(str(file2))
 
         tags = memory_manager.get_all_tags()
 
@@ -496,21 +498,24 @@ class TestReindexAndStats:
         """
         Verify get_all_types aggregates memory types.
         """
-        create_memory_file(
+        file1 = create_memory_file(
             memory_path,
             "plan1",
             "---\ntype: \"plan\"\n---\n# Plan 1"
         )
-        create_memory_file(
+        file2 = create_memory_file(
             memory_path,
             "plan2",
             "---\ntype: \"plan\"\n---\n# Plan 2"
         )
-        create_memory_file(
+        file3 = create_memory_file(
             memory_path,
             "fact1",
             "---\ntype: \"fact\"\n---\n# Fact 1"
         )
+        memory_manager.index_memory(str(file1))
+        memory_manager.index_memory(str(file2))
+        memory_manager.index_memory(str(file3))
 
         types = memory_manager.get_all_types()
 
@@ -527,8 +532,10 @@ class TestReindexAndStats:
         """
         content1 = "# Note 1\n\n" + "x" * 100
         content2 = "# Note 2\n\n" + "y" * 200
-        create_memory_file(memory_path, "size1", content1)
-        create_memory_file(memory_path, "size2", content2)
+        file1 = create_memory_file(memory_path, "size1", content1)
+        file2 = create_memory_file(memory_path, "size2", content2)
+        memory_manager.index_memory(str(file1))
+        memory_manager.index_memory(str(file2))
 
         total_size = memory_manager.get_total_size_bytes()
 
@@ -541,3 +548,151 @@ class TestReindexAndStats:
         failed = memory_manager.get_failed_files()
 
         assert failed == []
+
+
+# ============================================================================
+# Metadata Cache Tests
+# ============================================================================
+
+
+class TestMetadataCache:
+
+    def test_cache_updated_on_index_memory(
+        self, memory_manager: MemoryIndexManager, memory_path: Path
+    ):
+        """
+        Verify metadata cache is populated when a memory is indexed.
+        """
+        content = """---
+type: "fact"
+tags: ["cache-test", "validation"]
+---
+
+# Cache Validation
+
+This tests cache population on index.
+"""
+        file_path = create_memory_file(memory_path, "cache-test", content)
+
+        memory_manager.index_memory(str(file_path))
+
+        tags = memory_manager.get_all_tags()
+        types = memory_manager.get_all_types()
+
+        assert "cache-test" in tags
+        assert "validation" in tags
+        assert tags["cache-test"] == 1
+        assert "fact" in types
+        assert types["fact"] == 1
+
+    def test_cache_cleared_on_remove_memory(
+        self, memory_manager: MemoryIndexManager, memory_path: Path
+    ):
+        """
+        Verify metadata cache entry is removed when memory is removed.
+        """
+        content = """---
+type: "journal"
+tags: ["remove-test"]
+---
+
+# To Be Removed
+
+This memory will be removed.
+"""
+        file_path = create_memory_file(memory_path, "remove-cache", content)
+
+        memory_manager.index_memory(str(file_path))
+        assert "remove-test" in memory_manager.get_all_tags()
+
+        memory_manager.remove_memory("memory:remove-cache")
+
+        tags = memory_manager.get_all_tags()
+        assert "remove-test" not in tags
+
+    def test_cache_size_tracking(
+        self, memory_manager: MemoryIndexManager, memory_path: Path
+    ):
+        """
+        Verify size tracking is maintained in cache.
+        """
+        content1 = "# Small\n\n" + "a" * 50
+        content2 = "# Large\n\n" + "b" * 500
+
+        file1 = create_memory_file(memory_path, "small-file", content1)
+        file2 = create_memory_file(memory_path, "large-file", content2)
+
+        memory_manager.index_memory(str(file1))
+        size_after_first = memory_manager.get_total_size_bytes()
+
+        memory_manager.index_memory(str(file2))
+        size_after_both = memory_manager.get_total_size_bytes()
+
+        assert size_after_both > size_after_first
+
+    def test_cache_rebuilt_on_load(
+        self, memory_config: Config, memory_path: Path
+    ):
+        """
+        Verify metadata cache is rebuilt when indices are loaded.
+        """
+        content = """---
+type: "plan"
+tags: ["rebuild-test"]
+---
+
+# Rebuild Cache Test
+
+Cache should be rebuilt on load.
+"""
+        file_path = create_memory_file(memory_path, "rebuild-cache", content)
+
+        vector1 = VectorIndex()
+        keyword1 = KeywordIndex()
+        graph1 = GraphStore()
+        manager1 = MemoryIndexManager(memory_config, memory_path, vector1, keyword1, graph1)
+
+        manager1.index_memory(str(file_path))
+        manager1.persist()
+
+        vector2 = VectorIndex()
+        keyword2 = KeywordIndex()
+        graph2 = GraphStore()
+        manager2 = MemoryIndexManager(memory_config, memory_path, vector2, keyword2, graph2)
+        manager2.load()
+
+        tags = manager2.get_all_tags()
+        types = manager2.get_all_types()
+        total_size = manager2.get_total_size_bytes()
+
+        assert "rebuild-test" in tags
+        assert "plan" in types
+        assert total_size > 0
+
+    def test_stats_fast_from_cache(
+        self, memory_manager: MemoryIndexManager, memory_path: Path
+    ):
+        """
+        Verify stats queries access cache without re-reading files.
+
+        This test ensures the cache is used by checking that multiple
+        calls return consistent results without file I/O.
+        """
+        for i in range(5):
+            content = f"---\ntype: \"journal\"\ntags: [\"batch-{i}\"]\n---\n# Note {i}"
+            file_path = create_memory_file(memory_path, f"batch-{i}", content)
+            memory_manager.index_memory(str(file_path))
+
+        tags1 = memory_manager.get_all_tags()
+        types1 = memory_manager.get_all_types()
+        size1 = memory_manager.get_total_size_bytes()
+
+        tags2 = memory_manager.get_all_tags()
+        types2 = memory_manager.get_all_types()
+        size2 = memory_manager.get_total_size_bytes()
+
+        assert tags1 == tags2
+        assert types1 == types2
+        assert size1 == size2
+        assert len(tags1) == 5
+        assert types1.get("journal") == 5

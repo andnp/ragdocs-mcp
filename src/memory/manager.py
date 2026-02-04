@@ -37,6 +37,15 @@ class FailedMemory:
     timestamp: str
 
 
+@dataclass
+class MemoryMetadata:
+    """Cached metadata for a single memory file."""
+    memory_id: str
+    tags: list[str]
+    memory_type: str
+    size_bytes: int
+
+
 class MemoryIndexManager:
     """Manages memory file indexing and persistence.
 
@@ -77,6 +86,10 @@ class MemoryIndexManager:
         self._ops_since_checkpoint: int = 0
         self._last_checkpoint_time: float = time.time()
         self._dirty: bool = False
+
+        # Metadata cache for fast stats queries (protected by _cache_lock)
+        self._cache_lock = threading.Lock()
+        self._metadata_cache: dict[str, MemoryMetadata] = {}
 
         ensure_memory_dirs(memory_path)
 
@@ -292,6 +305,15 @@ class MemoryIndexManager:
                 f for f in self._failed_files if f.path != file_path
             ]
 
+            # Update metadata cache
+            with self._cache_lock:
+                self._metadata_cache[memory.id] = MemoryMetadata(
+                    memory_id=memory.id,
+                    tags=list(memory.frontmatter.tags),
+                    memory_type=memory.frontmatter.type,
+                    size_bytes=path.stat().st_size,
+                )
+
             with self._checkpoint_lock:
                 self._dirty = True
             self._maybe_checkpoint()
@@ -315,6 +337,11 @@ class MemoryIndexManager:
             self._vector.remove(memory_id)
             self._keyword.remove(memory_id)
             self._graph.remove_node(memory_id)
+
+            # Remove from metadata cache
+            with self._cache_lock:
+                self._metadata_cache.pop(memory_id, None)
+
             with self._checkpoint_lock:
                 self._dirty = True
             self._maybe_checkpoint()
@@ -386,10 +413,34 @@ class MemoryIndexManager:
             self._vector.load(indices_path / "vector")
             self._keyword.load(indices_path / "keyword")
             self._graph.load(indices_path / "graph")
+            self._rebuild_metadata_cache()
             logger.info(f"Loaded memory indices from {indices_path}")
         except Exception as e:
             logger.error(f"Failed to load memory indices: {e}", exc_info=True)
             raise
+
+    def _rebuild_metadata_cache(self) -> None:
+        """Rebuild metadata cache from filesystem.
+
+        Called on load() to populate cache from memory files.
+        """
+        cache: dict[str, MemoryMetadata] = {}
+        for memory_file in list_memory_files(self._memory_path):
+            try:
+                memory_id = compute_memory_id(self._memory_path, memory_file)
+                content = memory_file.read_text(encoding="utf-8")
+                frontmatter, _ = self._parse_frontmatter(content)
+                cache[memory_id] = MemoryMetadata(
+                    memory_id=memory_id,
+                    tags=list(frontmatter.tags),
+                    memory_type=frontmatter.type,
+                    size_bytes=memory_file.stat().st_size,
+                )
+            except Exception:
+                continue
+        with self._cache_lock:
+            self._metadata_cache = cache
+        logger.debug(f"Rebuilt metadata cache with {len(cache)} entries")
 
     def reconcile(self) -> int:
         memory_files = list_memory_files(self._memory_path)
@@ -449,38 +500,20 @@ class MemoryIndexManager:
         ]
 
     def get_all_tags(self) -> dict[str, int]:
-        tag_counts: dict[str, int] = {}
-
-        for memory_file in list_memory_files(self._memory_path):
-            try:
-                content = memory_file.read_text(encoding="utf-8")
-                frontmatter, _ = self._parse_frontmatter(content)
-                for tag in frontmatter.tags:
+        with self._cache_lock:
+            tag_counts: dict[str, int] = {}
+            for metadata in self._metadata_cache.values():
+                for tag in metadata.tags:
                     tag_counts[tag] = tag_counts.get(tag, 0) + 1
-            except Exception:
-                continue
-
-        return tag_counts
+            return tag_counts
 
     def get_all_types(self) -> dict[str, int]:
-        type_counts: dict[str, int] = {}
-
-        for memory_file in list_memory_files(self._memory_path):
-            try:
-                content = memory_file.read_text(encoding="utf-8")
-                frontmatter, _ = self._parse_frontmatter(content)
-                mem_type = frontmatter.type
-                type_counts[mem_type] = type_counts.get(mem_type, 0) + 1
-            except Exception:
-                continue
-
-        return type_counts
+        with self._cache_lock:
+            type_counts: dict[str, int] = {}
+            for metadata in self._metadata_cache.values():
+                type_counts[metadata.memory_type] = type_counts.get(metadata.memory_type, 0) + 1
+            return type_counts
 
     def get_total_size_bytes(self) -> int:
-        total = 0
-        for memory_file in list_memory_files(self._memory_path):
-            try:
-                total += memory_file.stat().st_size
-            except Exception:
-                continue
-        return total
+        with self._cache_lock:
+            return sum(m.size_bytes for m in self._metadata_cache.values())
