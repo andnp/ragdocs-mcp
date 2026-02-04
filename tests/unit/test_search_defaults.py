@@ -10,7 +10,7 @@ class TestSearchDefaults:
         config = SearchConfig()
 
         assert config.min_confidence == 0.3
-        assert config.score_calibration_threshold == 0.035
+        assert config.score_calibration_threshold == 0.02
         assert config.semantic_weight == 1.0
         assert config.keyword_weight == 1.0
 

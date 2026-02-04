@@ -6,6 +6,7 @@ import multiprocessing
 import multiprocessing.synchronize
 import os
 import queue
+import random
 import signal
 import sys
 import threading
@@ -24,6 +25,7 @@ from src.ipc.commands import (
     InitCompleteNotification,
     ShutdownCommand,
 )
+from src.ipc.queue_manager import QueueManager
 from src.reader.context import ReadOnlyContext
 
 logger = logging.getLogger(__name__)
@@ -52,10 +54,13 @@ class LifecycleCoordinator:
     _emergency_timeout: float = field(default=3.5, repr=False)
     _worker_process: multiprocessing.Process | None = field(default=None, repr=False)
     _command_queue: Queue[Any] | None = field(default=None, repr=False)
+    _command_queue_manager: QueueManager | None = field(default=None, repr=False)
     _response_queue: Queue[Any] | None = field(default=None, repr=False)
     _shutdown_event: multiprocessing.synchronize.Event | None = field(default=None, repr=False)
     _restart_attempts: int = field(default=0, repr=False)
     _health_check_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    _consecutive_timeouts: int = field(default=0, repr=False)
+    _max_consecutive_timeouts: int = field(default=3, repr=False)
 
     @property
     def state(self) -> LifecycleState:
@@ -141,6 +146,7 @@ class LifecycleCoordinator:
         config = self._readonly_ctx.config
 
         self._command_queue = multiprocessing.Queue()
+        self._command_queue_manager = QueueManager(self._command_queue, name="command")
         self._response_queue = multiprocessing.Queue()
         self._shutdown_event = multiprocessing.Event()
 
@@ -213,8 +219,8 @@ class LifecycleCoordinator:
                     await self._restart_worker()
                     continue
 
-                if self._command_queue is not None:
-                    self._command_queue.put_nowait(HealthCheckCommand())
+                if self._command_queue_manager is not None:
+                    await self._command_queue_manager.put_critical_async(HealthCheckCommand())
 
                     if self._response_queue is not None:
                         try:
@@ -223,13 +229,28 @@ class LifecycleCoordinator:
                                 timeout=6.0,
                             )
                             if isinstance(response, HealthStatusResponse):
+                                self._consecutive_timeouts = 0
                                 if not response.healthy:
                                     logger.warning("Worker reports unhealthy")
                                     self._state = LifecycleState.DEGRADED
                                 elif self._state == LifecycleState.DEGRADED:
+                                    logger.info("Worker recovered, transitioning to READY")
                                     self._state = LifecycleState.READY
                         except (asyncio.TimeoutError, queue.Empty):
-                            logger.debug("Health check: no response (worker busy)")
+                            self._consecutive_timeouts += 1
+                            logger.warning(
+                                "Health check timeout (%d/%d consecutive)",
+                                self._consecutive_timeouts,
+                                self._max_consecutive_timeouts,
+                            )
+                            if self._consecutive_timeouts >= self._max_consecutive_timeouts:
+                                logger.error(
+                                    "Max consecutive health check timeouts reached, "
+                                    "transitioning to DEGRADED and restarting worker"
+                                )
+                                self._state = LifecycleState.DEGRADED
+                                self._consecutive_timeouts = 0
+                                await self._restart_worker()
 
             except asyncio.CancelledError:
                 break
@@ -245,8 +266,11 @@ class LifecycleCoordinator:
         if self._readonly_ctx is None:
             return
 
-        max_attempts = self._readonly_ctx.config.worker.max_restart_attempts
-        backoff_base = self._readonly_ctx.config.worker.restart_backoff_base
+        worker_config = self._readonly_ctx.config.worker
+        max_attempts = worker_config.max_restart_attempts
+        backoff_base = worker_config.restart_backoff_base
+        jitter_factor = worker_config.restart_jitter_factor
+        max_delay = worker_config.restart_max_delay
 
         if self._restart_attempts >= max_attempts:
             logger.error("Max restart attempts reached, giving up")
@@ -254,10 +278,24 @@ class LifecycleCoordinator:
             return
 
         self._restart_attempts += 1
-        backoff = backoff_base * (2 ** (self._restart_attempts - 1))
-        logger.info("Restarting worker (attempt %d/%d) after %.1fs", self._restart_attempts, max_attempts, backoff)
 
-        await asyncio.sleep(backoff)
+        # Calculate base delay with exponential backoff, capped at max_delay
+        base_delay = min(max_delay, backoff_base * (2 ** (self._restart_attempts - 1)))
+
+        # Add jitter: ±jitter_factor random variation to prevent thundering herd
+        jitter = base_delay * jitter_factor * (2 * random.random() - 1)
+        delay = max(1.0, base_delay + jitter)  # Minimum 1 second
+
+        logger.info(
+            "Restarting worker (attempt %d/%d) after %.1fs (base: %.1f, jitter: %.1f)",
+            self._restart_attempts,
+            max_attempts,
+            delay,
+            base_delay,
+            jitter,
+        )
+
+        await asyncio.sleep(delay)
 
         await self._stop_worker()
         await self._start_worker()
@@ -273,11 +311,8 @@ class LifecycleCoordinator:
         if self._shutdown_event is not None:
             self._shutdown_event.set()
 
-        if self._command_queue is not None:
-            try:
-                self._command_queue.put_nowait(ShutdownCommand(graceful=True))
-            except Exception:
-                pass
+        if self._command_queue_manager is not None:
+            await self._command_queue_manager.put_critical_async(ShutdownCommand(graceful=True))
 
         if self._worker_process is not None and self._worker_process.is_alive():
             timeout = 5.0

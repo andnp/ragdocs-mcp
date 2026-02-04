@@ -16,6 +16,9 @@ class IndexSyncPublisher:
         self._load_current_version()
 
     def _load_current_version(self) -> None:
+        # Clean up any orphaned temp files from crashed publishes
+        self._cleanup_orphaned_temp_files()
+
         if self._version_file.exists():
             try:
                 data = self._version_file.read_bytes()
@@ -25,19 +28,44 @@ class IndexSyncPublisher:
                 logger.warning("Failed to load version file, starting from 0")
                 self._version = 0
 
+    def _cleanup_orphaned_temp_files(self) -> None:
+        """Remove any .tmp files/directories left from crashed publishes."""
+        if not self._snapshot_base.exists():
+            return
+
+        for item in self._snapshot_base.iterdir():
+            if item.name.endswith(".tmp"):
+                try:
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                        logger.debug("Cleaned up orphaned temp directory: %s", item)
+                    else:
+                        item.unlink()
+                        logger.debug("Cleaned up orphaned temp file: %s", item)
+                except OSError as e:
+                    logger.warning("Failed to clean up temp file %s: %s", item, e)
+
     def publish(self, persist_callback: Callable[[Path], None]) -> int:
         self._snapshot_base.mkdir(parents=True, exist_ok=True)
 
         new_version = self._version + 1
         snapshot_dir = self._snapshot_base / f"v{new_version}"
-        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        temp_snapshot_dir = self._snapshot_base / f"v{new_version}.tmp"
+        temp_version_file = self._version_file.with_suffix(".tmp")
 
         try:
-            persist_callback(snapshot_dir)
+            # Phase 1: Create snapshot in temp directory
+            temp_snapshot_dir.mkdir(parents=True, exist_ok=True)
+            persist_callback(temp_snapshot_dir)
 
-            version_data = struct.pack("<I", new_version)
-            temp_version_file = self._version_file.with_suffix(".tmp")
-            temp_version_file.write_bytes(version_data)
+            # Phase 2: Write version to temp file
+            temp_version_file.write_bytes(struct.pack("<I", new_version))
+
+            # Phase 3: Atomic moves (as atomic as filesystem allows)
+            # On POSIX, rename is atomic if on same filesystem
+            if snapshot_dir.exists():
+                shutil.rmtree(snapshot_dir)
+            temp_snapshot_dir.rename(snapshot_dir)
             temp_version_file.replace(self._version_file)
 
             self._version = new_version
@@ -47,8 +75,12 @@ class IndexSyncPublisher:
 
             return new_version
         except Exception:
-            if snapshot_dir.exists():
-                shutil.rmtree(snapshot_dir, ignore_errors=True)
+            # Cleanup any partial state
+            logger.exception("Snapshot publish failed, cleaning up")
+            if temp_snapshot_dir.exists():
+                shutil.rmtree(temp_snapshot_dir)
+            if temp_version_file.exists():
+                temp_version_file.unlink()
             raise
 
     def _cleanup_old_snapshots(self, keep: int = 2) -> None:

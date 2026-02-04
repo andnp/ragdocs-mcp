@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,6 +71,11 @@ class MemoryIndexManager:
         self._failed_files: list[FailedMemory] = []
         self._chunker = get_chunker(config.memory_chunking)
 
+        # Checkpoint tracking
+        self._ops_since_checkpoint: int = 0
+        self._last_checkpoint_time: float = time.time()
+        self._dirty: bool = False
+
         ensure_memory_dirs(memory_path)
 
     @property
@@ -87,6 +93,38 @@ class MemoryIndexManager:
     @property
     def graph(self) -> GraphStore:
         return self._graph
+
+    @property
+    def is_dirty(self) -> bool:
+        """Return True if there are unsaved changes."""
+        return self._dirty
+
+    def _maybe_checkpoint(self) -> None:
+        """Persist indices if checkpoint threshold is reached.
+
+        Checkpointing occurs when either:
+        - N operations have been performed since last checkpoint
+        - M seconds have elapsed since last checkpoint
+
+        This provides crash resilience by periodically persisting changes.
+        """
+        if not self._dirty:
+            return
+
+        self._ops_since_checkpoint += 1
+        now = time.time()
+
+        should_checkpoint = (
+            self._ops_since_checkpoint >= self._config.memory.checkpoint_interval_ops
+            or (now - self._last_checkpoint_time) >= self._config.memory.checkpoint_interval_secs
+        )
+
+        if should_checkpoint:
+            self.persist()
+            self._ops_since_checkpoint = 0
+            self._last_checkpoint_time = now
+            self._dirty = False
+            logger.debug("Memory indices checkpointed")
 
     def _parse_frontmatter(self, content: str) -> tuple[MemoryFrontmatter, str]:
         match = FRONTMATTER_PATTERN.match(content)
@@ -246,6 +284,9 @@ class MemoryIndexManager:
                 f for f in self._failed_files if f.path != file_path
             ]
 
+            self._dirty = True
+            self._maybe_checkpoint()
+
             logger.info(f"Indexed memory: {memory.id} with {len(chunks)} chunks")
 
         except Exception as e:
@@ -265,6 +306,8 @@ class MemoryIndexManager:
             self._vector.remove(memory_id)
             self._keyword.remove(memory_id)
             self._graph.remove_node(memory_id)
+            self._dirty = True
+            self._maybe_checkpoint()
             logger.info(f"Removed memory: {memory_id}")
         except Exception as e:
             logger.error(f"Failed to remove memory {memory_id}: {e}", exc_info=True)
@@ -309,6 +352,7 @@ class MemoryIndexManager:
             self._vector.persist(indices_path / "vector")
             self._keyword.persist(indices_path / "keyword")
             self._graph.persist(indices_path / "graph")
+            self._dirty = False
             logger.info(f"Persisted memory indices to {indices_path}")
         except Exception as e:
             logger.error(f"Failed to persist memory indices: {e}", exc_info=True)
@@ -369,6 +413,7 @@ class MemoryIndexManager:
 
         if reindexed_count > 0:
             logger.info(f"Reconciled {reindexed_count} memories with missing metadata")
+            self._maybe_checkpoint()
 
         return reindexed_count
 

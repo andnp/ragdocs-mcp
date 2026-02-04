@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING
 # Must be set before any HuggingFace/sentence-transformers imports.
 # See: https://github.com/huggingface/tokenizers/issues/993
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+# Disable HuggingFace/tqdm progress bars to prevent stdout pollution in JSON output
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TQDM_DISABLE", "1")
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server

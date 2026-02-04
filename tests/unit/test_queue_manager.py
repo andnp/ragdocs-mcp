@@ -5,12 +5,13 @@ Tests async get/put operations, timeouts, and drain functionality.
 """
 
 import asyncio
+import threading
 from multiprocessing import Queue
 
 import pytest
 
 from src.ipc.commands import HealthCheckCommand, ShutdownCommand
-from src.ipc.queue_manager import QueueManager
+from src.ipc.queue_manager import CommandPriority, QueueManager
 
 
 @pytest.fixture
@@ -20,9 +21,21 @@ def mp_queue() -> Queue:
 
 
 @pytest.fixture
+def small_queue() -> Queue:
+    """Create a small multiprocessing Queue that fills quickly."""
+    return Queue(maxsize=2)
+
+
+@pytest.fixture
 def queue_manager(mp_queue: Queue) -> QueueManager:
     """Create a QueueManager wrapping the test queue."""
     return QueueManager(mp_queue, name="test_queue")
+
+
+@pytest.fixture
+def small_queue_manager(small_queue: Queue) -> QueueManager:
+    """Create a QueueManager with a small underlying queue."""
+    return QueueManager(small_queue, name="small_test_queue")
 
 
 class TestQueueManagerPut:
@@ -173,3 +186,191 @@ class TestQueueManagerConcurrency:
 
         # Should receive all 10 messages
         assert len(received) == 10
+
+
+class TestCommandPriority:
+    """Tests for CommandPriority enum."""
+
+    def test_priority_ordering(self):
+        """Verify priority levels have correct ordering."""
+        assert CommandPriority.CRITICAL < CommandPriority.NORMAL < CommandPriority.LOW
+
+    def test_priority_values(self):
+        """Verify priority enum values."""
+        assert CommandPriority.CRITICAL == 0
+        assert CommandPriority.NORMAL == 1
+        assert CommandPriority.LOW == 2
+
+
+class TestQueueManagerDroppedCount:
+    """Tests for dropped message tracking."""
+
+    def test_initial_dropped_count_is_zero(self, queue_manager: QueueManager):
+        """Verify dropped count starts at zero."""
+        assert queue_manager.get_dropped_count() == 0
+
+    def test_dropped_count_increments_on_full_queue(
+        self, small_queue_manager: QueueManager, small_queue: Queue
+    ):
+        """Verify dropped count increments when queue is full."""
+        # Fill the queue (maxsize=2)
+        small_queue_manager.put_nowait(ShutdownCommand())
+        small_queue_manager.put_nowait(ShutdownCommand())
+
+        assert small_queue_manager.get_dropped_count() == 0
+
+        # This should fail and increment dropped count
+        result = small_queue_manager.put_nowait(ShutdownCommand())
+
+        assert result is False
+        assert small_queue_manager.get_dropped_count() == 1
+
+    def test_dropped_count_accumulates(
+        self, small_queue_manager: QueueManager, small_queue: Queue
+    ):
+        """Verify multiple dropped messages accumulate count."""
+        # Fill the queue
+        small_queue_manager.put_nowait(ShutdownCommand())
+        small_queue_manager.put_nowait(ShutdownCommand())
+
+        # Drop several messages
+        for _ in range(5):
+            small_queue_manager.put_nowait(ShutdownCommand())
+
+        assert small_queue_manager.get_dropped_count() == 5
+
+    def test_dropped_count_thread_safety(self, small_queue_manager: QueueManager):
+        """Verify dropped count is thread-safe under concurrent access."""
+        # Fill the queue first
+        small_queue_manager.put_nowait(ShutdownCommand())
+        small_queue_manager.put_nowait(ShutdownCommand())
+
+        threads_count = 10
+        drops_per_thread = 100
+        errors: list[Exception] = []
+
+        def drop_messages():
+            try:
+                for _ in range(drops_per_thread):
+                    small_queue_manager.put_nowait(ShutdownCommand())
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=drop_messages) for _ in range(threads_count)]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert small_queue_manager.get_dropped_count() == threads_count * drops_per_thread
+
+
+class TestQueueManagerPutCritical:
+    """Tests for put_critical() blocking method."""
+
+    def test_put_critical_success(self, queue_manager: QueueManager, mp_queue: Queue):
+        """Verify critical messages are delivered successfully."""
+        result = queue_manager.put_critical(ShutdownCommand(), timeout=1.0)
+
+        assert result is True
+        msg = mp_queue.get(timeout=1.0)
+        assert isinstance(msg, ShutdownCommand)
+
+    def test_put_critical_blocks_until_space(self, small_queue: Queue):
+        """Verify put_critical blocks when queue is full and succeeds when space opens."""
+        qm = QueueManager(small_queue, name="critical_test")
+
+        # Fill the queue
+        qm.put_nowait(ShutdownCommand())
+        qm.put_nowait(ShutdownCommand())
+
+        result_holder: list[bool] = []
+
+        def producer():
+            # This should block until space is available
+            result = qm.put_critical(HealthCheckCommand(), timeout=2.0)
+            result_holder.append(result)
+
+        def consumer():
+            import time
+            time.sleep(0.1)  # Let producer start blocking
+            small_queue.get()  # Free up one slot
+
+        producer_thread = threading.Thread(target=producer)
+        consumer_thread = threading.Thread(target=consumer)
+
+        producer_thread.start()
+        consumer_thread.start()
+
+        producer_thread.join(timeout=3.0)
+        consumer_thread.join(timeout=1.0)
+
+        assert len(result_holder) == 1
+        assert result_holder[0] is True
+
+    def test_put_critical_timeout_on_full_queue(self, small_queue: Queue):
+        """Verify put_critical returns False after timeout on full queue."""
+        qm = QueueManager(small_queue, name="timeout_test")
+
+        # Fill the queue
+        qm.put_nowait(ShutdownCommand())
+        qm.put_nowait(ShutdownCommand())
+
+        # This should timeout and return False
+        result = qm.put_critical(HealthCheckCommand(), timeout=0.1)
+
+        assert result is False
+
+
+class TestQueueManagerPutCriticalAsync:
+    """Tests for put_critical_async() method."""
+
+    @pytest.mark.asyncio
+    async def test_put_critical_async_success(
+        self, queue_manager: QueueManager, mp_queue: Queue
+    ):
+        """Verify async critical put succeeds."""
+        result = await queue_manager.put_critical_async(ShutdownCommand(), timeout=1.0)
+
+        assert result is True
+        msg = mp_queue.get(timeout=1.0)
+        assert isinstance(msg, ShutdownCommand)
+
+    @pytest.mark.asyncio
+    async def test_put_critical_async_timeout(self, small_queue: Queue):
+        """Verify async critical put times out on full queue."""
+        qm = QueueManager(small_queue, name="async_timeout_test")
+
+        # Fill the queue
+        qm.put_nowait(ShutdownCommand())
+        qm.put_nowait(ShutdownCommand())
+
+        result = await qm.put_critical_async(HealthCheckCommand(), timeout=0.1)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_put_critical_async_blocks_until_space(self, small_queue: Queue):
+        """Verify async put_critical blocks and succeeds when space opens."""
+        qm = QueueManager(small_queue, name="async_block_test")
+
+        # Fill the queue
+        qm.put_nowait(ShutdownCommand())
+        qm.put_nowait(ShutdownCommand())
+
+        async def consumer():
+            await asyncio.sleep(0.1)
+            small_queue.get()  # Free up space
+
+        # Run producer and consumer concurrently
+        producer_task = asyncio.create_task(
+            qm.put_critical_async(HealthCheckCommand(), timeout=2.0)
+        )
+        consumer_task = asyncio.create_task(consumer())
+
+        result = await producer_task
+        await consumer_task
+
+        assert result is True

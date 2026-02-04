@@ -19,6 +19,13 @@ Use ephemeral fixtures (tmp_path) when:
 - Each test needs complete isolation
 """
 
+# MUST be set before any HuggingFace/sentence-transformers imports to suppress
+# progress bars that would pollute JSON output in E2E tests.
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["TQDM_DISABLE"] = "1"
+
 from pathlib import Path
 from typing import Any, Generator
 

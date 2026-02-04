@@ -5,6 +5,7 @@ import glob
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from src.config import Config, load_config, detect_project, resolve_index_path, resolve_documents_path, resolve_memory_path
 from src.coordination import SingletonGuard
@@ -25,6 +26,16 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class IndexState:
+    """Tracks the current state of background indexing."""
+
+    status: Literal["uninitialized", "indexing", "partial", "ready", "failed"]
+    indexed_count: int = 0
+    total_count: int = 0
+    last_error: str | None = None
+
+
+@dataclass
 class ApplicationContext:
     config: Config
     index_manager: IndexManager
@@ -40,6 +51,10 @@ class ApplicationContext:
     _ready_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _init_error: Exception | None = field(default=None, repr=False)
     _singleton_guard: SingletonGuard | None = field(default=None, repr=False)
+    _index_state: IndexState = field(
+        default_factory=lambda: IndexState(status="uninitialized"),
+        repr=False,
+    )
 
     @classmethod
     def create(
@@ -263,30 +278,69 @@ class ApplicationContext:
         logger.info(f"Initial indexing complete: {len(files_to_index)} documents indexed")
 
     async def _background_index(self) -> None:
-        files_to_index: list[str] = []
-        try:
-            logger.info("Starting background indexing")
-            files_to_index = self.discover_files()
-            docs_path = Path(self.config.indexing.documents_path)
+        max_retries = 3
+        base_delay = 1.0
 
-            for file_path in files_to_index:
-                await asyncio.to_thread(self.index_manager.index_document, file_path)
+        for attempt in range(max_retries):
+            files_to_index: list[str] = []
+            indexed_count = 0
+            try:
+                logger.info(f"Starting background indexing (attempt {attempt + 1}/{max_retries})")
+                files_to_index = self.discover_files()
+                docs_path = Path(self.config.indexing.documents_path)
 
-            await asyncio.to_thread(self.index_manager.persist)
+                self._index_state = IndexState(
+                    status="indexing",
+                    indexed_count=0,
+                    total_count=len(files_to_index),
+                )
 
-            if self.current_manifest:
-                self.current_manifest.indexed_files = build_indexed_files_map(files_to_index, docs_path)
-                await asyncio.to_thread(save_manifest, self.index_path, self.current_manifest)
+                for file_path in files_to_index:
+                    await asyncio.to_thread(self.index_manager.index_document, file_path)
+                    indexed_count += 1
+                    self._index_state.indexed_count = indexed_count
 
-            logger.info(f"Background indexing complete: {len(files_to_index)} documents indexed")
-            self._ready_event.set()
-        except Exception as e:
-            logger.error(
-                f"Background indexing failed after processing some of {len(files_to_index)} files: {e}",
-                exc_info=True
-            )
-            self._init_error = e
-            self._ready_event.set()  # Unblock waiters so they can see the error
+                await asyncio.to_thread(self.index_manager.persist)
+
+                if self.current_manifest:
+                    self.current_manifest.indexed_files = build_indexed_files_map(files_to_index, docs_path)
+                    await asyncio.to_thread(save_manifest, self.index_path, self.current_manifest)
+
+                logger.info(f"Background indexing complete: {len(files_to_index)} documents indexed")
+                self._index_state = IndexState(
+                    status="ready",
+                    indexed_count=indexed_count,
+                    total_count=len(files_to_index),
+                )
+                self._ready_event.set()
+                return  # Success, exit retry loop
+
+            except Exception as e:
+                error_msg = str(e)
+                self._index_state = IndexState(
+                    status="partial" if indexed_count > 0 else "failed",
+                    indexed_count=indexed_count,
+                    total_count=len(files_to_index),
+                    last_error=error_msg,
+                )
+
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Background indexing failed after {indexed_count}/{len(files_to_index)} files "
+                        f"(attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay:.1f}s",
+                        exc_info=True,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"Background indexing failed after {indexed_count}/{len(files_to_index)} files "
+                        f"(exhausted {max_retries} retries): {e}",
+                        exc_info=True,
+                    )
+                    self._init_error = e
+                    self._ready_event.set()  # Unblock waiters so they can see the error
 
     async def _startup_reconciliation(self) -> None:
         logger.info("Running startup reconciliation")
@@ -402,8 +456,35 @@ class ApplicationContext:
             logger.error(f"Failed to build vocabulary: {e}", exc_info=True)
 
     def is_ready(self) -> bool:
-        """Check if initialization is complete and indices are ready."""
-        return self._ready_event.is_set() and self._init_error is None and self.index_manager.is_ready()
+        """Check if initialization is complete and indices are ready.
+
+        Returns True for both 'ready' and 'partial' states, allowing
+        queries on partially indexed data.
+        """
+        if not self._ready_event.is_set():
+            return False
+        if self._init_error is not None:
+            return False
+        if self._index_state.status in ("ready", "partial"):
+            return self.index_manager.is_ready()
+        return self.index_manager.is_ready()
+
+    def is_fully_ready(self) -> bool:
+        """Check if initialization succeeded completely.
+
+        Returns True only when all documents were indexed successfully.
+        Use is_ready() if partial results are acceptable.
+        """
+        return (
+            self._ready_event.is_set()
+            and self._init_error is None
+            and self._index_state.status == "ready"
+            and self.index_manager.is_ready()
+        )
+
+    def get_index_state(self) -> IndexState:
+        """Get current index state for health checks."""
+        return self._index_state
 
     async def ensure_ready(self, timeout: float = 60.0) -> None:
         """Wait for initialization to complete. Call before first query."""

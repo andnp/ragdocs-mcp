@@ -69,7 +69,7 @@ class TestIndexSyncPublisher:
         assert v3 == v2 + 1
 
     def test_publish_calls_persist_callback(self, snapshot_base: Path):
-        """Verify persist_callback receives correct path."""
+        """Verify persist_callback receives temp directory path (atomic pattern)."""
         publisher = IndexSyncPublisher(snapshot_base)
         received_paths: list[Path] = []
 
@@ -79,8 +79,11 @@ class TestIndexSyncPublisher:
         version = publisher.publish(capture_path)
 
         assert len(received_paths) == 1
-        expected_path = snapshot_base / f"v{version}"
-        assert received_paths[0] == expected_path
+        # Callback receives temp path; content is moved to final path after
+        expected_temp_path = snapshot_base / f"v{version}.tmp"
+        assert received_paths[0] == expected_temp_path
+        # Final path should exist after publish completes
+        assert (snapshot_base / f"v{version}").exists()
 
     def test_cleanup_old_snapshots(self, snapshot_base: Path):
         """Verify old snapshots are cleaned up, keeping only recent ones."""
@@ -270,6 +273,142 @@ class TestPublisherReceiverIntegration:
         loaded_content.clear()
         receiver.reload_if_needed()
         assert loaded_content == ["version 2"]
+
+
+class TestAtomicPublishBehavior:
+    """Tests for atomic two-phase commit publish pattern."""
+
+    def test_publish_uses_temp_directory_then_renames(self, snapshot_base: Path):
+        """Verify publish creates temp dir, then renames to final location."""
+        publisher = IndexSyncPublisher(snapshot_base)
+        observed_paths: list[Path] = []
+
+        def observe_path(path: Path) -> None:
+            observed_paths.append(path)
+            assert path.name.endswith(".tmp"), "Should write to temp dir first"
+            (path / "test.txt").write_text("data")
+
+        version = publisher.publish(observe_path)
+
+        # After publish, temp dir should not exist
+        temp_dir = snapshot_base / f"v{version}.tmp"
+        assert not temp_dir.exists()
+
+        # Final dir should exist with content
+        final_dir = snapshot_base / f"v{version}"
+        assert final_dir.exists()
+        assert (final_dir / "test.txt").read_text() == "data"
+
+    def test_partial_failure_persist_callback_cleans_up(self, snapshot_base: Path):
+        """Verify partial failure in persist_callback doesn't leave inconsistent state."""
+        publisher = IndexSyncPublisher(snapshot_base)
+
+        def failing_persist(path: Path) -> None:
+            (path / "partial.txt").write_text("partial data")
+            raise RuntimeError("Simulated failure")
+
+        with pytest.raises(RuntimeError, match="Simulated failure"):
+            publisher.publish(failing_persist)
+
+        # No snapshot directories should remain
+        snapshot_dirs = [d for d in snapshot_base.iterdir() if d.is_dir()]
+        assert snapshot_dirs == []
+
+        # No temp version file should remain
+        temp_version = snapshot_base / "version.tmp"
+        assert not temp_version.exists()
+
+        # Version should not have incremented
+        assert publisher.version == 0
+
+    def test_partial_failure_version_write_cleans_up(
+        self, snapshot_base: Path, monkeypatch
+    ):
+        """
+        Verify failure during version file write doesn't leave inconsistent state.
+        """
+        publisher = IndexSyncPublisher(snapshot_base)
+
+        # First, let write succeed to create temp version file, then fail on rename
+        write_count = 0
+
+        original_write_bytes = Path.write_bytes
+
+        def failing_write_bytes(self, data):
+            nonlocal write_count
+            write_count += 1
+            if str(self).endswith("version.tmp") and write_count > 0:
+                # First create the file so we test cleanup
+                original_write_bytes(self, data)
+                raise OSError("Simulated write failure")
+            return original_write_bytes(self, data)
+
+        monkeypatch.setattr(Path, "write_bytes", failing_write_bytes)
+
+        def noop_persist(path: Path) -> None:
+            (path / "data.txt").write_text("content")
+
+        with pytest.raises(OSError, match="Simulated write failure"):
+            publisher.publish(noop_persist)
+
+        # No temp files should remain
+        temp_files = [f for f in snapshot_base.iterdir() if f.name.endswith(".tmp")]
+        assert temp_files == []
+
+        # Version should not have incremented
+        assert publisher.version == 0
+
+    def test_temp_files_cleaned_on_startup(self, snapshot_base: Path):
+        """Verify orphaned temp files from crashed publishes are cleaned on startup."""
+        # Simulate crashed publish by leaving temp files
+        temp_dir = snapshot_base / "v5.tmp"
+        temp_dir.mkdir(parents=True)
+        (temp_dir / "partial.txt").write_text("orphaned")
+
+        temp_version = snapshot_base / "version.tmp"
+        temp_version.write_bytes(struct.pack("<I", 5))
+
+        # Also leave a valid snapshot to ensure it's preserved
+        valid_dir = snapshot_base / "v3"
+        valid_dir.mkdir()
+        (valid_dir / "data.txt").write_text("valid")
+
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 3))
+
+        # Creating publisher should clean up temp files
+        publisher = IndexSyncPublisher(snapshot_base)
+
+        # Temp files should be gone
+        assert not temp_dir.exists()
+        assert not temp_version.exists()
+
+        # Valid snapshot should remain
+        assert valid_dir.exists()
+        assert version_file.exists()
+
+        # Version should be loaded correctly
+        assert publisher.version == 3
+
+    def test_publish_overwrites_existing_snapshot_dir(self, snapshot_base: Path):
+        """Verify publish handles case where target snapshot dir already exists."""
+        publisher = IndexSyncPublisher(snapshot_base)
+
+        # Manually create a conflicting directory (simulates race/corruption)
+        conflicting_dir = snapshot_base / "v1"
+        conflicting_dir.mkdir(parents=True)
+        (conflicting_dir / "stale.txt").write_text("stale")
+
+        def write_new_data(path: Path) -> None:
+            (path / "fresh.txt").write_text("fresh")
+
+        version = publisher.publish(write_new_data)
+
+        assert version == 1
+        final_dir = snapshot_base / "v1"
+        # Old file should be gone, new file should exist
+        assert not (final_dir / "stale.txt").exists()
+        assert (final_dir / "fresh.txt").read_text() == "fresh"
 
 
 class TestSnapshotFallbackResilience:

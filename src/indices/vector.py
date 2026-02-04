@@ -12,7 +12,7 @@ import numpy as np
 from src.models import Chunk, Document
 from src.search.types import SearchResultDict
 from src.utils.atomic_io import atomic_write_json, fsync_path
-from src.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+from src.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen, CircuitState
 from src.utils.similarity import cosine_similarity
 
 logger = logging.getLogger(__name__)
@@ -763,6 +763,44 @@ class VectorIndex:
     def model_ready(self) -> bool:
         """Check if embedding model is loaded and ready for queries."""
         return self._model_loaded
+
+    @property
+    def circuit_state(self) -> CircuitState:
+        """Current circuit breaker state for health checks."""
+        return self._embedding_circuit_breaker.state
+
+    def reset_circuit_breaker(self) -> None:
+        """Manually reset circuit breaker to allow retry.
+
+        Use this when you've resolved the underlying issue (e.g., network restored,
+        model downloaded) and want to allow embedding operations to proceed.
+        """
+        self._embedding_circuit_breaker.reset()
+        logger.info("Embedding circuit breaker manually reset")
+
+    def get_circuit_breaker_status(self) -> dict:
+        """Get circuit breaker status for health check.
+
+        Returns:
+            dict with keys:
+                - state: Current circuit state ("closed", "open", "half_open")
+                - recent_failures: Count of failures in current window
+                - open_until: Timestamp when circuit will transition to half-open (if open)
+                - failure_threshold: Number of failures that triggers circuit open
+                - recovery_timeout: Seconds before allowing recovery attempt
+        """
+        breaker = self._embedding_circuit_breaker
+        open_until = None
+        if breaker.state == CircuitState.OPEN:
+            open_until = breaker._open_time + breaker.config.recovery_timeout
+
+        return {
+            "state": breaker.state.value,
+            "recent_failures": len(breaker._failure_timestamps),
+            "open_until": open_until,
+            "failure_threshold": breaker.config.failure_threshold,
+            "recovery_timeout": breaker.config.recovery_timeout,
+        }
 
     def get_embedding_for_chunk(self, chunk_id: str) -> list[float] | None:
         if self._index is None:

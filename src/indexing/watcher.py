@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import queue
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
@@ -58,6 +59,23 @@ class FileWatcher:
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._last_sync_time: str | None = None
+        self._stopped_cleanly: bool = True
+        self._event_handler: _MarkdownEventHandler | None = None
+
+    @property
+    def stopped_cleanly(self) -> bool:
+        """Return whether the watcher was stopped cleanly without timeout."""
+        return self._stopped_cleanly
+
+    def __del__(self) -> None:
+        """Safety net to ensure observer is cleaned up on garbage collection."""
+        try:
+            if self._observer is not None:
+                self._observer.unschedule_all()
+                self._observer.stop()
+                self._observer = None
+        except Exception:
+            pass
 
     def start(self):
         if self._running:
@@ -74,9 +92,9 @@ class FileWatcher:
             )
 
         self._running = True
-        event_handler = _MarkdownEventHandler(self._event_queue)
+        self._event_handler = _MarkdownEventHandler(self._event_queue)
         observer = Observer()
-        observer.schedule(event_handler, str(self._documents_path), recursive=True)
+        observer.schedule(self._event_handler, str(self._documents_path), recursive=True)
         observer.start()
         self._observer = observer
         self._task = asyncio.create_task(self._process_events())
@@ -96,15 +114,33 @@ class FileWatcher:
 
         # Stop the observer thread (no new events)
         if self._observer:
+            # First unschedule all watches to stop receiving events
+            try:
+                self._observer.unschedule_all()
+            except Exception as e:
+                logger.warning("Failed to unschedule watches: %s", e, exc_info=True)
+
+            # Then stop the observer thread
             self._observer.stop()
-            # Join with short timeout - don't wait forever
+
+            # Join with timeout - don't wait forever
             try:
                 await asyncio.wait_for(
                     asyncio.to_thread(self._observer.join, timeout=1.0),
                     timeout=1.5,
                 )
             except asyncio.TimeoutError:
-                logger.warning("Observer thread did not stop within timeout")
+                self._stopped_cleanly = False
+                logger.warning(
+                    "Observer thread did not stop within timeout, forcing unschedule"
+                )
+                # Try unschedule again in case it helps
+                try:
+                    self._observer.unschedule_all()
+                except Exception:
+                    pass
+
+            # Mark for garbage collection
             self._observer = None
 
         # Drain remaining events from queue (with timeout)
@@ -217,16 +253,58 @@ class FileWatcher:
     def get_failed_files(self) -> list[dict[str, str]]:
         return self._index_manager.get_failed_files()
 
+    @property
+    def dropped_event_count(self) -> int:
+        """Total number of events dropped due to queue full."""
+        if self._event_handler is None:
+            return 0
+        return self._event_handler.dropped_event_count
+
+    @property
+    def dropped_since_reconcile(self) -> int:
+        """Number of events dropped since last reconciliation."""
+        if self._event_handler is None:
+            return 0
+        return self._event_handler.dropped_since_reconcile
+
+    def reset_dropped_counter(self) -> None:
+        """Call after reconciliation to reset per-reconcile counter."""
+        if self._event_handler is not None:
+            self._event_handler.reset_dropped_counter()
+
+    def should_reconcile(self) -> bool:
+        """True if drops occurred since last reconcile and reconciliation is advised."""
+        return self.dropped_since_reconcile > 0
+
 
 class _MarkdownEventHandler(FileSystemEventHandler):
     def __init__(self, queue: queue.Queue[tuple[EventType, str]]):
         super().__init__()
         self._queue = queue
-        self._dropped_events = 0  # Track backpressure events
+        self._lock = threading.Lock()
+        self._dropped_events = 0  # Track backpressure events (total)
+        self._dropped_since_last_reconcile = 0  # Track drops since last reconcile
 
     def _is_markdown(self, path: str | bytes):
         path_str = path if isinstance(path, str) else path.decode("utf-8")
         return Path(path_str).suffix.lower() in (".md", ".markdown")
+
+    @property
+    def dropped_event_count(self) -> int:
+        """Total number of events dropped due to queue full."""
+        with self._lock:
+            return self._dropped_events
+
+    @property
+    def dropped_since_reconcile(self) -> int:
+        """Number of events dropped since last reconciliation."""
+        with self._lock:
+            return self._dropped_since_last_reconcile
+
+    def reset_dropped_counter(self) -> None:
+        """Call after reconciliation to reset per-reconcile counter."""
+        with self._lock:
+            self._dropped_since_last_reconcile = 0
 
     def _queue_event(self, event_type: EventType, path_str: str):
         """Queue event with backpressure handling."""
@@ -234,11 +312,18 @@ class _MarkdownEventHandler(FileSystemEventHandler):
             self._queue.put_nowait((event_type, path_str))
         except queue.Full:
             # Drop event if queue is full to prevent memory exhaustion
-            self._dropped_events += 1
-            if self._dropped_events % 100 == 1:  # Log every 100th drop to avoid spam
+            with self._lock:
+                self._dropped_events += 1
+                self._dropped_since_last_reconcile += 1
+                dropped_total = self._dropped_events
+                dropped_since_reconcile = self._dropped_since_last_reconcile
+            if dropped_total % 100 == 0:
                 logger.warning(
-                    f"Event queue full ({MAX_QUEUE_SIZE}), dropped {self._dropped_events} events. "
-                    "Increase cooldown or MAX_QUEUE_SIZE if this persists."
+                    "Event queue full (%d), dropped %d total events (%d since last reconcile). "
+                    "Increase cooldown or MAX_QUEUE_SIZE if this persists.",
+                    MAX_QUEUE_SIZE,
+                    dropped_total,
+                    dropped_since_reconcile,
                 )
 
     def on_created(self, event: FileSystemEvent):

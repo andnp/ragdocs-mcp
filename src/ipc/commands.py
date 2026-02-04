@@ -39,6 +39,8 @@ class HealthStatusResponse:
     queue_depth: int
     last_index_time: float | None
     doc_count: int
+    dropped_message_count: int = 0
+    circuit_breaker_state: str = "closed"
 
 
 IPCMessage = (

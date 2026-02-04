@@ -32,6 +32,7 @@ class MemorySearchStats:
     after_fusion: int = 0  # Unique results after RRF fusion
     filtered_missing_chunk: int = 0  # Filtered due to missing chunk data
     filtered_type_mismatch: int = 0  # Filtered due to type filter
+    filtered_tags_mismatch: int = 0  # Filtered due to tag filter
     filtered_time_range: int = 0  # Filtered due to time range
     filtered_below_threshold: int = 0  # Filtered due to score < threshold
     score_threshold: float = 0.0  # The threshold used

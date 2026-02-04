@@ -205,12 +205,14 @@ def test_indexing_speed_100_documents(config, manager, tmp_path):
     assert elapsed < (num_docs * 2.0), f"Indexing too slow: {elapsed:.2f}s for {num_docs} docs"
 
 
-def test_indexing_speed_varying_document_sizes(config, manager, tmp_path):
+def test_indexing_speed_varying_document_sizes(config, tmp_path, shared_embedding_model):
     """
     Benchmark indexing with varied document sizes.
 
     Tests performance across small, medium, and large documents
     to identify size-dependent performance characteristics.
+
+    Note: Uses isolated indices to avoid state leakage from other tests.
     """
     sizes = ["small", "medium", "large"]
     docs_path = tmp_path / "docs"
@@ -222,11 +224,17 @@ def test_indexing_speed_varying_document_sizes(config, manager, tmp_path):
         content = create_realistic_document(i, size=size)
         doc_file.write_text(content)
 
+    # Create isolated indices for this test to avoid state leakage
+    isolated_vector = VectorIndex(embedding_model=shared_embedding_model)
+    isolated_keyword = KeywordIndex()
+    isolated_graph = GraphStore()
+    isolated_manager = IndexManager(config, isolated_vector, isolated_keyword, isolated_graph)
+
     # Benchmark indexing
     start_time = time.perf_counter()
 
     for doc_file in sorted(docs_path.glob("*.md")):
-        manager.index_document(str(doc_file))
+        isolated_manager.index_document(str(doc_file))
 
     end_time = time.perf_counter()
     elapsed = end_time - start_time
@@ -236,7 +244,7 @@ def test_indexing_speed_varying_document_sizes(config, manager, tmp_path):
     avg_time_per_doc = elapsed / num_docs
 
     # Verify indexing completed
-    doc_count = manager.get_document_count()
+    doc_count = isolated_manager.get_document_count()
     assert doc_count == num_docs, f"Expected {num_docs} documents, got {doc_count}"
 
     # Report metrics

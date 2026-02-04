@@ -9,6 +9,9 @@ from pathlib import Path
 # Must be set before any HuggingFace/sentence-transformers imports.
 # See: https://github.com/huggingface/tokenizers/issues/993
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+# Disable HuggingFace/tqdm progress bars to prevent stdout pollution in JSON output
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TQDM_DISABLE", "1")
 
 import click
 import uvicorn
@@ -634,6 +637,12 @@ def search_commits(
     help="Memory type filter (plan|journal|fact|observation|reflection)",
 )
 @click.option(
+    "--tags",
+    type=str,
+    default=None,
+    help="Filter by tags (comma-separated, e.g., 'backend,database')",
+)
+@click.option(
     "--after",
     "after_timestamp",
     default=None,
@@ -665,6 +674,7 @@ def search_memory(
     limit: int,
     debug: bool,
     memory_type: str | None,
+    tags: str | None,
     after_timestamp: int | None,
     before_timestamp: int | None,
     relative_days: int | None,
@@ -706,6 +716,11 @@ def search_memory(
         validate_timestamp_range(after_timestamp, before_timestamp)
         validate_non_negative(relative_days, "--relative-days")
 
+        # Parse tags
+        filter_tags = None
+        if tags:
+            filter_tags = [t.strip() for t in tags.split(",") if t.strip()]
+
         # Load memory index
         ctx.memory_manager.load()
 
@@ -718,6 +733,7 @@ def search_memory(
                     query=query_text,
                     limit=limit,
                     filter_type=memory_type,
+                    filter_tags=filter_tags,
                     load_full_memory=load_full_memory,
                     after_timestamp=after_timestamp,
                     before_timestamp=before_timestamp,

@@ -14,6 +14,9 @@ from typing import TYPE_CHECKING
 # Prevent tokenizers parallelism warning in worker process.
 # This may already be set by parent, but ensure it for direct invocations.
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+# Disable HuggingFace/tqdm progress bars to prevent stdout pollution in JSON output
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TQDM_DISABLE", "1")
 
 from src.config import Config, load_config, resolve_embedding_model
 from src.ipc.commands import (
@@ -315,6 +318,50 @@ async def _startup_reconciliation(state: WorkerState, manifest) -> None:
         logger.info("Reconciliation complete: no changes needed")
 
 
+async def _trigger_drop_reconciliation(state: WorkerState) -> None:
+    """Run reconciliation to recover from dropped file watcher events."""
+    from src.indexing.manifest import load_manifest, save_manifest
+    from src.indexing.reconciler import build_indexed_files_map
+
+    docs_path = Path(state.config.indexing.documents_path)
+    index_path = Path(state.config.indexing.index_path)
+
+    discovered_files = _discover_files(state.config)
+    manifest = load_manifest(index_path)
+
+    if manifest is None:
+        manifest = _build_manifest(state.config)
+
+    result = await asyncio.to_thread(
+        state.index_manager.reconcile_indices,
+        discovered_files,
+        docs_path,
+    )
+
+    if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
+        await asyncio.to_thread(state.index_manager.persist)
+        manifest.indexed_files = build_indexed_files_map(discovered_files, docs_path)
+        await asyncio.to_thread(save_manifest, index_path, manifest)
+
+        version = _publish_snapshot(state)
+        doc_count = state.index_manager.get_document_count()
+        notification = IndexUpdatedNotification(
+            version=version,
+            doc_count=doc_count,
+        )
+        state.response_queue.put_nowait(notification)
+
+        logger.info(
+            "Drop recovery reconciliation complete: added=%d, removed=%d, moved=%d, failed=%d",
+            result.added_count,
+            result.removed_count,
+            result.moved_count,
+            result.failed_count,
+        )
+    else:
+        logger.info("Drop recovery reconciliation: no changes found")
+
+
 def _publish_snapshot(state: WorkerState) -> int:
     def persist_callback(snapshot_dir: Path) -> None:
         state.vector.persist_to(snapshot_dir / "vector")
@@ -496,6 +543,27 @@ async def _check_for_index_updates(state: WorkerState) -> None:
     if state.file_watcher is None:
         return
 
+    # Check if event drops require reconciliation
+    if state.file_watcher.should_reconcile():
+        dropped_count = state.file_watcher.dropped_since_reconcile
+        logger.warning(
+            "Event drops detected (%d since last reconcile), triggering reconciliation",
+            dropped_count,
+        )
+        await _trigger_drop_reconciliation(state)
+        state.file_watcher.reset_dropped_counter()
+
+    # Check if git watcher needs catch-up indexing
+    if state.git_watcher is not None and state.git_watcher.should_catchup():
+        dropped_count = state.git_watcher.dropped_event_count
+        logger.warning(
+            "Git event drops detected (%d), triggering catch-up indexing",
+            dropped_count,
+        )
+        indexed = await state.git_watcher.run_catchup()
+        if indexed > 0:
+            logger.info("Git catch-up indexed %d commits", indexed)
+
     pending = state.file_watcher.get_pending_queue_size()
     last_sync = state.file_watcher.get_last_sync_time()
 
@@ -560,11 +628,19 @@ def _build_health_response(state: WorkerState) -> HealthStatusResponse:
     if state.file_watcher:
         queue_depth = state.file_watcher.get_pending_queue_size()
 
+    circuit_state = "closed"
+    try:
+        circuit_state = state.index_manager.vector.circuit_state.value
+    except Exception:
+        pass  # Default to "closed" if unable to get state
+
     return HealthStatusResponse(
         healthy=True,
         queue_depth=queue_depth,
         last_index_time=state.last_index_time,
         doc_count=state.index_manager.get_document_count(),
+        dropped_message_count=state.command_queue.get_dropped_count(),
+        circuit_breaker_state=circuit_state,
     )
 
 

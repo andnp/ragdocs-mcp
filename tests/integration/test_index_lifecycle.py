@@ -215,20 +215,22 @@ def test_startup_version_mismatch_triggers_rebuild(config, manager, current_mani
     # Add new document to verify full rebuild would capture it
     (docs_path / "new.md").write_text("# New Document\n\nNew content after upgrade.")
 
-    # Clear persisted index data to simulate version mismatch rebuild
-    # In production, a version mismatch triggers full re-index from scratch
-    import shutil
-    if index_path.exists():
-        shutil.rmtree(index_path)
-    index_path.mkdir(parents=True, exist_ok=True)
+    # Verify both files exist before indexing
+    existing_files = list(docs_path.glob("*.md"))
+    assert len(existing_files) == 2, f"Expected 2 files, found: {[f.name for f in existing_files]}"
 
-    # Perform full reindex
+    # Perform full reindex with fresh indices
+    # Note: We must use force=True because the hash store from the previous
+    # indexing persists at index_path. Without force, delta indexing would
+    # detect "no changes" for outdated.md and skip it.
     vector_new = VectorIndex(embedding_model=shared_embedding_model)
     keyword_new = KeywordIndex()
     graph_new = GraphStore()
     manager_new = IndexManager(config, vector_new, keyword_new, graph_new)
-    files_indexed = index_all_documents(manager_new, docs_path)
-    assert files_indexed == 2, f"Expected 2 files, glob found {files_indexed}"
+
+    # Explicitly index each file with force=True to simulate full rebuild
+    for doc_file in existing_files:
+        manager_new.index_document(str(doc_file), force=True)
     manager_new.persist()
 
     # Save updated manifest
@@ -236,7 +238,7 @@ def test_startup_version_mismatch_triggers_rebuild(config, manager, current_mani
 
     # Verify both old and new documents are indexed
     doc_count = manager_new.get_document_count()
-    assert doc_count == 2  # Both outdated and new documents
+    assert doc_count == 2, f"Expected 2 documents, got {doc_count}. Files: {[f.name for f in existing_files]}"
 
     # Verify manifest was updated
     updated_manifest = load_manifest(index_path)

@@ -205,6 +205,8 @@ class MemoryConfig:
     enabled: bool = True
     storage_strategy: str = "user"
     score_threshold: float = 0.1
+    checkpoint_interval_ops: int = 10  # Persist every N operations
+    checkpoint_interval_secs: int = 300  # Or every M seconds (5 min default)
 
     # Exponential additive recency boost per memory type
     recency_journal: MemoryRecencyConfig = field(
@@ -255,6 +257,16 @@ class MemoryConfig:
                 f"score_threshold must be in [0.0, 1.0], got {self.score_threshold}"
             )
 
+        if self.checkpoint_interval_ops < 1:
+            raise ValueError(
+                f"checkpoint_interval_ops must be >= 1, got {self.checkpoint_interval_ops}"
+            )
+
+        if self.checkpoint_interval_secs < 0:
+            raise ValueError(
+                f"checkpoint_interval_secs must be >= 0, got {self.checkpoint_interval_secs}"
+            )
+
     def get_recency_config(self, memory_type: str) -> MemoryRecencyConfig:
         """Get recency boost config for memory type."""
         recency_configs = {
@@ -280,6 +292,8 @@ class WorkerConfig:
     health_check_interval: float = 10.0
     max_restart_attempts: int = 3
     restart_backoff_base: float = 1.0
+    restart_jitter_factor: float = 0.25  # ±25% random variation
+    restart_max_delay: float = 60.0  # Cap delay at 60 seconds
     snapshot_keep_count: int = 2
     index_poll_interval: float = 0.1
     progressive_snapshot_interval: float = 5.0
@@ -349,6 +363,8 @@ def _load_memory_config(data: dict[str, Any]):
         "enabled",
         "storage_strategy",
         "score_threshold",
+        "checkpoint_interval_ops",
+        "checkpoint_interval_secs",
     }
     recency_fields = {
         "recency_journal",

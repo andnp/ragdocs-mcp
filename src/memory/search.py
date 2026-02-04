@@ -199,6 +199,7 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
         query: str,
         limit: int = 5,
         filter_type: str | None = None,
+        filter_tags: list[str] | None = None,
         load_full_memory: bool = False,
         after_timestamp: int | None = None,
         before_timestamp: int | None = None,
@@ -211,6 +212,7 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
             query: Natural language search query
             limit: Maximum number of results to return
             filter_type: Only return memories of this type
+            filter_tags: Only return memories with at least one of these tags (OR logic)
             load_full_memory: Load complete file content instead of chunks
             after_timestamp: Only return memories after this Unix timestamp
             before_timestamp: Only return memories before this Unix timestamp
@@ -277,6 +279,13 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
             if filter_type and metadata.get("memory_type") != filter_type:
                 stats.filtered_type_mismatch += 1
                 continue
+
+            # Tag filtering (OR logic: at least one tag must match)
+            if filter_tags:
+                memory_tags = metadata.get("memory_tags", [])
+                if not any(tag in memory_tags for tag in filter_tags):
+                    stats.filtered_tags_mismatch += 1
+                    continue
 
             # Time filtering (with fallback to file mtime)
             if after_timestamp is not None or before_timestamp is not None:

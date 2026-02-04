@@ -72,15 +72,27 @@ def test_git_watcher_constructor_types(test_config, commit_indexer, tmp_path):
     assert all(isinstance(p, Path) for p in watcher._git_repos)
 
 
-def test_git_event_handler_instantiation(tmp_path):
+def test_git_event_handler_instantiation(tmp_path, test_config, commit_indexer):
     git_dir = tmp_path / ".git"
     event_queue = Queue()
+    git_repos = [git_dir]
 
-    handler = _GitEventHandler(queue=event_queue, git_dir=git_dir)
+    watcher = GitWatcher(
+        git_repos=git_repos,
+        commit_indexer=commit_indexer,
+        config=test_config,
+    )
+
+    handler = _GitEventHandler(
+        watcher=watcher,
+        event_queue=event_queue,
+        git_dir=git_dir,
+    )
 
     assert handler is not None
     assert handler._queue is event_queue
     assert handler._git_dir == git_dir
+    assert handler._watcher is watcher
 
 
 def test_git_watcher_empty_repos_list(test_config, commit_indexer):

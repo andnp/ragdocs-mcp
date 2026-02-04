@@ -143,6 +143,38 @@ class TestHealthStatusResponse:
         assert resp.healthy is False
         assert resp.last_index_time is None
 
+    def test_circuit_breaker_state_default(self):
+        """Verify circuit_breaker_state defaults to 'closed'."""
+        resp = HealthStatusResponse(
+            healthy=True,
+            queue_depth=0,
+            last_index_time=None,
+            doc_count=0,
+        )
+        assert resp.circuit_breaker_state == "closed"
+
+    def test_circuit_breaker_state_open(self):
+        """Verify circuit_breaker_state can be set to 'open'."""
+        resp = HealthStatusResponse(
+            healthy=True,
+            queue_depth=0,
+            last_index_time=None,
+            doc_count=0,
+            circuit_breaker_state="open",
+        )
+        assert resp.circuit_breaker_state == "open"
+
+    def test_circuit_breaker_state_half_open(self):
+        """Verify circuit_breaker_state can be set to 'half_open'."""
+        resp = HealthStatusResponse(
+            healthy=True,
+            queue_depth=0,
+            last_index_time=None,
+            doc_count=0,
+            circuit_breaker_state="half_open",
+        )
+        assert resp.circuit_breaker_state == "half_open"
+
 
 class TestIPCMessageUnion:
     """Tests for IPCMessage type alias (union of all command types)."""
