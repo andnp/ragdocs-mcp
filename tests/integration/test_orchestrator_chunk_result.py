@@ -45,9 +45,9 @@ def config(tmp_path):
 
 
 @pytest.fixture
-def indices():
+def indices(shared_embedding_model):
     return {
-        "vector": VectorIndex(),
+        "vector": VectorIndex(embedding_model=shared_embedding_model),
         "keyword": KeywordIndex(),
         "graph": GraphStore(),
     }

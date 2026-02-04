@@ -72,11 +72,11 @@ def memory_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def memory_indices():
+def memory_indices(shared_embedding_model):
     """
     Create fresh indices for memory testing.
     """
-    vector = VectorIndex()
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
     return vector, keyword, graph

@@ -54,13 +54,13 @@ def config(tmp_path):
 
 
 @pytest.fixture
-def indices():
+def indices(shared_embedding_model):
     """
     Create real index instances.
 
     Returns tuple of (vector, keyword, graph) indices for SearchOrchestrator.
     """
-    vector = VectorIndex()
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
     return vector, keyword, graph
@@ -320,7 +320,7 @@ async def test_top_k_limits_results_correctly(config, manager, orchestrator):
 
 
 @pytest.mark.asyncio
-async def test_weighted_strategies_affect_ranking(config, manager, orchestrator, tmp_path):
+async def test_weighted_strategies_affect_ranking(config, manager, orchestrator, tmp_path, shared_embedding_model):
     """
     Test that strategy weights affect result ranking.
 
@@ -357,7 +357,7 @@ async def test_weighted_strategies_affect_ranking(config, manager, orchestrator,
     docs_path2.mkdir(parents=True, exist_ok=True)
 
     # Create fresh indices for semantic-heavy test
-    vector_new = VectorIndex()
+    vector_new = VectorIndex(embedding_model=shared_embedding_model)
     keyword_new = KeywordIndex()
     graph_new = GraphStore()
     manager_new = IndexManager(config_semantic_heavy, vector_new, keyword_new, graph_new)

@@ -33,8 +33,8 @@ def config(tmp_path):
 
 
 @pytest.fixture
-def indices():
-    vector = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
+def indices(shared_embedding_model):
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
     return vector, keyword, graph
