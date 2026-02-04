@@ -273,7 +273,7 @@ class ApplicationContext:
             indexed_count = 0
             try:
                 logger.info(f"Starting background indexing (attempt {attempt + 1}/{max_retries})")
-                files_to_index = self.discover_files()
+                files_to_index = await asyncio.to_thread(self.discover_files)
                 docs_path = Path(self.config.indexing.documents_path)
 
                 self._index_state = IndexState(

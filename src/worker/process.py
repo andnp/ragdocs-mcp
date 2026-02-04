@@ -261,7 +261,7 @@ async def _full_index(state: WorkerState, manifest) -> None:
     from src.indexing.manifest import save_manifest
     from src.indexing.reconciler import build_indexed_files_map
 
-    files_to_index = _discover_files(state.config)
+    files_to_index = await asyncio.to_thread(_discover_files, state.config)
     docs_path = Path(state.config.indexing.documents_path)
     index_path = Path(state.config.indexing.index_path)
 
@@ -285,7 +285,7 @@ async def _startup_reconciliation(state: WorkerState, manifest) -> None:
     docs_path = Path(state.config.indexing.documents_path)
     index_path = Path(state.config.indexing.index_path)
 
-    discovered_files = _discover_files(state.config)
+    discovered_files = await asyncio.to_thread(_discover_files, state.config)
 
     result = await asyncio.to_thread(
         state.index_manager.reconcile_indices,
