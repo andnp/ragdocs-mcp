@@ -458,6 +458,11 @@ class VectorIndex:
         if self._index is None or not query.strip():
             return []
 
+        # Check circuit breaker state before attempting search
+        if self._embedding_circuit_breaker.state == CircuitState.OPEN:
+            logger.warning("Search skipped: embedding circuit breaker is open")
+            return []
+
         self._ensure_model_loaded()
 
         fetch_k = top_k * 2 if excluded_files else top_k
@@ -620,8 +625,10 @@ class VectorIndex:
         # Batch embed terms using thread pool for parallelism
         def embed_term(term: str) -> tuple[str, list[float] | None]:
             try:
-                assert self._embedding_model is not None
-                return term, self._embedding_model.get_text_embedding(term)
+                return term, self._protected_embed(term)
+            except CircuitBreakerOpen:
+                logger.debug(f"Circuit breaker open, skipping vocabulary term: {term}")
+                return term, None
             except Exception:
                 return term, None
 
@@ -733,10 +740,14 @@ class VectorIndex:
         embedded_count = 0
         for term in terms_to_embed:
             try:
-                embedding = self._embedding_model.get_text_embedding(term)
+                embedding = self._protected_embed(term)
                 self._concept_vocabulary[term] = embedding
                 self._pending_terms.discard(term)
                 embedded_count += 1
+            except CircuitBreakerOpen:
+                logger.debug(f"Circuit breaker open, skipping vocabulary term: {term}")
+                self._pending_terms.discard(term)
+                break  # Stop processing if circuit is open
             except Exception:
                 logger.debug("Failed to embed term '%s', continuing", term, exc_info=True)
                 self._pending_terms.discard(term)
@@ -752,10 +763,19 @@ class VectorIndex:
         return len(self._pending_terms)
 
     def get_text_embedding(self, text: str) -> list[float]:
-        self._ensure_model_loaded()
-        if self._embedding_model is None:
-            raise RuntimeError("Embedding model not initialized - call warm_up() first")
-        return self._embedding_model.get_text_embedding(text)
+        """Get embedding for text with circuit breaker protection.
+
+        Args:
+            text: Text to embed
+
+        Returns:
+            Embedding vector as list of floats
+
+        Raises:
+            CircuitBreakerOpen: If circuit breaker is open (too many recent failures)
+            RuntimeError: If embedding model not initialized
+        """
+        return self._protected_embed(text)
 
     def is_ready(self) -> bool:
         return self._index is not None
@@ -777,6 +797,26 @@ class VectorIndex:
         """
         self._embedding_circuit_breaker.reset()
         logger.info("Embedding circuit breaker manually reset")
+
+    def _protected_embed(self, text: str) -> list[float]:
+        """Get embedding with circuit breaker protection.
+
+        Args:
+            text: Text to embed
+
+        Returns:
+            Embedding vector as list of floats
+
+        Raises:
+            CircuitBreakerOpen: If circuit breaker is open (too many recent failures)
+            RuntimeError: If embedding model not initialized
+        """
+        self._ensure_model_loaded()
+        if self._embedding_model is None:
+            raise RuntimeError("Embedding model not initialized - call warm_up() first")
+        return self._embedding_circuit_breaker.call(
+            lambda: self._embedding_model.get_text_embedding(text)  # type: ignore[union-attr]
+        )
 
     def get_circuit_breaker_status(self) -> dict:
         """Get circuit breaker status for health check.
@@ -829,13 +869,14 @@ class VectorIndex:
         if not self._concept_vocabulary:
             return query
 
-        self._ensure_model_loaded()
-        if self._embedding_model is None:
-            raise RuntimeError("Embedding model not initialized - call warm_up() first")
-        query_embedding = np.array(
-            self._embedding_model.get_text_embedding(query),
-            dtype=np.float64,
-        )
+        try:
+            query_embedding = np.array(
+                self._protected_embed(query),
+                dtype=np.float64,
+            )
+        except CircuitBreakerOpen:
+            logger.warning("Circuit breaker open, returning unexpanded query")
+            return query
 
         similarities: list[tuple[str, float]] = []
         vocab_snapshot = list(self._concept_vocabulary.items())

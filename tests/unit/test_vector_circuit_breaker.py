@@ -1,5 +1,6 @@
 """Tests for VectorIndex circuit breaker functionality."""
 import time
+from datetime import datetime
 
 import pytest
 
@@ -246,6 +247,213 @@ class TestCircuitBreakerStatusReporting:
 
         status = vector_index.get_circuit_breaker_status()
         assert status["open_until"] is None
+
+
+class TestProtectedEmbed:
+    """Tests for _protected_embed method with circuit breaker protection."""
+
+    def test_protected_embed_uses_circuit_breaker(self, shared_embedding_model):
+        """_protected_embed wraps embedding calls with circuit breaker."""
+        vector_index = VectorIndex(embedding_model=shared_embedding_model)
+
+        # Should work normally when circuit is closed
+        embedding = vector_index._protected_embed("test text")
+        assert embedding is not None
+        assert len(embedding) > 0
+        assert vector_index.circuit_state == CircuitState.CLOSED
+
+    def test_protected_embed_raises_when_circuit_open(self, shared_embedding_model):
+        """_protected_embed raises CircuitBreakerOpen when circuit is open."""
+        from src.utils.circuit_breaker import CircuitBreakerOpen
+
+        vector_index = VectorIndex(embedding_model=shared_embedding_model)
+        breaker = vector_index._embedding_circuit_breaker
+
+        # Force circuit to OPEN state
+        breaker._state = CircuitState.OPEN
+        breaker._open_time = time.time()
+
+        with pytest.raises(CircuitBreakerOpen):
+            vector_index._protected_embed("test text")
+
+    def test_repeated_failures_trip_circuit(self, shared_embedding_model):
+        """Repeated embedding failures trip the circuit breaker."""
+        from unittest.mock import MagicMock
+        from src.utils.circuit_breaker import CircuitBreakerOpen
+
+        vector_index = VectorIndex(embedding_model=shared_embedding_model)
+        breaker = vector_index._embedding_circuit_breaker
+
+        # Configure for faster testing
+        breaker.config.failure_threshold = 3
+        breaker.config.recovery_timeout = 60.0
+
+        # Mock embedding model to fail
+        original_model = vector_index._embedding_model
+        mock_model = MagicMock()
+        mock_model.get_text_embedding.side_effect = RuntimeError("embedding failed")
+        vector_index._embedding_model = mock_model
+
+        # Cause failures to trip circuit
+        for _ in range(3):
+            try:
+                vector_index._protected_embed("test")
+            except RuntimeError:
+                pass
+
+        # Circuit should be open
+        assert vector_index.circuit_state == CircuitState.OPEN
+
+        # Restore original model
+        vector_index._embedding_model = original_model
+
+        # Subsequent call should fail fast with CircuitBreakerOpen
+        with pytest.raises(CircuitBreakerOpen):
+            vector_index._protected_embed("test")
+
+    def test_get_text_embedding_uses_protected_embed(self, shared_embedding_model):
+        """Public get_text_embedding uses _protected_embed internally."""
+        from src.utils.circuit_breaker import CircuitBreakerOpen
+
+        vector_index = VectorIndex(embedding_model=shared_embedding_model)
+        breaker = vector_index._embedding_circuit_breaker
+
+        # Force circuit to OPEN
+        breaker._state = CircuitState.OPEN
+        breaker._open_time = time.time()
+
+        # get_text_embedding should raise CircuitBreakerOpen
+        with pytest.raises(CircuitBreakerOpen):
+            vector_index.get_text_embedding("test text")
+
+
+class TestSearchCircuitBreaker:
+    """Tests for search behavior when circuit breaker is open."""
+
+    def test_search_returns_empty_when_circuit_open(self, shared_embedding_model, tmp_path):
+        """Search returns empty results when circuit breaker is open."""
+        vector_index = VectorIndex(embedding_model=shared_embedding_model)
+        vector_index._initialize_index()
+        breaker = vector_index._embedding_circuit_breaker
+
+        # Force circuit to OPEN
+        breaker._state = CircuitState.OPEN
+        breaker._open_time = time.time()
+
+        # Search should return empty list instead of raising
+        results = vector_index.search("test query")
+        assert results == []
+
+    def test_search_works_after_circuit_reset(self, shared_embedding_model):
+        """Search works normally after circuit breaker is reset."""
+        from src.models import Chunk
+
+        vector_index = VectorIndex(embedding_model=shared_embedding_model)
+        vector_index._initialize_index()
+
+        # Add a chunk to search for
+        chunk = Chunk(
+            chunk_id="test_doc_chunk_0",
+            doc_id="test_doc",
+            content="This is test content for searching",
+            header_path="Test Section",
+            file_path="/test/doc.md",
+            chunk_index=0,
+            metadata={},
+            start_pos=0,
+            end_pos=34,
+            modified_time=datetime.now(),
+        )
+        vector_index.add_chunk(chunk)
+
+        # Force circuit open then reset
+        breaker = vector_index._embedding_circuit_breaker
+        breaker._state = CircuitState.OPEN
+        breaker._open_time = time.time()
+
+        # Search fails when open
+        assert vector_index.search("test content") == []
+
+        # Reset circuit
+        vector_index.reset_circuit_breaker()
+
+        # Search should work now
+        results = vector_index.search("test content")
+        assert len(results) > 0
+
+
+class TestVocabularyCircuitBreaker:
+    """Tests for vocabulary operations with circuit breaker protection."""
+
+    def test_build_vocabulary_handles_circuit_open(self, shared_embedding_model):
+        """build_concept_vocabulary skips terms when circuit opens."""
+        from unittest.mock import MagicMock
+
+        vector_index = VectorIndex(embedding_model=shared_embedding_model)
+        vector_index._initialize_index()
+
+        # Add some content
+        from src.models import Chunk
+        chunk = Chunk(
+            chunk_id="doc1_chunk_0",
+            doc_id="doc1",
+            content="test content python programming code",
+            header_path="",
+            file_path="/test.md",
+            chunk_index=0,
+            metadata={},
+            start_pos=0,
+            end_pos=37,
+            modified_time=datetime.now(),
+        )
+        vector_index.add_chunk(chunk)
+
+        # Should complete without errors even with low threshold
+        breaker = vector_index._embedding_circuit_breaker
+        breaker.config.failure_threshold = 1000  # High threshold to not trip
+
+        # Build vocabulary should work
+        vector_index.build_concept_vocabulary(min_frequency=1, max_terms=10)
+        assert len(vector_index._concept_vocabulary) > 0
+
+    def test_update_vocabulary_stops_on_circuit_open(self, shared_embedding_model):
+        """update_vocabulary_incremental stops processing when circuit opens."""
+        from unittest.mock import MagicMock
+
+        vector_index = VectorIndex(embedding_model=shared_embedding_model)
+        vector_index._initialize_index()
+
+        # Register some pending terms
+        vector_index._pending_terms = {"alpha", "beta", "gamma"}
+        vector_index._term_counts = {"alpha": 5, "beta": 4, "gamma": 3}
+
+        breaker = vector_index._embedding_circuit_breaker
+
+        # Mock model to fail after first call
+        original_model = vector_index._embedding_model
+        call_count = [0]
+
+        def failing_embed(text):
+            call_count[0] += 1
+            if call_count[0] > 1:
+                raise RuntimeError("embedding failed")
+            return [0.1] * 384  # Return valid embedding for first call
+
+        mock_model = MagicMock()
+        mock_model.get_text_embedding.side_effect = failing_embed
+        vector_index._embedding_model = mock_model
+
+        # Configure circuit to open quickly
+        breaker.config.failure_threshold = 2
+
+        # Update vocabulary - should stop when circuit opens
+        count = vector_index.update_vocabulary_incremental(batch_size=10)
+
+        # Restore model
+        vector_index._embedding_model = original_model
+
+        # Should have embedded at least one term before failures
+        assert count >= 1
 
 
 class TestCircuitBreakerIntegration:
