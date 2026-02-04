@@ -177,6 +177,48 @@ class TestIndexSyncReceiver:
 
         assert receiver._current_version == 99
 
+    def test_initialize_from_loaded_version(self, snapshot_base: Path):
+        """Verify initialize_from_loaded_version sets current_version.
+
+        This is used when indices are loaded externally during startup,
+        bypassing the normal reload_if_needed flow.
+        """
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=lambda p, v: None)
+        assert receiver._current_version == 0
+        assert receiver.current_version == 0
+
+        receiver.initialize_from_loaded_version(42)
+
+        assert receiver._current_version == 42
+        assert receiver.current_version == 42
+
+    def test_initialize_from_loaded_version_prevents_redundant_reload(self, snapshot_base: Path):
+        """Verify initialized version prevents reload of same version.
+
+        If we load version 5 at startup and call initialize_from_loaded_version(5),
+        subsequent check_for_update should return False for version 5.
+        """
+        # Setup: version file says v5 is current
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 5))
+
+        reload_count = [0]
+
+        def count_reloads(path: Path, version: int) -> None:
+            reload_count[0] += 1
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback=count_reloads)
+
+        # Simulate: indices already loaded at startup, skip reload via initialize
+        receiver.initialize_from_loaded_version(5)
+
+        # check_for_update should return False since we're at version 5
+        assert receiver.check_for_update() is False
+
+        # reload_if_needed should not call callback
+        receiver.reload_if_needed()
+        assert reload_count[0] == 0
+
 
 class TestPublisherReceiverIntegration:
     """Integration tests for publisher/receiver coordination."""

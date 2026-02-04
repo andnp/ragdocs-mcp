@@ -94,6 +94,111 @@ class TestReadOnlyContextIsReady:
     """Tests for ReadOnlyContext.is_ready() method."""
 
     @pytest.mark.asyncio
+    async def test_is_ready_false_with_no_snapshot(self, tmp_path: Path):
+        """
+        Verify is_ready returns False when no snapshot loaded.
+
+        When no snapshot exists at startup, sync_receiver.current_version is 0,
+        so is_ready() should return False (waiting for worker to publish).
+        """
+        from src.reader.context import ReadOnlyContext
+
+        snapshot_base = tmp_path / "snapshots"
+        snapshot_base.mkdir()
+
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+
+        config = Config(
+            server=ServerConfig(),
+            indexing=IndexingConfig(
+                documents_path=str(docs_path),
+                index_path=str(tmp_path / "indices"),
+            ),
+            llm=LLMConfig(embedding_model="local"),
+        )
+
+        ctx = await ReadOnlyContext.create(
+            config=config,
+            snapshot_base=snapshot_base,
+        )
+
+        # No snapshot loaded, so is_ready() should be False
+        assert ctx.is_ready() is False
+        assert ctx.sync_receiver.current_version == 0
+
+    @pytest.mark.asyncio
+    async def test_is_ready_true_after_loading_snapshot(self, tmp_path: Path):
+        """
+        Regression test: is_ready returns True after loading existing snapshot.
+
+        This prevents the timeout bug where wait_ready() would hang for 60s
+        even when indices were successfully loaded from an existing snapshot.
+
+        Bug scenario (before fix):
+        1. Worker publishes snapshot v5
+        2. MCP server restarts
+        3. ReadOnlyContext.create() loads snapshot v5
+        4. sync_receiver.current_version stayed at 0
+        5. is_ready() returned False
+        6. wait_ready() timed out after 60s
+
+        After fix, loading snapshot should set current_version correctly.
+        """
+        from src.indices.graph import GraphStore
+        from src.indices.keyword import KeywordIndex
+        from src.indices.vector import VectorIndex
+        from src.reader.context import ReadOnlyContext
+
+        snapshot_base = tmp_path / "snapshots"
+        snapshot_base.mkdir()
+
+        # Create version file pointing to v5
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 5))
+
+        # Create snapshot directory with empty indices
+        snapshot_dir = snapshot_base / "v5"
+        snapshot_dir.mkdir()
+
+        # Create minimal index files to satisfy load
+        vector_dir = snapshot_dir / "vector"
+        vector_dir.mkdir()
+        keyword_dir = snapshot_dir / "keyword"
+        keyword_dir.mkdir()
+        graph_dir = snapshot_dir / "graph"
+        graph_dir.mkdir()
+
+        # Create empty index files that load() expects
+        (vector_dir / "doc_id_to_node_ids.json").write_text("{}")
+        (keyword_dir / "index_exists").write_text("")
+        (graph_dir / "graph_data.json").write_text("{}")
+
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+
+        config = Config(
+            server=ServerConfig(),
+            indexing=IndexingConfig(
+                documents_path=str(docs_path),
+                index_path=str(tmp_path / "indices"),
+            ),
+            llm=LLMConfig(embedding_model="local"),
+        )
+
+        ctx = await ReadOnlyContext.create(
+            config=config,
+            snapshot_base=snapshot_base,
+        )
+
+        # After loading snapshot v5, is_ready() should return True
+        assert ctx.is_ready() is True, (
+            f"is_ready() returned False with sync_receiver.current_version={ctx.sync_receiver.current_version}. "
+            "This would cause query_documents to timeout waiting for ready state."
+        )
+        assert ctx.sync_receiver.current_version == 5
+
+    @pytest.mark.asyncio
     async def test_is_ready_after_create(self, tmp_path: Path):
         """Verify is_ready returns True after successful creation with vector index loaded."""
         from src.reader.context import ReadOnlyContext
