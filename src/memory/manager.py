@@ -1,5 +1,6 @@
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -71,7 +72,8 @@ class MemoryIndexManager:
         self._failed_files: list[FailedMemory] = []
         self._chunker = get_chunker(config.memory_chunking)
 
-        # Checkpoint tracking
+        # Checkpoint tracking (protected by _checkpoint_lock)
+        self._checkpoint_lock = threading.Lock()
         self._ops_since_checkpoint: int = 0
         self._last_checkpoint_time: float = time.time()
         self._dirty: bool = False
@@ -107,23 +109,29 @@ class MemoryIndexManager:
         - M seconds have elapsed since last checkpoint
 
         This provides crash resilience by periodically persisting changes.
+        Lock scope is minimal: state checks/updates under lock, I/O outside.
         """
-        if not self._dirty:
-            return
+        should_checkpoint = False
 
-        self._ops_since_checkpoint += 1
-        now = time.time()
+        with self._checkpoint_lock:
+            if not self._dirty:
+                return
 
-        should_checkpoint = (
-            self._ops_since_checkpoint >= self._config.memory.checkpoint_interval_ops
-            or (now - self._last_checkpoint_time) >= self._config.memory.checkpoint_interval_secs
-        )
+            self._ops_since_checkpoint += 1
+            now = time.time()
+
+            should_checkpoint = (
+                self._ops_since_checkpoint >= self._config.memory.checkpoint_interval_ops
+                or (now - self._last_checkpoint_time) >= self._config.memory.checkpoint_interval_secs
+            )
+
+            if should_checkpoint:
+                self._ops_since_checkpoint = 0
+                self._last_checkpoint_time = now
+                self._dirty = False
 
         if should_checkpoint:
-            self.persist()
-            self._ops_since_checkpoint = 0
-            self._last_checkpoint_time = now
-            self._dirty = False
+            self._persist_indices()
             logger.debug("Memory indices checkpointed")
 
     def _parse_frontmatter(self, content: str) -> tuple[MemoryFrontmatter, str]:
@@ -284,7 +292,8 @@ class MemoryIndexManager:
                 f for f in self._failed_files if f.path != file_path
             ]
 
-            self._dirty = True
+            with self._checkpoint_lock:
+                self._dirty = True
             self._maybe_checkpoint()
 
             logger.info(f"Indexed memory: {memory.id} with {len(chunks)} chunks")
@@ -306,7 +315,8 @@ class MemoryIndexManager:
             self._vector.remove(memory_id)
             self._keyword.remove(memory_id)
             self._graph.remove_node(memory_id)
-            self._dirty = True
+            with self._checkpoint_lock:
+                self._dirty = True
             self._maybe_checkpoint()
             logger.info(f"Removed memory: {memory_id}")
         except Exception as e:
@@ -346,14 +356,26 @@ class MemoryIndexManager:
 
         return indexed_count
 
-    def persist(self) -> None:
+    def _persist_indices(self) -> None:
+        """Internal: persist indices without touching dirty flag.
+
+        Used by _maybe_checkpoint() which manages dirty flag under lock.
+        """
         indices_path = get_indices_path(self._memory_path)
+        self._vector.persist(indices_path / "vector")
+        self._keyword.persist(indices_path / "keyword")
+        self._graph.persist(indices_path / "graph")
+        logger.info(f"Persisted memory indices to {indices_path}")
+
+    def persist(self) -> None:
+        """Persist indices to disk and clear dirty flag.
+
+        Public API for explicit persistence (e.g., on shutdown).
+        """
         try:
-            self._vector.persist(indices_path / "vector")
-            self._keyword.persist(indices_path / "keyword")
-            self._graph.persist(indices_path / "graph")
-            self._dirty = False
-            logger.info(f"Persisted memory indices to {indices_path}")
+            self._persist_indices()
+            with self._checkpoint_lock:
+                self._dirty = False
         except Exception as e:
             logger.error(f"Failed to persist memory indices: {e}", exc_info=True)
             raise

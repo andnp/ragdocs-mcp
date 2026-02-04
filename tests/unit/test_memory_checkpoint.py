@@ -5,7 +5,9 @@ Tests periodic persistence (checkpointing) based on operation count
 and time thresholds to prevent data loss on unexpected shutdown.
 """
 
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pytest
@@ -163,15 +165,15 @@ class TestOperationCountCheckpoint:
         manager = create_manager(config, memory_path)
 
         persist_count = 0
-        original_persist = manager.persist
+        original_persist_indices = manager._persist_indices
 
         def counting_persist() -> None:
             nonlocal persist_count
             persist_count += 1
-            original_persist()
+            original_persist_indices()
 
         # Type-safely assign via object attribute
-        object.__setattr__(manager, 'persist', counting_persist)
+        object.__setattr__(manager, '_persist_indices', counting_persist)
 
         for i in range(5):
             file_path = create_memory_file(
@@ -195,14 +197,14 @@ class TestOperationCountCheckpoint:
         persist_calls = []
 
         def tracking_persist() -> None:
-            persist_calls.append(manager._ops_since_checkpoint)
+            # Capture ops count at time of persist (already reset to 0 by _maybe_checkpoint)
+            persist_calls.append(time.time())
             manager._vector.persist(memory_path / "indices" / "vector")
             manager._keyword.persist(memory_path / "indices" / "keyword")
             manager._graph.persist(memory_path / "indices" / "graph")
-            manager._dirty = False
 
         # Type-safely assign via object attribute
-        object.__setattr__(manager, 'persist', tracking_persist)
+        object.__setattr__(manager, '_persist_indices', tracking_persist)
 
         # Create 6 files - should trigger checkpoint at ops 2, 4, 6
         for i in range(6):
@@ -235,15 +237,15 @@ class TestTimeBasedCheckpoint:
         manager = create_manager(config, memory_path)
 
         persist_count = 0
-        original_persist = manager.persist
+        original_persist_indices = manager._persist_indices
 
         def counting_persist() -> None:
             nonlocal persist_count
             persist_count += 1
-            original_persist()
+            original_persist_indices()
 
         # Type-safely assign via object attribute
-        object.__setattr__(manager, 'persist', counting_persist)
+        object.__setattr__(manager, '_persist_indices', counting_persist)
 
         # Set last checkpoint time to the past
         manager._last_checkpoint_time = time.time() - 2  # 2 seconds ago
@@ -417,3 +419,180 @@ class TestCheckpointConfigValidation:
         """Verify checkpoint_interval_secs=0 is valid (time-based disabled)."""
         config = MemoryConfig(checkpoint_interval_secs=0)
         assert config.checkpoint_interval_secs == 0
+
+
+# ============================================================================
+# Thread Safety Tests
+# ============================================================================
+
+
+class TestCheckpointThreadSafety:
+    """Tests verifying thread-safe access to checkpoint state."""
+
+    def test_concurrent_index_operations_no_lost_ops(
+        self, tmp_path: Path, memory_path: Path
+    ):
+        """Verify concurrent index_memory calls don't lose operation counts.
+
+        Multiple threads indexing simultaneously should not cause:
+        - Lost increments to _ops_since_checkpoint
+        - Duplicate checkpoints from race conditions
+        """
+        # High checkpoint threshold so we can count ops without triggering
+        config = create_config(tmp_path, checkpoint_interval_ops=1000)
+        manager = create_manager(config, memory_path)
+
+        num_threads = 10
+        ops_per_thread = 5
+        total_ops = num_threads * ops_per_thread
+
+        # Create all memory files upfront
+        files = []
+        for i in range(total_ops):
+            file_path = create_memory_file(
+                memory_path,
+                f"concurrent-{i}",
+                f"# Concurrent {i}\n\nContent {i}."
+            )
+            files.append(str(file_path))
+
+        # Barrier to synchronize thread starts
+        barrier = threading.Barrier(num_threads)
+        errors: list[Exception] = []
+
+        def index_batch(thread_id: int):
+            try:
+                barrier.wait()  # Maximize contention
+                for i in range(ops_per_thread):
+                    file_idx = thread_id * ops_per_thread + i
+                    manager.index_memory(files[file_idx])
+            except Exception as e:
+                errors.append(e)
+
+        # Run concurrent indexing
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(index_batch, i) for i in range(num_threads)]
+            for future in as_completed(futures):
+                future.result()  # Raises if thread failed
+
+        assert not errors, f"Threads encountered errors: {errors}"
+
+        # Verify all operations were counted
+        # _ops_since_checkpoint should equal total_ops (no checkpoint triggered)
+        assert manager._ops_since_checkpoint == total_ops
+        assert manager.is_dirty is True
+
+    def test_concurrent_checkpoint_triggers_exactly_once(
+        self, tmp_path: Path, memory_path: Path
+    ):
+        """Verify checkpoint triggers exactly once when threshold crossed.
+
+        When multiple threads race to cross the checkpoint threshold,
+        only one should trigger persistence.
+        """
+        config = create_config(tmp_path, checkpoint_interval_ops=5)
+        manager = create_manager(config, memory_path)
+
+        persist_count = 0
+        persist_lock = threading.Lock()
+        original_persist_indices = manager._persist_indices
+
+        def counting_persist():
+            nonlocal persist_count
+            with persist_lock:
+                persist_count += 1
+            # Simulate slow I/O to widen race window
+            time.sleep(0.01)
+            original_persist_indices()
+
+        object.__setattr__(manager, '_persist_indices', counting_persist)
+
+        num_threads = 10
+        # Create files for all threads
+        files = []
+        for i in range(num_threads):
+            file_path = create_memory_file(
+                memory_path,
+                f"race-{i}",
+                f"# Race {i}\n\nContent."
+            )
+            files.append(str(file_path))
+
+        barrier = threading.Barrier(num_threads)
+
+        def index_one(thread_id: int):
+            barrier.wait()  # Start all at once
+            manager.index_memory(files[thread_id])
+
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(index_one, i) for i in range(num_threads)]
+            for future in as_completed(futures):
+                future.result()
+
+        # With 10 ops and interval=5, we expect 2 checkpoints
+        # Key: no duplicate checkpoints from races
+        expected_checkpoints = num_threads // config.memory.checkpoint_interval_ops
+        assert persist_count == expected_checkpoints
+
+    def test_checkpoint_lock_prevents_state_corruption(
+        self, tmp_path: Path, memory_path: Path
+    ):
+        """Verify lock prevents _dirty/_ops state corruption under contention."""
+        config = create_config(tmp_path, checkpoint_interval_ops=3)
+        manager = create_manager(config, memory_path)
+
+        # Track state consistency
+        inconsistencies: list[str] = []
+        state_lock = threading.Lock()
+
+        original_maybe_checkpoint = manager._maybe_checkpoint
+
+        def checking_maybe_checkpoint():
+            # Snapshot state under lock (simulates what lock should protect)
+            with manager._checkpoint_lock:
+                dirty_snapshot = manager._dirty
+                ops_snapshot = manager._ops_since_checkpoint
+
+            original_maybe_checkpoint()
+
+            # After checkpoint, verify consistency
+            with manager._checkpoint_lock:
+                # If dirty was True and ops >= threshold, should have checkpointed
+                # (dirty should now be False if checkpoint happened)
+                if dirty_snapshot and ops_snapshot >= config.memory.checkpoint_interval_ops:
+                    if manager._dirty is True and manager._ops_since_checkpoint > 0:
+                        # Checkpoint should have cleared these
+                        with state_lock:
+                            inconsistencies.append(
+                                f"State not cleared after checkpoint: "
+                                f"dirty={manager._dirty}, ops={manager._ops_since_checkpoint}"
+                            )
+
+        object.__setattr__(manager, '_maybe_checkpoint', checking_maybe_checkpoint)
+
+        num_threads = 8
+        ops_per_thread = 10
+
+        files = []
+        for i in range(num_threads * ops_per_thread):
+            file_path = create_memory_file(
+                memory_path,
+                f"consistency-{i}",
+                f"# Consistency {i}\n\nContent."
+            )
+            files.append(str(file_path))
+
+        barrier = threading.Barrier(num_threads)
+
+        def index_batch(thread_id: int):
+            barrier.wait()
+            for i in range(ops_per_thread):
+                file_idx = thread_id * ops_per_thread + i
+                manager.index_memory(files[file_idx])
+
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(index_batch, i) for i in range(num_threads)]
+            for future in as_completed(futures):
+                future.result()
+
+        assert not inconsistencies, f"State inconsistencies detected: {inconsistencies}"
