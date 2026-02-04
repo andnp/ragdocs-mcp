@@ -47,10 +47,16 @@ class ReadOnlyContext:
         keyword = KeywordIndex()
         graph = GraphStore()
 
+        loaded_version: int | None = None
         latest_snapshot = _find_latest_snapshot(snapshot_base)
         if latest_snapshot is not None:
             logger.info("Loading indices from snapshot: %s", latest_snapshot)
             await asyncio.to_thread(_load_indices_from_snapshot, vector, keyword, graph, latest_snapshot)
+            # Extract version number from snapshot directory name (e.g., "v42" -> 42)
+            try:
+                loaded_version = int(latest_snapshot.name[1:])  # Strip "v" prefix
+            except (ValueError, IndexError):
+                logger.warning("Could not parse version from snapshot: %s", latest_snapshot)
         else:
             logger.info("No snapshot found, starting with empty indices")
 
@@ -110,6 +116,10 @@ class ReadOnlyContext:
             logger.info("Reloaded indices from snapshot v%d", version)
 
         sync_receiver = IndexSyncReceiver(snapshot_base, reload_callback)
+
+        # If we loaded indices from snapshot, sync the version so is_ready() returns True
+        if loaded_version is not None:
+            sync_receiver.initialize_from_loaded_version(loaded_version)
 
         commit_indexer = None
         if config.git_indexing.enabled:

@@ -85,6 +85,15 @@ class IndexSyncReceiver:
         self._current_version = 0
         self._reload_callback = reload_callback
 
+    def initialize_from_loaded_version(self, version: int) -> None:
+        """Set the current version after indices were loaded externally.
+
+        Use this when indices are loaded during startup (not via reload_if_needed)
+        to ensure is_ready() returns True.
+        """
+        self._current_version = version
+        logger.info("IndexSyncReceiver initialized to version %d", version)
+
     def _read_published_version(self) -> int | None:
         if not self._version_file.exists():
             return None
