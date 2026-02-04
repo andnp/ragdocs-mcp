@@ -69,9 +69,9 @@ def create_config(
     )
 
 
-def create_manager(config: Config, memory_path: Path) -> MemoryIndexManager:
+def create_manager(config: Config, memory_path: Path, shared_embedding_model) -> MemoryIndexManager:
     """Create MemoryIndexManager instance for testing."""
-    vector = VectorIndex()
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
     return MemoryIndexManager(config, memory_path, vector, keyword, graph)
@@ -91,17 +91,17 @@ def create_memory_file(memory_path: Path, filename: str, content: str) -> Path:
 
 class TestDirtyFlagTracking:
 
-    def test_initial_state_not_dirty(self, tmp_path: Path, memory_path: Path):
+    def test_initial_state_not_dirty(self, tmp_path: Path, memory_path: Path, shared_embedding_model):
         """Verify manager starts in clean state."""
         config = create_config(tmp_path)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         assert manager.is_dirty is False
 
-    def test_index_memory_sets_dirty(self, tmp_path: Path, memory_path: Path):
+    def test_index_memory_sets_dirty(self, tmp_path: Path, memory_path: Path, shared_embedding_model):
         """Verify indexing a memory marks the manager as dirty."""
         config = create_config(tmp_path, checkpoint_interval_ops=100)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         file_path = create_memory_file(
             memory_path,
@@ -112,10 +112,10 @@ class TestDirtyFlagTracking:
 
         assert manager.is_dirty is True
 
-    def test_remove_memory_sets_dirty(self, tmp_path: Path, memory_path: Path):
+    def test_remove_memory_sets_dirty(self, tmp_path: Path, memory_path: Path, shared_embedding_model):
         """Verify removing a memory marks the manager as dirty."""
         config = create_config(tmp_path, checkpoint_interval_ops=100)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         file_path = create_memory_file(
             memory_path,
@@ -132,10 +132,10 @@ class TestDirtyFlagTracking:
 
         assert manager.is_dirty is True
 
-    def test_persist_clears_dirty(self, tmp_path: Path, memory_path: Path):
+    def test_persist_clears_dirty(self, tmp_path: Path, memory_path: Path, shared_embedding_model):
         """Verify persist() clears the dirty flag."""
         config = create_config(tmp_path, checkpoint_interval_ops=100)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         file_path = create_memory_file(
             memory_path,
@@ -158,11 +158,11 @@ class TestDirtyFlagTracking:
 class TestOperationCountCheckpoint:
 
     def test_checkpoint_triggers_after_n_operations(
-        self, tmp_path: Path, memory_path: Path
+        self, tmp_path: Path, memory_path: Path, shared_embedding_model
     ):
         """Verify checkpoint triggers after configured operation count."""
         config = create_config(tmp_path, checkpoint_interval_ops=3)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         persist_count = 0
         original_persist_indices = manager._persist_indices
@@ -188,11 +188,11 @@ class TestOperationCountCheckpoint:
         assert persist_count >= 1
 
     def test_checkpoint_resets_operation_counter(
-        self, tmp_path: Path, memory_path: Path
+        self, tmp_path: Path, memory_path: Path, shared_embedding_model
     ):
         """Verify operation counter resets after checkpoint."""
         config = create_config(tmp_path, checkpoint_interval_ops=2)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         persist_calls = []
 
@@ -226,7 +226,7 @@ class TestOperationCountCheckpoint:
 class TestTimeBasedCheckpoint:
 
     def test_checkpoint_triggers_after_time_elapsed(
-        self, tmp_path: Path, memory_path: Path
+        self, tmp_path: Path, memory_path: Path, shared_embedding_model
     ):
         """Verify checkpoint triggers when time threshold is exceeded."""
         config = create_config(
@@ -234,7 +234,7 @@ class TestTimeBasedCheckpoint:
             checkpoint_interval_ops=100,  # High enough to not trigger
             checkpoint_interval_secs=1,   # 1 second
         )
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         persist_count = 0
         original_persist_indices = manager._persist_indices
@@ -260,14 +260,14 @@ class TestTimeBasedCheckpoint:
         assert persist_count >= 1
 
     def test_checkpoint_updates_timestamp(
-        self, tmp_path: Path, memory_path: Path
+        self, tmp_path: Path, memory_path: Path, shared_embedding_model
     ):
         """Verify checkpoint updates the last checkpoint timestamp."""
         config = create_config(
             tmp_path,
             checkpoint_interval_ops=1,  # Checkpoint every operation
         )
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         initial_time = manager._last_checkpoint_time
 
@@ -293,11 +293,11 @@ class TestTimeBasedCheckpoint:
 class TestNoCheckpointWhenClean:
 
     def test_no_checkpoint_when_not_dirty(
-        self, tmp_path: Path, memory_path: Path
+        self, tmp_path: Path, memory_path: Path, shared_embedding_model
     ):
         """Verify _maybe_checkpoint does nothing when not dirty."""
         config = create_config(tmp_path, checkpoint_interval_ops=1)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         persist_called = False
 
@@ -325,14 +325,14 @@ class TestNoCheckpointWhenClean:
 class TestReconcileCheckpoint:
 
     def test_reconcile_checkpoints_when_changes_detected(
-        self, tmp_path: Path, memory_path: Path
+        self, tmp_path: Path, memory_path: Path, shared_embedding_model
     ):
         """Verify reconcile triggers checkpoint when it makes changes."""
         config = create_config(
             tmp_path,
             checkpoint_interval_ops=100,  # Won't trigger from count
         )
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         # Create files that reconcile will detect
         create_memory_file(
@@ -363,11 +363,11 @@ class TestReconcileCheckpoint:
             assert checkpoint_called is True
 
     def test_reconcile_no_checkpoint_when_no_changes(
-        self, tmp_path: Path, memory_path: Path
+        self, tmp_path: Path, memory_path: Path, shared_embedding_model
     ):
         """Verify reconcile doesn't checkpoint when no changes needed."""
         config = create_config(tmp_path, checkpoint_interval_ops=1)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         # No files to reconcile = no changes
         persist_called = False
@@ -430,7 +430,7 @@ class TestCheckpointThreadSafety:
     """Tests verifying thread-safe access to checkpoint state."""
 
     def test_concurrent_index_operations_no_lost_ops(
-        self, tmp_path: Path, memory_path: Path
+        self, tmp_path: Path, memory_path: Path, shared_embedding_model
     ):
         """Verify concurrent index_memory calls don't lose operation counts.
 
@@ -440,7 +440,7 @@ class TestCheckpointThreadSafety:
         """
         # High checkpoint threshold so we can count ops without triggering
         config = create_config(tmp_path, checkpoint_interval_ops=1000)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         num_threads = 10
         ops_per_thread = 5
@@ -483,7 +483,7 @@ class TestCheckpointThreadSafety:
         assert manager.is_dirty is True
 
     def test_concurrent_checkpoint_triggers_exactly_once(
-        self, tmp_path: Path, memory_path: Path
+        self, tmp_path: Path, memory_path: Path, shared_embedding_model
     ):
         """Verify checkpoint triggers exactly once when threshold crossed.
 
@@ -491,7 +491,7 @@ class TestCheckpointThreadSafety:
         only one should trigger persistence.
         """
         config = create_config(tmp_path, checkpoint_interval_ops=5)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         persist_count = 0
         persist_lock = threading.Lock()
@@ -535,11 +535,11 @@ class TestCheckpointThreadSafety:
         assert persist_count == expected_checkpoints
 
     def test_checkpoint_lock_prevents_state_corruption(
-        self, tmp_path: Path, memory_path: Path
+        self, tmp_path: Path, memory_path: Path, shared_embedding_model
     ):
         """Verify lock prevents _dirty/_ops state corruption under contention."""
         config = create_config(tmp_path, checkpoint_interval_ops=3)
-        manager = create_manager(config, memory_path)
+        manager = create_manager(config, memory_path, shared_embedding_model)
 
         # Track state consistency
         inconsistencies: list[str] = []

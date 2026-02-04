@@ -54,8 +54,8 @@ def base_config(tmp_path):
 
 
 @pytest.fixture
-def indices():
-    vector = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
+def indices(shared_embedding_model):
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
     return vector, keyword, graph
@@ -307,7 +307,7 @@ async def test_query_with_hypothesis_uses_orchestrator_documents_path(base_confi
 # ============================================================================
 
 
-def test_two_orchestrators_with_different_paths_are_isolated(base_config, tmp_path):
+def test_two_orchestrators_with_different_paths_are_isolated(base_config, tmp_path, shared_embedding_model):
     """
     Test that two orchestrators created with different documents_path values
     maintain their own paths independently.
@@ -315,12 +315,12 @@ def test_two_orchestrators_with_different_paths_are_isolated(base_config, tmp_pa
     This simulates the multi-project scenario where ApplicationContext creates
     separate orchestrators for different projects.
     """
-    vector1 = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
+    vector1 = VectorIndex(embedding_model=shared_embedding_model)
     keyword1 = KeywordIndex()
     graph1 = GraphStore()
     manager1 = IndexManager(base_config, vector1, keyword1, graph1)
 
-    vector2 = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
+    vector2 = VectorIndex(embedding_model=shared_embedding_model)
     keyword2 = KeywordIndex()
     graph2 = GraphStore()
     manager2 = IndexManager(base_config, vector2, keyword2, graph2)
@@ -352,14 +352,14 @@ def test_two_orchestrators_with_different_paths_are_isolated(base_config, tmp_pa
 # ============================================================================
 
 
-def test_base_orchestrator_stores_documents_path(base_config, tmp_path):
+def test_base_orchestrator_stores_documents_path(base_config, tmp_path, shared_embedding_model):
     """
     Test that BaseSearchOrchestrator stores documents_path in _documents_path.
 
     The base class provides the foundation for path storage that subclasses
     like SearchOrchestrator and MemorySearchOrchestrator use.
     """
-    vector = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
 

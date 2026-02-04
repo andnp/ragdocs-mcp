@@ -14,8 +14,8 @@ def docs_root(tmp_path):
 
 
 @pytest.fixture
-def vector_index():
-    return VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
+def vector_index(shared_embedding_model):
+    return VectorIndex(embedding_model=shared_embedding_model)
 
 
 def test_vector_search_without_exclusions(vector_index, docs_root):
