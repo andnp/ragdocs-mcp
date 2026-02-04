@@ -297,7 +297,7 @@ async def handle_search_memories(
         f"- **Total indexed memories:** {stats.get('total_indexed', 0)}",
         f"- **Candidates:** vector={stats.get('vector_candidates', 0)}, keyword={stats.get('keyword_candidates', 0)}",
         f"- **After fusion:** {stats.get('after_fusion', 0)}",
-        f"- **Filtered out:**",
+        "- **Filtered out:**",
         f"  - Missing chunk data: {stats.get('filtered_missing_chunk', 0)}",
         f"  - Type mismatch: {stats.get('filtered_type_mismatch', 0)}",
         f"  - Time range: {stats.get('filtered_time_range', 0)}",

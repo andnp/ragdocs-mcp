@@ -145,9 +145,6 @@ class TestReadOnlyContextIsReady:
 
         After fix, loading snapshot should set current_version correctly.
         """
-        from src.indices.graph import GraphStore
-        from src.indices.keyword import KeywordIndex
-        from src.indices.vector import VectorIndex
         from src.reader.context import ReadOnlyContext
 
         snapshot_base = tmp_path / "snapshots"
