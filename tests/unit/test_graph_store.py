@@ -258,3 +258,75 @@ def test_remove_chunk_thread_safe(graph_store):
             assert not graph_store.has_node(chunk_id)
         else:
             assert graph_store.has_node(chunk_id)
+
+
+def test_get_neighbors_thread_safe_with_concurrent_modifications(graph_store):
+    """Test that get_neighbors() is thread-safe with concurrent add/remove operations.
+
+    Verifies the structure-snapshot pattern prevents issues when:
+    - Multiple threads call get_neighbors() repeatedly
+    - Other threads add/remove nodes concurrently
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Setup initial graph structure
+    for i in range(20):
+        graph_store.add_node(f"node_{i}", {"index": i})
+    for i in range(19):
+        graph_store.add_edge(f"node_{i}", f"node_{i+1}", "link")
+
+    errors = []
+    stop_event = threading.Event()
+
+    def reader_task(node_id):
+        """Repeatedly call get_neighbors() on various nodes."""
+        iterations = 0
+        while not stop_event.is_set() and iterations < 100:
+            try:
+                graph_store.get_neighbors(node_id, depth=2)
+                iterations += 1
+            except Exception as e:
+                errors.append(f"Reader error on {node_id}: {e}")
+                break
+
+    def writer_task(base_id):
+        """Add and remove nodes concurrently."""
+        for i in range(20):
+            if stop_event.is_set():
+                break
+            try:
+                node_id = f"dynamic_{base_id}_{i}"
+                graph_store.add_node(node_id, {"dynamic": True})
+                # Connect to existing nodes
+                graph_store.add_edge(node_id, f"node_{i % 20}", "link")
+                graph_store.remove_node(node_id)
+            except Exception as e:
+                errors.append(f"Writer error: {e}")
+                break
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        # Submit reader tasks for different nodes
+        reader_futures = [
+            executor.submit(reader_task, f"node_{i}")
+            for i in range(0, 20, 4)
+        ]
+        # Submit writer tasks
+        writer_futures = [
+            executor.submit(writer_task, i)
+            for i in range(3)
+        ]
+
+        # Wait for writers to complete
+        for future in as_completed(writer_futures):
+            future.result()
+
+        # Signal readers to stop
+        stop_event.set()
+
+        # Wait for readers
+        for future in as_completed(reader_futures):
+            future.result()
+
+    # Verify no exceptions occurred
+    assert errors == [], f"Thread safety errors: {errors}"

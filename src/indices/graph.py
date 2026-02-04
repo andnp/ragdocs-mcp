@@ -140,17 +140,23 @@ class GraphStore:
             return True
 
     def get_neighbors(self, doc_id: str, depth: int = 1) -> list[str]:
-        """Get neighbors up to specified depth using snapshot pattern.
+        """Get neighbors up to specified depth using structure snapshot pattern.
 
-        Takes a shallow copy of the graph under lock, then performs BFS
-        traversal without holding the lock. This prevents lock contention
-        during deep graph traversals while maintaining consistency.
+        Takes structure-only snapshot (adjacency) under lock, then performs BFS
+        without holding the lock. This prevents lock contention during deep
+        graph traversals while maintaining consistency.
+
+        Unlike a shallow graph copy, this approach stores only the adjacency
+        structure as frozen sets, eliminating shared references to node/edge
+        data dictionaries that could cause issues if modified concurrently.
         """
-        # Take shallow copy of graph under lock
+        # Capture structure under lock (no data dict references)
         with self._lock:
             if doc_id not in self._graph:
                 return []
-            graph_snapshot = self._graph.copy()
+            # Store adjacency as frozen sets - no shared references
+            successors_map = {n: frozenset(self._graph.successors(n)) for n in self._graph.nodes()}
+            predecessors_map = {n: frozenset(self._graph.predecessors(n)) for n in self._graph.nodes()}
 
         # BFS on snapshot (no lock held)
         neighbors = set()
@@ -159,12 +165,8 @@ class GraphStore:
         for _ in range(depth):
             next_level = set()
             for node in current_level:
-                if node not in graph_snapshot:
-                    continue
-                successors = set(graph_snapshot.successors(node))
-                predecessors = set(graph_snapshot.predecessors(node))
-                next_level.update(successors | predecessors)
-
+                next_level.update(successors_map.get(node, frozenset()))
+                next_level.update(predecessors_map.get(node, frozenset()))
             neighbors.update(next_level)
             current_level = next_level
 
