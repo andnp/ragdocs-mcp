@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import glob
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +9,7 @@ from typing import Literal
 from src.config import Config, load_config, detect_project, resolve_index_path, resolve_documents_path, resolve_memory_path
 from src.coordination import SingletonGuard
 from src.git.commit_indexer import CommitIndexer
+from src.indexing.discovery import discover_files as _discover_files
 from src.indexing.manager import IndexManager
 from src.indexing.manifest import IndexManifest, load_manifest, save_manifest, should_rebuild
 from src.indexing.reconciler import build_indexed_files_map
@@ -20,7 +20,6 @@ from src.indices.vector import VectorIndex
 from src.memory.manager import MemoryIndexManager
 from src.memory.search import MemorySearchOrchestrator
 from src.search.orchestrator import SearchOrchestrator
-from src.utils import should_include_file
 
 logger = logging.getLogger(__name__)
 
@@ -174,26 +173,14 @@ class ApplicationContext:
         )
 
     def discover_files(self) -> list[str]:
-        docs_path = Path(self.config.indexing.documents_path)
-
-        # Collect all files matching parser patterns
-        all_files = set()
-        for pattern in self.config.parsers.keys():
-            # Keep the full pattern including ** for recursive matching
-            glob_pattern = str(docs_path / pattern)
-
-            files = glob.glob(glob_pattern, recursive=self.config.indexing.recursive)
-            all_files.update(files)
-
-        return [
-            f for f in sorted(all_files)
-            if should_include_file(
-                f,
-                self.config.indexing.include,
-                self.config.indexing.exclude,
-                self.config.indexing.exclude_hidden_dirs,
-            )
-        ]
+        return _discover_files(
+            documents_path=self.config.indexing.documents_path,
+            parsers=self.config.parsers,
+            recursive=self.config.indexing.recursive,
+            include_patterns=self.config.indexing.include,
+            exclude_patterns=self.config.indexing.exclude,
+            exclude_hidden_dirs=self.config.indexing.exclude_hidden_dirs,
+        )
 
     def _check_and_rebuild_if_needed(self) -> bool:
         self.index_path.mkdir(parents=True, exist_ok=True)

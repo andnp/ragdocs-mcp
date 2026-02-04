@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import glob
 import logging
 import os
 import signal
@@ -246,25 +245,16 @@ def _build_manifest(config: Config):
 
 
 def _discover_files(config: Config) -> list[str]:
-    from src.utils import should_include_file
+    from src.indexing.discovery import discover_files
 
-    docs_path = Path(config.indexing.documents_path)
-    all_files: set[str] = set()
-
-    for pattern in config.parsers.keys():
-        glob_pattern = str(docs_path / pattern)
-        files = glob.glob(glob_pattern, recursive=config.indexing.recursive)
-        all_files.update(files)
-
-    return [
-        f for f in sorted(all_files)
-        if should_include_file(
-            f,
-            config.indexing.include,
-            config.indexing.exclude,
-            config.indexing.exclude_hidden_dirs,
-        )
-    ]
+    return discover_files(
+        documents_path=config.indexing.documents_path,
+        parsers=config.parsers,
+        recursive=config.indexing.recursive,
+        include_patterns=config.indexing.include,
+        exclude_patterns=config.indexing.exclude,
+        exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
+    )
 
 
 async def _full_index(state: WorkerState, manifest) -> None:
