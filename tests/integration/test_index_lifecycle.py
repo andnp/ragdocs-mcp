@@ -41,13 +41,14 @@ def config(tmp_path):
 
 
 @pytest.fixture
-def indices():
+def indices(shared_embedding_model):
     """
-    Create real index instances.
+    Create real index instances with shared embedding model.
 
+    Uses session-scoped embedding model to avoid redundant model loading.
     Returns tuple of (vector, keyword, graph) indices for IndexManager.
     """
-    vector = VectorIndex()
+    vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
     graph = GraphStore()
     return vector, keyword, graph
@@ -84,10 +85,13 @@ def index_all_documents(manager, docs_path):
     Index all markdown files in the documents directory.
 
     Helper function to simulate full indexing on startup.
+    Returns count of files indexed for verification.
     """
     pattern = str(Path(docs_path) / "**" / "*.md")
-    for file_path in glob.glob(pattern, recursive=True):
+    files = glob.glob(pattern, recursive=True)
+    for file_path in files:
         manager.index_document(file_path)
+    return len(files)
 
 
 def test_startup_no_manifest_triggers_full_index(config, manager, current_manifest, tmp_path):
@@ -132,7 +136,7 @@ def test_startup_no_manifest_triggers_full_index(config, manager, current_manife
     assert saved_manifest.parsers == {"**/*.md": "MarkdownParser"}
 
 
-def test_startup_matching_manifest_skips_rebuild(config, manager, current_manifest, tmp_path):
+def test_startup_matching_manifest_skips_rebuild(config, manager, current_manifest, tmp_path, shared_embedding_model):
     """
     Test that startup with matching manifest skips rebuild.
 
@@ -158,7 +162,7 @@ def test_startup_matching_manifest_skips_rebuild(config, manager, current_manife
     assert needs_rebuild is False
 
     # Simulate restart: create new manager with fresh indices
-    vector_new = VectorIndex()
+    vector_new = VectorIndex(embedding_model=shared_embedding_model)
     keyword_new = KeywordIndex()
     graph_new = GraphStore()
     manager_new = IndexManager(config, vector_new, keyword_new, graph_new)
@@ -171,7 +175,7 @@ def test_startup_matching_manifest_skips_rebuild(config, manager, current_manife
     assert doc_count == 1  # Only the pre-indexed document
 
 
-def test_startup_version_mismatch_triggers_rebuild(config, manager, current_manifest, tmp_path):
+def test_startup_version_mismatch_triggers_rebuild(config, manager, current_manifest, tmp_path, shared_embedding_model):
     """
     Test that startup with version mismatch triggers rebuild.
 
@@ -211,12 +215,20 @@ def test_startup_version_mismatch_triggers_rebuild(config, manager, current_mani
     # Add new document to verify full rebuild would capture it
     (docs_path / "new.md").write_text("# New Document\n\nNew content after upgrade.")
 
+    # Clear persisted index data to simulate version mismatch rebuild
+    # In production, a version mismatch triggers full re-index from scratch
+    import shutil
+    if index_path.exists():
+        shutil.rmtree(index_path)
+    index_path.mkdir(parents=True, exist_ok=True)
+
     # Perform full reindex
-    vector_new = VectorIndex()
+    vector_new = VectorIndex(embedding_model=shared_embedding_model)
     keyword_new = KeywordIndex()
     graph_new = GraphStore()
     manager_new = IndexManager(config, vector_new, keyword_new, graph_new)
-    index_all_documents(manager_new, docs_path)
+    files_indexed = index_all_documents(manager_new, docs_path)
+    assert files_indexed == 2, f"Expected 2 files, glob found {files_indexed}"
     manager_new.persist()
 
     # Save updated manifest
