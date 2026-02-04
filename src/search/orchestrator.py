@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -41,6 +42,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         # Query embedding cache with LRU eviction
         self._embedding_cache: dict[str, tuple[list[float], float]] = {}
+        self._cache_lock = threading.Lock()
         self._cache_max_size = 100
         self._cache_ttl = 300.0  # 5 minutes
 
@@ -72,6 +74,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         Cache entries expire after 5 minutes to prevent stale embeddings.
         When cache is full, evicts the oldest entry (LRU policy).
+        Thread-safe: uses lock around cache access/mutation.
 
         Args:
             query: Query text to embed
@@ -79,30 +82,30 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         Returns:
             Embedding vector for the query
         """
-        current_time = time.time()
-
-        # Check cache
-        if query in self._embedding_cache:
-            embedding, timestamp = self._embedding_cache[query]
-            # Expire after TTL
-            if current_time - timestamp < self._cache_ttl:
-                logger.debug(f"Embedding cache hit for query: {query[:50]}...")
-                return embedding
-            else:
+        # Check cache under lock
+        with self._cache_lock:
+            if query in self._embedding_cache:
+                embedding, timestamp = self._embedding_cache[query]
+                if time.time() - timestamp < self._cache_ttl:
+                    logger.debug(f"Embedding cache hit for query: {query[:50]}...")
+                    return embedding
                 # Remove expired entry
                 del self._embedding_cache[query]
 
-        # Compute new embedding
+        # Compute embedding OUTSIDE lock (expensive operation)
         logger.debug(f"Embedding cache miss for query: {query[:50]}...")
         embedding = self._vector.get_text_embedding(query)
 
-        # Evict oldest if cache full (LRU policy)
-        if len(self._embedding_cache) >= self._cache_max_size:
-            oldest_key = min(self._embedding_cache, key=lambda k: self._embedding_cache[k][1])
-            del self._embedding_cache[oldest_key]
-            logger.debug(f"Evicted oldest cache entry: {oldest_key[:50]}...")
+        # Update cache under lock
+        with self._cache_lock:
+            # Evict oldest if at capacity
+            if len(self._embedding_cache) >= self._cache_max_size:
+                oldest_key = min(self._embedding_cache, key=lambda k: self._embedding_cache[k][1])
+                del self._embedding_cache[oldest_key]
+                logger.debug(f"Evicted oldest cache entry: {oldest_key[:50]}...")
 
-        self._embedding_cache[query] = (embedding, current_time)
+            self._embedding_cache[query] = (embedding, time.time())
+
         return embedding
 
     async def query(
