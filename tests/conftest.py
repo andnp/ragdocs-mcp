@@ -41,10 +41,26 @@ from src.indices.vector import VectorIndex
 
 @pytest.fixture(autouse=True)
 def isolate_xdg_data_home(tmp_path_factory, monkeypatch):
+    """Isolate application data while preserving HuggingFace model cache.
+
+    Creates temp directories for XDG_DATA_HOME and HOME to isolate test data,
+    but preserves HF_HOME to avoid re-downloading large embedding models
+    and hitting rate limits during parallel test execution.
+    """
+    # Preserve original HuggingFace cache location BEFORE modifying HOME
+    # Default to ~/.cache/huggingface if not set
+    original_home = os.environ.get("HOME", "")
+    original_hf_home = os.environ.get("HF_HOME", os.path.join(original_home, ".cache", "huggingface"))
+
+    # Create isolated temp directories for application data
     data_home = tmp_path_factory.mktemp("xdg-data-home")
     home_dir = tmp_path_factory.mktemp("home")
+
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
     monkeypatch.setenv("HOME", str(home_dir))
+
+    # Restore HuggingFace cache to original location (shared across workers)
+    monkeypatch.setenv("HF_HOME", original_hf_home)
 
 
 # ============================================================================
@@ -85,13 +101,24 @@ def create_test_document(docs_dir: Path | str, doc_id: str, content: str):
 @pytest.fixture(scope="session")
 def shared_embedding_model():
     """Session-scoped embedding model shared across all tests.
-    
+
+    Uses filelock to ensure only one pytest worker downloads the model
+    at a time, preventing race conditions and rate limit issues.
     Pre-warms the model with a dummy embedding call to avoid first-call
     overhead (~1-2s) during actual tests.
     """
-    model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
-    # Pre-warm: trigger model initialization and cache warmup
-    _ = model.get_text_embedding("warmup")
+    import filelock
+
+    # Lock file in the HF cache directory
+    hf_home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+    lock_path = os.path.join(hf_home, ".model_download.lock")
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+
+    with filelock.FileLock(lock_path, timeout=300):  # 5 min timeout
+        model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+        # Pre-warm: trigger model initialization and cache warmup
+        _ = model.get_text_embedding("warmup")
+
     return model
 
 

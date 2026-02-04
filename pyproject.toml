@@ -40,6 +40,7 @@ mcp-markdown-ragdocs = "src.cli:main"
 
 [dependency-groups]
 dev = [
+    "filelock>=3.0.0",
     "pyright>=1.1.407",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.24.0",
