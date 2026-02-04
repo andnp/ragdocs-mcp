@@ -539,6 +539,55 @@ class TestMarkerFileValidation:
         assert receiver._validate_snapshot(snapshot_dir, 42) is False
 
 
+class TestCorruptionRecovery:
+    """Tests for corruption recovery paths in index sync."""
+
+    def test_orphaned_temp_files_cleaned_on_init(self, snapshot_base: Path):
+        """Verify temp files from crashed publishes are cleaned up."""
+        # Create orphaned .tmp files/dirs
+        (snapshot_base / "v1.tmp").mkdir()
+        (snapshot_base / "version.tmp").write_text("garbage")
+
+        # Create valid snapshot for baseline
+        (snapshot_base / "v1").mkdir()
+        (snapshot_base / "version.bin").write_bytes(struct.pack("<I", 1))
+
+        # Init publisher should clean orphaned files
+        IndexSyncPublisher(snapshot_base)
+
+        assert not (snapshot_base / "v1.tmp").exists()
+        assert not (snapshot_base / "version.tmp").exists()
+
+    def test_corrupted_version_bin_fallback_to_zero(self, snapshot_base: Path):
+        """Verify publisher handles truncated/corrupted version file gracefully."""
+        # Write fewer than 4 bytes (truncated/corrupted file)
+        (snapshot_base / "version.bin").write_bytes(b"ab")
+
+        publisher = IndexSyncPublisher(snapshot_base)
+        assert publisher.version == 0
+
+    def test_receiver_fallback_on_missing_snapshot_dir(self, snapshot_base: Path):
+        """Verify receiver falls back to highest available snapshot."""
+        # Setup: version.bin points to v3 but only v1, v2 exist
+        (snapshot_base / "v1").mkdir()
+        (snapshot_base / "v1" / "complete.marker").write_text("1")
+        (snapshot_base / "v2").mkdir()
+        (snapshot_base / "v2" / "complete.marker").write_text("2")
+        (snapshot_base / "version.bin").write_bytes(struct.pack("<I", 3))  # Points to missing v3
+
+        reloaded_version = None
+
+        def reload_callback(path: Path, version: int):
+            nonlocal reloaded_version
+            reloaded_version = version
+
+        receiver = IndexSyncReceiver(snapshot_base, reload_callback)
+        result = receiver.reload_if_needed()
+
+        assert result is True
+        assert reloaded_version == 2  # Fell back to highest available
+
+
 class TestSnapshotFallbackResilience:
     """Tests for snapshot version mismatch fallback behavior."""
 

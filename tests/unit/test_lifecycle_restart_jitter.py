@@ -357,3 +357,83 @@ class TestRestartAttemptTracking:
 
         assert not sleep_called, "Sleep should not be called when max attempts reached"
         assert coordinator._state == LifecycleState.DEGRADED
+
+
+class TestRestartBackoffEdgeCases:
+    """Edge case tests for restart backoff logic."""
+
+    @pytest.mark.asyncio
+    async def test_backoff_capped_at_max_delay(self):
+        """Verify backoff doesn't exceed max_delay regardless of attempt count."""
+        coordinator = LifecycleCoordinator()
+        mock_ctx = MockReadOnlyContext()
+        mock_ctx.config.worker = WorkerConfig(
+            restart_backoff_base=5.0,
+            restart_jitter_factor=0.0,  # No jitter for predictable testing
+            restart_max_delay=15.0,
+            max_restart_attempts=20,
+        )
+        _set_readonly_ctx(coordinator, mock_ctx)
+        coordinator._state = LifecycleState.DEGRADED
+        coordinator._restart_attempts = 10  # High attempt count for large exponent
+
+        delays: list[float] = []
+
+        async def capture_delay(delay: float):
+            delays.append(delay)
+
+        with (
+            patch("asyncio.sleep", side_effect=capture_delay),
+            patch.object(coordinator, "_stop_worker", new_callable=AsyncMock),
+            patch.object(coordinator, "_start_worker", new_callable=AsyncMock),
+            patch.object(coordinator, "_wait_for_init", return_value=True),
+        ):
+            await coordinator._restart_worker()
+
+        assert len(delays) == 1
+        # At attempt 11, base_delay = 5.0 * (2^10) = 5120, capped to 15.0
+        assert delays[0] == 15.0, f"Expected delay capped at 15.0, got {delays[0]}"
+
+    @pytest.mark.asyncio
+    async def test_jitter_stays_within_bounds(self):
+        """Verify jitter keeps delay within ±jitter_factor of base."""
+        coordinator = LifecycleCoordinator()
+        mock_ctx = MockReadOnlyContext()
+        mock_ctx.config.worker = WorkerConfig(
+            restart_backoff_base=10.0,
+            restart_jitter_factor=0.25,
+            restart_max_delay=100.0,  # High enough to not interfere
+            max_restart_attempts=200,
+        )
+        _set_readonly_ctx(coordinator, mock_ctx)
+        coordinator._state = LifecycleState.DEGRADED
+
+        for seed in range(100):  # Statistical test
+            random.seed(seed)
+            coordinator._restart_attempts = 0
+
+            delays: list[float] = []
+
+            async def capture_delay(delay: float):
+                delays.append(delay)
+
+            with (
+                patch("asyncio.sleep", side_effect=capture_delay),
+                patch.object(coordinator, "_stop_worker", new_callable=AsyncMock),
+                patch.object(coordinator, "_start_worker", new_callable=AsyncMock),
+                patch.object(coordinator, "_wait_for_init", return_value=True),
+            ):
+                await coordinator._restart_worker()
+
+            if delays:
+                base_delay = 10.0  # First attempt: 10.0 * (2^0) = 10.0
+                jitter_factor = 0.25
+                min_expected = base_delay * (1 - jitter_factor)  # 7.5
+                max_expected = base_delay * (1 + jitter_factor)  # 12.5
+                # Min delay is max(1.0, base + jitter), so clamp min_expected
+                min_expected = max(1.0, min_expected)
+
+                assert min_expected <= delays[0] <= max_expected, (
+                    f"Delay {delays[0]} not in expected range "
+                    f"[{min_expected}, {max_expected}] (seed={seed})"
+                )
