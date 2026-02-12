@@ -407,12 +407,9 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         return results
 
     def _get_graph_neighbors(self, doc_ids: list[str]):
-        neighbors = set()
-        for doc_id in doc_ids:
-            doc_neighbors = self._graph.get_neighbors(doc_id, depth=1)
-            neighbors.update(doc_neighbors)
+        neighbors = self._graph.get_neighbors_batch(doc_ids, depth=1)
         logger.info(f"Graph traversal for {doc_ids[:3]} returned {len(neighbors)} neighbors: {list(neighbors)[:5]}")
-        return list(neighbors)
+        return neighbors
 
     def _apply_community_boost(
         self,

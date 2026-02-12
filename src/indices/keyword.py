@@ -439,6 +439,38 @@ class KeywordIndex:
                     exc_info=True,
                 )
 
+    def remove_chunks(self, chunk_ids: list[str]) -> None:
+        """Remove multiple chunks in a single writer transaction.
+
+        More efficient than calling remove_chunk() in a loop since it
+        acquires the Whoosh writer lock only once.
+        """
+        if not chunk_ids:
+            return
+
+        with self._lock:
+            if self._index is None:
+                return
+
+            try:
+                writer = self._get_writer()
+                try:
+                    for chunk_id in chunk_ids:
+                        writer.delete_by_term("id", chunk_id)
+                    writer.commit()
+                    logger.debug(f"Batch removed {len(chunk_ids)} chunks from keyword index")
+                except Exception as e:
+                    logger.warning("Writer operation failed in remove_chunks(), cancelling: %s", e, exc_info=True)
+                    writer.cancel()
+                    raise
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(
+                    f"Keyword index corruption detected during remove_chunks: {e}. "
+                    "Reinitializing index.",
+                    exc_info=True,
+                )
+                self._reinitialize_after_corruption()
+
     def move_chunk(self, old_chunk_id: str, new_chunk: Chunk) -> bool:
         """Move chunk to new ID with updated metadata (for file moves).
 

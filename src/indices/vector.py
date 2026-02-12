@@ -3,7 +3,7 @@ import logging
 import re
 import threading
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
@@ -13,7 +13,6 @@ from src.models import Chunk, Document
 from src.search.types import SearchResultDict
 from src.utils.atomic_io import atomic_write_json, fsync_path
 from src.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen, CircuitState
-from src.utils.similarity import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +67,9 @@ class VectorIndex:
         self._concept_vocabulary: OrderedDict[str, list[float]] = OrderedDict()
         self._term_counts: OrderedDict[str, int] = OrderedDict()
         self._pending_terms: set[str] = set()  # Terms that need embedding
+        # FAISS index for fast vocabulary nearest-neighbor search
+        self._vocab_faiss_index = None
+        self._vocab_terms: list[str] = []  # Ordered terms matching FAISS index positions
         # Bounded warning deduplication with LRU eviction (max 1000 entries)
         self._warned_stale_chunk_ids: OrderedDict[str, bool] = OrderedDict()
         self._max_warned_chunks = 1000
@@ -228,41 +230,36 @@ class VectorIndex:
         if self._index is None:
             raise RuntimeError("VectorIndex not initialized - call load() or add_chunks() first")
 
-        def create_llama_doc(chunk: Chunk) -> LlamaDocument:
-            embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
-            return LlamaDocument(
-                text=embedding_text,
-                metadata={
-                    "chunk_id": chunk.chunk_id,
-                    "doc_id": chunk.doc_id,
-                    "chunk_index": chunk.chunk_index,
-                    "header_path": chunk.header_path,
-                    "file_path": chunk.file_path,
-                    "tags": chunk.metadata.get("tags", []),
-                    "links": chunk.metadata.get("links", []),
-                    "parent_chunk_id": chunk.parent_chunk_id,
-                    **chunk.metadata,
-                },
-                id_=chunk.chunk_id,
-            )
+        # Create all LlamaDocuments sequentially (trivially fast dict construction),
+        # then insert in a single batch so LlamaIndex can batch-embed efficiently.
+        llama_docs: list[tuple[LlamaDocument, Chunk]] = []
+        for chunk in chunks:
+            try:
+                embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
+                llama_doc = LlamaDocument(
+                    text=embedding_text,
+                    metadata={
+                        "chunk_id": chunk.chunk_id,
+                        "doc_id": chunk.doc_id,
+                        "chunk_index": chunk.chunk_index,
+                        "header_path": chunk.header_path,
+                        "file_path": chunk.file_path,
+                        "tags": chunk.metadata.get("tags", []),
+                        "links": chunk.metadata.get("links", []),
+                        "parent_chunk_id": chunk.parent_chunk_id,
+                        **chunk.metadata,
+                    },
+                    id_=chunk.chunk_id,
+                )
+                llama_docs.append((llama_doc, chunk))
+            except Exception as e:
+                logger.error(
+                    f"Failed to create document for chunk {chunk.chunk_id}: {e}",
+                    exc_info=True,
+                )
 
-        with ThreadPoolExecutor(max_workers=self._embedding_workers) as executor:
-            future_to_chunk = {
-                executor.submit(create_llama_doc, chunk): chunk
-                for chunk in chunks
-            }
-
-            llama_docs = []
-            for future in as_completed(future_to_chunk):
-                chunk = future_to_chunk[future]
-                try:
-                    llama_doc = future.result()
-                    llama_docs.append((llama_doc, chunk))
-                except Exception as e:
-                    logger.error(
-                        f"Failed to create document for chunk {chunk.chunk_id}: {e}",
-                        exc_info=True,
-                    )
+        if not llama_docs:
+            return
 
         with self._index_lock:
             for llama_doc, chunk in llama_docs:
@@ -641,6 +638,7 @@ class VectorIndex:
 
         self._pending_terms.clear()
         logger.info(f"Built concept vocabulary with {len(self._concept_vocabulary)} terms")
+        self._rebuild_vocab_index()
 
     def extract_terms_from_text(self, text: str, min_term_length: int = 3) -> dict[str, int]:
         """Extract terms and their counts from text."""
@@ -755,8 +753,36 @@ class VectorIndex:
 
         if embedded_count > 0:
             logger.debug(f"Incrementally added {embedded_count} terms to vocabulary")
+            self._rebuild_vocab_index()
 
         return embedded_count
+
+    def _rebuild_vocab_index(self) -> None:
+        """Rebuild FAISS inner-product index over vocabulary embeddings.
+
+        Enables O(1) approximate nearest-neighbor lookup in expand_query()
+        instead of O(V×D) linear scan over all vocabulary terms.
+        """
+        if not self._concept_vocabulary:
+            self._vocab_faiss_index = None
+            self._vocab_terms = []
+            return
+
+        import faiss
+
+        terms = list(self._concept_vocabulary.keys())
+        embeddings = np.array(
+            [self._concept_vocabulary[t] for t in terms], dtype=np.float32
+        )
+        # Normalize for cosine similarity via inner product
+        faiss.normalize_L2(embeddings)  # type: ignore[attr-defined]
+
+        index = faiss.IndexFlatIP(embeddings.shape[1])  # type: ignore[attr-defined]
+        index.add(embeddings)  # type: ignore[union-attr]
+
+        self._vocab_faiss_index = index
+        self._vocab_terms = terms
+        logger.debug(f"Built vocabulary FAISS index with {len(terms)} terms")
 
     def get_pending_vocabulary_count(self) -> int:
         """Return count of terms waiting to be embedded."""
@@ -869,25 +895,29 @@ class VectorIndex:
         if not self._concept_vocabulary:
             return query
 
+        # Lazily rebuild FAISS index if needed (e.g., after incremental update)
+        if self._vocab_faiss_index is None or not self._vocab_terms:
+            self._rebuild_vocab_index()
+            if self._vocab_faiss_index is None:
+                return query
+
         try:
+            import faiss
+
             query_embedding = np.array(
-                self._protected_embed(query),
-                dtype=np.float64,
-            )
+                self._protected_embed(query), dtype=np.float32
+            ).reshape(1, -1)
+            faiss.normalize_L2(query_embedding)  # type: ignore[attr-defined]
+
+            scores, indices = self._vocab_faiss_index.search(query_embedding, top_k)  # type: ignore[union-attr]
+
+            expansion_terms = []
+            for score, idx in zip(scores[0], indices[0]):
+                if idx >= 0 and score >= similarity_threshold:
+                    expansion_terms.append(self._vocab_terms[idx])
         except CircuitBreakerOpen:
             logger.warning("Circuit breaker open, returning unexpanded query")
             return query
-
-        similarities: list[tuple[str, float]] = []
-        vocab_snapshot = list(self._concept_vocabulary.items())
-        for term, term_emb in vocab_snapshot:
-            term_vec = np.array(term_emb, dtype=np.float64)
-            sim = cosine_similarity(query_embedding, term_vec)
-            if sim >= similarity_threshold:
-                similarities.append((term, sim))
-
-        similarities.sort(key=lambda x: x[1], reverse=True)
-        expansion_terms = [term for term, _ in similarities[:top_k]]
 
         query_tokens = set(query.lower().split())
         new_terms = [t for t in expansion_terms if t not in query_tokens]
@@ -1048,6 +1078,7 @@ class VectorIndex:
 
         self._pending_terms.clear()
         self._warned_stale_chunk_ids.clear()
+        self._rebuild_vocab_index()
 
     def _initialize_index(self) -> None:
         from llama_index.core import StorageContext, VectorStoreIndex
@@ -1154,6 +1185,8 @@ class VectorIndex:
         self._pending_terms.clear()
         self._warned_stale_chunk_ids.clear()
         self._tombstoned_docs.clear()
+        self._vocab_faiss_index = None
+        self._vocab_terms = []
 
     def save(self, path: Path) -> None:
         self.persist(path)

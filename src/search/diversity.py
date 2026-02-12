@@ -22,6 +22,8 @@ def select_mmr(
 
     embeddings: dict[str, NDArray[np.floating]] = {}
     relevance_scores: dict[str, float] = {}
+    # Pre-build score lookup for O(1) access instead of linear scan
+    score_lookup = {chunk_id: score for chunk_id, score in candidates}
 
     for chunk_id, score in candidates:
         emb = get_embedding(chunk_id)
@@ -56,10 +58,7 @@ def select_mmr(
                 best_id = chunk_id
 
         if best_id is not None:
-            original_score = next(
-                (score for cid, score in candidates if cid == best_id), 0.0
-            )
-            selected.append((best_id, original_score))
+            selected.append((best_id, score_lookup.get(best_id, 0.0)))
             remaining.remove(best_id)
         else:
             break

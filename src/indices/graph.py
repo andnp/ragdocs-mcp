@@ -140,38 +140,62 @@ class GraphStore:
             return True
 
     def get_neighbors(self, doc_id: str, depth: int = 1) -> list[str]:
-        """Get neighbors up to specified depth using structure snapshot pattern.
+        """Get neighbors up to specified depth via BFS under lock.
 
-        Takes structure-only snapshot (adjacency) under lock, then performs BFS
-        without holding the lock. This prevents lock contention during deep
-        graph traversals while maintaining consistency.
-
-        Unlike a shallow graph copy, this approach stores only the adjacency
-        structure as frozen sets, eliminating shared references to node/edge
-        data dictionaries that could cause issues if modified concurrently.
+        For typical depths (1-2), BFS under lock is fast (dict lookups in
+        NetworkX) and avoids the overhead of snapshotting the entire graph
+        adjacency structure.
         """
-        # Capture structure under lock (no data dict references)
         with self._lock:
             if doc_id not in self._graph:
                 return []
-            # Store adjacency as frozen sets - no shared references
-            successors_map = {n: frozenset(self._graph.successors(n)) for n in self._graph.nodes()}
-            predecessors_map = {n: frozenset(self._graph.predecessors(n)) for n in self._graph.nodes()}
 
-        # BFS on snapshot (no lock held)
-        neighbors = set()
-        current_level = {doc_id}
+            neighbors: set[str] = set()
+            current_level = {doc_id}
 
-        for _ in range(depth):
-            next_level = set()
-            for node in current_level:
-                next_level.update(successors_map.get(node, frozenset()))
-                next_level.update(predecessors_map.get(node, frozenset()))
-            neighbors.update(next_level)
-            current_level = next_level
+            for _ in range(depth):
+                next_level: set[str] = set()
+                for node in current_level:
+                    if node in self._graph:
+                        next_level.update(self._graph.successors(node))
+                        next_level.update(self._graph.predecessors(node))
+                neighbors.update(next_level)
+                current_level = next_level
 
-        neighbors.discard(doc_id)
-        return list(neighbors)
+            neighbors.discard(doc_id)
+            return list(neighbors)
+
+    def get_neighbors_batch(self, doc_ids: list[str], depth: int = 1) -> list[str]:
+        """Get neighbors for multiple seed nodes in a single lock acquisition.
+
+        More efficient than calling get_neighbors() in a loop when multiple
+        seed doc_ids need neighbor expansion (e.g., search result graph boost).
+        """
+        with self._lock:
+            seed_ids: set[str] = set()
+            current_level: set[str] = set()
+
+            for doc_id in doc_ids:
+                if doc_id in self._graph:
+                    current_level.add(doc_id)
+                    seed_ids.add(doc_id)
+
+            if not current_level:
+                return []
+
+            neighbors: set[str] = set()
+
+            for _ in range(depth):
+                next_level: set[str] = set()
+                for node in current_level:
+                    if node in self._graph:
+                        next_level.update(self._graph.successors(node))
+                        next_level.update(self._graph.predecessors(node))
+                neighbors.update(next_level)
+                current_level = next_level
+
+            neighbors -= seed_ids
+            return list(neighbors)
 
     def detect_communities(self, algorithm: str = "louvain") -> dict[str, int]:
         with self._lock:

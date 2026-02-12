@@ -170,11 +170,14 @@ class IndexManager:
         if not chunks:
             return
 
-        # Remove old versions
-        for chunk in chunks:
-            self.vector.remove_chunk(chunk.chunk_id)
-            self.keyword.remove_chunk(chunk.chunk_id)
-            self.graph.remove_chunk(chunk.chunk_id)
+        chunk_ids = [chunk.chunk_id for chunk in chunks]
+
+        # Remove old versions (batch where possible)
+        for chunk_id in chunk_ids:
+            self.vector.remove_chunk(chunk_id)
+        self.keyword.remove_chunks(chunk_ids)
+        for chunk_id in chunk_ids:
+            self.graph.remove_chunk(chunk_id)
 
         # Add new versions
         self.vector.add_chunks(chunks)
@@ -202,7 +205,6 @@ class IndexManager:
             self._hash_store.remove_document(doc_id)
             for chunk in chunks:
                 self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
-            self._hash_store.persist()
 
         logger.debug(f"Full re-indexed {doc_id} with {len(chunks)} chunks")
 
@@ -400,7 +402,6 @@ class IndexManager:
                     # Update hash store for all chunks (even unchanged, to handle ID shifts)
                     for chunk in chunks:
                         self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
-                    self._hash_store.persist()
 
             # Add document node to graph (for links/metadata)
             # Pass full metadata including tags and file_path to the graph
@@ -516,7 +517,6 @@ class IndexManager:
         # Remove from hash store
         if self._config.indexing.enable_delta_indexing:
             self._hash_store.remove_document(doc_id)
-            self._hash_store.persist()
 
     def persist(self):
         """Persist all indices with retry logic for transient failures.
