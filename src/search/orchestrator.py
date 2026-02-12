@@ -2,6 +2,7 @@ import asyncio
 import logging
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 from src.config import Config
@@ -40,8 +41,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         self._pending_reindex: set[str] = set()
         self._reindex_tasks: set[asyncio.Task] = set()
 
-        # Query embedding cache with LRU eviction
-        self._embedding_cache: dict[str, tuple[list[float], float]] = {}
+        # Query embedding cache with LRU eviction (OrderedDict for O(1) evict)
+        self._embedding_cache: OrderedDict[str, tuple[list[float], float]] = OrderedDict()
         self._cache_lock = threading.Lock()
         self._cache_max_size = 100
         self._cache_ttl = 300.0  # 5 minutes
@@ -87,6 +88,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             if query in self._embedding_cache:
                 embedding, timestamp = self._embedding_cache[query]
                 if time.time() - timestamp < self._cache_ttl:
+                    self._embedding_cache.move_to_end(query)
                     logger.debug(f"Embedding cache hit for query: {query[:50]}...")
                     return embedding
                 # Remove expired entry
@@ -98,11 +100,10 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         # Update cache under lock
         with self._cache_lock:
-            # Evict oldest if at capacity
+            # Evict LRU entry if at capacity (O(1) via OrderedDict)
             if len(self._embedding_cache) >= self._cache_max_size:
-                oldest_key = min(self._embedding_cache, key=lambda k: self._embedding_cache[k][1])
-                del self._embedding_cache[oldest_key]
-                logger.debug(f"Evicted oldest cache entry: {oldest_key[:50]}...")
+                evicted_key, _ = self._embedding_cache.popitem(last=False)
+                logger.debug(f"Evicted LRU cache entry: {evicted_key[:50]}...")
 
             self._embedding_cache[query] = (embedding, time.time())
 
