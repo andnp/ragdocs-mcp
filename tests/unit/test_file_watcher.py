@@ -7,11 +7,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.indexing.discovery import is_excluded_dir, walk_included_dirs
 from src.indexing.watcher import (
     FileWatcher,
     _DocumentEventHandler,
-    _is_excluded_dir,
-    _walk_included_dirs,
     MAX_QUEUE_SIZE,
 )
 
@@ -509,47 +508,47 @@ class TestFileWatcherParserSuffixes:
 
 
 class TestIsExcludedDir:
-    """Tests for _is_excluded_dir helper."""
+    """Tests for is_excluded_dir helper."""
 
     def test_hidden_dir_excluded_by_default(self):
         """Hidden directories should be excluded when exclude_hidden_dirs=True."""
-        assert _is_excluded_dir("/project/.git", [], exclude_hidden_dirs=True) is True
-        assert _is_excluded_dir("/project/.venv", [], exclude_hidden_dirs=True) is True
+        assert is_excluded_dir("/project/.git", [], exclude_hidden_dirs=True) is True
+        assert is_excluded_dir("/project/.venv", [], exclude_hidden_dirs=True) is True
 
     def test_hidden_dir_allowed_when_disabled(self):
         """Hidden directories should be allowed when exclude_hidden_dirs=False."""
-        assert _is_excluded_dir("/project/.git", [], exclude_hidden_dirs=False) is False
+        assert is_excluded_dir("/project/.git", [], exclude_hidden_dirs=False) is False
 
     def test_exclude_pattern_matches(self):
         """Directories matching exclude patterns should be excluded."""
         patterns = ["**/node_modules/**", "**/.venv/**"]
-        assert _is_excluded_dir("/project/node_modules", patterns, exclude_hidden_dirs=False) is True
+        assert is_excluded_dir("/project/node_modules", patterns, exclude_hidden_dirs=False) is True
 
     def test_normal_dir_not_excluded(self):
         """Normal directories should not be excluded."""
         patterns = ["**/node_modules/**", "**/.venv/**"]
-        assert _is_excluded_dir("/project/docs", patterns, exclude_hidden_dirs=True) is False
-        assert _is_excluded_dir("/project/src/utils", patterns, exclude_hidden_dirs=True) is False
+        assert is_excluded_dir("/project/docs", patterns, exclude_hidden_dirs=True) is False
+        assert is_excluded_dir("/project/src/utils", patterns, exclude_hidden_dirs=True) is False
 
     def test_nested_exclude_pattern(self):
         """Deeply nested excluded dirs should be detected."""
         patterns = ["**/build/**"]
-        assert _is_excluded_dir("/project/libs/mylib/build", patterns, exclude_hidden_dirs=False) is True
+        assert is_excluded_dir("/project/libs/mylib/build", patterns, exclude_hidden_dirs=False) is True
 
 
 class TestWalkIncludedDirs:
-    """Tests for _walk_included_dirs helper."""
+    """Tests for walk_included_dirs helper."""
 
     def test_returns_root(self, tmp_path):
         """Should always include the root directory."""
-        result = _walk_included_dirs(tmp_path, [], exclude_hidden_dirs=True)
+        result = walk_included_dirs(tmp_path, [], exclude_hidden_dirs=True)
         assert tmp_path in result
 
     def test_includes_normal_subdirs(self, tmp_path):
         """Should include non-excluded subdirectories."""
         (tmp_path / "docs").mkdir()
         (tmp_path / "src").mkdir()
-        result = _walk_included_dirs(tmp_path, [], exclude_hidden_dirs=True)
+        result = walk_included_dirs(tmp_path, [], exclude_hidden_dirs=True)
         assert tmp_path / "docs" in result
         assert tmp_path / "src" in result
 
@@ -558,7 +557,7 @@ class TestWalkIncludedDirs:
         (tmp_path / ".git").mkdir()
         (tmp_path / ".venv").mkdir()
         (tmp_path / "docs").mkdir()
-        result = _walk_included_dirs(tmp_path, [], exclude_hidden_dirs=True)
+        result = walk_included_dirs(tmp_path, [], exclude_hidden_dirs=True)
         assert tmp_path / ".git" not in result
         assert tmp_path / ".venv" not in result
         assert tmp_path / "docs" in result
@@ -569,7 +568,7 @@ class TestWalkIncludedDirs:
         (tmp_path / "node_modules" / "pkg").mkdir()
         (tmp_path / "src").mkdir()
         patterns = ["**/node_modules/**"]
-        result = _walk_included_dirs(tmp_path, patterns, exclude_hidden_dirs=False)
+        result = walk_included_dirs(tmp_path, patterns, exclude_hidden_dirs=False)
         assert tmp_path / "node_modules" not in result
         assert tmp_path / "node_modules" / "pkg" not in result
         assert tmp_path / "src" in result
@@ -580,13 +579,13 @@ class TestWalkIncludedDirs:
         venv.mkdir()
         (venv / "lib").mkdir()
         (venv / "lib" / "site-packages").mkdir()
-        result = _walk_included_dirs(tmp_path, [], exclude_hidden_dirs=True)
+        result = walk_included_dirs(tmp_path, [], exclude_hidden_dirs=True)
         assert all(".venv" not in str(p) for p in result)
 
     def test_includes_nested_dirs(self, tmp_path):
         """Should include deeply nested non-excluded directories."""
         (tmp_path / "a" / "b" / "c").mkdir(parents=True)
-        result = _walk_included_dirs(tmp_path, [], exclude_hidden_dirs=True)
+        result = walk_included_dirs(tmp_path, [], exclude_hidden_dirs=True)
         assert tmp_path / "a" in result
         assert tmp_path / "a" / "b" in result
         assert tmp_path / "a" / "b" / "c" in result

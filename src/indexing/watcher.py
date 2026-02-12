@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-import fnmatch
 import logging
 import os
 import queue
@@ -13,7 +12,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
-from src.indexing.discovery import DEFAULT_SUFFIXES
+from src.indexing.discovery import DEFAULT_SUFFIXES, is_excluded_dir, walk_included_dirs
 from src.indexing.manager import IndexManager
 from src.utils import should_include_file
 
@@ -26,50 +25,6 @@ EventType: TypeAlias = Literal["created", "modified", "deleted"]
 
 # Maximum queue size to prevent memory exhaustion under load
 MAX_QUEUE_SIZE = 1000
-
-
-def _is_excluded_dir(
-    dir_path: str,
-    exclude_patterns: list[str],
-    exclude_hidden_dirs: bool,
-) -> bool:
-    """Check if a directory should be excluded from watching."""
-    normalized = dir_path.replace("\\", "/")
-    name = Path(normalized).name
-
-    if exclude_hidden_dirs and name.startswith("."):
-        return True
-
-    # Test with a synthetic file path to match directory-level exclude patterns
-    test_path = normalized.rstrip("/") + "/test_file"
-    for pattern in exclude_patterns:
-        if fnmatch.fnmatch(test_path, pattern):
-            return True
-
-    return False
-
-
-def _walk_included_dirs(
-    root: Path,
-    exclude_patterns: list[str],
-    exclude_hidden_dirs: bool,
-) -> list[Path]:
-    """Walk directory tree, returning only directories that should be watched.
-
-    Prunes excluded and hidden directories to avoid unnecessary inotify watches.
-    """
-    included: list[Path] = [root]
-    for dirpath, dirnames, _ in os.walk(root, topdown=True):
-        # Prune in-place so os.walk skips excluded subtrees
-        dirnames[:] = [
-            d for d in dirnames
-            if not _is_excluded_dir(
-                os.path.join(dirpath, d), exclude_patterns, exclude_hidden_dirs
-            )
-        ]
-        for d in dirnames:
-            included.append(Path(dirpath) / d)
-    return included
 
 
 class FileWatcher:
@@ -118,7 +73,7 @@ class FileWatcher:
         if self._running:
             return
 
-        included_dirs = _walk_included_dirs(
+        included_dirs = walk_included_dirs(
             self._documents_path, self._exclude_patterns, self._exclude_hidden_dirs
         )
         if len(included_dirs) > 1000:
@@ -396,7 +351,7 @@ class _DocumentEventHandler(FileSystemEventHandler):
         if self._observer is None:
             return
 
-        new_dirs = _walk_included_dirs(
+        new_dirs = walk_included_dirs(
             Path(dir_path), self._exclude_patterns, self._exclude_hidden_dirs
         )
         for d in new_dirs:
@@ -421,7 +376,7 @@ class _DocumentEventHandler(FileSystemEventHandler):
                 if isinstance(event.src_path, str)
                 else event.src_path.decode("utf-8")
             )
-            if not _is_excluded_dir(
+            if not is_excluded_dir(
                 path_str, self._exclude_patterns, self._exclude_hidden_dirs
             ):
                 self._schedule_new_directory(path_str)

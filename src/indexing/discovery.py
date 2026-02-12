@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import glob
+import fnmatch
+import os
 from pathlib import Path
 
 from src.utils import should_include_file
@@ -36,6 +37,50 @@ def get_parser_suffixes(
     return suffixes
 
 
+def is_excluded_dir(
+    dir_path: str,
+    exclude_patterns: list[str],
+    exclude_hidden_dirs: bool,
+) -> bool:
+    """Check if a directory should be excluded from watching or discovery."""
+    normalized = dir_path.replace("\\", "/")
+    name = Path(normalized).name
+
+    if exclude_hidden_dirs and name.startswith("."):
+        return True
+
+    # Test with a synthetic file path to match directory-level exclude patterns
+    test_path = normalized.rstrip("/") + "/test_file"
+    for pattern in exclude_patterns:
+        if fnmatch.fnmatch(test_path, pattern):
+            return True
+
+    return False
+
+
+def walk_included_dirs(
+    root: Path,
+    exclude_patterns: list[str],
+    exclude_hidden_dirs: bool,
+) -> list[Path]:
+    """Walk directory tree, returning only non-excluded directories.
+
+    Prunes excluded and hidden directories to avoid unnecessary traversal.
+    """
+    included: list[Path] = [root]
+    for dirpath, dirnames, _ in os.walk(root, topdown=True):
+        # Prune in-place so os.walk skips excluded subtrees
+        dirnames[:] = [
+            d for d in dirnames
+            if not is_excluded_dir(
+                os.path.join(dirpath, d), exclude_patterns, exclude_hidden_dirs
+            )
+        ]
+        for d in dirnames:
+            included.append(Path(dirpath) / d)
+    return included
+
+
 def discover_files(
     documents_path: str | Path,
     parsers: dict[str, str],
@@ -46,6 +91,9 @@ def discover_files(
     exclude_hidden_dirs: bool = True,
 ) -> list[str]:
     """Discover all indexable files matching parser patterns.
+
+    Uses os.walk with directory pruning instead of glob.glob to avoid
+    traversing excluded directories (e.g. .venv/, node_modules/).
 
     Args:
         documents_path: Root directory to search
@@ -61,20 +109,29 @@ def discover_files(
     docs_path = Path(documents_path)
     include = include_patterns if include_patterns else ["*"]
     exclude = exclude_patterns or []
+    suffixes = get_parser_suffixes(parsers)
 
-    # Collect all files matching parser patterns
     all_files: set[str] = set()
-    for pattern in parsers.keys():
-        glob_pattern = str(docs_path / pattern)
-        files = glob.glob(glob_pattern, recursive=recursive)
-        all_files.update(files)
+
+    if recursive:
+        included_dirs = walk_included_dirs(docs_path, exclude, exclude_hidden_dirs)
+        for dir_path in included_dirs:
+            try:
+                for entry in os.scandir(str(dir_path)):
+                    if entry.is_file() and Path(entry.name).suffix.lower() in suffixes:
+                        all_files.add(entry.path)
+            except OSError:
+                pass
+    else:
+        # Non-recursive: only scan the root directory
+        try:
+            for entry in os.scandir(str(docs_path)):
+                if entry.is_file() and Path(entry.name).suffix.lower() in suffixes:
+                    all_files.add(entry.path)
+        except OSError:
+            pass
 
     return [
         f for f in sorted(all_files)
-        if should_include_file(
-            f,
-            include,
-            exclude,
-            exclude_hidden_dirs,
-        )
+        if should_include_file(f, include, exclude, exclude_hidden_dirs)
     ]
