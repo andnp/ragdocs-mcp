@@ -8,6 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from src.chunking.factory import get_chunker
 from src.config import Config
 from src.coordination import IndexLock
+from src.indexing.discovery import get_parser_suffixes
 from src.indices.code import CodeIndex
 from src.indices.graph import GraphStore
 from src.indices.hash_store import ChunkHashStore
@@ -59,18 +60,8 @@ class IndexManager:
         )
 
     def _get_parser_suffixes(self, fallback_suffixes: list[str] | None = None):
-        suffixes: set[str] = set()
-        for pattern in self._config.parsers.keys():
-            suffix = Path(pattern).suffix
-            if suffix:
-                suffixes.add(suffix)
-
-        if not suffixes:
-            if fallback_suffixes is None:
-                return []
-            suffixes.update(fallback_suffixes)
-
-        return sorted(suffixes)
+        fallback = set(fallback_suffixes) if fallback_suffixes else None
+        return sorted(get_parser_suffixes(self._config.parsers, fallback=fallback))
 
     def reindex_document(self, doc_id: str, reason: str | None = None):
         docs_path = Path(self._config.indexing.documents_path)

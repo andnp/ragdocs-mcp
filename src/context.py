@@ -9,7 +9,7 @@ from typing import Literal
 from src.config import Config, load_config, detect_project, resolve_index_path, resolve_documents_path, resolve_memory_path
 from src.coordination import SingletonGuard
 from src.git.commit_indexer import CommitIndexer
-from src.indexing.discovery import discover_files as _discover_files
+from src.indexing.discovery import discover_files as _discover_files, get_parser_suffixes
 from src.indexing.manager import IndexManager
 from src.indexing.manifest import IndexManifest, load_manifest, save_manifest, should_rebuild
 from src.indexing.reconciler import build_indexed_files_map
@@ -110,6 +110,7 @@ class ApplicationContext:
                 include_patterns=config.indexing.include,
                 exclude_patterns=config.indexing.exclude,
                 exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
+                parser_suffixes=get_parser_suffixes(config.parsers),
             )
 
         # Initialize commit indexer if enabled and git available

@@ -7,6 +7,34 @@ from pathlib import Path
 
 from src.utils import should_include_file
 
+# Default suffixes when no parsers are configured
+DEFAULT_SUFFIXES: set[str] = {".md", ".markdown"}
+
+
+def get_parser_suffixes(
+    parsers: dict[str, str],
+    fallback: set[str] | None = None,
+) -> set[str]:
+    """Extract file suffixes from parser glob patterns.
+
+    Args:
+        parsers: Mapping of glob patterns to parser names (e.g. {"**/*.md": "MarkdownParser"})
+        fallback: Suffixes to use if no suffixes can be extracted from parsers
+
+    Returns:
+        Set of lowercase file suffixes (e.g. {".md", ".txt"})
+    """
+    suffixes: set[str] = set()
+    for pattern in parsers:
+        suffix = Path(pattern).suffix
+        if suffix:
+            suffixes.add(suffix.lower())
+
+    if not suffixes:
+        return fallback if fallback is not None else set(DEFAULT_SUFFIXES)
+
+    return suffixes
+
 
 def discover_files(
     documents_path: str | Path,

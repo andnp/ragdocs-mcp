@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.indexing.watcher import FileWatcher, _MarkdownEventHandler, MAX_QUEUE_SIZE
+from src.indexing.watcher import FileWatcher, _DocumentEventHandler, MAX_QUEUE_SIZE
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ def full_queue():
 @pytest.fixture
 def event_handler(full_queue):
     """Create event handler with a full queue."""
-    return _MarkdownEventHandler(full_queue)
+    return _DocumentEventHandler(full_queue, {".md", ".markdown"})
 
 
 class TestFileWatcherStoppedCleanly:
@@ -262,18 +262,18 @@ class TestFileWatcherStopIdempotent:
 
 
 class TestEventHandlerDroppedEventCounter:
-    """Tests for _MarkdownEventHandler dropped event tracking."""
+    """Tests for _DocumentEventHandler dropped event tracking."""
 
     def test_dropped_event_count_starts_at_zero(self):
         """Counter should start at zero."""
         q = queue.Queue(maxsize=10)
-        handler = _MarkdownEventHandler(q)
+        handler = _DocumentEventHandler(q, {".md", ".markdown"})
         assert handler.dropped_event_count == 0
 
     def test_dropped_since_reconcile_starts_at_zero(self):
         """Per-reconcile counter should start at zero."""
         q = queue.Queue(maxsize=10)
-        handler = _MarkdownEventHandler(q)
+        handler = _DocumentEventHandler(q, {".md", ".markdown"})
         assert handler.dropped_since_reconcile == 0
 
     def test_dropped_counter_increments_on_queue_full(self, event_handler):
@@ -425,3 +425,78 @@ class TestFileWatcherDroppedEventMetrics:
         watcher.reset_dropped_counter()
         assert handler.dropped_since_reconcile == 0
         await watcher.stop()
+
+
+class TestDocumentEventHandlerSuffixFiltering:
+    """Tests for _DocumentEventHandler suffix-based file filtering."""
+
+    def test_supports_md_by_default(self):
+        """Handler with default suffixes should accept .md files."""
+        q = queue.Queue(maxsize=10)
+        handler = _DocumentEventHandler(q, {".md", ".markdown"})
+        assert handler._is_supported_file("/docs/readme.md") is True
+
+    def test_supports_markdown_by_default(self):
+        """Handler with default suffixes should accept .markdown files."""
+        q = queue.Queue(maxsize=10)
+        handler = _DocumentEventHandler(q, {".md", ".markdown"})
+        assert handler._is_supported_file("/docs/readme.markdown") is True
+
+    def test_rejects_unsupported_extension(self):
+        """Handler should reject files with unsupported extensions."""
+        q = queue.Queue(maxsize=10)
+        handler = _DocumentEventHandler(q, {".md"})
+        assert handler._is_supported_file("/docs/readme.txt") is False
+
+    def test_supports_txt_when_configured(self):
+        """Handler with .txt suffix should accept .txt files."""
+        q = queue.Queue(maxsize=10)
+        handler = _DocumentEventHandler(q, {".md", ".txt"})
+        assert handler._is_supported_file("/docs/notes.txt") is True
+
+    def test_supports_custom_extension(self):
+        """Handler should accept files matching custom suffixes."""
+        q = queue.Queue(maxsize=10)
+        handler = _DocumentEventHandler(q, {".rst"})
+        assert handler._is_supported_file("/docs/guide.rst") is True
+        assert handler._is_supported_file("/docs/guide.md") is False
+
+    def test_case_insensitive_suffix_matching(self):
+        """Suffix matching should be case-insensitive."""
+        q = queue.Queue(maxsize=10)
+        handler = _DocumentEventHandler(q, {".md"})
+        assert handler._is_supported_file("/docs/README.MD") is True
+
+    def test_handles_bytes_path(self):
+        """Handler should handle bytes paths correctly."""
+        q = queue.Queue(maxsize=10)
+        handler = _DocumentEventHandler(q, {".md", ".txt"})
+        assert handler._is_supported_file(b"/docs/readme.md") is True
+        assert handler._is_supported_file(b"/docs/notes.txt") is True
+        assert handler._is_supported_file(b"/docs/script.py") is False
+
+
+class TestFileWatcherParserSuffixes:
+    """Tests for FileWatcher parser_suffixes parameter."""
+
+    def test_default_suffixes_when_none(self, tmp_path, mock_index_manager):
+        """FileWatcher should use default suffixes when None is passed."""
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            parser_suffixes=None,
+        )
+        assert watcher._parser_suffixes == {".md", ".markdown"}
+
+    def test_custom_suffixes_passed_through(self, tmp_path, mock_index_manager):
+        """FileWatcher should store custom parser_suffixes."""
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            parser_suffixes={".md", ".txt", ".rst"},
+        )
+        assert watcher._parser_suffixes == {".md", ".txt", ".rst"}

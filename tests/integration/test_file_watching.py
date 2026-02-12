@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.indexing.discovery import get_parser_suffixes
 from src.indexing.manager import IndexManager
 from src.indexing.watcher import FileWatcher
 from src.indices.graph import GraphStore
@@ -78,6 +79,7 @@ def watcher(config, manager):
         include_patterns=config.indexing.include,
         exclude_patterns=config.indexing.exclude,
         exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
+        parser_suffixes=get_parser_suffixes(config.parsers),
     )
 
 

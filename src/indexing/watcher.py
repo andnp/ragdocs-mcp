@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+from src.indexing.discovery import DEFAULT_SUFFIXES
 from src.indexing.manager import IndexManager
 from src.utils import should_include_file
 
@@ -46,6 +47,7 @@ class FileWatcher:
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         exclude_hidden_dirs: bool = True,
+        parser_suffixes: set[str] | None = None,
     ):
         self._documents_path = Path(documents_path)
         self._index_manager = index_manager
@@ -53,6 +55,7 @@ class FileWatcher:
         self._include_patterns = include_patterns or ["**/*"]
         self._exclude_patterns = exclude_patterns or []
         self._exclude_hidden_dirs = exclude_hidden_dirs
+        self._parser_suffixes = parser_suffixes if parser_suffixes else DEFAULT_SUFFIXES
         self._observer: BaseObserver | None = None
         # Bounded queue prevents memory exhaustion during high file change rates
         self._event_queue = queue.Queue[tuple[EventType, str]](maxsize=MAX_QUEUE_SIZE)
@@ -60,7 +63,7 @@ class FileWatcher:
         self._task: asyncio.Task[None] | None = None
         self._last_sync_time: str | None = None
         self._stopped_cleanly: bool = True
-        self._event_handler: _MarkdownEventHandler | None = None
+        self._event_handler: _DocumentEventHandler | None = None
 
     @property
     def stopped_cleanly(self) -> bool:
@@ -92,7 +95,7 @@ class FileWatcher:
             )
 
         self._running = True
-        self._event_handler = _MarkdownEventHandler(self._event_queue)
+        self._event_handler = _DocumentEventHandler(self._event_queue, self._parser_suffixes)
         observer = Observer()
         observer.schedule(self._event_handler, str(self._documents_path), recursive=True)
         observer.start()
@@ -277,17 +280,18 @@ class FileWatcher:
         return self.dropped_since_reconcile > 0
 
 
-class _MarkdownEventHandler(FileSystemEventHandler):
-    def __init__(self, queue: queue.Queue[tuple[EventType, str]]):
+class _DocumentEventHandler(FileSystemEventHandler):
+    def __init__(self, event_queue: queue.Queue[tuple[EventType, str]], suffixes: set[str]):
         super().__init__()
-        self._queue = queue
+        self._queue = event_queue
+        self._suffixes = suffixes
         self._lock = threading.Lock()
         self._dropped_events = 0  # Track backpressure events (total)
         self._dropped_since_last_reconcile = 0  # Track drops since last reconcile
 
-    def _is_markdown(self, path: str | bytes):
+    def _is_supported_file(self, path: str | bytes) -> bool:
         path_str = path if isinstance(path, str) else path.decode("utf-8")
-        return Path(path_str).suffix.lower() in (".md", ".markdown")
+        return Path(path_str).suffix.lower() in self._suffixes
 
     @property
     def dropped_event_count(self) -> int:
@@ -327,7 +331,7 @@ class _MarkdownEventHandler(FileSystemEventHandler):
                 )
 
     def on_created(self, event: FileSystemEvent):
-        if not event.is_directory and self._is_markdown(event.src_path):
+        if not event.is_directory and self._is_supported_file(event.src_path):
             path_str = (
                 event.src_path
                 if isinstance(event.src_path, str)
@@ -336,7 +340,7 @@ class _MarkdownEventHandler(FileSystemEventHandler):
             self._queue_event("created", path_str)
 
     def on_modified(self, event: FileSystemEvent):
-        if not event.is_directory and self._is_markdown(event.src_path):
+        if not event.is_directory and self._is_supported_file(event.src_path):
             path_str = (
                 event.src_path
                 if isinstance(event.src_path, str)
@@ -345,7 +349,7 @@ class _MarkdownEventHandler(FileSystemEventHandler):
             self._queue_event("modified", path_str)
 
     def on_deleted(self, event: FileSystemEvent):
-        if not event.is_directory and self._is_markdown(event.src_path):
+        if not event.is_directory and self._is_supported_file(event.src_path):
             path_str = (
                 event.src_path
                 if isinstance(event.src_path, str)

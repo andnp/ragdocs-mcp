@@ -401,6 +401,7 @@ def _should_publish_snapshot(
 
 async def _start_watchers(state: WorkerState) -> None:
     from src.indexing.watcher import FileWatcher
+    from src.indexing.discovery import get_parser_suffixes
 
     state.file_watcher = FileWatcher(
         documents_path=state.config.indexing.documents_path,
@@ -408,6 +409,7 @@ async def _start_watchers(state: WorkerState) -> None:
         include_patterns=state.config.indexing.include,
         exclude_patterns=state.config.indexing.exclude,
         exclude_hidden_dirs=state.config.indexing.exclude_hidden_dirs,
+        parser_suffixes=get_parser_suffixes(state.config.parsers),
     )
 
     if not state._watcher_callback_registered:
