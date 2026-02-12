@@ -387,7 +387,6 @@ class TestVocabularyCircuitBreaker:
 
     def test_build_vocabulary_handles_circuit_open(self, shared_embedding_model):
         """build_concept_vocabulary skips terms when circuit opens."""
-        from unittest.mock import MagicMock
 
         vector_index = VectorIndex(embedding_model=shared_embedding_model)
         vector_index._initialize_index()

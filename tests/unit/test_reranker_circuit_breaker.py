@@ -210,4 +210,3 @@ class TestCircuitBreakerIntegration:
 
         assert not errors, f"Thread errors: {errors}"
         assert reranker._model is not None
-

@@ -81,7 +81,7 @@ class TestDiscoverFiles:
 
     def test_includes_hidden_dirs_when_disabled(self, docs_structure):
         """Hidden directories can be included with explicit pattern and exclude_hidden_dirs=False.
-        
+
         Note: glob's ** pattern doesn't match hidden directories by default,
         so an explicit pattern must include them.
         """

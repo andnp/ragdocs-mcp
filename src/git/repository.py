@@ -5,6 +5,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from src.indexing.discovery import is_excluded_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -15,6 +17,8 @@ def discover_git_repositories(
 ) -> list[Path]:
     """
     Recursively discover .git directories.
+
+    Uses is_excluded_dir() for consistent pattern matching with file discovery.
 
     Args:
         documents_path: Root path to search
@@ -32,14 +36,9 @@ def discover_git_repositories(
         # Check if current directory has .git
         git_dir = root_path / ".git"
         if git_dir.is_dir():
-            # Check exclusion patterns
-            should_exclude = False
-            for pattern in exclude_patterns:
-                if git_dir.match(pattern):
-                    should_exclude = True
-                    break
-
-            if not should_exclude:
+            # .git dirs are the target — only exclude if an explicit pattern
+            # matches the repo root itself (not the .git contents pattern)
+            if not is_excluded_dir(str(root_path), exclude_patterns, exclude_hidden_dirs):
                 git_repos.append(git_dir.resolve())
                 logger.debug(f"Found git repository: {git_dir}")
 
@@ -47,25 +46,13 @@ def discover_git_repositories(
             dirs.clear()
             continue
 
-        # Filter directories for descent
-        dirs_to_remove = []
-        for dir_name in dirs:
-            dir_path = root_path / dir_name
-
-            # Skip hidden directories (except .git which we already handled)
-            if exclude_hidden_dirs and dir_name.startswith("."):
-                dirs_to_remove.append(dir_name)
-                continue
-
-            # Check exclusion patterns
-            for pattern in exclude_patterns:
-                if dir_path.match(pattern):
-                    dirs_to_remove.append(dir_name)
-                    break
-
-        # Remove excluded directories from walk
-        for dir_name in dirs_to_remove:
-            dirs.remove(dir_name)
+        # Prune excluded directories in-place
+        dirs[:] = [
+            d for d in dirs
+            if not is_excluded_dir(
+                os.path.join(root, d), exclude_patterns, exclude_hidden_dirs
+            )
+        ]
 
     logger.info(f"Discovered {len(git_repos)} git repositories in {documents_path}")
     return git_repos
