@@ -20,6 +20,7 @@ from src.indices.vector import VectorIndex
 from src.memory.manager import MemoryIndexManager
 from src.memory.search import MemorySearchOrchestrator
 from src.search.orchestrator import SearchOrchestrator
+from src.storage.db import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class ApplicationContext:
     memory_manager: MemoryIndexManager | None = None
     memory_search: MemorySearchOrchestrator | None = None
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
+    db_manager: DatabaseManager | None = None
     current_manifest: IndexManifest | None = None
     reconciliation_task: asyncio.Task | None = field(default=None, repr=False)
     _background_index_task: asyncio.Task | None = field(default=None, repr=False)
@@ -93,7 +95,12 @@ class ApplicationContext:
             )
             vector.warm_up()
 
-        keyword = KeywordIndex()
+        from src.indexing.migration import detect_and_migrate_legacy_index
+
+        detect_and_migrate_legacy_index(index_path)
+
+        db_manager = DatabaseManager(index_path / "index.db")
+        keyword = KeywordIndex(db_manager)
         graph = GraphStore()
 
         manager = IndexManager(config, vector, keyword, graph)
@@ -156,6 +163,7 @@ class ApplicationContext:
             memory_manager=memory_manager,
             memory_search=memory_search,
             index_path=index_path,
+            db_manager=db_manager,
             current_manifest=None,
             reconciliation_task=None,
         )

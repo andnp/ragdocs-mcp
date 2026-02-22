@@ -37,6 +37,7 @@ from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
+from src.storage.db import DatabaseManager
 
 
 @pytest.fixture(autouse=True)
@@ -137,7 +138,7 @@ def module_vector_index(shared_embedding_model):
 
 
 @pytest.fixture(scope="module")
-def module_indices(shared_embedding_model):
+def module_indices(shared_embedding_model, tmp_path_factory):
     """
     Module-scoped indices for integration tests.
 
@@ -150,7 +151,8 @@ def module_indices(shared_embedding_model):
     3. Explicitly clear indices between tests
     """
     vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
+    db_path = tmp_path_factory.mktemp("keyword_module") / "index.db"
+    keyword = KeywordIndex(DatabaseManager(db_path))
     graph = GraphStore()
     return vector, keyword, graph
 
@@ -243,7 +245,7 @@ def persistent_config(
 
 
 @pytest.fixture(scope="module")
-def persistent_indices_module(shared_embedding_model) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
+def persistent_indices_module(shared_embedding_model, tmp_path_factory) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
     """
     Create module-scoped indices that persist across tests in a module.
 
@@ -253,7 +255,8 @@ def persistent_indices_module(shared_embedding_model) -> Generator[tuple[VectorI
     Yields tuple of (vector, keyword, graph) indices.
     """
     vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
+    db_path = tmp_path_factory.mktemp("keyword_persistent_module") / "index.db"
+    keyword = KeywordIndex(DatabaseManager(db_path))
     graph = GraphStore()
     yield vector, keyword, graph
 
@@ -281,7 +284,7 @@ def persistent_manager_module(
 
 
 @pytest.fixture
-def persistent_indices_isolated(shared_embedding_model) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
+def persistent_indices_isolated(shared_embedding_model, tmp_path) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
     """
     Create function-scoped indices that can use persistent storage.
 
@@ -291,7 +294,7 @@ def persistent_indices_isolated(shared_embedding_model) -> Generator[tuple[Vecto
     Yields tuple of (vector, keyword, graph) indices.
     """
     vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
+    keyword = KeywordIndex(DatabaseManager(tmp_path / "index.db"))
     graph = GraphStore()
     yield vector, keyword, graph
 

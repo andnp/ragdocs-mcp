@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 
-from src.config import load_config, LLMConfig, Config, resolve_embedding_model
+from src.config import load_config, LLMConfig, resolve_embedding_model
 
 
 def test_load_from_project_local_config(tmp_path):

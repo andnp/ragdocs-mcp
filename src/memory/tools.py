@@ -15,9 +15,8 @@ from src.utils.atomic_io import atomic_write_text
 
 if TYPE_CHECKING:
     from src.context import ApplicationContext
-    from src.reader.context import ReadOnlyContext
 
-type ContextType = ApplicationContext | ReadOnlyContext
+type ContextType = ApplicationContext
 
 logger = logging.getLogger(__name__)
 

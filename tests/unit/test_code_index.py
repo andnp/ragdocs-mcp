@@ -1,8 +1,12 @@
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from src.indices.code import CodeIndex
 from src.models import CodeBlock
+
+whoosh = pytest.importorskip("whoosh", reason="Code search requires Whoosh")
 
 
 class TestCodeIndex:

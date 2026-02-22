@@ -1,577 +1,193 @@
-import atexit
-import logging
-import shutil
-import time
-from pathlib import Path
-from threading import Lock
-from typing import Any, cast
+from __future__ import annotations
 
-from whoosh import index as whoosh_index
-from whoosh.analysis import StemmingAnalyzer
-from whoosh.fields import ID, KEYWORD, TEXT, Schema
-from whoosh.index import IndexError as WhooshIndexError, LockError
-from whoosh.qparser import MultifieldParser
-from whoosh.scoring import BM25F
+import logging
+import re
+import sqlite3
+import threading
+from pathlib import Path
+from typing import Any
 
 from src.models import Chunk, Document
 from src.search.types import SearchResultDict
+from src.storage.db import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
-WRITER_TIMEOUT = 5.0
-WRITER_MAX_RETRIES = 3
-WRITER_RETRY_DELAY = 0.5
 
-_temp_dirs: set[Path] = set()
-
-
-def _cleanup_temp_dirs() -> None:
-    for temp_dir in list(_temp_dirs):
-        try:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception:
-            pass
-    _temp_dirs.clear()
-
-
-atexit.register(_cleanup_temp_dirs)
-
-
-STOPWORDS: frozenset[str] = frozenset(
-    [
-        "a",
-        "an",
-        "and",
-        "are",
-        "as",
-        "at",
-        "be",
-        "but",
-        "by",
-        "for",
-        "if",
-        "in",
-        "into",
-        "is",
-        "it",
-        "no",
-        "not",
-        "of",
-        "on",
-        "or",
-        "such",
-        "that",
-        "the",
-        "their",
-        "then",
-        "there",
-        "these",
-        "they",
-        "this",
-        "to",
-        "was",
-        "will",
-        "with",
-        "i",
-        "me",
-        "my",
-        "myself",
-        "we",
-        "our",
-        "ours",
-        "ourselves",
-        "you",
-        "your",
-        "yours",
-        "yourself",
-        "yourselves",
-        "he",
-        "him",
-        "his",
-        "himself",
-        "she",
-        "her",
-        "hers",
-        "herself",
-        "its",
-        "itself",
-        "them",
-        "themselves",
-        "what",
-        "which",
-        "who",
-        "whom",
-        "when",
-        "where",
-        "why",
-        "how",
-        "all",
-        "each",
-        "both",
-        "few",
-        "more",
-        "most",
-        "other",
-        "some",
-        "any",
-        "only",
-        "own",
-        "same",
-        "so",
-        "than",
-        "too",
-        "very",
-        "can",
-        "just",
-        "should",
-        "now",
-        "d",
-        "ll",
-        "m",
-        "o",
-        "re",
-        "ve",
-        "y",
-        "ain",
-        "aren",
-        "couldn",
-        "didn",
-        "doesn",
-        "hadn",
-        "hasn",
-        "haven",
-        "isn",
-        "ma",
-        "mightn",
-        "mustn",
-        "needn",
-        "shan",
-        "shouldn",
-        "wasn",
-        "weren",
-        "won",
-        "wouldn",
-        "do",
-        "does",
-        "did",
-        "doing",
-        "has",
-        "have",
-        "had",
-        "having",
-        "been",
-        "being",
-        "would",
-        "could",
-        "might",
-        "must",
-        "shall",
-        "am",
-        "were",
-        "about",
-        "above",
-        "after",
-        "again",
-        "against",
-        "before",
-        "below",
-        "between",
-        "during",
-        "from",
-        "further",
-        "here",
-        "once",
-        "out",
-        "over",
-        "under",
-        "until",
-        "up",
-        "while",
-    ]
-)
+def _sanitize_fts_query(query: str) -> str:
+    """Sanitize a query string for safe use in FTS5 MATCH."""
+    # Remove FTS5 special characters (including hyphen which acts as NOT)
+    sanitized = re.sub(r'[\"\'*\^(){}[\]<>|~!:\-]', ' ', query)
+    sanitized = sanitized.strip()
+    if not sanitized:
+        return '""'
+    # Split into tokens and join
+    tokens = sanitized.split()
+    return " ".join(tokens)
 
 
 class KeywordIndex:
-    def __init__(self):
-        stem_analyzer = StemmingAnalyzer(stoplist=cast(Any, STOPWORDS), minsize=2)
+    def __init__(self, db_manager: DatabaseManager | None = None) -> None:
+        if db_manager is None:
+            import tempfile
+            _tmp = tempfile.mkdtemp(prefix="keyword_idx_")
+            db_manager = DatabaseManager(Path(_tmp) / "index.db")
+        self._db = db_manager
+        self._lock = threading.Lock()
 
-        self._schema = Schema(
-            id=ID(stored=True, unique=True),
-            doc_id=ID(stored=True),
-            content=TEXT(stored=False, analyzer=stem_analyzer),
-            title=TEXT(stored=False, analyzer=stem_analyzer, field_boost=3.0),
-            headers=TEXT(stored=False, analyzer=stem_analyzer, field_boost=2.5),
-            description=TEXT(stored=False, analyzer=stem_analyzer, field_boost=2.0),
-            keywords=TEXT(stored=False, analyzer=stem_analyzer, field_boost=2.5),
-            aliases=TEXT(stored=False, analyzer=stem_analyzer, field_boost=1.5),
-            tags=KEYWORD(stored=False, commas=True, field_boost=2.0),
-            author=TEXT(stored=False, analyzer=stem_analyzer, field_boost=1.0),
-            category=KEYWORD(stored=False),
-        )
-        self._index = None
-        self._index_path = None
-        self._lock = Lock()
+    def _conn(self) -> sqlite3.Connection:
+        return self._db.get_connection()
 
-    def _get_writer(self):
-        if self._index is None:
-            raise RuntimeError("KeywordIndex not initialized - call load() or add() first")
-        for attempt in range(WRITER_MAX_RETRIES):
-            try:
-                return self._index.writer(timeout=WRITER_TIMEOUT)
-            except LockError:
-                if attempt == WRITER_MAX_RETRIES - 1:
-                    raise
-                logger.warning(
-                    f"Whoosh writer lock contention, retrying ({attempt + 1}/{WRITER_MAX_RETRIES})..."
-                )
-                time.sleep(WRITER_RETRY_DELAY * (attempt + 1))
-        raise LockError("Failed to acquire writer lock after retries")
+    # ------------------------------------------------------------------
+    # Write methods
+    # ------------------------------------------------------------------
 
     def add(self, document: Document) -> None:
+        """Add a document as a single FTS5 entry."""
         with self._lock:
-            if self._index is None:
-                self._initialize_index()
-
-            if self._index is None:
-                raise RuntimeError("KeywordIndex not initialized - call load() or add() first")
-
-            aliases = document.metadata.get("aliases", [])
-            if isinstance(aliases, str):
-                aliases = [aliases]
-            elif not isinstance(aliases, list):
-                aliases = []
-
-            aliases_text = " ".join(str(a) for a in aliases)
-            tags_text = ",".join(document.tags) if document.tags else ""
-            title = str(document.metadata.get("title", ""))
-            description = str(
-                document.metadata.get("description", "")
-                or document.metadata.get("summary", "")
-            )
-            keywords_list = document.metadata.get("keywords", [])
-            keywords_text = (
-                " ".join(keywords_list)
-                if isinstance(keywords_list, list)
-                else str(keywords_list)
-            )
-            author = str(document.metadata.get("author", ""))
-            category = str(document.metadata.get("category", ""))
-
-            writer = self._get_writer()
             try:
-                writer.update_document(
-                    id=document.id,
-                    doc_id=document.id,
-                    content=document.content,
-                    title=title,
-                    headers="",
-                    description=description,
-                    keywords=keywords_text,
-                    aliases=aliases_text,
-                    tags=tags_text,
-                    author=author,
-                    category=category,
+                title = str(document.metadata.get("title", ""))
+                tags_list = document.tags if document.tags else []
+                tags = ",".join(tags_list)
+                source_file = str(document.metadata.get("source_file", document.id))
+                # Include aliases, keywords, description, author, category in indexed headers field
+                aliases_list = document.metadata.get("aliases", [])
+                aliases_text = " ".join(str(a) for a in aliases_list) if isinstance(aliases_list, list) else str(aliases_list)
+                keywords_list = document.metadata.get("keywords", [])
+                keywords_text = " ".join(keywords_list) if isinstance(keywords_list, list) else str(keywords_list)
+                description = str(document.metadata.get("description", "") or document.metadata.get("summary", ""))
+                author = str(document.metadata.get("author", ""))
+                category = str(document.metadata.get("category", ""))
+                extra = " ".join(filter(None, [aliases_text, keywords_text, description, author, category]))
+                conn = self._conn()
+                # FTS5 doesn't support real UPDATE; delete old entry first, then insert
+                conn.execute("DELETE FROM search_index WHERE chunk_id = ?", (document.id,))
+                conn.execute(
+                    """
+                    INSERT INTO search_index
+                        (chunk_id, doc_id, content, title, headers, tags, source_file)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (document.id, document.id, document.content, title, extra, tags, source_file),
                 )
-                writer.commit()
+                conn.commit()
             except Exception as e:
-                logger.warning("Writer operation failed in add(), cancelling: %s", e, exc_info=True)
-                writer.cancel()
+                logger.warning("Failed to add document %s: %s", document.id, e, exc_info=True)
                 raise
 
     def add_chunk(self, chunk: Chunk) -> None:
+        """Add a single chunk to FTS5 index."""
         with self._lock:
-            if self._index is None:
-                self._initialize_index()
-
-            if self._index is None:
-                raise RuntimeError("KeywordIndex not initialized - call load() or add_chunk() first")
-
-            metadata = chunk.metadata
-            tags_text = ",".join(metadata.get("tags", []))
-            title = str(metadata.get("title", ""))
-            headers = chunk.header_path or ""
-            description = str(
-                metadata.get("description", "") or metadata.get("summary", "")
-            )
-            keywords_list = metadata.get("keywords", [])
-            keywords_text = (
-                " ".join(keywords_list)
-                if isinstance(keywords_list, list)
-                else str(keywords_list)
-            )
-            aliases_list = metadata.get("aliases", [])
-            aliases_text = (
-                " ".join(str(a) for a in aliases_list)
-                if isinstance(aliases_list, list)
-                else str(aliases_list)
-            )
-            author = str(metadata.get("author", ""))
-            category = str(metadata.get("category", ""))
-
-            writer = self._get_writer()
-            try:
-                writer.update_document(
-                    id=chunk.chunk_id,
-                    doc_id=chunk.doc_id,
-                    content=chunk.content,
-                    title=title,
-                    headers=headers,
-                    description=description,
-                    keywords=keywords_text,
-                    aliases=aliases_text,
-                    tags=tags_text,
-                    author=author,
-                    category=category,
-                )
-                writer.commit()
-            except Exception as e:
-                logger.warning("Writer operation failed in add_chunk(), cancelling: %s", e, exc_info=True)
-                writer.cancel()
-                raise
+            self._insert_chunk(chunk)
+            self._conn().commit()
 
     def add_chunks(self, chunks: list[Chunk]) -> None:
+        """Add multiple chunks in a single transaction."""
         if not chunks:
             return
-
         with self._lock:
-            if self._index is None:
-                self._initialize_index()
+            for chunk in chunks:
+                self._insert_chunk(chunk)
+            self._conn().commit()
 
-            if self._index is None:
-                raise RuntimeError("KeywordIndex not initialized - call load() or add_chunks() first")
-
-            writer = self._get_writer()
-            try:
-                for chunk in chunks:
-                    metadata = chunk.metadata
-                    tags_text = ",".join(metadata.get("tags", []))
-                    title = str(metadata.get("title", ""))
-                    headers = chunk.header_path or ""
-                    description = str(
-                        metadata.get("description", "") or metadata.get("summary", "")
-                    )
-                    keywords_list = metadata.get("keywords", [])
-                    keywords_text = (
-                        " ".join(keywords_list)
-                        if isinstance(keywords_list, list)
-                        else str(keywords_list)
-                    )
-                    aliases_list = metadata.get("aliases", [])
-                    aliases_text = (
-                        " ".join(str(a) for a in aliases_list)
-                        if isinstance(aliases_list, list)
-                        else str(aliases_list)
-                    )
-                    author = str(metadata.get("author", ""))
-                    category = str(metadata.get("category", ""))
-
-                    writer.update_document(
-                        id=chunk.chunk_id,
-                        doc_id=chunk.doc_id,
-                        content=chunk.content,
-                        title=title,
-                        headers=headers,
-                        description=description,
-                        keywords=keywords_text,
-                        aliases=aliases_text,
-                        tags=tags_text,
-                        author=author,
-                        category=category,
-                    )
-                writer.commit()
-            except Exception as e:
-                logger.warning("Writer operation failed in add_chunks(), cancelling: %s", e, exc_info=True)
-                writer.cancel()
-                raise
+    def _insert_chunk(self, chunk: Chunk) -> None:
+        metadata = chunk.metadata
+        title = str(metadata.get("title", ""))
+        header_path = chunk.header_path or ""
+        tags_list = metadata.get("tags", [])
+        tags = ",".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
+        source_file = str(metadata.get("source_file", chunk.doc_id))
+        # Include aliases, keywords, description, author, category in headers field
+        aliases_list = metadata.get("aliases", [])
+        aliases_text = " ".join(str(a) for a in aliases_list) if isinstance(aliases_list, list) else str(aliases_list)
+        keywords_list = metadata.get("keywords", [])
+        keywords_text = " ".join(keywords_list) if isinstance(keywords_list, list) else str(keywords_list)
+        description = str(metadata.get("description", "") or metadata.get("summary", ""))
+        author = str(metadata.get("author", ""))
+        category = str(metadata.get("category", ""))
+        headers = " ".join(filter(None, [header_path, aliases_text, keywords_text, description, author, category]))
+        conn = self._conn()
+        # FTS5 doesn't support real UPDATE; delete old entry first, then insert
+        conn.execute("DELETE FROM search_index WHERE chunk_id = ?", (chunk.chunk_id,))
+        conn.execute(
+            """
+            INSERT INTO search_index
+                (chunk_id, doc_id, content, title, headers, tags, source_file)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (chunk.chunk_id, chunk.doc_id, chunk.content, title, headers, tags, source_file),
+        )
 
     def remove(self, document_id: str) -> None:
+        """Remove all chunks for a document."""
         with self._lock:
-            if self._index is None:
-                return
-
             try:
-                writer = self._get_writer()
-                try:
-                    writer.delete_by_term("id", document_id)
-                    writer.delete_by_term("doc_id", document_id)
-                    writer.commit()
-                except Exception as e:
-                    logger.warning("Writer operation failed in remove(), cancelling: %s", e, exc_info=True)
-                    writer.cancel()
-                    raise
-            except (FileNotFoundError, OSError) as e:
-                logger.warning(
-                    f"Keyword index corruption detected during remove({document_id}): {e}. "
-                    "Reinitializing index."
+                conn = self._conn()
+                conn.execute(
+                    "DELETE FROM search_index WHERE doc_id = ?", (document_id,)
                 )
-                self._reinitialize_after_corruption()
+                # Also delete if chunk_id == document_id (document-level entries)
+                conn.execute(
+                    "DELETE FROM search_index WHERE chunk_id = ?", (document_id,)
+                )
+                conn.commit()
+            except Exception as e:
+                logger.warning("Failed to remove document %s: %s", document_id, e, exc_info=True)
 
     def remove_chunk(self, chunk_id: str) -> None:
-        """Remove a specific chunk from keyword index.
-
-        Thread-safe operation. Handles missing chunks and corruption gracefully.
-        """
+        """Remove a specific chunk."""
         with self._lock:
-            if self._index is None:
-                logger.warning(f"Cannot remove chunk {chunk_id}: index not initialized")
-                return
-
             try:
-                writer = self._get_writer()
-                try:
-                    writer.delete_by_term("id", chunk_id)
-                    writer.commit()
-                    logger.debug(f"Removed chunk {chunk_id} from keyword index")
-                except Exception as e:
-                    logger.warning("Writer operation failed in remove_chunk(), cancelling: %s", e, exc_info=True)
-                    writer.cancel()
-                    raise
-            except (FileNotFoundError, OSError) as e:
-                logger.warning(
-                    f"Keyword index corruption detected during remove_chunk({chunk_id}): {e}. "
-                    "Reinitializing index.",
-                    exc_info=True,
+                conn = self._conn()
+                conn.execute(
+                    "DELETE FROM search_index WHERE chunk_id = ?", (chunk_id,)
                 )
-                self._reinitialize_after_corruption()
+                conn.commit()
             except Exception as e:
-                logger.warning(
-                    f"Failed to remove chunk {chunk_id} from keyword index: {e}",
-                    exc_info=True,
-                )
+                logger.warning("Failed to remove chunk %s: %s", chunk_id, e, exc_info=True)
 
     def remove_chunks(self, chunk_ids: list[str]) -> None:
-        """Remove multiple chunks in a single writer transaction.
-
-        More efficient than calling remove_chunk() in a loop since it
-        acquires the Whoosh writer lock only once.
-        """
+        """Remove multiple chunks."""
         if not chunk_ids:
             return
-
         with self._lock:
-            if self._index is None:
-                return
-
             try:
-                writer = self._get_writer()
-                try:
-                    for chunk_id in chunk_ids:
-                        writer.delete_by_term("id", chunk_id)
-                    writer.commit()
-                    logger.debug(f"Batch removed {len(chunk_ids)} chunks from keyword index")
-                except Exception as e:
-                    logger.warning("Writer operation failed in remove_chunks(), cancelling: %s", e, exc_info=True)
-                    writer.cancel()
-                    raise
-            except (FileNotFoundError, OSError) as e:
-                logger.warning(
-                    f"Keyword index corruption detected during remove_chunks: {e}. "
-                    "Reinitializing index.",
-                    exc_info=True,
+                conn = self._conn()
+                placeholders = ",".join("?" * len(chunk_ids))
+                conn.execute(
+                    f"DELETE FROM search_index WHERE chunk_id IN ({placeholders})",
+                    chunk_ids,
                 )
-                self._reinitialize_after_corruption()
+                conn.commit()
+            except Exception as e:
+                logger.warning("Failed to remove chunks: %s", e, exc_info=True)
 
     def move_chunk(self, old_chunk_id: str, new_chunk: Chunk) -> bool:
-        """Move chunk to new ID with updated metadata (for file moves).
-
-        Copies document with new ID and updated content/metadata, then deletes old document.
-        More efficient than full re-indexing since content is not stored in index.
-
-        Args:
-            old_chunk_id: Chunk ID to move from
-            new_chunk: New chunk object with updated path and metadata
-
-        Returns:
-            True if move successful, False otherwise
-        """
+        """Move chunk to new ID with updated metadata."""
         with self._lock:
-            if self._index is None:
-                logger.warning("Cannot move chunk: index not initialized")
-                return False
-
             try:
-                # Check if old document exists
-                searcher = self._index.searcher()
-                try:
-                    old_exists = any(searcher.documents(id=old_chunk_id))
-                finally:
-                    searcher.close()
-
-                if not old_exists:
-                    logger.debug(f"Chunk {old_chunk_id} not found in keyword index")
+                conn = self._conn()
+                row = conn.execute(
+                    "SELECT chunk_id FROM search_index WHERE chunk_id = ?", (old_chunk_id,)
+                ).fetchone()
+                if row is None:
+                    logger.debug("Chunk %s not found in keyword index", old_chunk_id)
                     return False
 
-                # Extract metadata from new chunk
-                metadata = new_chunk.metadata
-                tags_text = ",".join(metadata.get("tags", []))
-                title = str(metadata.get("title", ""))
-                headers = new_chunk.header_path or ""
-                description = str(
-                    metadata.get("description", "") or metadata.get("summary", "")
+                self._insert_chunk(new_chunk)
+                conn.execute(
+                    "DELETE FROM search_index WHERE chunk_id = ?", (old_chunk_id,)
                 )
-                keywords_list = metadata.get("keywords", [])
-                keywords_text = (
-                    " ".join(keywords_list)
-                    if isinstance(keywords_list, list)
-                    else str(keywords_list)
-                )
-                aliases_list = metadata.get("aliases", [])
-                aliases_text = (
-                    " ".join(str(a) for a in aliases_list)
-                    if isinstance(aliases_list, list)
-                    else str(aliases_list)
-                )
-                author = str(metadata.get("author", ""))
-                category = str(metadata.get("category", ""))
-
-                # Add new document first and commit
-                writer = self._get_writer()
-                try:
-                    writer.add_document(
-                        id=new_chunk.chunk_id,
-                        doc_id=new_chunk.doc_id,
-                        content=new_chunk.content,
-                        title=title,
-                        headers=headers,
-                        description=description,
-                        keywords=keywords_text,
-                        aliases=aliases_text,
-                        tags=tags_text,
-                        author=author,
-                        category=category,
-                    )
-                    writer.commit()
-                except Exception as e:
-                    logger.warning("Writer operation failed in move_chunk() (add), cancelling: %s", e, exc_info=True)
-                    writer.cancel()
-                    raise
-
-                # Delete old document in separate transaction
-                writer = self._get_writer()
-                try:
-                    writer.delete_by_term("id", old_chunk_id)
-                    writer.commit()
-                    logger.debug(f"Moved chunk in keyword index: {old_chunk_id} -> {new_chunk.chunk_id}")
-                    return True
-                except Exception as e:
-                    logger.warning("Writer operation failed in move_chunk() (delete), cancelling: %s", e, exc_info=True)
-                    writer.cancel()
-                    raise
-
-            except (FileNotFoundError, OSError) as e:
-                logger.warning(
-                    f"Keyword index corruption detected during move_chunk: {e}. "
-                    "Reinitializing index.",
-                    exc_info=True,
-                )
-                self._reinitialize_after_corruption()
-                return False
+                conn.commit()
+                logger.debug("Moved chunk in keyword index: %s -> %s", old_chunk_id, new_chunk.chunk_id)
+                return True
             except Exception as e:
-                logger.warning(
-                    f"Failed to move chunk {old_chunk_id} -> {new_chunk.chunk_id}: {e}",
-                    exc_info=True,
-                )
+                logger.warning("Failed to move chunk %s: %s", old_chunk_id, e, exc_info=True)
                 return False
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
 
     def search(
         self,
@@ -580,218 +196,167 @@ class KeywordIndex:
         excluded_files: set[str] | None = None,
         docs_root: Path | None = None,
     ) -> list[SearchResultDict]:
+        if not query.strip():
+            return []
+
         with self._lock:
-            if self._index is None or not query.strip():
-                return []
+            sanitized = _sanitize_fts_query(query)
+            conn = self._conn()
 
             try:
-                searcher = self._index.searcher(weighting=BM25F())
-            except (FileNotFoundError, OSError) as e:
-                logger.warning(
-                    f"Keyword index corruption detected during search: {e}. "
-                    "Reinitializing index and returning empty results."
-                )
-                self._reinitialize_after_corruption()
-                return []
+                rows = conn.execute(
+                    """
+                    SELECT chunk_id, doc_id, bm25(search_index) AS score
+                    FROM search_index
+                    WHERE search_index MATCH ?
+                    ORDER BY score
+                    LIMIT ?
+                    """,
+                    (sanitized, top_k * 2 if excluded_files else top_k),
+                ).fetchall()
+            except sqlite3.OperationalError as e:
+                if "fts5" in str(e).lower() or "syntax" in str(e).lower():
+                    logger.warning("FTS5 query error, falling back to LIKE: %s", e)
+                    try:
+                        like_query = f"%{query.strip()}%"
+                        rows = conn.execute(
+                            """
+                            SELECT chunk_id, doc_id, -1.0 AS score
+                            FROM search_index
+                            WHERE content LIKE ? OR title LIKE ?
+                            LIMIT ?
+                            """,
+                            (like_query, like_query, top_k * 2 if excluded_files else top_k),
+                        ).fetchall()
+                    except Exception as e2:
+                        logger.warning("LIKE fallback also failed: %s", e2, exc_info=True)
+                        return []
+                else:
+                    logger.warning("Search error: %s", e, exc_info=True)
+                    return []
 
-            parser = MultifieldParser(
-                [
-                    "content",
-                    "title",
-                    "headers",
-                    "description",
-                    "keywords",
-                    "aliases",
-                    "tags",
-                    "author",
-                ],
-                schema=self._schema,
-            )
+            results: list[SearchResultDict] = []
+            for row in rows:
+                chunk_id = row["chunk_id"]
+                doc_id = row["doc_id"]
+                # bm25() returns negative values; negate so higher = better
+                score = -float(row["score"])
 
-            try:
-                parsed_query = parser.parse(query)
+                if excluded_files and docs_root:
+                    from src.search.path_utils import normalize_path
+                    from pathlib import Path as PathLib
 
-                fetch_k = top_k * 2 if excluded_files else top_k
-                results = searcher.search(parsed_query, limit=fetch_k)
+                    normalized = normalize_path(doc_id, docs_root)
+                    if normalized in excluded_files:
+                        continue
+                    if PathLib(normalized).name in excluded_files:
+                        continue
 
-                chunk_results = []
-                for hit in results:
-                    if excluded_files and docs_root:
-                        doc_id = hit.get("doc_id", hit["id"])
-                        from src.search.path_utils import normalize_path
+                results.append({"chunk_id": chunk_id, "doc_id": doc_id, "score": score})
+                if len(results) >= top_k:
+                    break
 
-                        normalized_doc_id = normalize_path(doc_id, docs_root)
+            return results
 
-                        if normalized_doc_id in excluded_files:
-                            continue
-
-                        from pathlib import Path as PathLib
-
-                        filename = PathLib(normalized_doc_id).name
-                        if filename in excluded_files:
-                            continue
-
-                    chunk_results.append(
-                        {
-                            "chunk_id": hit["id"],
-                            "doc_id": hit.get("doc_id", hit["id"]),
-                            "score": hit.score,
-                        }
-                    )
-
-                    if len(chunk_results) >= top_k:
-                        break
-
-                return chunk_results
-            finally:
-                searcher.close()
+    # ------------------------------------------------------------------
+    # Persistence no-ops (data lives in SQLite)
+    # ------------------------------------------------------------------
 
     def persist(self, path: Path) -> None:
-        with self._lock:
-            if self._index is None:
-                return
-
-            path.mkdir(parents=True, exist_ok=True)
-
-            if self._index_path != path:
-                import shutil
-
-                if self._index_path and self._index_path.exists():
-                    for item in self._index_path.iterdir():
-                        dest = path / item.name
-                        if item.is_file():
-                            shutil.copy2(item, dest)
+        """Copy SQLite index to the given path directory."""
+        import shutil
+        path.mkdir(parents=True, exist_ok=True)
+        src = self._db._db_path
+        dest = path / "index.db"
+        if src != dest and src.exists():
+            with self._lock:
+                # WAL checkpoint before copy for consistency
+                try:
+                    self._conn().execute("PRAGMA wal_checkpoint(FULL)")
+                except Exception:
+                    pass
+                shutil.copy2(src, dest)
 
     def persist_to(self, snapshot_dir: Path) -> None:
         self.persist(snapshot_dir)
 
     def load_from(self, snapshot_dir: Path) -> bool:
+        """Load SQLite index from snapshot directory.
+
+        Returns False if the directory is empty, contains only Whoosh files,
+        or doesn't have a valid index.db.
+        Returns True if a valid index.db was found and loaded.
+        """
         if not snapshot_dir.exists():
-            return False
+            return True  # No snapshot yet; fresh start is fine
+        db_file = snapshot_dir / "index.db"
+        if db_file.exists():
+            self._load_from_db_file(db_file)
+            return True
+        # Directory exists but no index.db - could be old Whoosh snapshot or empty
+        return False
 
-        try:
-            with self._lock:
-                existing_index = whoosh_index.open_dir(str(snapshot_dir))
-                existing_fields = set(existing_index.schema.names())
-                expected_fields = set(self._schema.names())
-
-                if existing_fields != expected_fields:
-                    existing_index.close()
-                    return False
-
-                self._index = existing_index
-                self._index_path = snapshot_dir
-                return True
-        except (whoosh_index.EmptyIndexError, WhooshIndexError, FileNotFoundError):
-            return False
+    def _load_from_db_file(self, db_file: Path) -> None:
+        """Reinitialize db_manager to use the given SQLite file."""
+        self._db.close()
+        self._db = DatabaseManager(db_file)
 
     def load(self, path: Path) -> None:
+        """Load index from path directory if it contains an index.db."""
+        if not path.exists():
+            return
+        db_file = path / "index.db"
+        if db_file.exists():
+            self._load_from_db_file(db_file)
+
+    def save(self, path: Path) -> None:
+        self.persist(path)
+
+    # ------------------------------------------------------------------
+    # Misc
+    # ------------------------------------------------------------------
+
+    def clear(self) -> None:
         with self._lock:
-            if not path.exists():
-                self._initialize_index()
-                return
-
             try:
-                existing_index = whoosh_index.open_dir(str(path))
-                existing_fields = set(existing_index.schema.names())
-                expected_fields = set(self._schema.names())
-
-                if existing_fields != expected_fields:
-                    import logging
-
-                    logger = logging.getLogger(__name__)
-                    missing = expected_fields - existing_fields
-                    extra = existing_fields - expected_fields
-                    logger.warning(
-                        f"Keyword index schema mismatch. Missing: {missing}, Extra: {extra}. "
-                        "Rebuilding index."
-                    )
-                    existing_index.close()
-                    self._initialize_index()
-                    return
-
-                self._index = existing_index
-                self._index_path = path
-            except (whoosh_index.EmptyIndexError, WhooshIndexError, FileNotFoundError):
-                self._initialize_index()
-
-    def _initialize_index(self) -> None:
-        import tempfile
-
-        temp_dir = Path(tempfile.mkdtemp(prefix="whoosh_"))
-        _temp_dirs.add(temp_dir)
-        self._index = whoosh_index.create_in(str(temp_dir), self._schema)
-        self._index_path = temp_dir
-
-    def _reinitialize_after_corruption(self):
-        if self._index_path and self._index_path in _temp_dirs:
-            shutil.rmtree(self._index_path, ignore_errors=True)
-            _temp_dirs.discard(self._index_path)
-        self._index = None
-        self._index_path = None
-        self._initialize_index()
-
-    # IndexProtocol methods
+                conn = self._conn()
+                conn.execute("DELETE FROM search_index")
+                conn.commit()
+            except Exception as e:
+                logger.warning("Failed to clear search_index: %s", e, exc_info=True)
 
     def add_document(self, doc_id: str, content: str, metadata: dict[str, Any]) -> None:
+        """Add a document by id/content/metadata (IndexProtocol compatibility)."""
         with self._lock:
-            if self._index is None:
-                self._initialize_index()
-
-            if self._index is None:
-                raise RuntimeError("KeywordIndex not initialized - call load() or add_document() first")
-
-            tags = metadata.get("tags", [])
-            tags_text = ",".join(tags) if isinstance(tags, list) else str(tags)
-            title = str(metadata.get("title", ""))
-            description = str(metadata.get("description", ""))
-            keywords_list = metadata.get("keywords", [])
-            keywords_text = (
-                " ".join(keywords_list)
-                if isinstance(keywords_list, list)
-                else str(keywords_list)
-            )
-            aliases_list = metadata.get("aliases", [])
-            aliases_text = (
-                " ".join(str(a) for a in aliases_list)
-                if isinstance(aliases_list, list)
-                else str(aliases_list)
-            )
-
-            writer = self._get_writer()
             try:
-                writer.update_document(
-                    id=doc_id,
-                    doc_id=doc_id,
-                    content=content,
-                    title=title,
-                    description=description,
-                    keywords=keywords_text,
-                    aliases=aliases_text,
-                    tags=tags_text,
+                title = str(metadata.get("title", ""))
+                tags_list = metadata.get("tags", [])
+                tags = ",".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
+                source_file = str(metadata.get("source_file", doc_id))
+                conn = self._conn()
+                conn.execute("DELETE FROM search_index WHERE chunk_id = ?", (doc_id,))
+                conn.execute(
+                    """
+                    INSERT INTO search_index
+                        (chunk_id, doc_id, content, title, headers, tags, source_file)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (doc_id, doc_id, content, title, "", tags, source_file),
                 )
-                writer.commit()
+                conn.commit()
             except Exception as e:
-                logger.warning("Writer operation failed in add_document(), cancelling: %s", e, exc_info=True)
-                writer.cancel()
+                logger.warning("Failed to add_document %s: %s", doc_id, e, exc_info=True)
                 raise
 
     def remove_document(self, doc_id: str) -> None:
         self.remove(doc_id)
 
-    def clear(self) -> None:
-        with self._lock:
-            if self._index_path and self._index_path in _temp_dirs:
-                shutil.rmtree(self._index_path, ignore_errors=True)
-                _temp_dirs.discard(self._index_path)
-            self._index = None
-            self._index_path = None
-
-    def save(self, path: Path) -> None:
-        self.persist(path)
-
     def __len__(self) -> int:
         with self._lock:
-            if self._index is None:
+            try:
+                row = self._conn().execute(
+                    "SELECT COUNT(*) FROM search_index"
+                ).fetchone()
+                return row[0] if row else 0
+            except Exception:
                 return 0
-            return self._index.doc_count()

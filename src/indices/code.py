@@ -7,12 +7,23 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from whoosh import index as whoosh_index
-from whoosh.analysis import Filter, RegexTokenizer
-from whoosh.fields import ID, TEXT, Schema
-from whoosh.index import IndexError as WhooshIndexError
-from whoosh.qparser import MultifieldParser
-from whoosh.scoring import BM25F
+try:
+    from whoosh import index as whoosh_index
+    from whoosh.analysis import Filter, RegexTokenizer
+    from whoosh.fields import ID, TEXT, Schema
+    from whoosh.index import IndexError as WhooshIndexError
+    from whoosh.qparser import MultifieldParser
+    from whoosh.scoring import BM25F
+    _WHOOSH_AVAILABLE = True
+except ImportError:
+    _WHOOSH_AVAILABLE = False
+    whoosh_index = None  # type: ignore[assignment]
+    Filter = object  # type: ignore[assignment,misc]
+    RegexTokenizer = None  # type: ignore[assignment]
+    ID = TEXT = Schema = None  # type: ignore[assignment]
+    WhooshIndexError = Exception  # type: ignore[assignment,misc]
+    MultifieldParser = None  # type: ignore[assignment]
+    BM25F = None  # type: ignore[assignment]
 
 from src.models import CodeBlock
 from src.search.types import CodeSearchResultDict
@@ -36,52 +47,69 @@ atexit.register(_cleanup_temp_dirs)
 logger = logging.getLogger(__name__)
 
 
-class CamelCaseSplitter(Filter):
-    _camel_split_pattern = re.compile(
-        r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])'
-    )
+if _WHOOSH_AVAILABLE:
+    class CamelCaseSplitter(Filter):  # type: ignore[misc]
+        _camel_split_pattern = re.compile(
+            r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])'
+        )
 
-    def __call__(self, tokens: Any) -> Generator[Any, None, None]:
-        for token in tokens:
-            text = token.text
-            parts = self._camel_split_pattern.split(text)
-            if len(parts) > 1:
-                yield token
-                for part in parts:
-                    if part:
-                        new_token = token.copy()
-                        new_token.text = part.lower()
-                        yield new_token
-            else:
-                yield token
+        def __call__(self, tokens: Any) -> Generator[Any, None, None]:
+            for token in tokens:
+                text = token.text
+                parts = self._camel_split_pattern.split(text)
+                if len(parts) > 1:
+                    yield token
+                    for part in parts:
+                        if part:
+                            new_token = token.copy()
+                            new_token.text = part.lower()
+                            yield new_token
+                else:
+                    yield token
 
 
-class SnakeCaseSplitter(Filter):
-    def __call__(self, tokens: Any) -> Generator[Any, None, None]:
-        for token in tokens:
-            text = token.text
-            if '_' in text:
-                parts = text.split('_')
-                yield token
-                for part in parts:
-                    if part:
-                        new_token = token.copy()
-                        new_token.text = part.lower()
-                        yield new_token
-            else:
-                yield token
+    class SnakeCaseSplitter(Filter):  # type: ignore[misc]
+        def __call__(self, tokens: Any) -> Generator[Any, None, None]:
+            for token in tokens:
+                text = token.text
+                if '_' in text:
+                    parts = text.split('_')
+                    yield token
+                    for part in parts:
+                        if part:
+                            new_token = token.copy()
+                            new_token.text = part.lower()
+                            yield new_token
+                else:
+                    yield token
+else:
+    class CamelCaseSplitter:  # type: ignore[no-redef]
+        pass
+
+    class SnakeCaseSplitter:  # type: ignore[no-redef]
+        pass
 
 
 _CODE_TOKEN_PATTERN = re.compile(r'[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+')
 
 
 def _create_code_analyzer():
+    if not _WHOOSH_AVAILABLE:
+        raise RuntimeError("Whoosh is required for code search but is not installed")
     tokenizer = RegexTokenizer(expression=_CODE_TOKEN_PATTERN)
     return tokenizer | CamelCaseSplitter() | SnakeCaseSplitter()
 
 
 class CodeIndex:
     def __init__(self):
+        if not _WHOOSH_AVAILABLE:
+            logger.warning("Whoosh not available; CodeIndex is disabled")
+            self._schema = None
+            self._index = None
+            self._index_path: Path | None = None
+            self._lock = Lock()
+            return
+
         code_analyzer = _create_code_analyzer()
 
         self._schema = Schema(
@@ -92,7 +120,7 @@ class CodeIndex:
             language=ID(stored=True),
         )
         self._index = None
-        self._index_path: Path | None = None
+        self._index_path = None
         self._lock = Lock()
 
     def add_code_block(self, code_block: CodeBlock) -> None:

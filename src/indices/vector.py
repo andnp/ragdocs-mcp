@@ -1191,5 +1191,13 @@ class VectorIndex:
     def save(self, path: Path) -> None:
         self.persist(path)
 
+    def save_to_db(self, db_manager: Any) -> None:
+        """Stub: SQLite-backed vector persistence (future enhancement)."""
+        pass
+
+    def load_from_db(self, db_manager: Any) -> None:
+        """Stub: SQLite-backed vector loading (future enhancement)."""
+        pass
+
     def __len__(self) -> int:
         return len(self._doc_id_to_node_ids)

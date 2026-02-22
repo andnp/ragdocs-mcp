@@ -668,6 +668,7 @@ def test_keyword_index_schema_mismatch_triggers_rebuild(tmp_path):
     missing new fields), the index should be rebuilt from scratch to
     avoid field errors.
     """
+    pytest.importorskip("whoosh")
     from whoosh import index as whoosh_index
     from whoosh.fields import ID, TEXT, Schema
 
@@ -712,6 +713,7 @@ def test_keyword_index_remove_handles_corrupted_segment(tmp_path):
     When Whoosh segment files (.seg) are deleted/corrupted mid-operation,
     the index should detect the corruption, reinitialize, and not crash.
     """
+    pytest.importorskip("whoosh")
     import glob
     from pathlib import Path
 
@@ -756,6 +758,7 @@ def test_keyword_index_search_handles_corrupted_segment(tmp_path):
     the issue, reinitialize the index, and return an empty list rather
     than crashing.
     """
+    pytest.importorskip("whoosh")
     import glob
     from pathlib import Path
 
@@ -799,6 +802,7 @@ def test_keyword_index_recovery_allows_reindexing(tmp_path):
     corruption during operation, reinitialize, then add new documents
     successfully.
     """
+    pytest.importorskip("whoosh")
     import glob
     from pathlib import Path
 
@@ -917,6 +921,7 @@ def test_remove_chunk_handles_missing_chunk():
 
 def test_remove_chunk_handles_corruption(tmp_path):
     """Test that remove_chunk() handles index corruption gracefully."""
+    pytest.importorskip("whoosh")
     from src.models import Chunk
     import glob
     from pathlib import Path

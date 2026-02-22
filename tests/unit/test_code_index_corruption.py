@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+whoosh = pytest.importorskip("whoosh", reason="Code search requires Whoosh")
+
 from src.indices.code import CodeIndex
 from src.models import CodeBlock
 

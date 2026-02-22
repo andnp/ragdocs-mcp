@@ -17,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 class TestTokenizersParallelismEnvVar:
     """Tests for TOKENIZERS_PARALLELISM environment variable setup."""
@@ -91,6 +93,7 @@ print("PASS: mcp.server module sets TOKENIZERS_PARALLELISM=false")
         Worker process is spawned via multiprocessing and must also set the
         env var in case inheritance doesn't work (e.g., spawn start method).
         """
+        pytest.skip("Worker process module has been removed in single-process architecture")
         result = subprocess.run(
             [
                 sys.executable,
