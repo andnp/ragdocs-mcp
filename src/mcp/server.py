@@ -118,9 +118,15 @@ class MCPServer:
         if not self.ctx:
             return
         logger.info("Shutting down MCP server")
+        # Keep self.ctx set during cleanup so in-flight handlers still see
+        # a valid context via the getter.  They'll get an error from
+        # wait_ready() (coordinator rejects SHUTTING_DOWN state) rather
+        # than a confusing "Server not initialized" from require_ctx().
         ctx = self.ctx
-        self.ctx = None
-        await ctx.stop()
+        try:
+            await ctx.stop()
+        finally:
+            self.ctx = None
         logger.info("Shutdown complete")
 
     async def run(self) -> None:
