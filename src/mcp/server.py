@@ -105,19 +105,13 @@ class MCPServer:
             raise
 
     async def startup(self) -> None:
+        """Initialize context and start index loading.
+
+        Unlike run(), this blocks until initialization completes (suitable
+        for callers that explicitly await startup before accepting requests).
+        """
         logger.info("Starting MCP server initialization")
-
-        await self._ensure_context()
-
-        if self._use_worker:
-            from src.reader.context import ReadOnlyContext as ROContext
-
-            if isinstance(self.ctx, ROContext):
-                await self._coordinator.start_with_worker(self.ctx)
-        else:
-            if isinstance(self.ctx, ApplicationContext):
-                await self.ctx.start(background_index=True)
-
+        await self._init_and_start()
         logger.info("MCP server initialization complete")
 
     async def shutdown(self) -> None:
