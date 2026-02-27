@@ -56,7 +56,7 @@ class MCPServer:
             handler = get_handler(name)
             if handler is None:
                 raise ValueError(f"Unknown tool: {name}")
-            hctx = HandlerContext(self.ctx, self._coordinator)
+            hctx = HandlerContext(lambda: self.ctx, self._coordinator)
             return await handler(hctx, arguments)
 
     async def _ensure_context(self) -> None:
@@ -79,17 +79,30 @@ class MCPServer:
         else:
             self.ctx = app_ctx
 
-    async def _start_background_init(self) -> asyncio.Task[None]:
+    async def _init_and_start(self) -> None:
+        """Background task: create context then start index loading.
+
+        Runs after stdio_server() opens so the MCP handshake can complete
+        immediately.  Tool handlers call wait_for_ready() to block until
+        indices are available.
+        """
         from src.reader.context import ReadOnlyContext as ROContext
 
-        if self._use_worker:
-            if not isinstance(self.ctx, ROContext):
-                raise RuntimeError("Worker mode requires ReadOnlyContext")
-            return asyncio.create_task(self._coordinator.start_with_worker(self.ctx))
-        else:
-            if not isinstance(self.ctx, ApplicationContext):
-                raise RuntimeError("Non-worker mode requires ApplicationContext")
-            return asyncio.create_task(self._coordinator.start(self.ctx, background_index=True))
+        try:
+            await self._ensure_context()
+
+            if self._use_worker:
+                if not isinstance(self.ctx, ROContext):
+                    raise RuntimeError("Worker mode requires ReadOnlyContext")
+                await self._coordinator.start_with_worker(self.ctx)
+            else:
+                if not isinstance(self.ctx, ApplicationContext):
+                    raise RuntimeError("Non-worker mode requires ApplicationContext")
+                await self._coordinator.start(self.ctx, background_index=True)
+        except Exception as e:
+            logger.error("Background initialization failed: %s", e, exc_info=True)
+            self._coordinator.record_init_error(e)
+            raise
 
     async def startup(self) -> None:
         logger.info("Starting MCP server initialization")
@@ -121,10 +134,11 @@ class MCPServer:
         self._coordinator.install_signal_handlers(loop)
 
         try:
-            await self._ensure_context()
-
             async with stdio_server() as (read_stream, write_stream):
-                init_task = await self._start_background_init()
+                # Open stdio FIRST so the MCP handshake can succeed immediately.
+                # Initialization runs in the background; tool handlers wait
+                # via wait_for_ready().
+                init_task = asyncio.create_task(self._init_and_start())
 
                 try:
                     await self.server.run(

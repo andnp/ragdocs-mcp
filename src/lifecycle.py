@@ -61,10 +61,18 @@ class LifecycleCoordinator:
     _health_check_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _consecutive_timeouts: int = field(default=0, repr=False)
     _max_consecutive_timeouts: int = field(default=3, repr=False)
+    _init_error: BaseException | None = field(default=None, repr=False)
 
     @property
     def state(self) -> LifecycleState:
         return self._state
+
+    def record_init_error(self, error: BaseException) -> None:
+        """Record an initialization failure so waiting handlers fail fast."""
+        self._init_error = error
+        if self._state in (LifecycleState.UNINITIALIZED, LifecycleState.STARTING, LifecycleState.INITIALIZING):
+            self._state = LifecycleState.DEGRADED
+            logger.error("Initialization failed, transitioning to DEGRADED: %s", error)
 
     async def start(self, ctx: ApplicationContext, *, background_index: bool = False) -> None:
         if self._state != LifecycleState.UNINITIALIZED:
@@ -335,7 +343,12 @@ class LifecycleCoordinator:
         if self._state == LifecycleState.READY:
             return
 
+        # Fail fast if initialization already failed
+        if self._init_error is not None:
+            raise RuntimeError(f"Server initialization failed: {self._init_error}") from self._init_error
+
         allowed_states = (
+            LifecycleState.UNINITIALIZED,
             LifecycleState.STARTING,
             LifecycleState.INITIALIZING,
             LifecycleState.DEGRADED,
@@ -345,10 +358,12 @@ class LifecycleCoordinator:
 
         start = time.monotonic()
 
-        # Wait for STARTING to transition to INITIALIZING/READY first
-        while self._state == LifecycleState.STARTING:
+        # Wait for UNINITIALIZED/STARTING to transition forward
+        while self._state in (LifecycleState.UNINITIALIZED, LifecycleState.STARTING):
+            if self._init_error is not None:
+                raise RuntimeError(f"Server initialization failed: {self._init_error}") from self._init_error
             if time.monotonic() - start > timeout:
-                raise RuntimeError(f"Wait for ready timed out after {timeout}s (stuck in STARTING)")
+                raise RuntimeError(f"Wait for ready timed out after {timeout}s (stuck in {self._state})")
             await asyncio.sleep(0.1)
 
         if self._state == LifecycleState.READY:
