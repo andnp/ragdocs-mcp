@@ -65,7 +65,11 @@ class MCPServer:
 
         from src.reader.context import ReadOnlyContext as ROContext
 
-        app_ctx = ApplicationContext.create(
+        # ApplicationContext.create() is synchronous and may do slow work
+        # (config loading, model path resolution).  Run in a thread so the
+        # event loop stays responsive for MCP protocol handling.
+        app_ctx = await asyncio.to_thread(
+            ApplicationContext.create,
             project_override=self.project_override,
             enable_watcher=True,
             lazy_embeddings=True,
