@@ -172,6 +172,7 @@ def get_memory_tools() -> list[Tool]:
 async def handle_create_memory(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -189,6 +190,7 @@ async def handle_create_memory(
 async def handle_append_memory(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -202,6 +204,7 @@ async def handle_append_memory(
 async def handle_read_memory(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -216,6 +219,7 @@ async def handle_read_memory(
 async def handle_update_memory(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -229,6 +233,7 @@ async def handle_update_memory(
 async def handle_delete_memory(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")
@@ -241,8 +246,6 @@ async def handle_search_memories(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
     """Search memories with comprehensive input validation."""
-    ctx = hctx.require_ctx()
-
     try:
         query = validate_query(arguments, "query")
         limit = validate_integer_range(
@@ -272,6 +275,9 @@ async def handle_search_memories(
 
     except ValidationError as e:
         return text_response(f"Validation error: {e}")
+
+    await hctx.wait_for_ready()
+    ctx = hctx.require_ctx()
 
     # Always include stats for visibility into filtering
     results, stats = await memory_tools_impl.search_memories(

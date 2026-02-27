@@ -348,6 +348,13 @@ async def handle_search_with_hypothesis(
 async def handle_search_git_history(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    query = arguments["query"]
+    top_n = max(MIN_TOP_N, min(arguments.get("top_n", 5), MAX_TOP_N))
+    files_glob = arguments.get("files_glob")
+    after_timestamp = arguments.get("after_timestamp")
+    before_timestamp = arguments.get("before_timestamp")
+
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     if ctx.commit_indexer is None:
@@ -359,12 +366,6 @@ async def handle_search_git_history(
         ]
 
     from src.git.commit_search import search_git_history
-
-    query = arguments["query"]
-    top_n = max(MIN_TOP_N, min(arguments.get("top_n", 5), MAX_TOP_N))
-    files_glob = arguments.get("files_glob")
-    after_timestamp = arguments.get("after_timestamp")
-    before_timestamp = arguments.get("before_timestamp")
 
     response = await asyncio.to_thread(
         search_git_history,
@@ -457,6 +458,7 @@ async def handle_search_linked_memories(
 ) -> list[TextContent]:
     from src.memory import tools as memory_tools
 
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     query = arguments.get("query", "")
