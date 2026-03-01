@@ -92,14 +92,13 @@ Adjust weights and thresholds.
     return docs_dir
 
 
-def _create_config(tmp_path, test_docs_dir, hyde_enabled: bool = True) -> Config:
+def _create_config(tmp_path, test_docs_dir) -> Config:
     """
     Create a Config object for testing.
 
     Args:
         tmp_path: Pytest temporary path fixture
         test_docs_dir: Path to test documents directory
-        hyde_enabled: Whether to enable HyDE search
 
     Returns:
         Config object with the specified settings
@@ -118,9 +117,6 @@ def _create_config(tmp_path, test_docs_dir, hyde_enabled: bool = True) -> Config
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
-            hyde_enabled=hyde_enabled,
-            community_detection_enabled=True,
-            dynamic_weights_enabled=True,
         ),
         document_chunking=ChunkingConfig(),
         memory_chunking=ChunkingConfig(),
@@ -441,30 +437,3 @@ class TestHyDEIntegrationWithSearchInfrastructure:
 
         text = result[0].text
         assert "(" in text and ")" in text
-
-
-# ============================================================================
-# Config Toggle Tests
-# ============================================================================
-
-
-class TestHyDEConfigToggle:
-    """Tests for HyDE enable/disable configuration."""
-
-    @pytest.mark.asyncio
-    async def test_hyde_disabled_still_returns_results(self, tmp_path, test_docs_dir):
-        """
-        With hyde_enabled=False, search_with_hypothesis falls back to regular query.
-        """
-        config = _create_config(tmp_path, test_docs_dir, hyde_enabled=False)
-        _server, hctx = _create_mcp_server(config, test_docs_dir)
-        handler = get_handler("search_with_hypothesis")
-        assert handler is not None
-
-        result = await handler(hctx, {
-            "hypothesis": "Search documentation",
-            "top_n": 3,
-        })
-
-        assert len(result) == 1
-        assert "Results" in result[0].text

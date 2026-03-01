@@ -37,8 +37,6 @@ def config(tmp_path):
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
             index_path=str(tmp_path / "index"),
-            enable_delta_indexing=True,
-            enable_move_detection=True,
             move_detection_threshold=0.8,
         ),
         document_chunking=ChunkingConfig(
@@ -146,39 +144,6 @@ async def test_reconciliation_respects_move_threshold(config, manager):
 
     # Assert: Falls back to full reindex (below 80% threshold)
     assert result.moved_count == 0, f"Move should NOT be detected (below threshold), got {result.moved_count}"
-    assert result.removed_count == 1, f"Should remove old doc, got {result.removed_count}"
-    assert result.added_count == 1, f"Should add new doc, got {result.added_count}"
-
-
-@pytest.mark.asyncio
-async def test_move_detection_disabled_via_config(config, manager):
-    """Test that move detection can be disabled."""
-    # Disable move detection
-    config.indexing.enable_move_detection = False
-
-    docs_path = Path(config.indexing.documents_path)
-    docs_path.mkdir(parents=True, exist_ok=True)
-
-    # Create, index, and move a file
-    original = docs_path / "original.md"
-    content = "# Test\n\nContent for testing disabled move detection."
-    original.write_text(content)
-    manager.index_document(str(original))
-    manager.persist()
-    _save_manifest_for_files(manager, config, [original])
-
-    moved = docs_path / "moved.md"
-    moved.write_text(content)
-    original.unlink()
-
-    # Discover files
-    discovered = [str(moved)]
-
-    # Trigger reconciliation
-    result = manager.reconcile_indices(discovered, docs_path)
-
-    # Assert: Move detection not used (treated as remove + add)
-    assert result.moved_count == 0, f"Move detection should be disabled, got {result.moved_count}"
     assert result.removed_count == 1, f"Should remove old doc, got {result.removed_count}"
     assert result.added_count == 1, f"Should add new doc, got {result.added_count}"
 

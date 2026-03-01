@@ -34,9 +34,6 @@ path = "/home/user/Documents/research-papers"
 # Where to find markdown files (relative to project root)
 documents_path = "."
 
-# Whether to search subdirectories recursively
-recursive = true
-
 # Optional: Filter files by pattern (defaults shown)
 # include = ["**/*"]  # Match all files
 # exclude = ["**/.venv/**", "**/venv/**", "**/build/**", "**/dist/**", "**/.git/**", "**/node_modules/**", "**/__pycache__/**", "**/.pytest_cache/**"]

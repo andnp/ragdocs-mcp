@@ -288,7 +288,6 @@ class TestCompressionPipeline:
         """
         pipeline_config = SearchPipelineConfig(
             min_confidence=0.0,
-            dedup_enabled=True,
             dedup_threshold=0.85,
         )
 
@@ -325,7 +324,6 @@ class TestCompressionStats:
         """
         pipeline_config = SearchPipelineConfig(
             min_confidence=0.3,
-            dedup_enabled=True,
             dedup_threshold=0.85,
         )
 
@@ -388,7 +386,6 @@ class TestParameterHandling:
         """
         pipeline_config = SearchPipelineConfig(
             min_confidence=0.1,
-            dedup_enabled=True,
             dedup_threshold=0.85,
         )
 
@@ -439,13 +436,11 @@ class TestParameterHandling:
         """
         config_high = SearchPipelineConfig(
             min_confidence=0.2,
-            dedup_enabled=True,
             dedup_threshold=0.95,
         )
 
         config_low = SearchPipelineConfig(
             min_confidence=0.2,
-            dedup_enabled=True,
             dedup_threshold=0.7,
         )
 
@@ -510,7 +505,6 @@ class TestEdgeCases:
         """
         pipeline_config = SearchPipelineConfig(
             min_confidence=0.1,
-            dedup_enabled=True,
             dedup_threshold=0.85,
         )
 

@@ -44,12 +44,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             pipeline_config = SearchPipelineConfig(
                 min_confidence=self._config.search.min_confidence,
                 max_chunks_per_doc=self._config.search.max_chunks_per_doc,
-                dedup_enabled=self._config.search.dedup_enabled,
                 dedup_threshold=self._config.search.dedup_similarity_threshold,
-                ngram_dedup_enabled=self._config.search.ngram_dedup_enabled,
                 ngram_dedup_threshold=self._config.search.ngram_dedup_threshold,
-                parent_retrieval_enabled=self._config.document_chunking.parent_retrieval_enabled,
-                rerank_enabled=self._config.search.rerank_enabled,
                 rerank_model=self._config.search.rerank_model,
                 rerank_top_n=self._config.search.rerank_top_n,
             )
@@ -104,26 +100,25 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         # Tag-based query expansion: Find related documents via tag graph traversal
         tag_expansion_count = 0
-        if self._config.search.tag_expansion_enabled:
-            combined_initial_results = vector_results + keyword_results
-            tag_expanded_results = expand_query_with_tags(
-                initial_results=combined_initial_results,
-                graph=self._graph,
-                vector=self._vector,
-                top_k=top_k,
-                max_related_tags=self._config.search.tag_expansion_max_tags,
-                max_depth=self._config.search.tag_expansion_depth,
-            )
+        combined_initial_results = vector_results + keyword_results
+        tag_expanded_results = expand_query_with_tags(
+            initial_results=combined_initial_results,
+            graph=self._graph,
+            vector=self._vector,
+            top_k=top_k,
+            max_related_tags=self._config.search.tag_expansion_max_tags,
+            max_depth=self._config.search.tag_expansion_depth,
+        )
 
-            # Merge tag-expanded results into existing result sets
-            for result in tag_expanded_results:
-                chunk_id = result["chunk_id"]
-                doc_id = result["doc_id"]
-                if chunk_id not in chunk_id_to_doc_id:
-                    all_doc_ids.add(doc_id)
-                    chunk_id_to_doc_id[chunk_id] = doc_id
-                    vector_results.append(result)  # Add to semantic results for fusion
-                    tag_expansion_count += 1
+        # Merge tag-expanded results into existing result sets
+        for result in tag_expanded_results:
+            chunk_id = result["chunk_id"]
+            doc_id = result["doc_id"]
+            if chunk_id not in chunk_id_to_doc_id:
+                all_doc_ids.add(doc_id)
+                chunk_id_to_doc_id[chunk_id] = doc_id
+                vector_results.append(result)  # Add to semantic results for fusion
+                tag_expansion_count += 1
 
         graph_neighbors = self._get_graph_neighbors(list(all_doc_ids))
 
@@ -138,28 +133,17 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             vector_count=len(vector_results),
             keyword_count=len(keyword_results),
             graph_count=len(graph_chunk_ids),
-            tag_expansion_count=tag_expansion_count if self._config.search.tag_expansion_enabled else None,
+            tag_expansion_count=tag_expansion_count,
         )
-
-        results_dict: dict[str, list[str]] = {
-             "semantic": [r["chunk_id"] for r in vector_results],
-             "keyword": [r["chunk_id"] for r in keyword_results],
-             "graph": graph_chunk_ids,
-         }
 
         base_semantic = self._config.search.semantic_weight
         base_keyword = self._config.search.keyword_weight
         base_graph = 1.0
 
-        if self._config.search.adaptive_weights_enabled:
-            query_type = classify_query(query_text)
-            semantic_w, keyword_w, graph_w = get_adaptive_weights(
-                query_type, base_semantic, base_keyword, base_graph
-            )
-        else:
-            semantic_w = base_semantic
-            keyword_w = base_keyword
-            graph_w = base_graph
+        query_type = classify_query(query_text)
+        semantic_w, keyword_w, graph_w = get_adaptive_weights(
+            query_type, base_semantic, base_keyword, base_graph
+        )
 
         weights: dict[str, float] = {
             "semantic": semantic_w,
@@ -176,8 +160,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         fused = self._apply_score_pipeline(strategy_results, weights)
 
-        if self._config.search.community_detection_enabled:
-            fused = self._apply_community_boost(fused, all_doc_ids, chunk_id_to_doc_id)
+        fused = self._apply_community_boost(fused, all_doc_ids, chunk_id_to_doc_id)
 
         if pipeline_config is not None:
             pipeline = SearchPipeline(pipeline_config)
@@ -192,13 +175,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             top_n,
         )
 
-        # Parent expansion: if enabled, expand child chunks to parent chunks
-        parent_retrieval_enabled = self._config.document_chunking.parent_retrieval_enabled
-        if pipeline_config is not None and pipeline_config.parent_retrieval_enabled:
-            parent_retrieval_enabled = True
-
-        if parent_retrieval_enabled:
-            final = self._expand_to_parents(final)
+        # Parent expansion: always expand child chunks to parent chunks
+        final = self._expand_to_parents(final)
 
         chunk_results = []
         missing_chunk_ids: list[str] = []
@@ -267,7 +245,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         return ScorePipelineConfig(
             rrf_k=self._config.search.rrf_k_constant,
             strategy_weights=weights,
-            use_dynamic_weights=self._config.search.dynamic_weights_enabled,
             variance_threshold=self._config.search.variance_threshold,
             min_weight_factor=self._config.search.min_weight_factor,
             calibration_threshold=self._config.search.score_calibration_threshold,
@@ -295,10 +272,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         return None
 
     async def _search_vector(self, query_text: str, top_k: int, excluded_files: set[str] | None, docs_root: Path):
-        if self._config.search.query_expansion_enabled:
-            expanded_query = self._vector.expand_query(query_text)
-        else:
-            expanded_query = query_text
+        expanded_query = self._vector.expand_query(query_text)
 
         results = await asyncio.to_thread(
             self._vector.search, expanded_query, top_k, excluded_files, docs_root
@@ -431,10 +405,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 after_doc_limit=0,
                 clusters_merged=0,
             ), SearchStrategyStats()
-
-        if not self._config.search.hyde_enabled:
-            logger.warning("HyDE search disabled in config, falling back to regular query")
-            return await self.query(hypothesis, top_k, top_n, excluded_files=excluded_files)
 
         docs_root = self._documents_path
 

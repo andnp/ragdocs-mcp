@@ -19,7 +19,6 @@ class GraphStore:
         self._graph: nx.DiGraph = nx.DiGraph()
         self._lock = Lock()
         self._communities: dict[str, int] = {}
-        self._community_detection_enabled = True
         self._last_community_node_count = 0
 
     def add_node(self, doc_id: str, metadata: dict) -> None:
@@ -227,9 +226,6 @@ class GraphStore:
                 doc_ids, self._communities, seed_doc_ids, boost_factor
             )
 
-    def set_community_detection_enabled(self, enabled: bool) -> None:
-        self._community_detection_enabled = enabled
-
     def _should_recompute_communities(self) -> bool:
         current_count = self._graph.number_of_nodes()
         last_count = self._last_community_node_count
@@ -249,7 +245,7 @@ class GraphStore:
 
             atomic_write_json(graph_file, graph_data)
 
-            if self._community_detection_enabled and self._graph.number_of_nodes() > 0:
+            if self._graph.number_of_nodes() > 0:
                 if self._should_recompute_communities():
                     detector = get_community_detector("louvain")
                     self._communities = detector.detect(self._graph)

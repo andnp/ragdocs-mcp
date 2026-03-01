@@ -18,7 +18,6 @@ def manager(tmp_path, shared_embedding_model):
         indexing=IndexingConfig(
             documents_path=str(docs_dir),
             index_path=str(tmp_path / ".index_data"),
-            recursive=False,
         ),
         parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(
@@ -33,14 +32,12 @@ def manager(tmp_path, shared_embedding_model):
             min_chunk_chars=200,
             max_chunk_chars=1500,
             overlap_chars=100,
-            include_parent_headers=True,
         ),
         memory_chunking=ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=200,
             max_chunk_chars=1500,
             overlap_chars=100,
-            include_parent_headers=True,
         ),
     )
 

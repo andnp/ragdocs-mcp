@@ -74,9 +74,6 @@ class BaseSearchOrchestrator(ABC, Generic[ResultT]):
         ctx: HybridSearchContext,
         top_k: int,
     ) -> None:
-        if not self._config.search.tag_expansion_enabled:
-            return
-
         combined_initial_results = ctx.vector_results + ctx.keyword_results
         tag_expanded_results = expand_query_with_tags(
             initial_results=combined_initial_results,

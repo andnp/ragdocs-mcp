@@ -281,9 +281,6 @@ async def test_query_with_hypothesis_uses_orchestrator_documents_path(base_confi
     explicit_docs = tmp_path / "explicit_docs"
     explicit_docs.mkdir()
 
-    # Disable HyDE to simplify test (will fall back to regular query)
-    base_config.search.hyde_enabled = False
-
     orchestrator = SearchOrchestrator(
         vector, keyword, graph, base_config, manager,
         documents_path=explicit_docs,

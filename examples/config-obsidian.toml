@@ -12,9 +12,6 @@ documents_path = "~/Documents/ObsidianVault"
 # Cache indices globally (shared across projects)
 index_path = "~/.cache/ragdocs-obsidian"
 
-# Search all subdirectories recursively
-recursive = true
-
 # Optional: Include only markdown files, exclude templates and dailies
 # include = ["**/*.md"]
 # exclude = ["**/templates/**", "**/Daily Notes/**", "**/.obsidian/**"]

@@ -288,21 +288,20 @@ def rebuild_index_cmd(project: str | None):
                     click.echo(f"⚠️  Git indexing failed: {e}", err=True)
 
         # Concept vocabulary building phase
-        if ctx.config.search.query_expansion_enabled:
-            try:
-                click.echo("Building concept vocabulary...")
-                ctx.index_manager.vector.build_concept_vocabulary(
-                    max_terms=ctx.config.search.query_expansion_max_terms,
-                    min_frequency=ctx.config.search.query_expansion_min_frequency,
-                )
-                ctx.index_manager.persist()
-                vocab_size = len(ctx.index_manager.vector._concept_vocabulary)
-                click.echo(
-                    f"✅ Successfully built concept vocabulary: {vocab_size} terms"
-                )
-            except Exception as e:
-                logger.error(f"Concept vocabulary building failed: {e}")
-                click.echo(f"⚠️  Concept vocabulary building failed: {e}", err=True)
+        try:
+            click.echo("Building concept vocabulary...")
+            ctx.index_manager.vector.build_concept_vocabulary(
+                max_terms=ctx.config.search.query_expansion_max_terms,
+                min_frequency=ctx.config.search.query_expansion_min_frequency,
+            )
+            ctx.index_manager.persist()
+            vocab_size = len(ctx.index_manager.vector._concept_vocabulary)
+            click.echo(
+                f"✅ Successfully built concept vocabulary: {vocab_size} terms"
+            )
+        except Exception as e:
+            logger.error(f"Concept vocabulary building failed: {e}")
+            click.echo(f"⚠️  Concept vocabulary building failed: {e}", err=True)
 
     except Exception as e:
         logger.error(f"Failed to rebuild index: {e}")
@@ -331,7 +330,6 @@ def check_config_cmd(project: str | None):
 
         table.add_row("Documents Path", config.indexing.documents_path)
         table.add_row("Index Path", config.indexing.index_path)
-        table.add_row("Recursive", str(config.indexing.recursive))
 
         if config.projects:
             table.add_row("", "")

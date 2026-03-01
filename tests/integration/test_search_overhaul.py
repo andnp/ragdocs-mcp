@@ -55,12 +55,9 @@ def test_config(tmp_path):
             keyword_weight=1.0,
             recency_bias=0.5,
             rrf_k_constant=60,
-            community_detection_enabled=True,
             community_boost_factor=1.1,
-            dynamic_weights_enabled=True,
             variance_threshold=0.1,
             min_weight_factor=0.5,
-            hyde_enabled=True,
         ),
         document_chunking=ChunkingConfig(),
         memory_chunking=ChunkingConfig(),
@@ -327,42 +324,6 @@ class TestDynamicWeightsIntegration:
         assert any("unique_term" in chunk_id for chunk_id in chunk_ids), \
             f"unique_term should be in results, got: {chunk_ids}"
 
-    @pytest.mark.asyncio
-    async def test_dynamic_weights_disabled_uses_base_weights(self, test_config, indices, manager, tmp_path):
-        """
-        With dynamic_weights_enabled=False, base weights are used unchanged.
-        """
-        config_static = Config(
-            server=ServerConfig(),
-            indexing=IndexingConfig(
-                documents_path=str(tmp_path / "docs_static"),
-                index_path=str(tmp_path / "indices_static"),
-            ),
-            parsers={"**/*.md": "MarkdownParser"},
-            search=SearchConfig(
-                semantic_weight=1.0,
-                keyword_weight=1.0,
-                dynamic_weights_enabled=False,
-            ),
-            llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
-        )
-
-        docs_path = Path(config_static.indexing.documents_path)
-        docs_path.mkdir(parents=True, exist_ok=True)
-
-        vector, keyword, graph = indices
-        manager_static = IndexManager(config_static, vector, keyword, graph)
-        orchestrator_static = SearchOrchestrator(
-            vector, keyword, graph, config_static, manager_static
-        )
-
-        doc1 = docs_path / "test_doc.md"
-        doc1.write_text("# Test\n\nTest document content.")
-        manager_static.index_document(str(doc1))
-
-        results, _, _ = await orchestrator_static.query("test document", top_k=10, top_n=5)
-        assert len(results) >= 0
-
 
 # ============================================================================
 # HyDE Search Integration Tests
@@ -409,43 +370,6 @@ Example tool registration in src/mcp_server.py.
         assert len(results) > 0
         result_doc_ids = [r.doc_id for r in results]
         assert "mcp_tools" in result_doc_ids or "configuration" in result_doc_ids
-
-    @pytest.mark.asyncio
-    async def test_hyde_disabled_falls_back_to_regular_query(
-        self, test_config, indices, manager, tmp_path
-    ):
-        """
-        When hyde_enabled=False, query_with_hypothesis falls back to regular query.
-        """
-        config_no_hyde = Config(
-            server=ServerConfig(),
-            indexing=IndexingConfig(
-                documents_path=str(tmp_path / "docs_no_hyde"),
-                index_path=str(tmp_path / "indices_no_hyde"),
-            ),
-            parsers={"**/*.md": "MarkdownParser"},
-            search=SearchConfig(hyde_enabled=False),
-            llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
-        )
-
-        docs_path = Path(config_no_hyde.indexing.documents_path)
-        docs_path.mkdir(parents=True, exist_ok=True)
-
-        vector, keyword, graph = indices
-        manager_no_hyde = IndexManager(config_no_hyde, vector, keyword, graph)
-        orchestrator_no_hyde = SearchOrchestrator(
-            vector, keyword, graph, config_no_hyde, manager_no_hyde
-        )
-
-        doc1 = docs_path / "test.md"
-        doc1.write_text("# Test Document\n\nSome content here.")
-        manager_no_hyde.index_document(str(doc1))
-
-        results, _, _ = await orchestrator_no_hyde.query_with_hypothesis(
-            "test hypothesis", top_k=10, top_n=5
-        )
-
-        assert len(results) >= 0
 
     @pytest.mark.asyncio
     async def test_hyde_returns_normalized_scores(self, test_config, manager, orchestrator):
@@ -563,9 +487,6 @@ A related feature that shares concepts.
         """
         New search.advanced config options are correctly loaded.
         """
-        assert test_config.search.community_detection_enabled is True
         assert test_config.search.community_boost_factor == 1.1
-        assert test_config.search.dynamic_weights_enabled is True
         assert test_config.search.variance_threshold == 0.1
         assert test_config.search.min_weight_factor == 0.5
-        assert test_config.search.hyde_enabled is True

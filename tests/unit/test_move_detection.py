@@ -331,8 +331,6 @@ def config(tmp_path):
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
             index_path=str(tmp_path / "index"),
-            enable_delta_indexing=True,
-            enable_move_detection=True,
             move_detection_threshold=0.8,
         ),
         document_chunking=ChunkingConfig(),
@@ -502,31 +500,3 @@ def test_detect_file_moves_threshold(manager):
     assert moves["old_doc"] == "new_doc"
 
 
-def test_move_detection_disabled(manager, sample_chunks):
-    """Test move detection can be disabled via config."""
-    manager._config.indexing.enable_move_detection = False
-
-    for chunk in sample_chunks:
-        manager._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
-
-    removed_docs = {"docs/test"}
-    added_docs = {"docs/renamed": sample_chunks}
-
-    moves = manager._detect_file_moves(removed_docs, added_docs)
-
-    assert len(moves) == 0
-
-
-def test_move_detection_requires_delta_indexing(manager, sample_chunks):
-    """Test move detection requires delta indexing to be enabled."""
-    manager._config.indexing.enable_delta_indexing = False
-
-    for chunk in sample_chunks:
-        manager._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
-
-    removed_docs = {"docs/test"}
-    added_docs = {"docs/renamed": sample_chunks}
-
-    moves = manager._detect_file_moves(removed_docs, added_docs)
-
-    assert len(moves) == 0

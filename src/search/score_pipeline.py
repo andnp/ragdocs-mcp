@@ -23,7 +23,6 @@ class ScorePipelineConfig:
         "semantic": 0.6, "keyword": 0.3, "graph": 0.1
     })
 
-    use_dynamic_weights: bool = False
     variance_threshold: float = 0.1
     min_weight_factor: float = 0.5
 
@@ -74,24 +73,23 @@ class ScorePipeline:
 
         weights = dict(self.config.strategy_weights)
 
-        if self.config.use_dynamic_weights:
-            vector_scores = [score for _, score in strategy_results.get("semantic", [])]
-            keyword_scores = [score for _, score in strategy_results.get("keyword", [])]
+        vector_scores = [score for _, score in strategy_results.get("semantic", [])]
+        keyword_scores = [score for _, score in strategy_results.get("keyword", [])]
 
-            if vector_scores and keyword_scores:
-                base_vector = weights.get("semantic", 1.0)
-                base_keyword = weights.get("keyword", 1.0)
+        if vector_scores and keyword_scores:
+            base_vector = weights.get("semantic", 1.0)
+            base_keyword = weights.get("keyword", 1.0)
 
-                adj_vector, adj_keyword = compute_dynamic_weights(
-                    vector_scores,
-                    keyword_scores,
-                    base_vector,
-                    base_keyword,
-                    self.config.variance_threshold,
-                    self.config.min_weight_factor,
-                )
-                weights["semantic"] = adj_vector
-                weights["keyword"] = adj_keyword
+            adj_vector, adj_keyword = compute_dynamic_weights(
+                vector_scores,
+                keyword_scores,
+                base_vector,
+                base_keyword,
+                self.config.variance_threshold,
+                self.config.min_weight_factor,
+            )
+            weights["semantic"] = adj_vector
+            weights["keyword"] = adj_keyword
 
         scores: dict[str, float] = {}
 

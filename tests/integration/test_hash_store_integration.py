@@ -19,7 +19,6 @@ def config(tmp_path):
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
             index_path=str(tmp_path / ".index"),
-            enable_delta_indexing=True,
             delta_full_reindex_threshold=0.5,
         ),
         document_chunking=ChunkingConfig(
@@ -123,29 +122,3 @@ def test_hash_store_survives_reload(tmp_path, config, shared_embedding_model):
     assert manager2._hash_store.get_hash("doc1#chunk-0") == "hash1"
     assert manager2._hash_store.get_hash("doc1#chunk-1") == "hash2"
 
-
-def test_hash_store_disabled_when_config_false(tmp_path):
-    """Test that hash store still initializes but isn't used when disabled."""
-    config = Config(
-        indexing=IndexingConfig(
-            documents_path=str(tmp_path / "docs"),
-            index_path=str(tmp_path / ".index"),
-            enable_delta_indexing=False,  # Disabled
-        ),
-        document_chunking=ChunkingConfig(),
-    )
-
-    vector = VectorIndex()
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    manager = IndexManager(config, vector, keyword, graph)
-
-    # Hash store should still be initialized (for future use)
-    assert manager._hash_store is not None
-
-    # But persist shouldn't write it when disabled
-    manager._hash_store.set_hash("test#chunk-0", "hash1")
-    manager.persist()
-
-    # Behavior: hash store exists but delta indexing logic won't use it
-    # This is acceptable - infrastructure is ready but feature is off

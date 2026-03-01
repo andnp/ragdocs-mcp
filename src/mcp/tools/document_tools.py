@@ -228,9 +228,7 @@ async def _query_documents_impl(
     pipeline_config = SearchPipelineConfig(
         min_confidence=min_score,
         max_chunks_per_doc=max_chunks_per_doc,
-        dedup_enabled=True,
         dedup_threshold=similarity_threshold,
-        rerank_enabled=False,
     )
 
     results, stats, _ = await ctx.orchestrator.query(

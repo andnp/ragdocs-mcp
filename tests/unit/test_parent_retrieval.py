@@ -13,7 +13,6 @@ class TestParentChildChunking:
             min_chunk_chars=100,
             max_chunk_chars=400,
             overlap_chars=0,
-            parent_retrieval_enabled=True,
             parent_chunk_min_chars=500,
             parent_chunk_max_chars=1000,
         )
@@ -62,52 +61,12 @@ More text to ensure this section is substantial enough for chunking.
             if child.parent_chunk_id:
                 assert child.parent_chunk_id.startswith("test_doc_parent_")
 
-    def test_no_parent_chunks_when_disabled(self):
-        config = ChunkingConfig(
-            strategy="header_based",
-            min_chunk_chars=100,
-            max_chunk_chars=400,
-            overlap_chars=0,
-            parent_retrieval_enabled=False,
-        )
-        chunker = HeaderBasedChunker(config)
-
-        content = """# Title
-
-Some content here.
-
-## Section
-
-More content in this section.
-"""
-
-        doc = Document(
-            id="test_doc",
-            content=content,
-            metadata={},
-            links=[],
-            tags=[],
-            file_path="/test/doc.md",
-            modified_time=datetime.now(),
-        )
-
-        chunks = chunker.chunk_document(doc)
-
-        # No parent chunks when disabled
-        parent_chunks = [c for c in chunks if "_parent_" in c.chunk_id]
-        assert len(parent_chunks) == 0
-
-        # All chunks should have no parent_chunk_id
-        for chunk in chunks:
-            assert chunk.parent_chunk_id is None
-
     def test_child_chunks_reference_correct_parent(self):
         config = ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=50,
             max_chunk_chars=200,
             overlap_chars=0,
-            parent_retrieval_enabled=True,
             parent_chunk_min_chars=300,
             parent_chunk_max_chars=800,
         )
@@ -156,7 +115,6 @@ Content for section three with more text for the chunk.
             min_chunk_chars=50,
             max_chunk_chars=200,
             overlap_chars=0,
-            parent_retrieval_enabled=True,
             parent_chunk_min_chars=300,
             parent_chunk_max_chars=1000,
         )

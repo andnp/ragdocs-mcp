@@ -131,18 +131,6 @@ class TestDiscoverFiles:
         for f in files:
             assert Path(f).is_absolute()
 
-    def test_non_recursive_only_searches_top_level(self, docs_structure):
-        """Non-recursive search only finds top-level files."""
-        # Use pattern without ** prefix for non-recursive
-        parsers = {"*.md": "markdown"}
-
-        files = discover_files(docs_structure, parsers, recursive=False)
-
-        assert any("README.md" in f for f in files)
-        assert any("CONTRIBUTING.md" in f for f in files)
-        # Nested files should not be found with non-** pattern
-        assert not any("overview.md" in f for f in files)
-
     def test_accepts_path_object(self, docs_structure):
         """Documents path can be a Path object."""
         parsers = {"**/*.md": "markdown"}

@@ -20,8 +20,6 @@ def config(tmp_path):
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
             index_path=str(tmp_path / "index"),
-            enable_delta_indexing=True,
-            enable_move_detection=True,
             move_detection_threshold=0.8,
         ),
         document_chunking=ChunkingConfig(

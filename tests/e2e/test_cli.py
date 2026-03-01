@@ -436,27 +436,13 @@ def test_rebuild_index_git_error_handling_non_fatal(runner, tmp_path, config_fil
 
 def test_rebuild_index_builds_vocabulary_when_enabled(runner, tmp_path, config_file, docs_dir):
     """
-    Test rebuild-index builds concept vocabulary when query_expansion_enabled.
+    Test rebuild-index builds concept vocabulary.
 
     Validates vocabulary is built and persisted.
     """
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
-
-        # Ensure query_expansion is enabled
-        config_dir = tmp_path / ".mcp-markdown-ragdocs"
-        config_path = config_dir / "config.toml"
-        config_content = config_path.read_text()
-        if "[search]" in config_content:
-            # Add query_expansion_enabled to existing search section
-            config_content = config_content.replace(
-                "[search]",
-                "[search]\nquery_expansion_enabled = true"
-            )
-        else:
-            config_content += "\n[search]\nquery_expansion_enabled = true\n"
-        config_path.write_text(config_content)
 
         result = runner.invoke(cli, ["rebuild-index"])
 
@@ -465,40 +451,6 @@ def test_rebuild_index_builds_vocabulary_when_enabled(runner, tmp_path, config_f
         assert "Building concept vocabulary" in result.output
         assert "Successfully built concept vocabulary" in result.output
         assert "terms" in result.output
-
-    finally:
-        os.chdir(original_cwd)
-
-
-def test_rebuild_index_skips_vocabulary_when_disabled(runner, tmp_path, config_file, docs_dir):
-    """
-    Test rebuild-index skips vocabulary building when query_expansion_enabled is false.
-
-    Validates vocabulary phase is skipped entirely.
-    """
-    original_cwd = os.getcwd()
-    try:
-        os.chdir(tmp_path)
-
-        # Disable query_expansion
-        config_dir = tmp_path / ".mcp-markdown-ragdocs"
-        config_path = config_dir / "config.toml"
-        config_content = config_path.read_text()
-        if "[search]" in config_content:
-            config_content = config_content.replace(
-                "[search]",
-                "[search]\nquery_expansion_enabled = false"
-            )
-        else:
-            config_content += "\n[search]\nquery_expansion_enabled = false\n"
-        config_path.write_text(config_content)
-
-        result = runner.invoke(cli, ["rebuild-index"])
-
-        assert result.exit_code == 0
-        assert "Successfully rebuilt index" in result.output
-        # Should NOT mention vocabulary building
-        assert "Building concept vocabulary" not in result.output
 
     finally:
         os.chdir(original_cwd)
@@ -513,19 +465,6 @@ def test_rebuild_index_vocabulary_error_handling_non_fatal(runner, tmp_path, con
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
-
-        # Ensure query_expansion is enabled
-        config_dir = tmp_path / ".mcp-markdown-ragdocs"
-        config_path = config_dir / "config.toml"
-        config_content = config_path.read_text()
-        if "[search]" in config_content:
-            config_content = config_content.replace(
-                "[search]",
-                "[search]\nquery_expansion_enabled = true"
-            )
-        else:
-            config_content += "\n[search]\nquery_expansion_enabled = true\n"
-        config_path.write_text(config_content)
 
         # Mock build_concept_vocabulary to raise exception
         with mock.patch("src.indices.vector.VectorIndex.build_concept_vocabulary", side_effect=Exception("Vocabulary error")):
@@ -561,19 +500,12 @@ def test_rebuild_index_both_git_and_vocabulary_enabled(runner, tmp_path, config_
         subprocess.run(["git", "add", "."], cwd=docs_dir, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=docs_dir, check=True, capture_output=True)
 
-        # Enable both git_indexing and query_expansion
+        # Enable git_indexing
         config_dir = tmp_path / ".mcp-markdown-ragdocs"
         config_path = config_dir / "config.toml"
         config_content = config_path.read_text()
         if "[git_indexing]" not in config_content:
             config_content += "\n[git_indexing]\nenabled = true\n"
-        if "[search]" in config_content:
-            config_content = config_content.replace(
-                "[search]",
-                "[search]\nquery_expansion_enabled = true"
-            )
-        else:
-            config_content += "\n[search]\nquery_expansion_enabled = true\n"
         config_path.write_text(config_content)
 
         result = runner.invoke(cli, ["rebuild-index"])

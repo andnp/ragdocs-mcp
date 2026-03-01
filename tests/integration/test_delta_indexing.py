@@ -20,26 +20,7 @@ def config_delta_enabled(tmp_path):
         indexing=IndexingConfig(
             documents_path=str(docs_path),
             index_path=str(tmp_path / "indices"),
-            enable_delta_indexing=True,
             delta_full_reindex_threshold=0.5,
-        ),
-        document_chunking=ChunkingConfig(
-            min_chunk_chars=100,
-            max_chunk_chars=1000,
-        ),
-    )
-
-
-@pytest.fixture
-def config_delta_disabled(tmp_path):
-    """Create test configuration with delta indexing disabled."""
-    docs_path = tmp_path / "docs"
-    docs_path.mkdir()
-    return Config(
-        indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices"),
-            enable_delta_indexing=False,
         ),
         document_chunking=ChunkingConfig(
             min_chunk_chars=100,
@@ -169,7 +150,6 @@ def test_delta_indexing_full_reindex_threshold(tmp_path, shared_embedding_model)
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
             index_path=str(tmp_path / "indices"),
-            enable_delta_indexing=True,
             delta_full_reindex_threshold=0.5,
         ),
         document_chunking=ChunkingConfig(
@@ -442,62 +422,7 @@ Content 3.
     assert len(results_after) == 0, "Section 2 content should be removed"
 
 
-def test_delta_indexing_disabled(tmp_path, config_delta_disabled, shared_embedding_model):
-    """Verify full re-index when delta indexing disabled."""
-    # 1. Config with enable_delta_indexing=False
-    docs_path = tmp_path / "docs"
-    test_file = docs_path / "test.md"
 
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    manager = IndexManager(config_delta_disabled, vector, keyword, graph)
-
-    # 2. Index doc
-    original_content = """# Document
-
-## Section 1
-Content 1.
-
-## Section 2
-Content 2.
-
-## Section 3
-Content 3.
-"""
-    test_file.write_text(original_content)
-    manager.index_document(str(test_file))
-    initial_count = len(manager.vector._doc_id_to_node_ids)
-
-    # Get initial hash count
-    initial_hash_count = len(manager._hash_store._hashes)
-
-    # 3. Modify 1 section
-    modified_content = """# Document
-
-## Section 1
-MODIFIED content 1.
-
-## Section 2
-Content 2.
-
-## Section 3
-Content 3.
-"""
-    test_file.write_text(modified_content)
-
-    # 4. Re-index
-    manager.index_document(str(test_file))
-
-    # 5. Verify: all chunks processed (not just changed one)
-    # With delta disabled, it should do full re-index
-    final_count = len(manager.vector._doc_id_to_node_ids)
-    assert final_count == initial_count, "Document count should be stable"
-
-    # Hash store should still update (infrastructure is there, just not used for delta)
-    # But the logic path is different (full re-index vs delta)
-    final_hash_count = len(manager._hash_store._hashes)
-    assert final_hash_count >= initial_hash_count, "Hashes should be updated"
 
 
 def test_delta_indexing_empty_document(tmp_path, manager):

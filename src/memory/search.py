@@ -189,7 +189,6 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
         return ScorePipelineConfig(
             rrf_k=self._config.search.rrf_k_constant,
             strategy_weights=weights,
-            use_dynamic_weights=False,
             calibration_threshold=self._config.search.score_calibration_threshold,
             calibration_steepness=self._config.search.score_calibration_steepness,
         )

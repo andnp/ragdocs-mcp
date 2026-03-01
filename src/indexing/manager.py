@@ -52,8 +52,7 @@ class IndexManager:
 
         logger.info(
             f"IndexManager initialized with embedding_workers={config.indexing.embedding_workers} "
-            f"(mode: {'parallel' if config.indexing.embedding_workers > 1 else 'sequential'}), "
-            f"delta_indexing={'enabled' if config.indexing.enable_delta_indexing else 'disabled'}"
+            f"(mode: {'parallel' if config.indexing.embedding_workers > 1 else 'sequential'})"
         )
 
     def _get_parser_suffixes(self, fallback_suffixes: list[str] | None = None):
@@ -124,10 +123,6 @@ class IndexManager:
         Returns:
             (changed_chunks, unchanged_chunk_ids)
         """
-        if not self._config.indexing.enable_delta_indexing:
-            # Delta indexing disabled, all chunks are "changed"
-            return chunks, []
-
         changed = []
         unchanged = []
 
@@ -196,10 +191,10 @@ class IndexManager:
             self.graph.add_node(chunk.chunk_id, chunk.metadata)
 
         # Update hash store (clear old hashes first)
-        if self._config.indexing.enable_delta_indexing:
-            self._hash_store.remove_document(doc_id)
-            for chunk in chunks:
-                self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
+        self._hash_store.remove_document(doc_id)
+        for chunk in chunks:
+            self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
+        self._hash_store.persist()
 
         logger.debug(f"Full re-indexed {doc_id} with {len(chunks)} chunks")
 
@@ -217,13 +212,6 @@ class IndexManager:
         Returns:
             Dict mapping old_doc_id -> new_doc_id for detected moves
         """
-        if not self._config.indexing.enable_move_detection:
-            return {}
-
-        if not self._config.indexing.enable_delta_indexing:
-            logger.debug("Move detection requires delta indexing to be enabled")
-            return {}
-
         moves: dict[str, str] = {}
         threshold = self._config.indexing.move_detection_threshold
 
@@ -371,8 +359,8 @@ class IndexManager:
             document.chunks = chunks
 
             # Delta indexing logic
-            if force or not self._config.indexing.enable_delta_indexing:
-                # Force full re-index or delta disabled
+            if force:
+                # Force full re-index
                 self._full_reindex_document(document.id, chunks)
             else:
                 # Delta detection
@@ -493,8 +481,7 @@ class IndexManager:
             )
 
         # Remove from hash store
-        if self._config.indexing.enable_delta_indexing:
-            self._hash_store.remove_document(doc_id)
+        self._hash_store.remove_document(doc_id)
 
     def persist(self):
         """Persist all indices with retry logic for transient failures.
@@ -541,8 +528,7 @@ class IndexManager:
             self.graph.persist(index_path / "graph")
 
             # Persist hash store for delta indexing
-            if self._config.indexing.enable_delta_indexing:
-                self._hash_store.persist()
+            self._hash_store.persist()
         except Exception as e:
             logger.error(f"Failed to persist indices: {e}", exc_info=True)
             raise
@@ -617,12 +603,10 @@ class IndexManager:
 
         result = ReconciliationResult()
 
-        # Detect file moves if enabled
+        # Detect file moves
         moved_files: dict[str, str] = {}
         if (
-            self._config.indexing.enable_move_detection
-            and self._config.indexing.enable_delta_indexing
-            and files_to_add
+            files_to_add
             and doc_ids_to_remove
         ):
             logger.info(

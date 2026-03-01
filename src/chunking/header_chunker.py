@@ -37,8 +37,7 @@ class HeaderBasedChunker(ChunkingStrategy):
         split_chunks = self._split_large_chunks(merged_chunks)
         final_chunks = self._apply_overlap(split_chunks)
 
-        if self.config.parent_retrieval_enabled:
-            final_chunks = self._create_parent_child_chunks(document, final_chunks)
+        final_chunks = self._create_parent_child_chunks(document, final_chunks)
 
         return final_chunks
 

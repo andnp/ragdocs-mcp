@@ -86,9 +86,7 @@ def create_app():
         pipeline_config = SearchPipelineConfig(
             min_confidence=0.0,
             max_chunks_per_doc=max_chunks_per_doc,
-            dedup_enabled=True,
             dedup_threshold=0.85,
-            rerank_enabled=False,
         )
 
         results, _, _ = await orchestrator.query(

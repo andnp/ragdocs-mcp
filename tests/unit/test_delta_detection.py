@@ -38,7 +38,6 @@ def manager(tmp_path, shared_embedding_model):
         indexing=IndexingConfig(
             documents_path=str(docs_dir),
             index_path=str(tmp_path / ".index_data"),
-            enable_delta_indexing=True,
             delta_full_reindex_threshold=0.5,
         ),
         parsers={"**/*.md": "MarkdownParser"},
@@ -113,25 +112,6 @@ def test_detect_changed_chunks_partial_changes(manager):
     assert len(unchanged) == 1
     assert changed[0].chunk_id == "doc1#chunk_0"
     assert unchanged[0] == "doc1#chunk_1"
-
-
-def test_detect_changed_chunks_with_delta_disabled(manager):
-    """Verify _detect_changed_chunks treats all chunks as changed when delta is disabled."""
-    # Disable delta indexing
-    manager._config.indexing.enable_delta_indexing = False
-
-    chunks = [
-        make_chunk("doc1#chunk_0", "doc1", "Content", 0),
-    ]
-
-    # Store hashes (should be ignored)
-    for chunk in chunks:
-        manager._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
-
-    changed, unchanged = manager._detect_changed_chunks(chunks)
-
-    assert len(changed) == 1
-    assert len(unchanged) == 0
 
 
 def test_should_use_delta_indexing_below_threshold(manager):

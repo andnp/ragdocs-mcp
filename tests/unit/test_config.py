@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 
-from src.config import load_config, LLMConfig, resolve_embedding_model, Config
+from src.config import load_config, LLMConfig, resolve_embedding_model
 
 
 def test_load_from_project_local_config(tmp_path):
@@ -27,7 +27,6 @@ port = 9000
 [indexing]
 documents_path = "/data/docs"
 index_path = "/data/index"
-recursive = false
 """)
 
     # Change to tmp directory to test local config loading
@@ -40,7 +39,6 @@ recursive = false
         assert config.server.port == 9000
         assert config.indexing.documents_path == "/data/docs"
         assert config.indexing.index_path == "/data/index"
-        assert config.indexing.recursive is False
     finally:
         os.chdir(original_cwd)
 
@@ -97,7 +95,6 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         # Verify all default values are used
         assert config.server.host == "127.0.0.1"
         assert config.server.port == 8000
-        assert config.indexing.recursive is True
         assert config.search.semantic_weight == 1.0
         assert config.search.keyword_weight == 1.0
         assert config.search.recency_bias == 0.5
@@ -190,7 +187,6 @@ port = 3000
         assert config.server.port == 3000
         # Default values for missing fields
         assert config.server.host == "127.0.0.1"
-        assert config.indexing.recursive is True
         assert config.llm.embedding_model == "local"
     finally:
         os.chdir(original_cwd)
@@ -212,7 +208,6 @@ port = 5000
 [indexing]
 documents_path = "/srv/docs"
 index_path = "/srv/index"
-recursive = false
 
 [parsers]
 "**/*.txt" = "TextParser"
@@ -236,7 +231,6 @@ embedding_model = "custom"
         assert config.server.port == 5000
         assert config.indexing.documents_path == "/srv/docs"
         assert config.indexing.index_path == "/srv/index"
-        assert config.indexing.recursive is False
         assert config.parsers == {"**/*.txt": "TextParser"}
         assert config.search.semantic_weight == 0.8
         assert config.search.keyword_weight == 0.2

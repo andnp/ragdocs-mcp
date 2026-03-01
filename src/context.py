@@ -184,7 +184,6 @@ class ApplicationContext:
         return _discover_files(
             documents_path=self.config.indexing.documents_path,
             parsers=self.config.parsers,
-            recursive=self.config.indexing.recursive,
             include_patterns=self.config.indexing.include,
             exclude_patterns=self.config.indexing.exclude,
             exclude_hidden_dirs=self.config.indexing.exclude_hidden_dirs,
@@ -432,10 +431,6 @@ class ApplicationContext:
 
     async def _build_initial_vocabulary(self) -> None:
         """Build concept vocabulary from scratch in background."""
-        if not self.config.search.query_expansion_enabled:
-            logger.info("Query expansion disabled, skipping vocabulary build")
-            return
-
         try:
             logger.info("Building concept vocabulary in background...")
             await asyncio.to_thread(

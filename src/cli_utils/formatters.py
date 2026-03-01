@@ -44,8 +44,6 @@ def print_debug_stats(
             strategy_table.add_row("Keyword (BM25)", str(strategy_stats.keyword_count))
         if strategy_stats.graph_count is not None:
             strategy_table.add_row("Graph (PageRank)", str(strategy_stats.graph_count))
-        if strategy_stats.code_count is not None:
-            strategy_table.add_row("Code Search", str(strategy_stats.code_count))
         if strategy_stats.tag_expansion_count is not None:
             strategy_table.add_row("Tag Expansion", str(strategy_stats.tag_expansion_count))
 

@@ -12,9 +12,6 @@ documents_path = "~/Projects/myapp/docs"
 # Store index in project directory
 index_path = ".ragdocs-index/"
 
-# Index all subdirectories
-recursive = true
-
 # Optional: Filter files (uncomment to customize)
 # include = ["**/*.md", "**/*.txt"]  # Only markdown and text
 # exclude = ["**/drafts/**", "**/archive/**"]  # Skip drafts and archives

@@ -706,16 +706,13 @@ def test_keyword_index_schema_mismatch_triggers_rebuild(tmp_path):
     assert "new_chunk_0" in _extract_chunk_ids(results)
 
 
-def test_keyword_index_remove_handles_corrupted_segment(tmp_path):
+def test_keyword_index_remove_handles_corrupted_db(tmp_path):
     """
-    Remove operation handles corrupted segment files gracefully.
+    Remove operation handles corrupted SQLite database gracefully.
 
-    When Whoosh segment files (.seg) are deleted/corrupted mid-operation,
+    When the SQLite database file is corrupted mid-operation,
     the index should detect the corruption, reinitialize, and not crash.
     """
-    pytest.importorskip("whoosh")
-    import glob
-    from pathlib import Path
 
     from src.models import Chunk
 
@@ -739,10 +736,10 @@ def test_keyword_index_remove_handles_corrupted_segment(tmp_path):
     keyword_index.persist(index_path)
     keyword_index.load(index_path)
 
-    seg_files = glob.glob(str(index_path / "*.seg"))
-    assert len(seg_files) > 0, "Expected segment files after persist"
-    for seg in seg_files:
-        Path(seg).unlink()
+    db_file = index_path / "index.db"
+    assert db_file.exists(), "Expected index.db after persist"
+    # Corrupt the SQLite database by writing garbage
+    db_file.write_bytes(b"corrupted data here")
 
     keyword_index.remove("chunk_to_remove_0")
 
@@ -750,17 +747,14 @@ def test_keyword_index_remove_handles_corrupted_segment(tmp_path):
     assert isinstance(results, list)
 
 
-def test_keyword_index_search_handles_corrupted_segment(tmp_path):
+def test_keyword_index_search_handles_corrupted_db(tmp_path):
     """
-    Search operation handles corrupted segment files gracefully.
+    Search operation handles corrupted SQLite database gracefully.
 
-    When Whoosh segment files (.seg) are corrupted, search should detect
+    When the SQLite database is corrupted, search should detect
     the issue, reinitialize the index, and return an empty list rather
     than crashing.
     """
-    pytest.importorskip("whoosh")
-    import glob
-    from pathlib import Path
 
     from src.models import Chunk
 
@@ -784,10 +778,10 @@ def test_keyword_index_search_handles_corrupted_segment(tmp_path):
     keyword_index.persist(index_path)
     keyword_index.load(index_path)
 
-    seg_files = glob.glob(str(index_path / "*.seg"))
-    assert len(seg_files) > 0, "Expected segment files after persist"
-    for seg in seg_files:
-        Path(seg).unlink()
+    db_file = index_path / "index.db"
+    assert db_file.exists(), "Expected index.db after persist"
+    # Corrupt the SQLite database by writing garbage
+    db_file.write_bytes(b"corrupted data here")
 
     results = keyword_index.search("searchable content", top_k=5)
 
@@ -1189,7 +1183,7 @@ def test_keyword_index_search_recovers_from_malformed_mid_operation(tmp_path):
     index.add(doc)
 
     # Patch _conn to simulate a mid-operation malformed error
-    real_conn = index._conn()
+    _ = index._conn()
     def _raise_malformed():
         raise sqlite3.DatabaseError("database disk image is malformed")
 

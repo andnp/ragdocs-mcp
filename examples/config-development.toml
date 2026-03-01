@@ -13,9 +13,6 @@ documents_path = "./test-docs"
 # Store indices in local temp directory
 index_path = "./.dev-indices"
 
-# Index all subdirectories
-recursive = true
-
 # Optional: Customize file patterns for testing
 # include = ["**/*.md", "**/*.txt"]
 # exclude = ["**/node_modules/**", "**/.git/**"]

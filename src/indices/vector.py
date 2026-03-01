@@ -892,6 +892,9 @@ class VectorIndex:
         top_k: int = 3,
         similarity_threshold: float = 0.5,
     ) -> str:
+        if top_k <= 0:
+            return query
+
         if not self._concept_vocabulary:
             return query
 

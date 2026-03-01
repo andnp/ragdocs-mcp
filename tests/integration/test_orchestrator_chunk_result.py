@@ -32,14 +32,12 @@ def config(tmp_path):
             min_chunk_chars=200,
             max_chunk_chars=1500,
             overlap_chars=100,
-            include_parent_headers=True,
         ),
         memory_chunking=ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=200,
             max_chunk_chars=1500,
             overlap_chars=100,
-            include_parent_headers=True,
         ),
     )
 

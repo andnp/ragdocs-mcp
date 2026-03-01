@@ -42,7 +42,6 @@ class ServerConfig:
 class IndexingConfig:
     documents_path: str = "."
     index_path: str = ".index_data/"
-    recursive: bool = True
     include: list[str] = field(default_factory=lambda: ["**/*"])
     exclude: list[str] = field(
         default_factory=lambda: [
@@ -67,9 +66,7 @@ class IndexingConfig:
     coordination_mode: str = "file_lock"
     lock_timeout_seconds: float = 5.0
     embedding_workers: int = 4
-    enable_delta_indexing: bool = True
     delta_full_reindex_threshold: float = 0.5
-    enable_move_detection: bool = True
     move_detection_threshold: float = 0.8
 
 
@@ -81,24 +78,15 @@ class SearchConfig:
     rrf_k_constant: int = 60
     min_confidence: float = 0.3
     max_chunks_per_doc: int = 2
-    dedup_enabled: bool = True
     dedup_similarity_threshold: float = 0.80
-    ngram_dedup_enabled: bool = True
     ngram_dedup_threshold: float = 0.7
-    rerank_enabled: bool = True
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_top_n: int = 10
-    adaptive_weights_enabled: bool = True
-    query_expansion_enabled: bool = True
     query_expansion_max_terms: int = 2000
     query_expansion_min_frequency: int = 3
-    community_detection_enabled: bool = True
     community_boost_factor: float = 1.1
-    dynamic_weights_enabled: bool = True
     variance_threshold: float = 0.1
     min_weight_factor: float = 0.5
-    hyde_enabled: bool = True
-    tag_expansion_enabled: bool = True
     tag_expansion_max_tags: int = 5
     tag_expansion_depth: int = 2
     # Calibration converts RRF scores to [0,1] confidence via sigmoid.
@@ -154,8 +142,6 @@ class ChunkingConfig:
     min_chunk_chars: int = 1000
     max_chunk_chars: int = 3000
     overlap_chars: int = 200
-    include_parent_headers: bool = True
-    parent_retrieval_enabled: bool = True
     parent_chunk_min_chars: int = 1500
     parent_chunk_max_chars: int = 4000
 

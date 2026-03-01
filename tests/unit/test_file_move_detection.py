@@ -57,30 +57,7 @@ def config_with_move_detection(tmp_path: Path):
         indexing=IndexingConfig(
             documents_path=str(docs_path),
             index_path=str(index_path),
-            enable_delta_indexing=True,
-            enable_move_detection=True,
             move_detection_threshold=0.8,
-        ),
-        parsers={"**/*.md": "MarkdownParser"},
-        llm=LLMConfig(embedding_model="local"),
-    )
-
-
-@pytest.fixture
-def config_without_move_detection(tmp_path: Path):
-    """Config with delta indexing but move detection disabled."""
-    docs_path = tmp_path / "docs"
-    docs_path.mkdir()
-    index_path = tmp_path / "index"
-    index_path.mkdir()
-
-    return Config(
-        server=ServerConfig(),
-        indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(index_path),
-            enable_delta_indexing=True,
-            enable_move_detection=False,
         ),
         parsers={"**/*.md": "MarkdownParser"},
         llm=LLMConfig(embedding_model="local"),
@@ -186,22 +163,6 @@ class TestDetectFileMoves:
         moves = manager._detect_file_moves({"old_doc"}, {"new_doc": new_chunks})
 
         assert "old_doc" not in moves, "60% match should NOT trigger move detection"
-
-    def test_move_detection_disabled(self, config_without_move_detection: Config, shared_embedding_model):
-        """
-        Verify move detection returns empty when disabled in config.
-        """
-        vector = VectorIndex(embedding_model=shared_embedding_model)
-        manager = IndexManager(config_without_move_detection, vector, KeywordIndex(), GraphStore())
-
-        manager._hash_store.set_hash("old_doc_chunk_0", "hash_a")
-        manager._hash_store.persist()
-
-        new_chunks = [make_chunk("new_doc_chunk_0", "new_doc", "Content", 0, content_hash="hash_a")]
-
-        moves = manager._detect_file_moves({"old_doc"}, {"new_doc": new_chunks})
-
-        assert moves == {}, "Move detection should return empty when disabled"
 
     def test_move_detection_best_match_selection(self, manager_with_move_detection: IndexManager):
         """

@@ -11,12 +11,8 @@ from src.search.reranker import ReRanker
 class SearchPipelineConfig:
     min_confidence: float = 0.0
     max_chunks_per_doc: int = 0
-    dedup_enabled: bool = True
     dedup_threshold: float = 0.85
-    ngram_dedup_enabled: bool = True
     ngram_dedup_threshold: float = 0.7
-    parent_retrieval_enabled: bool = False
-    rerank_enabled: bool = False
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_top_n: int = 10
 
@@ -66,7 +62,7 @@ class SearchPipeline:
         # N-gram dedup (fast character-level similarity pre-filter)
         ngram_deduped = content_deduped
         after_ngram_dedup = after_content_dedup
-        if self._config.ngram_dedup_enabled and len(content_deduped) > 1:
+        if len(content_deduped) > 1:
             ngram_deduped, _ = deduplicate_by_ngram(
                 content_deduped,
                 cached_get_content,
@@ -77,7 +73,7 @@ class SearchPipeline:
         # Semantic dedup
         clusters_merged = 0
         dedup_results = ngram_deduped
-        if self._config.dedup_enabled and len(ngram_deduped) > 1:
+        if len(ngram_deduped) > 1:
             dedup_results, clusters_merged = deduplicate_by_similarity(
                 ngram_deduped,
                 get_embedding,
@@ -89,7 +85,7 @@ class SearchPipeline:
         limited = limit_per_document(dedup_results, self._config.max_chunks_per_doc)
         after_doc_limit = len(limited)
 
-        if self._config.rerank_enabled and limited:
+        if limited:
             reranker = self._get_reranker()
             limited = reranker.rerank(
                 query,

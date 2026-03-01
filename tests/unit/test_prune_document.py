@@ -52,7 +52,6 @@ def base_config(tmp_path, tmp_index_path):
         indexing=IndexingConfig(
             documents_path=str(docs_dir),
             index_path=str(tmp_index_path),
-            enable_delta_indexing=False,
         )
     )
 

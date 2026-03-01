@@ -33,8 +33,6 @@ def config_query_expansion(tmp_path):
             keyword_weight=1.0,
             recency_bias=0.0,  # Disable recency for predictable tests
             rrf_k_constant=60,
-            rerank_enabled=False,
-            dedup_enabled=False,
         ),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
     )
@@ -56,10 +54,8 @@ def config_reranking(tmp_path):
             keyword_weight=1.0,
             recency_bias=0.0,
             rrf_k_constant=60,
-            rerank_enabled=True,
             rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
             rerank_top_n=5,
-            dedup_enabled=False,
         ),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
     )
@@ -360,10 +356,8 @@ class TestQueryExpansionAndReranking:
                 keyword_weight=1.0,
                 recency_bias=0.0,
                 rrf_k_constant=60,
-                rerank_enabled=True,
                 rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
                 rerank_top_n=3,
-                dedup_enabled=False,
             ),
             llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
         )

@@ -85,7 +85,6 @@ def discover_files(
     documents_path: str | Path,
     parsers: dict[str, str],
     *,
-    recursive: bool = True,
     include_patterns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
     exclude_hidden_dirs: bool = True,
@@ -98,7 +97,6 @@ def discover_files(
     Args:
         documents_path: Root directory to search
         parsers: Mapping of glob patterns to parser names
-        recursive: Whether to search recursively (default: True)
         include_patterns: Glob patterns for files to include (default: ["*"] = all)
         exclude_patterns: Glob patterns for files to exclude
         exclude_hidden_dirs: Whether to exclude hidden directories (default: True)
@@ -113,19 +111,10 @@ def discover_files(
 
     all_files: set[str] = set()
 
-    if recursive:
-        included_dirs = walk_included_dirs(docs_path, exclude, exclude_hidden_dirs)
-        for dir_path in included_dirs:
-            try:
-                for entry in os.scandir(str(dir_path)):
-                    if entry.is_file() and Path(entry.name).suffix.lower() in suffixes:
-                        all_files.add(entry.path)
-            except OSError:
-                pass
-    else:
-        # Non-recursive: only scan the root directory
+    included_dirs = walk_included_dirs(docs_path, exclude, exclude_hidden_dirs)
+    for dir_path in included_dirs:
         try:
-            for entry in os.scandir(str(docs_path)):
+            for entry in os.scandir(str(dir_path)):
                 if entry.is_file() and Path(entry.name).suffix.lower() in suffixes:
                     all_files.add(entry.path)
         except OSError:
