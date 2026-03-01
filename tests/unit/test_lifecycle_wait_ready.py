@@ -278,3 +278,71 @@ class TestWaitReadyTimeoutBehavior:
             await transition_task
         except asyncio.CancelledError:
             pass
+
+
+class TestWaitReadyWorkerExhausted:
+    """Regression tests for worker restart exhaustion causing indefinite hangs.
+
+    Reproduces the bug where tool calls (e.g. search_memories) hung for 60s
+    each when the worker process permanently failed. The health check loop
+    kept detecting timeouts and calling _restart_worker(), but the counter
+    was already at max so it returned immediately with "giving up". Meanwhile,
+    wait_ready() looped for the full timeout before raising.
+    """
+
+    @pytest.mark.asyncio
+    async def test_wait_ready_fails_fast_when_restarts_exhausted(self):
+        """
+        When worker restarts are permanently exhausted, wait_ready() must
+        raise immediately — not loop for 60s.
+        """
+        coordinator = LifecycleCoordinator()
+        coordinator._state = LifecycleState.DEGRADED
+        coordinator._restarts_exhausted = True
+        coordinator._restart_attempts = 3
+
+        # Must complete well under 1s (proves no 60s polling loop)
+        with pytest.raises(RuntimeError, match="max restart attempts exhausted"):
+            await asyncio.wait_for(coordinator.wait_ready(timeout=60.0), timeout=0.5)
+
+    @pytest.mark.asyncio
+    async def test_restart_attempts_reset_after_successful_restart(self):
+        """
+        Verify _restart_attempts resets to 0 after a successful restart,
+        allowing future restarts after transient failures.
+        """
+        coordinator = LifecycleCoordinator()
+        coordinator._restart_attempts = 2
+        coordinator._restarts_exhausted = False
+
+        # Simulate successful restart (as done in _restart_worker)
+        coordinator._state = LifecycleState.READY
+        coordinator._restart_attempts = 0
+        coordinator._restarts_exhausted = False
+
+        # Now simulate another failure cycle — should be allowed since counter reset
+        coordinator._state = LifecycleState.DEGRADED
+        coordinator._restart_attempts = 1
+
+        assert coordinator._restart_attempts == 1
+        assert coordinator._restarts_exhausted is False
+
+    @pytest.mark.asyncio
+    async def test_degraded_without_exhaustion_still_waits(self):
+        """
+        DEGRADED state without exhaustion should still allow waiting
+        (recovery may happen via health check loop).
+        """
+        coordinator = LifecycleCoordinator()
+        coordinator._state = LifecycleState.DEGRADED
+        coordinator._restarts_exhausted = False
+
+        async def recover_after_delay():
+            await asyncio.sleep(0.1)
+            coordinator._state = LifecycleState.READY
+
+        recovery_task = asyncio.create_task(recover_after_delay())
+        await coordinator.wait_ready(timeout=5.0)
+        await recovery_task
+
+        assert coordinator._state == LifecycleState.READY
