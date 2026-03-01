@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 
-from src.config import load_config, LLMConfig, resolve_embedding_model
+from src.config import load_config, LLMConfig, resolve_embedding_model, Config, WorkerConfig
 
 
 def test_load_from_project_local_config(tmp_path):
@@ -595,3 +595,59 @@ def test_resolve_embedding_model_fallback_with_custom_model():
 
     assert result == "custom/model"
 
+
+
+def test_config_has_worker_attribute_with_defaults(tmp_path):
+    """
+    Config always exposes a .worker attribute with sensible defaults.
+
+    Regression test: fc5d73f deleted WorkerConfig from config.py while
+    src/mcp/server.py still accessed config.worker.enabled, causing
+    AttributeError: 'Config' object has no attribute 'worker'.
+    """
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+        assert hasattr(config, "worker"), "Config must have a 'worker' attribute"
+        assert isinstance(config.worker, WorkerConfig)
+        assert isinstance(config.worker.enabled, bool)
+        assert config.worker.enabled is True  # default should be True
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_worker_config_loaded_from_toml(tmp_path):
+    """
+    WorkerConfig values are loaded from [worker] in .mcp-markdown-ragdocs/config.toml.
+    """
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        "[worker]\nenabled = false\nstartup_timeout = 60.0\n"
+    )
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+        assert config.worker.enabled is False
+        assert config.worker.startup_timeout == 60.0
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_config_worker_accessible_as_mcp_server_does(tmp_path):
+    """
+    config.worker.enabled is accessible exactly as src/mcp/server.py uses it.
+
+    Reproduces the exact AttributeError: 'Config' object has no attribute 'worker'.
+    """
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+        # This is the exact access pattern in src/mcp/server.py line 78
+        use_worker = config.worker.enabled
+        assert isinstance(use_worker, bool)
+    finally:
+        os.chdir(original_cwd)
