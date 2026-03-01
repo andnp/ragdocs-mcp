@@ -13,8 +13,6 @@ class TestSearchPipelineConfig:
         assert config.dedup_threshold == 0.85
         assert config.ngram_dedup_enabled is True
         assert config.ngram_dedup_threshold == 0.7
-        assert config.mmr_enabled is False
-        assert config.mmr_lambda == 0.7
         assert config.parent_retrieval_enabled is False
         assert config.rerank_enabled is False
         assert config.rerank_model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -28,8 +26,6 @@ class TestSearchPipelineConfig:
             dedup_threshold=0.9,
             ngram_dedup_enabled=False,
             ngram_dedup_threshold=0.8,
-            mmr_enabled=True,
-            mmr_lambda=0.5,
             parent_retrieval_enabled=True,
             rerank_enabled=True,
             rerank_model="custom-model",
@@ -42,8 +38,6 @@ class TestSearchPipelineConfig:
         assert config.dedup_threshold == 0.9
         assert config.ngram_dedup_enabled is False
         assert config.ngram_dedup_threshold == 0.8
-        assert config.mmr_enabled is True
-        assert config.mmr_lambda == 0.5
         assert config.parent_retrieval_enabled is True
         assert config.rerank_enabled is True
         assert config.rerank_model == "custom-model"

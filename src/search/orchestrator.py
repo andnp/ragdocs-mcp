@@ -1,8 +1,5 @@
 import asyncio
 import logging
-import threading
-import time
-from collections import OrderedDict
 from pathlib import Path
 
 from src.config import Config
@@ -41,12 +38,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         self._pending_reindex: set[str] = set()
         self._reindex_tasks: set[asyncio.Task] = set()
 
-        # Query embedding cache with LRU eviction (OrderedDict for O(1) evict)
-        self._embedding_cache: OrderedDict[str, tuple[list[float], float]] = OrderedDict()
-        self._cache_lock = threading.Lock()
-        self._cache_max_size = 100
-        self._cache_ttl = 300.0  # 5 minutes
-
     @property
     def documents_path(self) -> Path:
         return self._documents_path
@@ -60,8 +51,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 dedup_threshold=self._config.search.dedup_similarity_threshold,
                 ngram_dedup_enabled=self._config.search.ngram_dedup_enabled,
                 ngram_dedup_threshold=self._config.search.ngram_dedup_threshold,
-                mmr_enabled=self._config.search.mmr_enabled,
-                mmr_lambda=self._config.search.mmr_lambda,
                 parent_retrieval_enabled=self._config.document_chunking.parent_retrieval_enabled,
                 rerank_enabled=self._config.search.rerank_enabled,
                 rerank_model=self._config.search.rerank_model,
@@ -69,45 +58,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             )
             self._pipeline = SearchPipeline(pipeline_config)
         return self._pipeline
-
-    def _get_cached_embedding(self, query: str) -> list[float]:
-        """Get query embedding with LRU cache and TTL-based expiration.
-
-        Cache entries expire after 5 minutes to prevent stale embeddings.
-        When cache is full, evicts the oldest entry (LRU policy).
-        Thread-safe: uses lock around cache access/mutation.
-
-        Args:
-            query: Query text to embed
-
-        Returns:
-            Embedding vector for the query
-        """
-        # Check cache under lock
-        with self._cache_lock:
-            if query in self._embedding_cache:
-                embedding, timestamp = self._embedding_cache[query]
-                if time.time() - timestamp < self._cache_ttl:
-                    self._embedding_cache.move_to_end(query)
-                    logger.debug(f"Embedding cache hit for query: {query[:50]}...")
-                    return embedding
-                # Remove expired entry
-                del self._embedding_cache[query]
-
-        # Compute embedding OUTSIDE lock (expensive operation)
-        logger.debug(f"Embedding cache miss for query: {query[:50]}...")
-        embedding = self._vector.get_text_embedding(query)
-
-        # Update cache under lock
-        with self._cache_lock:
-            # Evict LRU entry if at capacity (O(1) via OrderedDict)
-            if len(self._embedding_cache) >= self._cache_max_size:
-                evicted_key, _ = self._embedding_cache.popitem(last=False)
-                logger.debug(f"Evicted LRU cache entry: {evicted_key[:50]}...")
-
-            self._embedding_cache[query] = (embedding, time.time())
-
-        return embedding
 
     async def query(
         self,
@@ -260,19 +210,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         else:
             pipeline = self._get_pipeline()
 
-        query_embedding = None
-        if self._config.search.mmr_enabled or (
-            pipeline_config is not None and pipeline_config.mmr_enabled
-        ):
-            query_embedding = self._get_cached_embedding(query_text)
-
         final, compression_stats = pipeline.process(
             fused,
             self._get_chunk_embedding,
             self._get_chunk_content,
             query_text,
             top_n,
-            query_embedding,
         )
 
         # Parent expansion: if enabled, expand child chunks to parent chunks
@@ -566,7 +509,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             self._get_chunk_content,
             hypothesis,
             top_n,
-            None,
         )
 
         # Build strategy stats (HyDE only uses semantic search)

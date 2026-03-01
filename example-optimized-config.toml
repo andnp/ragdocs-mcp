@@ -34,10 +34,6 @@ query_expansion_min_frequency = 3
 dedup_enabled = false
 dedup_similarity_threshold = 0.85
 
-# MMR (diversity) settings
-mmr_enabled = false
-mmr_lambda = 0.7
-
 # Re-ranking settings (optional, increases query time)
 rerank_enabled = false
 rerank_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"

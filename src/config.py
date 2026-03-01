@@ -85,8 +85,6 @@ class SearchConfig:
     dedup_similarity_threshold: float = 0.80
     ngram_dedup_enabled: bool = True
     ngram_dedup_threshold: float = 0.7
-    mmr_enabled: bool = False
-    mmr_lambda: float = 0.7
     rerank_enabled: bool = True
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_top_n: int = 10
