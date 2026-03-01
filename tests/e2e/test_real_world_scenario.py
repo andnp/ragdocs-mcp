@@ -389,7 +389,6 @@ def app_with_corpus(tmp_path, docs_corpus, monkeypatch):
             indexing=IndexingConfig(
                 documents_path=str(docs_corpus),
                 index_path=str(index_path),
-                recursive=True,
             ),
             parsers={"**/*.md": "MarkdownParser"},
             search=SearchConfig(

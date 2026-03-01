@@ -17,7 +17,6 @@ def config(tmp_path):
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
             index_path=str(tmp_path / ".index_data"),
-            recursive=False,
         ),
         parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(

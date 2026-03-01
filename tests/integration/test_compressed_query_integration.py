@@ -51,7 +51,6 @@ def integration_config(tmp_path_factory) -> Config:
         indexing=IndexingConfig(
             documents_path=str(docs_path),
             index_path=str(index_path),
-            recursive=True,
         ),
         parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(

@@ -90,7 +90,6 @@ def app_with_config(tmp_path, test_docs_dir, monkeypatch):
             indexing=IndexingConfig(
                 documents_path=str(test_docs_dir),
                 index_path=str(index_path),
-                recursive=True,
             ),
             parsers={"**/*.md": "MarkdownParser"},
             search=SearchConfig(
@@ -332,7 +331,6 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
             indexing=IndexingConfig(
                 documents_path=str(test_docs_dir),
                 index_path=str(index_path),
-                recursive=True,
             ),
             parsers={"**/*.md": "MarkdownParser"},
             search=SearchConfig(),

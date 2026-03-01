@@ -11,6 +11,7 @@ from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.search.score_pipeline import ScorePipeline, ScorePipelineConfig
 from src.search.tag_expansion import expand_query_with_tags
+from src.search.types import SearchResultDict
 
 logger = logging.getLogger(__name__)
 
@@ -121,12 +122,12 @@ class BaseSearchOrchestrator(ABC, Generic[ResultT]):
     ) -> ScorePipelineConfig:
         ...
 
-    async def _search_vector_base(self, query: str, top_k: int) -> list[dict]:
+    async def _search_vector_base(self, query: str, top_k: int) -> list[SearchResultDict]:
         return await asyncio.to_thread(
             self._vector.search, query, top_k, None, self._documents_path
         )
 
-    async def _search_keyword_base(self, query: str, top_k: int) -> list[dict]:
+    async def _search_keyword_base(self, query: str, top_k: int) -> list[SearchResultDict]:
         return await asyncio.to_thread(
             self._keyword.search, query, top_k, None, self._documents_path
         )

@@ -111,7 +111,6 @@ def _create_config(tmp_path, test_docs_dir) -> Config:
         indexing=IndexingConfig(
             documents_path=str(test_docs_dir),
             index_path=str(index_path),
-            recursive=True,
         ),
         parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(
@@ -156,12 +155,13 @@ def _create_mcp_server(config: Config, docs_dir) -> tuple[MCPServer, HandlerCont
             return True
 
     mock_ctx = MockContext()
-    server = MCPServer(ctx=cast(ApplicationContext, mock_ctx))
+    cast_ctx = cast(ApplicationContext, mock_ctx)
+    server = MCPServer(ctx=cast_ctx)
 
     # Create HandlerContext for direct handler testing
     mock_coordinator = MagicMock()
     mock_coordinator.wait_ready = MagicMock(return_value=None)
-    hctx = HandlerContext(ctx=cast(ApplicationContext, mock_ctx), coordinator=mock_coordinator)
+    hctx = HandlerContext(ctx_getter=lambda: cast_ctx, coordinator=mock_coordinator)
 
     return server, hctx
 
