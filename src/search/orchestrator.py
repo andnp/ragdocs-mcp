@@ -3,7 +3,6 @@ import logging
 from pathlib import Path
 
 from src.config import Config
-from src.indices.code import CodeIndex
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
@@ -27,13 +26,11 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         graph_store: GraphStore,
         config: Config,
         index_manager: IndexManager | None = None,
-        code_index: CodeIndex | None = None,
         documents_path: Path | None = None,
     ):
         super().__init__(vector_index, keyword_index, graph_store, config, documents_path)
         self._documents_path = documents_path if documents_path is not None else Path(config.indexing.documents_path)
         self._index_manager = index_manager
-        self._code = code_index
         self._pipeline: SearchPipeline | None = None
         self._pending_reindex: set[str] = set()
         self._reindex_tasks: set[asyncio.Task] = set()
@@ -85,18 +82,10 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             self._search_keyword(query_text, top_k, excluded_files, docs_root),
         ]
 
-        code_search_enabled = (
-            self._config.search.code_search_enabled
-            and self._code is not None
-        )
-        if code_search_enabled:
-            search_tasks.append(self._search_code(query_text, top_k))
-
         results = await asyncio.gather(*search_tasks)
 
         vector_results = results[0]
         keyword_results = results[1]
-        code_results = results[2] if code_search_enabled else []
 
         all_doc_ids = set()
         chunk_id_to_doc_id = {}
@@ -113,16 +102,10 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             all_doc_ids.add(doc_id)
             chunk_id_to_doc_id[chunk_id] = doc_id
 
-        for result in code_results:
-            chunk_id = result["chunk_id"]
-            doc_id = result["doc_id"]
-            all_doc_ids.add(doc_id)
-            chunk_id_to_doc_id[chunk_id] = doc_id
-
         # Tag-based query expansion: Find related documents via tag graph traversal
         tag_expansion_count = 0
         if self._config.search.tag_expansion_enabled:
-            combined_initial_results = vector_results + keyword_results + code_results
+            combined_initial_results = vector_results + keyword_results
             tag_expanded_results = expand_query_with_tags(
                 initial_results=combined_initial_results,
                 graph=self._graph,
@@ -155,7 +138,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             vector_count=len(vector_results),
             keyword_count=len(keyword_results),
             graph_count=len(graph_chunk_ids),
-            code_count=len(code_results) if code_search_enabled else None,
             tag_expansion_count=tag_expansion_count if self._config.search.tag_expansion_enabled else None,
         )
 
@@ -164,9 +146,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
              "keyword": [r["chunk_id"] for r in keyword_results],
              "graph": graph_chunk_ids,
          }
-
-        if code_search_enabled and code_results:
-            results_dict["code"] = [r["chunk_id"] for r in code_results]
 
         base_semantic = self._config.search.semantic_weight
         base_keyword = self._config.search.keyword_weight
@@ -188,17 +167,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             "graph": graph_w,
         }
 
-        if code_search_enabled:
-            weights["code"] = self._config.search.code_search_weight
-
         # Build strategy results with scores for ScorePipeline
         strategy_results: dict[str, list[tuple[str, float]]] = {
             "semantic": [(r["chunk_id"], r.get("score", 0.0)) for r in vector_results],
             "keyword": [(r["chunk_id"], r.get("score", 0.0)) for r in keyword_results],
             "graph": [(cid, 1.0) for cid in graph_chunk_ids],
         }
-        if code_search_enabled and code_results:
-            strategy_results["code"] = [(r["chunk_id"], r.get("score", 0.0)) for r in code_results]
 
         fused = self._apply_score_pipeline(strategy_results, weights)
 
@@ -337,16 +311,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             self._keyword.search, query_text, top_k, excluded_files, docs_root
         )
         logger.info(f"Keyword search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
-        return results
-
-    async def _search_code(self, query_text: str, top_k: int):
-        if self._code is None:
-            return []
-
-        results = await asyncio.to_thread(
-            self._code.search, query_text, top_k
-        )
-        logger.info(f"Code search returned {len(results)} results")
         return results
 
     def _get_graph_neighbors(self, doc_ids: list[str]):

@@ -9,7 +9,6 @@ from src.chunking.factory import get_chunker
 from src.config import Config
 from src.coordination import IndexLock
 from src.indexing.discovery import get_parser_suffixes
-from src.indices.code import CodeIndex
 from src.indices.graph import GraphStore
 from src.indices.hash_store import ChunkHashStore
 from src.indices.keyword import KeywordIndex
@@ -38,13 +37,11 @@ class IndexManager:
         vector: VectorIndex,
         keyword: KeywordIndex,
         graph: GraphStore,
-        code: CodeIndex | None = None,
     ):
         self._config = config
         self.vector = vector
         self.keyword = keyword
         self.graph = graph
-        self.code = code
         self._failed_files: list[FailedFile] = []
         self._chunker = get_chunker(config.document_chunking)
 
@@ -98,8 +95,6 @@ class IndexManager:
             removed_chunks = self.vector.prune_document(doc_id)
             self.keyword.remove(doc_id)
             self.graph.remove_node(doc_id)
-            if self.code is not None:
-                self.code.remove_by_doc_id(doc_id)
 
             index_path = Path(self._config.indexing.index_path)
             manifest = load_manifest(index_path)
@@ -431,14 +426,6 @@ class IndexManager:
                 for link in document.links:
                     self.graph.add_edge(document.id, link, edge_type="links_to")
 
-            if self.code is not None and self._config.search.code_search_enabled:
-                from src.parsers.markdown import MarkdownParser
-
-                if isinstance(parser, MarkdownParser):
-                    code_blocks = parser.extract_code_blocks(file_path, document.id)
-                    for code_block in code_blocks:
-                        self.code.add_code_block(code_block)
-
             self._failed_files = [f for f in self._failed_files if f.path != file_path]
 
         except UnicodeDecodeError as e:
@@ -500,15 +487,6 @@ class IndexManager:
                 )
                 errors.append((index_name, e))
 
-        if self.code is not None:
-            try:
-                self.code.remove_by_doc_id(doc_id)
-            except Exception as e:
-                logger.error(
-                    f"Failed to remove {doc_id} from code index: {e}", exc_info=True
-                )
-                errors.append(("code", e))
-
         if errors:
             logger.warning(
                 f"Document {doc_id} removal completed with {len(errors)} index failures"
@@ -561,8 +539,6 @@ class IndexManager:
             self.vector.persist(index_path / "vector")
             self.keyword.persist(index_path / "keyword")
             self.graph.persist(index_path / "graph")
-            if self.code is not None:
-                self.code.persist(index_path / "code")
 
             # Persist hash store for delta indexing
             if self._config.indexing.enable_delta_indexing:
@@ -591,8 +567,6 @@ class IndexManager:
             self.vector.load(index_path / "vector")
             self.keyword.load(index_path / "keyword")
             self.graph.load(index_path / "graph")
-            if self.code is not None:
-                self.code.load(index_path / "code")
         except Exception as e:
             logger.error(f"Failed to load indices: {e}", exc_info=True)
             raise

@@ -4,15 +4,6 @@ import hashlib
 
 
 @dataclass
-class CodeBlock:
-    id: str
-    doc_id: str
-    chunk_id: str
-    content: str
-    language: str
-
-
-@dataclass
 class Chunk:
     chunk_id: str
     doc_id: str
@@ -91,7 +82,6 @@ class SearchStrategyStats:
     vector_count: int | None = None
     keyword_count: int | None = None
     graph_count: int | None = None
-    code_count: int | None = None
     tag_expansion_count: int | None = None
 
     def to_dict(self):
@@ -102,8 +92,6 @@ class SearchStrategyStats:
             result["keyword_count"] = self.keyword_count
         if self.graph_count is not None:
             result["graph_count"] = self.graph_count
-        if self.code_count is not None:
-            result["code_count"] = self.code_count
         if self.tag_expansion_count is not None:
             result["tag_expansion_count"] = self.tag_expansion_count
         return result

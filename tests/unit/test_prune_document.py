@@ -211,23 +211,6 @@ class TestPruneDocumentEdgeCases:
 
         assert result is True
 
-    def test_prune_with_code_index(self, base_config, shared_embedding_model):
-        """Verify prune_document calls code index removal when present."""
-        mock_code = MagicMock()
-
-        manager = IndexManager(
-            base_config,
-            VectorIndex(embedding_model=shared_embedding_model),
-            KeywordIndex(),
-            GraphStore(),
-            code=mock_code,
-        )
-
-        doc_id = "code_doc"
-        manager.prune_document(doc_id)
-
-        mock_code.remove_by_doc_id.assert_called_once_with(doc_id)
-
 
 class TestPruneDocumentFailure:
     """Tests for failure scenarios."""

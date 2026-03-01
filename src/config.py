@@ -89,8 +89,6 @@ class SearchConfig:
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_top_n: int = 10
     adaptive_weights_enabled: bool = True
-    code_search_enabled: bool = False
-    code_search_weight: float = 1.0
     query_expansion_enabled: bool = True
     query_expansion_max_terms: int = 2000
     query_expansion_min_frequency: int = 3
