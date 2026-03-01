@@ -10,7 +10,6 @@ from mcp.types import TextContent
 if TYPE_CHECKING:
     from src.context import ApplicationContext
     from src.lifecycle import LifecycleCoordinator
-    from src.reader.context import ReadOnlyContext
 
 logger = logging.getLogger(__name__)
 
@@ -41,17 +40,17 @@ class HandlerContext:
 
     def __init__(
         self,
-        ctx_getter: Callable[[], ApplicationContext | ReadOnlyContext | None],
+        ctx_getter: Callable[[], ApplicationContext | None],
         coordinator: LifecycleCoordinator,
     ):
         self._ctx_getter = ctx_getter
         self.coordinator = coordinator
 
     @property
-    def ctx(self) -> ApplicationContext | ReadOnlyContext | None:
+    def ctx(self) -> ApplicationContext | None:
         return self._ctx_getter()
 
-    def require_ctx(self) -> ApplicationContext | ReadOnlyContext:
+    def require_ctx(self) -> ApplicationContext:
         """Get the application context, raising an error if not initialized."""
         ctx = self._ctx_getter()
         if ctx is None:

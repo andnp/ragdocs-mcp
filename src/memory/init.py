@@ -1,10 +1,8 @@
 """
 Memory system initialization helpers.
 
-These helpers ensure consistent memory system initialization across different
-contexts (ApplicationContext, ReadOnlyContext). Memory indices are owned by
-the main process and stored at `memory_path/indices/`, separate from
-document snapshots.
+These helpers ensure consistent memory system initialization.
+Memory indices are stored at `memory_path/indices/`.
 
 See ADR-022 for architectural rationale.
 """
@@ -26,11 +24,7 @@ def create_memory_indices(
     embedding_model_name: str,
     embedding_workers: int,
 ) -> tuple[VectorIndex, KeywordIndex, GraphStore]:
-    """Create fresh memory indices.
-
-    Memory indices are separate from document indices and don't
-    participate in snapshot-based synchronization.
-    """
+    """Create fresh memory indices."""
     vector = VectorIndex(
         embedding_model_name=embedding_model_name,
         embedding_workers=embedding_workers,

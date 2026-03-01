@@ -123,9 +123,7 @@ class LLMConfig:
     def resolved_embedding_model(self) -> str:
         """Return actual embedding model name, resolving 'local' to default.
 
-        This centralizes the embedding model resolution logic that was
-        previously duplicated across ApplicationContext, ReadOnlyContext,
-        worker process, and memory init.
+        This centralizes the embedding model resolution logic.
         """
         if self.embedding_model == "local":
             return self.DEFAULT_LOCAL_MODEL
@@ -286,28 +284,11 @@ class MemoryConfig:
 
 
 @dataclass
-class WorkerConfig:
-    enabled: bool = True
-    startup_timeout: float = 30.0
-    shutdown_timeout: float = 5.0
-    health_check_interval: float = 10.0
-    max_restart_attempts: int = 3
-    restart_backoff_base: float = 1.0
-    restart_jitter_factor: float = 0.25
-    restart_max_delay: float = 60.0
-    snapshot_keep_count: int = 2
-    index_poll_interval: float = 0.1
-    progressive_snapshot_interval: float = 5.0
-    progressive_snapshot_doc_count: int = 10
-
-
-@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
-    worker: WorkerConfig = field(default_factory=WorkerConfig)
     parsers: dict[str, str] = field(
         default_factory=lambda: {
             "**/*.md": "MarkdownParser",
@@ -480,14 +461,11 @@ def load_config():
 
     _validate_projects(projects)
 
-    worker = _load_dataclass_from_dict(WorkerConfig, config_data.get("worker", {}))
-
     return Config(
         server=server,
         indexing=indexing,
         git_indexing=git_indexing,
         memory=memory,
-        worker=worker,
         parsers=parsers,
         search=search,
         llm=llm,

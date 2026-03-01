@@ -1,10 +1,8 @@
 import asyncio
 import logging
 import os
-from pathlib import Path
-from typing import TYPE_CHECKING
 
-# Prevent tokenizers parallelism warning when forking worker process.
+# Prevent tokenizers parallelism warning.
 # Must be set before any HuggingFace/sentence-transformers imports.
 # See: https://github.com/huggingface/tokenizers/issues/993
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -26,19 +24,15 @@ import src.mcp.tools.document_tools  # noqa: F401 - registers handlers
 import src.mcp.tools.memory_tools  # noqa: F401 - registers handlers
 import src.mcp.tools.metadata_tools  # noqa: F401 - registers handlers
 
-if TYPE_CHECKING:
-    from src.reader.context import ReadOnlyContext
-
 logger = logging.getLogger(__name__)
 
 
 class MCPServer:
     def __init__(self, project_override: str | None = None, ctx: ApplicationContext | None = None):
-        self.ctx: ApplicationContext | ReadOnlyContext | None = ctx
+        self.ctx: ApplicationContext | None = ctx
         self.project_override = project_override
         self.server = Server("mcp-markdown-ragdocs")
         self._coordinator = LifecycleCoordinator()
-        self._use_worker: bool = False
 
         self._setup_handlers()
 
@@ -63,25 +57,15 @@ class MCPServer:
         if self.ctx is not None:
             return
 
-        from src.reader.context import ReadOnlyContext as ROContext
-
         # ApplicationContext.create() is synchronous and may do slow work
         # (config loading, model path resolution).  Run in a thread so the
         # event loop stays responsive for MCP protocol handling.
-        app_ctx = await asyncio.to_thread(
+        self.ctx = await asyncio.to_thread(
             ApplicationContext.create,
             project_override=self.project_override,
             enable_watcher=True,
             lazy_embeddings=True,
         )
-        config = app_ctx.config
-        self._use_worker = config.worker.enabled
-
-        if self._use_worker:
-            snapshot_base = Path(config.indexing.index_path) / "snapshots"
-            self.ctx = await ROContext.create(config, snapshot_base)
-        else:
-            self.ctx = app_ctx
 
     async def _init_and_start(self) -> None:
         """Background task: create context then start index loading.
@@ -90,19 +74,12 @@ class MCPServer:
         immediately.  Tool handlers call wait_for_ready() to block until
         indices are available.
         """
-        from src.reader.context import ReadOnlyContext as ROContext
-
         try:
             await self._ensure_context()
 
-            if self._use_worker:
-                if not isinstance(self.ctx, ROContext):
-                    raise RuntimeError("Worker mode requires ReadOnlyContext")
-                await self._coordinator.start_with_worker(self.ctx)
-            else:
-                if not isinstance(self.ctx, ApplicationContext):
-                    raise RuntimeError("Non-worker mode requires ApplicationContext")
-                await self._coordinator.start(self.ctx, background_index=True)
+            if not isinstance(self.ctx, ApplicationContext):
+                raise RuntimeError("Expected ApplicationContext")
+            await self._coordinator.start(self.ctx, background_index=True)
         except Exception as e:
             logger.error("Background initialization failed: %s", e, exc_info=True)
             self._coordinator.record_init_error(e)

@@ -86,36 +86,6 @@ print("PASS: mcp.server module sets TOKENIZERS_PARALLELISM=false")
             f"MCP server module test failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
 
-    def test_worker_process_module_sets_tokenizers_parallelism(self):
-        """
-        Verify src.worker.process sets TOKENIZERS_PARALLELISM=false before imports.
-        
-        Worker process is spawned via multiprocessing and must also set the
-        env var in case inheritance doesn't work (e.g., spawn start method).
-        """
-        pytest.skip("Worker process module has been removed in single-process architecture")
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                """
-import os
-os.environ.pop("TOKENIZERS_PARALLELISM", None)
-import src.worker.process
-assert os.environ.get("TOKENIZERS_PARALLELISM") == "false", \\
-    f"Expected 'false', got {os.environ.get('TOKENIZERS_PARALLELISM')!r}"
-print("PASS: worker.process module sets TOKENIZERS_PARALLELISM=false")
-""",
-            ],
-            capture_output=True,
-            text=True,
-            cwd=Path(__file__).parents[2],
-        )
-        
-        assert result.returncode == 0, (
-            f"Worker process module test failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
-        )
-
     def test_setdefault_preserves_user_override(self):
         """
         Verify setdefault() does not override user-specified value.

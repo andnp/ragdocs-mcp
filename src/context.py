@@ -144,8 +144,7 @@ class ApplicationContext:
 
             memory_path = resolve_memory_path(config, detected_project, config.projects)
 
-            # Memory system is owned by main process, uses memory_path/indices/ for storage
-            # NOT document snapshots (see ADR-022)
+            # Memory system uses memory_path/indices/ for storage
             memory_manager, memory_search = create_memory_system(
                 config=config,
                 memory_path=memory_path,
