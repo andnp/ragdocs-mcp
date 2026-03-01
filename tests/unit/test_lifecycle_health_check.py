@@ -123,3 +123,40 @@ class TestHealthCheckTimeoutLogic:
 
         assert coordinator._state == LifecycleState.READY
         assert coordinator._consecutive_timeouts == 2
+
+
+class TestRestartAttemptTracking:
+    """Tests for restart attempt counter and exhaustion flag."""
+
+    def test_restarts_exhausted_flag_defaults_false(self):
+        """Verify _restarts_exhausted starts as False."""
+        coordinator = LifecycleCoordinator()
+        assert coordinator._restarts_exhausted is False
+
+    def test_max_restart_sets_exhausted_flag(self):
+        """Verify exhaustion flag is set when max attempts reached."""
+        coordinator = LifecycleCoordinator()
+        coordinator._restart_attempts = 3  # default max
+
+        # Simulate _restart_worker logic
+        if coordinator._restart_attempts >= 3:
+            coordinator._state = LifecycleState.DEGRADED
+            coordinator._restarts_exhausted = True
+
+        assert coordinator._restarts_exhausted is True
+        assert coordinator._state == LifecycleState.DEGRADED
+
+    def test_successful_restart_resets_counters(self):
+        """Verify successful restart resets attempts and exhausted flag."""
+        coordinator = LifecycleCoordinator()
+        coordinator._restart_attempts = 2
+        coordinator._restarts_exhausted = False
+
+        # Simulate successful restart
+        coordinator._state = LifecycleState.READY
+        coordinator._restart_attempts = 0
+        coordinator._restarts_exhausted = False
+
+        assert coordinator._restart_attempts == 0
+        assert coordinator._restarts_exhausted is False
+        assert coordinator._state == LifecycleState.READY

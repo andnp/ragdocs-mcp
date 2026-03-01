@@ -189,6 +189,19 @@ class TestWaitReadyStateValidation:
         assert coordinator._state == LifecycleState.READY
 
     @pytest.mark.asyncio
+    async def test_wait_ready_from_degraded_with_restarts_exhausted_fails_fast(self):
+        """
+        Verify wait_ready() raises immediately when DEGRADED and worker
+        restart attempts are permanently exhausted (no 60s wait).
+        """
+        coordinator = LifecycleCoordinator()
+        coordinator._state = LifecycleState.DEGRADED
+        coordinator._restarts_exhausted = True
+
+        with pytest.raises(RuntimeError, match="max restart attempts exhausted"):
+            await asyncio.wait_for(coordinator.wait_ready(), timeout=0.5)
+
+    @pytest.mark.asyncio
     async def test_wait_ready_from_uninitialized_waits_then_times_out(self):
         """
         Verify wait_ready() waits (not raises) from UNINITIALIZED state,

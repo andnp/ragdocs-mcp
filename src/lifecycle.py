@@ -58,6 +58,7 @@ class LifecycleCoordinator:
     _response_queue: Queue[Any] | None = field(default=None, repr=False)
     _shutdown_event: multiprocessing.synchronize.Event | None = field(default=None, repr=False)
     _restart_attempts: int = field(default=0, repr=False)
+    _restarts_exhausted: bool = field(default=False, repr=False)
     _health_check_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _consecutive_timeouts: int = field(default=0, repr=False)
     _max_consecutive_timeouts: int = field(default=3, repr=False)
@@ -283,6 +284,7 @@ class LifecycleCoordinator:
         if self._restart_attempts >= max_attempts:
             logger.error("Max restart attempts reached, giving up")
             self._state = LifecycleState.DEGRADED
+            self._restarts_exhausted = True
             return
 
         self._restart_attempts += 1
@@ -311,6 +313,8 @@ class LifecycleCoordinator:
         worker_config = self._readonly_ctx.config.worker
         if await self._wait_for_init(worker_config.startup_timeout):
             self._state = LifecycleState.READY
+            self._restart_attempts = 0
+            self._restarts_exhausted = False
             logger.info("Worker restart successful")
         else:
             logger.warning("Worker restart: init timeout")
@@ -346,6 +350,13 @@ class LifecycleCoordinator:
         # Fail fast if initialization already failed
         if self._init_error is not None:
             raise RuntimeError(f"Server initialization failed: {self._init_error}") from self._init_error
+
+        # Fail fast if worker restarts are permanently exhausted
+        if self._restarts_exhausted and self._state == LifecycleState.DEGRADED:
+            raise RuntimeError(
+                "Worker process failed and max restart attempts exhausted. "
+                "Restart the MCP server to recover."
+            )
 
         allowed_states = (
             LifecycleState.UNINITIALIZED,
