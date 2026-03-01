@@ -13,6 +13,19 @@ from src.storage.db import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
+_CORRUPTION_PATTERNS = (
+    "database disk image is malformed",
+    "disk i/o error",
+    "file is not a database",
+    "database is locked",
+    "unable to open database file",
+)
+
+
+def _is_corruption_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(pat in msg for pat in _CORRUPTION_PATTERNS)
+
 
 def _sanitize_fts_query(query: str) -> str:
     """Sanitize a query string for safe use in FTS5 MATCH."""
@@ -37,6 +50,32 @@ class KeywordIndex:
 
     def _conn(self) -> sqlite3.Connection:
         return self._db.get_connection()
+
+    def _reinitialize_after_corruption(self) -> None:
+        """Delete the corrupt DB file and reset to a fresh in-memory index.
+
+        Reconciliation will repopulate the index from source documents.
+        """
+        corrupt_path = self._db._db_path
+        logger.warning(
+            "Keyword index corruption detected at %s; reinitializing clean "
+            "(reconciliation will repopulate from source documents).",
+            corrupt_path,
+        )
+        try:
+            self._db.close()
+        except Exception:
+            pass
+        for suffix in ("", "-wal", "-shm"):
+            p = corrupt_path.with_suffix(".db" + suffix) if suffix else corrupt_path
+            try:
+                if p.exists():
+                    p.unlink()
+            except OSError as e:
+                logger.warning("Could not delete %s: %s", p, e)
+        import tempfile
+        _tmp = tempfile.mkdtemp(prefix="keyword_idx_")
+        self._db = DatabaseManager(Path(_tmp) / "index.db")
 
     # ------------------------------------------------------------------
     # Write methods
@@ -72,23 +111,40 @@ class KeywordIndex:
                 )
                 conn.commit()
             except Exception as e:
+                if _is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return
                 logger.warning("Failed to add document %s: %s", document.id, e, exc_info=True)
                 raise
 
     def add_chunk(self, chunk: Chunk) -> None:
         """Add a single chunk to FTS5 index."""
         with self._lock:
-            self._insert_chunk(chunk)
-            self._conn().commit()
+            try:
+                self._insert_chunk(chunk)
+                self._conn().commit()
+            except Exception as e:
+                if _is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return
+                logger.warning("Failed to add chunk %s: %s", chunk.chunk_id, e, exc_info=True)
+                raise
 
     def add_chunks(self, chunks: list[Chunk]) -> None:
         """Add multiple chunks in a single transaction."""
         if not chunks:
             return
         with self._lock:
-            for chunk in chunks:
-                self._insert_chunk(chunk)
-            self._conn().commit()
+            try:
+                for chunk in chunks:
+                    self._insert_chunk(chunk)
+                self._conn().commit()
+            except Exception as e:
+                if _is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return
+                logger.warning("Failed to add chunks: %s", e, exc_info=True)
+                raise
 
     def _insert_chunk(self, chunk: Chunk) -> None:
         metadata = chunk.metadata
@@ -132,6 +188,9 @@ class KeywordIndex:
                 )
                 conn.commit()
             except Exception as e:
+                if _is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return
                 logger.warning("Failed to remove document %s: %s", document_id, e, exc_info=True)
 
     def remove_chunk(self, chunk_id: str) -> None:
@@ -144,6 +203,9 @@ class KeywordIndex:
                 )
                 conn.commit()
             except Exception as e:
+                if _is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return
                 logger.warning("Failed to remove chunk %s: %s", chunk_id, e, exc_info=True)
 
     def remove_chunks(self, chunk_ids: list[str]) -> None:
@@ -160,6 +222,9 @@ class KeywordIndex:
                 )
                 conn.commit()
             except Exception as e:
+                if _is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return
                 logger.warning("Failed to remove chunks: %s", e, exc_info=True)
 
     def move_chunk(self, old_chunk_id: str, new_chunk: Chunk) -> bool:
@@ -182,6 +247,9 @@ class KeywordIndex:
                 logger.debug("Moved chunk in keyword index: %s -> %s", old_chunk_id, new_chunk.chunk_id)
                 return True
             except Exception as e:
+                if _is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return False
                 logger.warning("Failed to move chunk %s: %s", old_chunk_id, e, exc_info=True)
                 return False
 
@@ -201,9 +269,9 @@ class KeywordIndex:
 
         with self._lock:
             sanitized = _sanitize_fts_query(query)
-            conn = self._conn()
 
             try:
+                conn = self._conn()
                 rows = conn.execute(
                     """
                     SELECT chunk_id, doc_id, bm25(search_index) AS score
@@ -214,12 +282,15 @@ class KeywordIndex:
                     """,
                     (sanitized, top_k * 2 if excluded_files else top_k),
                 ).fetchall()
-            except sqlite3.OperationalError as e:
+            except sqlite3.DatabaseError as e:
+                if _is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return []
                 if "fts5" in str(e).lower() or "syntax" in str(e).lower():
                     logger.warning("FTS5 query error, falling back to LIKE: %s", e)
                     try:
                         like_query = f"%{query.strip()}%"
-                        rows = conn.execute(
+                        rows = self._conn().execute(
                             """
                             SELECT chunk_id, doc_id, -1.0 AS score
                             FROM search_index

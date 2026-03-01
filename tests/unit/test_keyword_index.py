@@ -1163,3 +1163,42 @@ def test_keyword_index_recovers_from_corrupt_sqlite(tmp_path):
     index2.add(new_doc)
     results = index2.search("reinforcement learning", top_k=5)
     assert "new-doc" in _extract_chunk_ids(results)
+
+
+def test_keyword_index_search_recovers_from_malformed_mid_operation(tmp_path):
+    """
+    KeywordIndex.search() handles 'database disk image is malformed' mid-operation.
+
+    Simulates the DB becoming malformed after it was already successfully loaded,
+    which is the real-world pattern (e.g. sync tool corrupts the file mid-session).
+    The search should return [] and the index should be usable afterward.
+    """
+    import sqlite3
+    from unittest.mock import patch
+
+    index = KeywordIndex()
+    doc = Document(
+        id="some-doc",
+        content="Reinforcement learning with neural networks.",
+        metadata={},
+        links=[],
+        tags=[],
+        file_path="/tmp/test.md",
+        modified_time=datetime.now(),
+    )
+    index.add(doc)
+
+    # Patch _conn to simulate a mid-operation malformed error
+    real_conn = index._conn()
+    def _raise_malformed():
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    with patch.object(index, "_conn", side_effect=_raise_malformed):
+        results = index.search("reinforcement learning", top_k=5)
+
+    assert results == []
+
+    # After the simulated failure the index must be usable again
+    index.add(doc)
+    results = index.search("reinforcement learning", top_k=5)
+    assert "some-doc" in _extract_chunk_ids(results)
