@@ -111,7 +111,7 @@ class TestWaitReadyFromStartingState:
         coordinator = LifecycleCoordinator()
         coordinator._state = LifecycleState.STARTING
 
-        with pytest.raises(RuntimeError, match="stuck in STARTING"):
+        with pytest.raises(RuntimeError, match="stuck in starting"):
             await coordinator.wait_ready(timeout=0.2)
 
     @pytest.mark.asyncio
@@ -189,15 +189,16 @@ class TestWaitReadyStateValidation:
         assert coordinator._state == LifecycleState.READY
 
     @pytest.mark.asyncio
-    async def test_wait_ready_from_uninitialized_raises(self):
+    async def test_wait_ready_from_uninitialized_waits_then_times_out(self):
         """
-        Verify wait_ready() raises from UNINITIALIZED state.
+        Verify wait_ready() waits (not raises) from UNINITIALIZED state,
+        then times out if no transition occurs.
         """
         coordinator = LifecycleCoordinator()
         assert coordinator._state == LifecycleState.UNINITIALIZED
 
-        with pytest.raises(RuntimeError, match="Cannot wait for ready from state"):
-            await coordinator.wait_ready()
+        with pytest.raises(RuntimeError, match="stuck in uninitialized"):
+            await coordinator.wait_ready(timeout=0.2)
 
     @pytest.mark.asyncio
     async def test_wait_ready_from_shutting_down_raises(self):
@@ -256,7 +257,7 @@ class TestWaitReadyTimeoutBehavior:
 
         transition_task = asyncio.create_task(slow_transition())
 
-        with pytest.raises(RuntimeError, match="stuck in STARTING"):
+        with pytest.raises(RuntimeError, match="stuck in starting"):
             await coordinator.wait_ready(timeout=0.1)
 
         transition_task.cancel()

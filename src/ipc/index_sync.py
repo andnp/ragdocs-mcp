@@ -15,18 +15,62 @@ class IndexSyncPublisher:
         self._version_file = snapshot_base / "version.bin"
         self._load_current_version()
 
+    def _find_available_snapshots(self) -> list[tuple[int, Path]]:
+        """Return sorted list of (version, path) tuples for existing snapshots, newest first."""
+        if not self._snapshot_base.exists():
+            return []
+
+        snapshots = []
+        for item in self._snapshot_base.iterdir():
+            if item.is_dir() and item.name.startswith("v"):
+                try:
+                    version = int(item.name[1:])
+                    snapshots.append((version, item))
+                except ValueError:
+                    continue
+
+        return sorted(snapshots, key=lambda x: x[0], reverse=True)
+
     def _load_current_version(self) -> None:
         # Clean up any orphaned temp files from crashed publishes
         self._cleanup_orphaned_temp_files()
 
+        pointed_version: int | None = None
         if self._version_file.exists():
             try:
                 data = self._version_file.read_bytes()
                 if len(data) >= 4:
-                    self._version = struct.unpack("<I", data[:4])[0]
+                    pointed_version = struct.unpack("<I", data[:4])[0]
             except (OSError, struct.error):
-                logger.warning("Failed to load version file, starting from 0")
-                self._version = 0
+                logger.warning("Failed to read version file")
+
+        # Verify the snapshot directory exists
+        if pointed_version is not None:
+            snapshot_dir = self._snapshot_base / f"v{pointed_version}"
+            if snapshot_dir.exists():
+                self._version = pointed_version
+                return
+
+        # Fallback: find highest available snapshot on disk
+        available = self._find_available_snapshots()
+        if available:
+            highest_version, _ = available[0]
+            if pointed_version is not None:
+                logger.warning(
+                    "version.bin points to v%d but directory missing. "
+                    "Available snapshots: %s. Using v%d as base version.",
+                    pointed_version,
+                    [v for v, _ in available],
+                    highest_version,
+                )
+            self._version = highest_version
+        else:
+            if pointed_version is not None:
+                logger.warning(
+                    "version.bin points to v%d but no snapshots available. Starting from 0.",
+                    pointed_version,
+                )
+            self._version = 0
 
     def _cleanup_orphaned_temp_files(self) -> None:
         """Remove any .tmp files/directories left from crashed publishes."""

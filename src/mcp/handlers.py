@@ -41,20 +41,25 @@ class HandlerContext:
 
     def __init__(
         self,
-        ctx: ApplicationContext | ReadOnlyContext | None,
+        ctx_getter: Callable[[], ApplicationContext | ReadOnlyContext | None],
         coordinator: LifecycleCoordinator,
     ):
-        self.ctx = ctx
+        self._ctx_getter = ctx_getter
         self.coordinator = coordinator
+
+    @property
+    def ctx(self) -> ApplicationContext | ReadOnlyContext | None:
+        return self._ctx_getter()
 
     def require_ctx(self) -> ApplicationContext | ReadOnlyContext:
         """Get the application context, raising an error if not initialized."""
-        if self.ctx is None:
+        ctx = self._ctx_getter()
+        if ctx is None:
             raise RuntimeError("Server not initialized")
-        return self.ctx
+        return ctx
 
     async def wait_for_ready(self, timeout: float = 60.0) -> None:
         """Wait for indices to be ready if still initializing."""
-        if self.ctx and not self.ctx.is_ready():
+        if self.ctx is None or not self.ctx.is_ready():
             logger.info("Query received while initializing, waiting for indices...")
             await self.coordinator.wait_ready(timeout=timeout)

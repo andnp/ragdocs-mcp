@@ -135,6 +135,7 @@ def get_metadata_tools() -> list[Tool]:
 async def handle_get_memory_stats(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     stats = await memory_tools_impl.get_memory_stats(ctx)
@@ -170,6 +171,7 @@ async def handle_get_memory_stats(
 async def handle_merge_memories(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     source_files = arguments.get("source_files", [])
@@ -186,6 +188,7 @@ async def handle_merge_memories(
 async def handle_search_by_tag_cluster(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     tag = arguments.get("tag", "")
@@ -219,6 +222,7 @@ async def handle_search_by_tag_cluster(
 async def handle_get_tag_graph(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     result = await memory_tools_impl.get_tag_graph(ctx)
@@ -245,6 +249,7 @@ async def handle_get_tag_graph(
 async def handle_suggest_related_tags(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     tag = arguments.get("tag", "")
@@ -266,6 +271,7 @@ async def handle_suggest_related_tags(
 async def handle_get_memory_relationships(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
+    await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     filename = arguments.get("filename", "")

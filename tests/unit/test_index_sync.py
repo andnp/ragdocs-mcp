@@ -683,3 +683,87 @@ class TestSnapshotFallbackResilience:
         # Should return False since fallback (v50) < current (v100)
         assert result is False
         assert receiver._current_version == 100
+
+
+class TestPublisherMissingSnapshotFallback:
+    """Tests for publisher handling missing snapshot directory."""
+
+    def test_publisher_falls_back_when_version_bin_points_to_missing_snapshot(
+        self, snapshot_base: Path
+    ):
+        """
+        Verify publisher uses highest available version when version.bin
+        points to non-existent snapshot directory.
+
+        This is the key bug fix: when version.bin says v375 but only v405/v406
+        exist, the publisher should start from v406, not v375.
+        """
+        # Simulate: version.bin points to v375 which was cleaned up
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 375))
+
+        # But v405 and v406 exist on disk (v375 was cleaned up)
+        (snapshot_base / "v405").mkdir()
+        (snapshot_base / "v405" / "complete.marker").write_text("405")
+        (snapshot_base / "v406").mkdir()
+        (snapshot_base / "v406" / "complete.marker").write_text("406")
+
+        publisher = IndexSyncPublisher(snapshot_base)
+
+        # Should use v406 as base version, not v375
+        assert publisher.version == 406
+
+        # Next publish should be v407, not v376
+        def noop_persist(path: Path) -> None:
+            pass
+
+        new_version = publisher.publish(noop_persist)
+        assert new_version == 407
+
+    def test_publisher_starts_from_zero_when_no_snapshots_exist(
+        self, snapshot_base: Path
+    ):
+        """
+        Verify publisher starts from 0 when version.bin points to missing
+        snapshot and no other snapshots exist.
+        """
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 100))
+
+        # No snapshot directories exist
+
+        publisher = IndexSyncPublisher(snapshot_base)
+
+        assert publisher.version == 0
+
+    def test_publisher_uses_version_bin_when_snapshot_exists(
+        self, snapshot_base: Path
+    ):
+        """
+        Verify publisher uses version.bin when the pointed snapshot exists.
+        """
+        version_file = snapshot_base / "version.bin"
+        version_file.write_bytes(struct.pack("<I", 42))
+
+        # v42 exists on disk
+        (snapshot_base / "v42").mkdir()
+        (snapshot_base / "v42" / "complete.marker").write_text("42")
+
+        publisher = IndexSyncPublisher(snapshot_base)
+
+        assert publisher.version == 42
+
+    def test_publisher_find_available_snapshots_sorted_descending(
+        self, snapshot_base: Path
+    ):
+        """Verify _find_available_snapshots returns versions sorted descending."""
+        (snapshot_base / "v10").mkdir()
+        (snapshot_base / "v5").mkdir()
+        (snapshot_base / "v200").mkdir()
+        (snapshot_base / "not-a-version").mkdir()
+
+        publisher = IndexSyncPublisher(snapshot_base)
+        available = publisher._find_available_snapshots()
+
+        versions = [v for v, _ in available]
+        assert versions == [200, 10, 5]
