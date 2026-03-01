@@ -990,21 +990,31 @@ class VectorIndex:
 
         import faiss
 
-        faiss_path = path / "faiss_index.bin"
-        if faiss_path.exists():
-            faiss_index = faiss.read_index(str(faiss_path))  # type: ignore[attr-defined]
-        else:
-            dimension = 384
-            faiss_index = faiss.IndexFlatL2(dimension)  # type: ignore[attr-defined]
+        try:
+            faiss_path = path / "faiss_index.bin"
+            if faiss_path.exists():
+                faiss_index = faiss.read_index(str(faiss_path))  # type: ignore[attr-defined]
+            else:
+                dimension = 384
+                faiss_index = faiss.IndexFlatL2(dimension)  # type: ignore[attr-defined]
 
-        self._vector_store = FaissVectorStore(faiss_index=faiss_index)
+            self._vector_store = FaissVectorStore(faiss_index=faiss_index)
 
-        storage_context = StorageContext.from_defaults(
-            vector_store=self._vector_store,
-            persist_dir=str(path),
-        )
+            storage_context = StorageContext.from_defaults(
+                vector_store=self._vector_store,
+                persist_dir=str(path),
+            )
 
-        self._index = cast(VectorStoreIndex, load_index_from_storage(storage_context))
+            self._index = cast(VectorStoreIndex, load_index_from_storage(storage_context))
+        except Exception as e:
+            logger.warning(
+                "Vector index at %s is corrupted (%s: %s); clearing and reinitializing.",
+                path, type(e).__name__, e,
+                exc_info=True,
+            )
+            self._clear_index_dir(path)
+            self._initialize_index()
+            return
 
         def load_json_file(filepath: Path) -> dict | list | None:
             if not filepath.exists():
@@ -1012,7 +1022,7 @@ class VectorIndex:
             try:
                 with open(filepath, "r") as f:
                     return json.load(f)
-            except json.JSONDecodeError as e:
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 logger.warning(f"Failed to load {filepath.name} (corrupted JSON): {e}")
                 return None
 
@@ -1022,7 +1032,7 @@ class VectorIndex:
             try:
                 with open(filepath, "r") as f:
                     return json.load(f, object_pairs_hook=OrderedDict)
-            except json.JSONDecodeError as e:
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 logger.warning(f"Failed to load {filepath.name} (corrupted JSON): {e}")
                 return None
 
@@ -1079,6 +1089,13 @@ class VectorIndex:
         self._pending_terms.clear()
         self._warned_stale_chunk_ids.clear()
         self._rebuild_vocab_index()
+
+    def _clear_index_dir(self, path: Path) -> None:
+        """Remove all files from an index directory so it can be rebuilt cleanly."""
+        import shutil
+        if path.exists():
+            shutil.rmtree(path)
+        path.mkdir(parents=True, exist_ok=True)
 
     def _initialize_index(self) -> None:
         from llama_index.core import StorageContext, VectorStoreIndex

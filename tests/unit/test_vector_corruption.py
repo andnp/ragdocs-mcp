@@ -272,3 +272,48 @@ def test_vector_index_vocabulary_building_with_single_chunk(shared_embedding_mod
     # Should build vocabulary even with minimal data
     assert isinstance(index._concept_vocabulary, dict)
     assert isinstance(index._term_counts, dict)
+
+
+def test_vector_index_load_recovers_when_vector_store_json_is_binary(tmp_path, shared_embedding_model, sample_chunk):
+    """
+    VectorIndex self-heals when a persisted index file contains binary data.
+
+    Replicates the real-world corruption where binary data ends up in a JSON
+    file (e.g. via a file-sync conflict overwriting docstore.json with FAISS
+    binary content). The index should clear and reinitialize rather than crash.
+    """
+    index = VectorIndex(embedding_model=shared_embedding_model)
+    index.add_chunk(sample_chunk)
+    persist_path = tmp_path / "index"
+    index.persist(persist_path)
+
+    # Overwrite docstore.json with non-UTF-8 binary bytes to simulate
+    # the case where a binary file ends up in place of a JSON index file
+    (persist_path / "docstore.json").write_bytes(b"\x80\xff\xfe binary garbage \x00\x01")
+
+    index2 = VectorIndex(embedding_model=shared_embedding_model)
+    index2.load(persist_path)
+
+    # Should reinitialize clean — not crash
+    assert index2.is_ready()
+    # Corrupt directory should have been cleared out
+    assert not (persist_path / "docstore.json").exists() or \
+        (persist_path / "docstore.json").read_bytes()[:1] in (b"{", b"[")
+
+
+def test_vector_index_load_recovers_when_faiss_bin_is_corrupt(tmp_path, shared_embedding_model, sample_chunk):
+    """
+    VectorIndex self-heals when faiss_index.bin is unreadable.
+    """
+    index = VectorIndex(embedding_model=shared_embedding_model)
+    index.add_chunk(sample_chunk)
+    persist_path = tmp_path / "index"
+    index.persist(persist_path)
+
+    # Truncate the FAISS binary to produce a read error
+    (persist_path / "faiss_index.bin").write_bytes(b"not a faiss file")
+
+    index2 = VectorIndex(embedding_model=shared_embedding_model)
+    index2.load(persist_path)
+
+    assert index2.is_ready()

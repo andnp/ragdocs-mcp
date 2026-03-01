@@ -297,9 +297,28 @@ class KeywordIndex:
         return False
 
     def _load_from_db_file(self, db_file: Path) -> None:
-        """Reinitialize db_manager to use the given SQLite file."""
+        """Reinitialize db_manager to use the given SQLite file, or reinitialize fresh on corruption."""
+        candidate: DatabaseManager | None = None
+        try:
+            candidate = DatabaseManager(db_file)
+            result = candidate.get_connection().execute("PRAGMA quick_check").fetchone()
+            if result is None or result[0] != "ok":
+                raise sqlite3.DatabaseError(f"quick_check returned: {result}")
+        except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
+            logger.warning(
+                "Keyword index %s is corrupted (%s); reinitializing clean.",
+                db_file, e,
+                exc_info=True,
+            )
+            if candidate is not None:
+                try:
+                    candidate.close()
+                except Exception:
+                    pass
+            db_file.unlink(missing_ok=True)
+            return  # self._db remains the existing clean temp DB
         self._db.close()
-        self._db = DatabaseManager(db_file)
+        self._db = candidate
 
     def load(self, path: Path) -> None:
         """Load index from path directory if it contains an index.db."""
