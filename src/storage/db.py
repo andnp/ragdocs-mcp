@@ -24,6 +24,7 @@ class DatabaseManager:
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA foreign_keys=ON;")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -68,6 +69,50 @@ class DatabaseManager:
                 headers,
                 tags,
                 source_file UNINDEXED
+            );
+
+            CREATE TABLE IF NOT EXISTS graph_nodes (
+                node_id TEXT PRIMARY KEY,
+                metadata TEXT DEFAULT '{}'
+            );
+
+            CREATE TABLE IF NOT EXISTS graph_edges (
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                edge_type TEXT NOT NULL DEFAULT 'related_to',
+                edge_context TEXT DEFAULT '',
+                PRIMARY KEY (source, target, edge_type),
+                FOREIGN KEY (source) REFERENCES graph_nodes(node_id) ON DELETE CASCADE,
+                FOREIGN KEY (target) REFERENCES graph_nodes(node_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_type ON graph_edges(edge_type);
+
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                task_name TEXT NOT NULL,
+                data TEXT DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at REAL NOT NULL,
+                updated_at REAL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+
+            CREATE TABLE IF NOT EXISTS system1_journal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                timestamp REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_system1_journal_status ON system1_journal(status);
+
+            CREATE TABLE IF NOT EXISTS system_state (
+                key TEXT PRIMARY KEY,
+                value TEXT
             );
         """)
         conn.commit()
