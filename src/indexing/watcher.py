@@ -33,6 +33,7 @@ class FileWatcher:
         exclude_patterns: list[str] | None = None,
         exclude_hidden_dirs: bool = True,
         parser_suffixes: set[str] | None = None,
+        use_tasks: bool = False,
     ):
         self._documents_path = Path(documents_path)
         self._index_manager = index_manager
@@ -50,6 +51,7 @@ class FileWatcher:
         self._stopped_cleanly: bool = True
         self._event_handler: _DocumentEventHandler | None = None
         self._watched_dirs: set[str] = set()
+        self._use_tasks = use_tasks
 
     @property
     def stopped_cleanly(self) -> bool:
@@ -251,6 +253,13 @@ class FileWatcher:
 
             try:
                 if event_type in ("created", "modified"):
+                    if self._use_tasks:
+                        from src.indexing.tasks import enqueue_index
+
+                        if enqueue_index(file_path):
+                            logger.info(f"Enqueued indexing task: {file_path}")
+                            continue
+                    # Fallback to direct execution
                     await asyncio.to_thread(
                         self._index_manager.index_document, file_path
                     )
@@ -262,6 +271,13 @@ class FileWatcher:
                         doc_id = str(rel_path.with_suffix(""))
                     except ValueError:
                         doc_id = Path(file_path).stem
+                    if self._use_tasks:
+                        from src.indexing.tasks import enqueue_remove
+
+                        if enqueue_remove(doc_id):
+                            logger.info(f"Enqueued removal task: {doc_id}")
+                            continue
+                    # Fallback to direct execution
                     await asyncio.to_thread(
                         self._index_manager.remove_document, doc_id
                     )
