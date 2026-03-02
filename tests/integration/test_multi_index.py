@@ -145,12 +145,12 @@ def test_persist_and_load_all_indices(manager, sample_document, tmp_path, config
     index_path = Path(config.indexing.index_path)
     assert (index_path / "vector").exists()
     assert (index_path / "keyword").exists()
-    assert (index_path / "graph").exists()
+    # graph data lives in SQLite (no separate directory)
 
-    # Create new manager with fresh indices
+    # Create new manager with fresh indices sharing the same DB
     vector_new = VectorIndex()
-    keyword_new = KeywordIndex()
-    graph_new = GraphStore()
+    keyword_new = KeywordIndex(manager.keyword._db)
+    graph_new = GraphStore(manager.graph._db)
     manager_new = IndexManager(config, vector_new, keyword_new, graph_new)
 
     # Load persisted indices

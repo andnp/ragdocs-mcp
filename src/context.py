@@ -99,7 +99,7 @@ class ApplicationContext:
 
         db_manager = DatabaseManager(index_path / "index.db")
         keyword = KeywordIndex(db_manager)
-        graph = GraphStore()
+        graph = GraphStore(db_manager)
 
         manager = IndexManager(config, vector, keyword, graph)
         orchestrator = SearchOrchestrator(

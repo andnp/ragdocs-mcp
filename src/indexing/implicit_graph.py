@@ -24,10 +24,8 @@ class ImplicitGraphBuilder:
         # Group docs by directory
         dir_groups: dict[str, list[str]] = {}
         
-        # We need to access the graph's nodes directly to get paths
-        # This assumes the graph nodes are doc_ids and might have metadata
-        with self.graph._lock:
-            nodes = list(self.graph._graph.nodes(data=True))
+        # Use public API to get all nodes with their metadata
+        nodes = self.graph.get_all_nodes_with_metadata()
 
         for doc_id, metadata in nodes:
             # Skip if it's a memory or tag node
@@ -87,8 +85,7 @@ class ImplicitGraphBuilder:
         """
         tag_groups: dict[str, list[str]] = {}
 
-        with self.graph._lock:
-            nodes = list(self.graph._graph.nodes(data=True))
+        nodes = self.graph.get_all_nodes_with_metadata()
 
         for doc_id, metadata in nodes:
             tags = metadata.get("tags", [])

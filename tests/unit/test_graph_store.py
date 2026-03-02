@@ -115,22 +115,17 @@ def test_graph_store_persist_and_load(tmp_path, graph_store):
     graph_store.add_node("doc2", {"title": "Document 2"})
     graph_store.add_edge("doc1", "doc2", "link")
 
-    persist_path = tmp_path / "graph"
-    graph_store.persist(persist_path)
+    # Data lives in SQLite, so a second GraphStore sharing the same DB
+    # should see the same data immediately.
+    from src.storage.db import DatabaseManager
 
-    assert persist_path.exists()
-    assert (persist_path / "graph.json").exists()
+    new_store = GraphStore(graph_store._db)
 
-    new_store = GraphStore()
-    new_store.load(persist_path)
-
-    # Verify loaded data using public API
     neighbors_doc1 = new_store.get_neighbors("doc1", depth=1)
     assert "doc2" in neighbors_doc1
 
-    # Verify both nodes exist
     neighbors_doc2 = new_store.get_neighbors("doc2", depth=1)
-    assert "doc1" in neighbors_doc2  # Bidirectional check
+    assert "doc1" in neighbors_doc2
 
 
 def test_graph_store_load_nonexistent_path(tmp_path):

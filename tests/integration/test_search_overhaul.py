@@ -234,7 +234,10 @@ class TestCommunityDetectionIntegration:
 
     def test_community_persistence(self, indices, tmp_path):
         """
-        Community assignments persist across save/load cycles.
+        Community assignments persist when re-detected on the same data.
+
+        Since GraphStore now uses SQLite, graph data persists automatically.
+        Communities are recomputed via detect_communities().
         """
         _, _, graph = indices
 
@@ -243,16 +246,15 @@ class TestCommunityDetectionIntegration:
         graph.add_edge("doc1", "doc2", "related")
 
         graph.detect_communities()
-        original_community = graph.get_community("doc1")
+        # Both nodes should be in the same community
+        assert graph.get_community("doc1") == graph.get_community("doc2")
 
-        persist_path = tmp_path / "graph_persist"
-        graph.persist(persist_path)
+        # Create a new GraphStore sharing the same SQLite database
+        new_graph = GraphStore(graph._db)
+        new_graph.detect_communities()
 
-        new_graph = GraphStore()
-        new_graph.load(persist_path)
-
-        loaded_community = new_graph.get_community("doc1")
-        assert loaded_community == original_community
+        # Re-detection should also place both in the same community
+        assert new_graph.get_community("doc1") == new_graph.get_community("doc2")
 
     def test_community_boost_same_cluster(self, indices):
         """

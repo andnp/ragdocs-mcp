@@ -216,11 +216,10 @@ async def test_shutdown_persists_indices(context_with_config):
 
     vector_path = ctx.index_path / "vector"
     keyword_path = ctx.index_path / "keyword"
-    graph_path = ctx.index_path / "graph"
 
     assert vector_path.exists()
     assert keyword_path.exists()
-    assert graph_path.exists()
+    # graph data lives in SQLite (no separate directory)
 
 
 @pytest.mark.asyncio

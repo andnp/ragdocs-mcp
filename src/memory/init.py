@@ -16,6 +16,7 @@ from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.memory.manager import MemoryIndexManager
 from src.memory.search import MemorySearchOrchestrator
+from src.storage.db import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +24,15 @@ logger = logging.getLogger(__name__)
 def create_memory_indices(
     embedding_model_name: str,
     embedding_workers: int,
+    db_manager: DatabaseManager | None = None,
 ) -> tuple[VectorIndex, KeywordIndex, GraphStore]:
     """Create fresh memory indices."""
     vector = VectorIndex(
         embedding_model_name=embedding_model_name,
         embedding_workers=embedding_workers,
     )
-    keyword = KeywordIndex()
-    graph = GraphStore()
+    keyword = KeywordIndex(db_manager)
+    graph = GraphStore(db_manager)
     return vector, keyword, graph
 
 
@@ -92,6 +94,7 @@ def create_memory_system(
     vector, keyword, graph = create_memory_indices(
         embedding_model_name=embedding_model_name,
         embedding_workers=config.indexing.embedding_workers,
+        db_manager=DatabaseManager(memory_path / "indices" / "memory.db"),
     )
 
     manager = MemoryIndexManager(

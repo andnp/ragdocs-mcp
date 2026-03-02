@@ -612,7 +612,7 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
     def get_tag_frequency_map(self) -> dict[str, int]:
         tag_counts: dict[str, int] = {}
 
-        for node_id in self._graph._graph.nodes():
+        for node_id in self._graph.get_all_node_ids():
             if node_id.startswith("tag:"):
                 tag_name = node_id[4:]
                 memory_ids = [p for p in self._graph.get_neighbors(node_id, 1) if p.startswith("memory:")]
@@ -673,7 +673,7 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
                             "file_path": str(chunk_data.get("file_path", "")),
                         })
 
-                edges = self._graph._graph.out_edges(current_id, data=True)
+                edges = self._graph.get_outgoing_edges(current_id)
                 supersedes_edges = [e for e in edges if e[2].get("edge_type") == "SUPERSEDES"]
 
                 if supersedes_edges:
@@ -689,7 +689,7 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
                 continue  # Already handled above
 
             relationships: list[dict] = []
-            edges = self._graph._graph.out_edges(memory_id, data=True)
+            edges = self._graph.get_outgoing_edges(memory_id)
             matching_edges = [e for e in edges if e[2].get("edge_type") == edge_type]
 
             for _, target_id, edge_data in matching_edges:

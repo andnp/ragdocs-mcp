@@ -403,10 +403,17 @@ class TestPersistence:
     ):
         """
         Verify ghost nodes and edges survive persist/load cycle.
+
+        With SQLite-backed GraphStore, graph data persists automatically
+        when sharing the same DatabaseManager.
         """
+        from src.storage.db import DatabaseManager
+
+        db = DatabaseManager(memory_path / "indices" / "test.db")
+
         vector1 = VectorIndex()
-        keyword1 = KeywordIndex()
-        graph1 = GraphStore()
+        keyword1 = KeywordIndex(db)
+        graph1 = GraphStore(db)
         manager1 = MemoryIndexManager(memory_config, memory_path, vector1, keyword1, graph1)
 
         file_path = create_memory_file(
@@ -418,8 +425,8 @@ class TestPersistence:
         manager1.persist()
 
         vector2 = VectorIndex()
-        keyword2 = KeywordIndex()
-        graph2 = GraphStore()
+        keyword2 = KeywordIndex(db)
+        graph2 = GraphStore(db)
         manager2 = MemoryIndexManager(memory_config, memory_path, vector2, keyword2, graph2)
         manager2.load()
 
