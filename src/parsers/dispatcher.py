@@ -1,36 +1,24 @@
-from pathlib import PurePosixPath
+from pathlib import Path
 
-from src.config import Config
 from src.parsers.base import DocumentParser
 from src.parsers.markdown import MarkdownParser
 from src.parsers.plaintext import PlainTextParser
 
+SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({".md", ".markdown", ".txt"})
 
-def dispatch_parser(file_path: str, config: Config) -> DocumentParser:
-    path = PurePosixPath(file_path)
+_EXTENSION_TO_PARSER: dict[str, str] = {
+    ".md": "MarkdownParser",
+    ".markdown": "MarkdownParser",
+    ".txt": "PlainTextParser",
+}
 
-    for pattern in config.parsers.keys():
-        parser_name = config.parsers[pattern]
 
-        matched = False
-        try:
-            if path.match(pattern):
-                matched = True
-        except ValueError:
-            pass
-
-        if not matched and pattern.startswith("**/"):
-            simple_pattern = pattern.replace("**/", "")
-            try:
-                if path.match(simple_pattern):
-                    matched = True
-            except ValueError:
-                pass
-
-        if matched:
-            return _instantiate_parser(parser_name, file_path)
-
-    raise ValueError(f"No parser registered for file: {file_path}")
+def dispatch_parser(file_path: str) -> DocumentParser:
+    suffix = Path(file_path).suffix.lower()
+    parser_name = _EXTENSION_TO_PARSER.get(suffix)
+    if parser_name is None:
+        raise ValueError(f"No parser registered for file: {file_path}")
+    return _instantiate_parser(parser_name, file_path)
 
 
 def _instantiate_parser(parser_name: str, file_path: str) -> DocumentParser:
@@ -40,3 +28,4 @@ def _instantiate_parser(parser_name: str, file_path: str) -> DocumentParser:
         return PlainTextParser()
     else:
         raise ValueError(f"Unknown parser: {parser_name} for {file_path}")
+
