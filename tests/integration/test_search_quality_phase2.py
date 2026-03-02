@@ -27,12 +27,10 @@ def config_query_expansion(tmp_path):
             documents_path=str(docs_path),
             index_path=str(tmp_path / "indices"),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
             recency_bias=0.0,  # Disable recency for predictable tests
-            rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
     )
@@ -48,13 +46,10 @@ def config_reranking(tmp_path):
             documents_path=str(docs_path),
             index_path=str(tmp_path / "indices"),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
             recency_bias=0.0,
-            rrf_k_constant=60,
-            rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
             rerank_top_n=5,
         ),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
@@ -350,13 +345,10 @@ class TestQueryExpansionAndReranking:
                 documents_path=str(docs_path),
                 index_path=str(tmp_path / "indices"),
             ),
-            parsers={"**/*.md": "MarkdownParser"},
             search=SearchConfig(
                 semantic_weight=1.0,
                 keyword_weight=1.0,
                 recency_bias=0.0,
-                rrf_k_constant=60,
-                rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
                 rerank_top_n=3,
             ),
             llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),

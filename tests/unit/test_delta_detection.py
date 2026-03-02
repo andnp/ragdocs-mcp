@@ -43,12 +43,11 @@ def manager(tmp_path, shared_embedding_model):
         parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(),
         llm=LLMConfig(embedding_model="local"),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=200,
             max_chunk_chars=1500,
         ),
-        memory_chunking=ChunkingConfig(),
     )
 
     vector = VectorIndex(embedding_model=shared_embedding_model)

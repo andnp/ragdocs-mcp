@@ -395,7 +395,6 @@ def app_with_corpus(tmp_path, docs_corpus, monkeypatch):
                 semantic_weight=0.6,
                 keyword_weight=0.4,
                 recency_bias=0.5,
-                rrf_k_constant=60,
             ),
             llm=LLMConfig(
                 embedding_model="all-MiniLM-L6-v2"

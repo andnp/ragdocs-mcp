@@ -49,18 +49,12 @@ def test_config(tmp_path):
             documents_path=str(docs_path),
             index_path=str(tmp_path / "indices"),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
             recency_bias=0.5,
-            rrf_k_constant=60,
-            community_boost_factor=1.1,
-            variance_threshold=0.1,
-            min_weight_factor=0.5,
         ),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
@@ -487,6 +481,5 @@ A related feature that shares concepts.
         """
         New search.advanced config options are correctly loaded.
         """
-        assert test_config.search.community_boost_factor == 1.1
-        assert test_config.search.variance_threshold == 0.1
-        assert test_config.search.min_weight_factor == 0.5
+        assert test_config.search.semantic_weight == 1.0
+        assert test_config.search.keyword_weight == 1.0

@@ -45,11 +45,9 @@ def base_config(tmp_path):
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
-            rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
     )
 
 

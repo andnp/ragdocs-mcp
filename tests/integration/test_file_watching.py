@@ -35,7 +35,6 @@ def config(tmp_path):
             documents_path=str(docs_path),
             index_path=str(tmp_path / "indices"),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(),
         llm=LLMConfig(),
     )
@@ -79,7 +78,7 @@ def watcher(config, manager):
         include_patterns=config.indexing.include,
         exclude_patterns=config.indexing.exclude,
         exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
-        parser_suffixes=get_parser_suffixes(config.parsers),
+        parser_suffixes=get_parser_suffixes(),
     )
 
 

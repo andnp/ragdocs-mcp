@@ -34,7 +34,6 @@ def config(tmp_path):
             documents_path=str(docs_path),
             index_path=str(tmp_path / "indices"),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
@@ -75,7 +74,11 @@ def current_manifest(config):
     return IndexManifest(
         spec_version="1.0.0",
         embedding_model=config.llm.embedding_model,
-        parsers=config.parsers,
+        parsers={
+            "**/*.md": "MarkdownParser",
+            "**/*.markdown": "MarkdownParser",
+            "**/*.txt": "PlainTextParser",
+        },
         chunking_config={},
     )
 
@@ -133,7 +136,11 @@ def test_startup_no_manifest_triggers_full_index(config, manager, current_manife
     assert saved_manifest is not None
     assert saved_manifest.spec_version == "1.0.0"
     assert saved_manifest.embedding_model == "all-MiniLM-L6-v2"
-    assert saved_manifest.parsers == {"**/*.md": "MarkdownParser"}
+    assert saved_manifest.parsers == {
+        "**/*.md": "MarkdownParser",
+        "**/*.markdown": "MarkdownParser",
+        "**/*.txt": "PlainTextParser",
+    }
 
 
 def test_startup_matching_manifest_skips_rebuild(config, manager, current_manifest, tmp_path, shared_embedding_model):
@@ -197,7 +204,6 @@ def test_startup_version_mismatch_triggers_rebuild(config, manager, current_mani
     old_manifest = IndexManifest(
         spec_version="0.9.0",  # Old version
         embedding_model="all-MiniLM-L6-v2",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
     save_manifest(index_path, old_manifest)

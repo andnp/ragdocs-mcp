@@ -45,11 +45,9 @@ def config(tmp_path):
             semantic_weight=1.0,
             keyword_weight=1.0,
             recency_bias=0.5,
-            rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
     )
 
 
@@ -342,12 +340,10 @@ async def test_weighted_strategies_affect_ranking(config, manager, orchestrator,
             documents_path=str(tmp_path / "docs2"),
             index_path=str(tmp_path / "indices2"),
         ),
-        parsers=config.parsers,
         search=SearchConfig(
             semantic_weight=2.0,  # Double semantic weight
             keyword_weight=1.0,
             recency_bias=0.5,
-            rrf_k_constant=60,
         ),
         llm=config.llm,
     )

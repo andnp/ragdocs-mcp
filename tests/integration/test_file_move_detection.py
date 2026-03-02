@@ -22,7 +22,7 @@ def config(tmp_path):
             index_path=str(tmp_path / "index"),
             move_detection_threshold=0.8,
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=500,
         ),

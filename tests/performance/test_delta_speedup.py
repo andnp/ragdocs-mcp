@@ -103,7 +103,7 @@ def test_delta_speedup_10_percent_change(
             documents_path=str(tmp_docs_path),
             index_path=str(tmp_path / "indices_full"),
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=1000,
         ),
@@ -137,7 +137,7 @@ def test_delta_speedup_10_percent_change(
             index_path=str(tmp_path / "indices_delta"),
             delta_full_reindex_threshold=0.5,
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=1000,
         ),
@@ -195,7 +195,7 @@ def test_delta_speedup_1_percent_change(
             documents_path=str(tmp_docs_path),
             index_path=str(tmp_path / "indices_full"),
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=1000,
         ),
@@ -228,7 +228,7 @@ def test_delta_speedup_1_percent_change(
             index_path=str(tmp_path / "indices_delta"),
             delta_full_reindex_threshold=0.5,
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=1000,
         ),
@@ -277,7 +277,7 @@ def test_delta_speedup_50_percent_change(
             documents_path=str(tmp_docs_path),
             index_path=str(tmp_path / "indices_full"),
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=1000,
         ),
@@ -310,7 +310,7 @@ def test_delta_speedup_50_percent_change(
             index_path=str(tmp_path / "indices_delta"),
             delta_full_reindex_threshold=0.5,
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=1000,
         ),
@@ -360,7 +360,7 @@ def test_delta_speedup_no_change(tmp_path, tmp_docs_path, shared_embedding_model
             index_path=str(tmp_path / "indices_delta"),
             delta_full_reindex_threshold=0.5,
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=1000,
         ),
@@ -408,7 +408,7 @@ def test_delta_speedup_multiple_small_edits(
             index_path=str(tmp_path / "indices_delta"),
             delta_full_reindex_threshold=0.5,
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=1000,
         ),

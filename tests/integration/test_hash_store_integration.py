@@ -21,7 +21,7 @@ def config(tmp_path):
             index_path=str(tmp_path / ".index"),
             delta_full_reindex_threshold=0.5,
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=500,
         ),
@@ -121,4 +121,3 @@ def test_hash_store_survives_reload(tmp_path, config, shared_embedding_model):
     # Verify hashes loaded
     assert manager2._hash_store.get_hash("doc1#chunk-0") == "hash1"
     assert manager2._hash_store.get_hash("doc1#chunk-1") == "hash2"
-

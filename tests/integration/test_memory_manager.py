@@ -49,8 +49,7 @@ def memory_config(tmp_path: Path):
             storage_strategy="project",
         ),
         search=SearchConfig(),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 

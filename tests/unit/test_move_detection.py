@@ -333,7 +333,7 @@ def config(tmp_path):
             index_path=str(tmp_path / "index"),
             move_detection_threshold=0.8,
         ),
-        document_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
     )
 
 
@@ -498,5 +498,3 @@ def test_detect_file_moves_threshold(manager):
     # 80% match should trigger move (exactly at threshold)
     assert "old_doc" in moves
     assert moves["old_doc"] == "new_doc"
-
-

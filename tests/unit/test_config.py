@@ -98,13 +98,7 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         assert config.search.semantic_weight == 1.0
         assert config.search.keyword_weight == 1.0
         assert config.search.recency_bias == 0.5
-        assert config.search.rrf_k_constant == 60
         assert config.llm.embedding_model == "local"
-        assert config.parsers == {
-            "**/*.md": "MarkdownParser",
-            "**/*.markdown": "MarkdownParser",
-            "**/*.txt": "PlainTextParser"
-        }
     finally:
         os.chdir(original_cwd)
 
@@ -209,14 +203,10 @@ port = 5000
 documents_path = "/srv/docs"
 index_path = "/srv/index"
 
-[parsers]
-"**/*.txt" = "TextParser"
-
 [search]
 semantic_weight = 0.8
 keyword_weight = 0.2
 recency_bias = 0.3
-rrf_k_constant = 50
 
 [llm]
 embedding_model = "custom"
@@ -231,11 +221,9 @@ embedding_model = "custom"
         assert config.server.port == 5000
         assert config.indexing.documents_path == "/srv/docs"
         assert config.indexing.index_path == "/srv/index"
-        assert config.parsers == {"**/*.txt": "TextParser"}
         assert config.search.semantic_weight == 0.8
         assert config.search.keyword_weight == 0.2
         assert config.search.recency_bias == 0.3
-        assert config.search.rrf_k_constant == 50
         assert config.llm.embedding_model == "custom"
     finally:
         os.chdir(original_cwd)

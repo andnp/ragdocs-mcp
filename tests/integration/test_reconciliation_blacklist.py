@@ -84,7 +84,7 @@ def test_reconciliation_removes_newly_blacklisted_venv_files(
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers=base_config.parsers,
+        parsers={"**/*.md": "MarkdownParser", "**/*.markdown": "MarkdownParser", "**/*.txt": "PlainTextParser"},
         chunking_config={},
         indexed_files={
             "README": "README.md",
@@ -152,7 +152,7 @@ def test_reconciliation_handles_blacklist_config_change(
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers=base_config.parsers,
+        parsers={"**/*.md": "MarkdownParser", "**/*.markdown": "MarkdownParser", "**/*.txt": "PlainTextParser"},
         chunking_config={},
         indexed_files={
             "main": "main.md",
@@ -176,7 +176,6 @@ def test_reconciliation_handles_blacklist_config_change(
             exclude=["**/.venv/**", "**/node_modules/**", "**/build/**", "**/vendor/**"],
             exclude_hidden_dirs=True,
         ),
-        parsers=base_config.parsers,
         search=SearchConfig(),
         llm=LLMConfig(),
     )
@@ -242,7 +241,7 @@ def test_reconciliation_respects_exclude_hidden_dirs_change(
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers=base_config.parsers,
+        parsers={"**/*.md": "MarkdownParser", "**/*.markdown": "MarkdownParser", "**/*.txt": "PlainTextParser"},
         chunking_config={},
         indexed_files={
             "visible": "visible.md",
@@ -317,7 +316,7 @@ def test_reconciliation_logs_distinct_messages_for_excluded_vs_missing(
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers=base_config.parsers,
+        parsers={"**/*.md": "MarkdownParser", "**/*.markdown": "MarkdownParser", "**/*.txt": "PlainTextParser"},
         chunking_config={},
         indexed_files={
             "active": "active.md",

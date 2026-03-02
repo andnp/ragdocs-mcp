@@ -1,10 +1,10 @@
 """
 Unit tests for TOKENIZERS_PARALLELISM environment variable configuration.
 
-Regression tests for the bug where tokenizers would warn about parallelism 
+Regression tests for the bug where tokenizers would warn about parallelism
 being used before fork when running in multiprocess mode:
 
-    huggingface/tokenizers: The current process just got forked, after 
+    huggingface/tokenizers: The current process just got forked, after
     parallelism has already been used. Disabling parallelism to avoid deadlocks...
 
 The fix is to set TOKENIZERS_PARALLELISM=false in all entry points before
@@ -25,7 +25,7 @@ class TestTokenizersParallelismEnvVar:
     def test_cli_module_sets_tokenizers_parallelism(self):
         """
         Verify src.cli sets TOKENIZERS_PARALLELISM=false before imports.
-        
+
         The env var must be set before any HuggingFace/sentence-transformers
         imports to prevent the warning when forking worker processes.
         """
@@ -52,7 +52,7 @@ print("PASS: cli module sets TOKENIZERS_PARALLELISM=false")
             text=True,
             cwd=Path(__file__).parents[2],
         )
-        
+
         assert result.returncode == 0, (
             f"CLI module test failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
@@ -60,7 +60,7 @@ print("PASS: cli module sets TOKENIZERS_PARALLELISM=false")
     def test_mcp_server_module_sets_tokenizers_parallelism(self):
         """
         Verify src.mcp.server sets TOKENIZERS_PARALLELISM=false before imports.
-        
+
         MCP server can be run directly, so it must also set the env var.
         """
         result = subprocess.run(
@@ -80,7 +80,7 @@ print("PASS: mcp.server module sets TOKENIZERS_PARALLELISM=false")
             text=True,
             cwd=Path(__file__).parents[2],
         )
-        
+
         assert result.returncode == 0, (
             f"MCP server module test failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
@@ -88,7 +88,7 @@ print("PASS: mcp.server module sets TOKENIZERS_PARALLELISM=false")
     def test_setdefault_preserves_user_override(self):
         """
         Verify setdefault() does not override user-specified value.
-        
+
         Users may want to set TOKENIZERS_PARALLELISM=true in some scenarios,
         and our setdefault() should respect their explicit choice.
         """
@@ -111,7 +111,7 @@ print("PASS: setdefault preserves user override")
             text=True,
             cwd=Path(__file__).parents[2],
         )
-        
+
         assert result.returncode == 0, (
             f"User override test failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
@@ -120,7 +120,7 @@ print("PASS: setdefault preserves user override")
 class TestTokenizersEnvVarPlacement:
     """
     Tests verifying env var is set BEFORE HuggingFace imports.
-    
+
     The order is critical: setting the env var after tokenizers is imported
     has no effect. These tests verify the fix is properly placed.
     """
@@ -128,7 +128,7 @@ class TestTokenizersEnvVarPlacement:
     def test_env_var_set_before_sentence_transformers_import(self):
         """
         Verify env var is available before sentence-transformers would be imported.
-        
+
         This simulates the critical ordering requirement: the env var must be
         set before any code path that might import tokenizers.
         """
@@ -169,7 +169,7 @@ print("PASS: env var set during cli import")
             text=True,
             cwd=Path(__file__).parents[2],
         )
-        
+
         assert result.returncode == 0, (
             f"Import order test failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )

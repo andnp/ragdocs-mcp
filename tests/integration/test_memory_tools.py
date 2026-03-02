@@ -70,8 +70,7 @@ def memory_config(tmp_path: Path):
             score_threshold=0.001,
         ),
         search=SearchConfig(),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 

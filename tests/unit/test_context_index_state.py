@@ -63,8 +63,7 @@ class MockConfig:
 
     indexing: MagicMock = field(default_factory=MagicMock)
     llm: MagicMock = field(default_factory=MagicMock)
-    parsers: dict = field(default_factory=dict)
-    document_chunking: MagicMock = field(default_factory=MagicMock)
+    chunking: MagicMock = field(default_factory=MagicMock)
 
 
 @dataclass

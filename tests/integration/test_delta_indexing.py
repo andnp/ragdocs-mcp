@@ -22,7 +22,7 @@ def config_delta_enabled(tmp_path):
             index_path=str(tmp_path / "indices"),
             delta_full_reindex_threshold=0.5,
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=1000,
         ),
@@ -152,7 +152,7 @@ def test_delta_indexing_full_reindex_threshold(tmp_path, shared_embedding_model)
             index_path=str(tmp_path / "indices"),
             delta_full_reindex_threshold=0.5,
         ),
-        document_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             min_chunk_chars=100,
             max_chunk_chars=1000,
         ),

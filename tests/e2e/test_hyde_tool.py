@@ -117,8 +117,7 @@ def _create_config(tmp_path, test_docs_dir) -> Config:
             semantic_weight=1.0,
             keyword_weight=1.0,
         ),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 

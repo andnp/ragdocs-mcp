@@ -20,8 +20,7 @@ def test_config(tmp_path):
             index_path=str(index_path),
         ),
         search=SearchConfig(),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
     )
 
@@ -143,7 +142,11 @@ def test_build_manifest_creates_correct_structure(context_with_config):
 
     assert manifest.spec_version == "1.0.0"
     assert manifest.embedding_model == ctx.config.llm.embedding_model
-    assert manifest.parsers == ctx.config.parsers
+    assert manifest.parsers == {
+        "**/*.md": "MarkdownParser",
+        "**/*.markdown": "MarkdownParser",
+        "**/*.txt": "PlainTextParser",
+    }
     assert "strategy" in manifest.chunking_config
 
 
@@ -160,12 +163,16 @@ def test_check_and_rebuild_if_needed_returns_false_for_existing_index(context_wi
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model=ctx.config.llm.embedding_model,
-        parsers=ctx.config.parsers,
+        parsers={
+            "**/*.md": "MarkdownParser",
+            "**/*.markdown": "MarkdownParser",
+            "**/*.txt": "PlainTextParser",
+        },
         chunking_config={
-            "strategy": ctx.config.document_chunking.strategy,
-            "min_chunk_chars": ctx.config.document_chunking.min_chunk_chars,
-            "max_chunk_chars": ctx.config.document_chunking.max_chunk_chars,
-            "overlap_chars": ctx.config.document_chunking.overlap_chars,
+            "strategy": ctx.config.chunking.strategy,
+            "min_chunk_chars": ctx.config.chunking.min_chunk_chars,
+            "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
+            "overlap_chars": ctx.config.chunking.overlap_chars,
         },
         indexed_files={},
     )

@@ -48,7 +48,6 @@ def test_overlapping_projects_same_root_different_subdirs(shared_docs_root, tmp_
             documents_path=str(project_a_docs),
             index_path=str(index_a),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
     )
 
     config_b = Config(
@@ -57,7 +56,6 @@ def test_overlapping_projects_same_root_different_subdirs(shared_docs_root, tmp_
             documents_path=str(project_b_docs),
             index_path=str(index_b),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
     )
 
     # Index both projects
@@ -113,7 +111,6 @@ def test_overlapping_projects_nested_paths(tmp_path, shared_embedding_model):
             index_path=str(parent_index),
             exclude=["**/nested/**"],  # Exclude nested project
         ),
-        parsers={"**/*.md": "MarkdownParser"},
     )
 
     # Nested project config
@@ -123,7 +120,6 @@ def test_overlapping_projects_nested_paths(tmp_path, shared_embedding_model):
             documents_path=str(nested_project),
             index_path=str(nested_index),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
     )
 
     # Index parent (should only get parent_doc)
@@ -176,7 +172,6 @@ def test_overlapping_projects_symlinked_paths(tmp_path, shared_embedding_model):
             documents_path=str(real_docs),
             index_path=str(index_real),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
     )
 
     config_linked = Config(
@@ -185,7 +180,6 @@ def test_overlapping_projects_symlinked_paths(tmp_path, shared_embedding_model):
             documents_path=str(linked_docs),
             index_path=str(index_linked),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
     )
 
     # Index from both paths
@@ -236,7 +230,6 @@ def test_overlapping_projects_manifest_isolation(tmp_path, shared_embedding_mode
     manifest_a = IndexManifest(
         spec_version="1.0.0",
         embedding_model="model-a",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
         indexed_files={"doc": "doc.md"},
     )
@@ -245,7 +238,6 @@ def test_overlapping_projects_manifest_isolation(tmp_path, shared_embedding_mode
     manifest_b = IndexManifest(
         spec_version="1.0.0",
         embedding_model="model-b",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
         indexed_files={"doc": "doc.md"},
     )
@@ -285,7 +277,6 @@ def test_overlapping_projects_same_relative_paths(tmp_path, shared_embedding_mod
             documents_path=str(project_a),
             index_path=str(index_a),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
     )
 
     config_b = Config(
@@ -294,7 +285,6 @@ def test_overlapping_projects_same_relative_paths(tmp_path, shared_embedding_mod
             documents_path=str(project_b),
             index_path=str(index_b),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
     )
 
     # Index both
@@ -344,7 +334,6 @@ def test_project_switch_same_index_path_fails_gracefully(tmp_path, shared_embedd
             documents_path=str(project_a),
             index_path=str(shared_index),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
     )
 
     # Index project A
@@ -360,7 +349,6 @@ def test_project_switch_same_index_path_fails_gracefully(tmp_path, shared_embedd
     manifest_a = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
     save_manifest(shared_index, manifest_a)
@@ -372,7 +360,6 @@ def test_project_switch_same_index_path_fails_gracefully(tmp_path, shared_embedd
             documents_path=str(project_b),
             index_path=str(shared_index),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
     )
 
     # Loading with different documents_path should work but might need rebuild

@@ -31,7 +31,6 @@ def config(tmp_path):
             documents_path=str(tmp_path / "docs"),
             index_path=str(tmp_path / "indices"),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(),
         llm=LLMConfig(),
     )

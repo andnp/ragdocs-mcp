@@ -52,7 +52,6 @@ recursive = true
 semantic_weight = 1.0
 keyword_weight = 1.0
 recency_bias = 0.5
-rrf_k_constant = 60
 
 [llm]
 embedding_model = "local"

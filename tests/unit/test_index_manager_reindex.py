@@ -24,16 +24,9 @@ def manager(tmp_path, shared_embedding_model):
             semantic_weight=1.0,
             keyword_weight=1.0,
             recency_bias=0.5,
-            rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="local"),
-        document_chunking=ChunkingConfig(
-            strategy="header_based",
-            min_chunk_chars=200,
-            max_chunk_chars=1500,
-            overlap_chars=100,
-        ),
-        memory_chunking=ChunkingConfig(
+        chunking=ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=200,
             max_chunk_chars=1500,

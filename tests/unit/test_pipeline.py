@@ -27,8 +27,7 @@ class TestSearchPipelineConfig:
         assert config.min_confidence == 0.0
         assert config.max_chunks_per_doc == 0
         assert config.dedup_threshold == 0.85
-        assert config.ngram_dedup_threshold == 0.7
-        assert config.rerank_model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        assert config.reranking_enabled is True
         assert config.rerank_top_n == 10
 
     def test_custom_values(self):
@@ -36,16 +35,14 @@ class TestSearchPipelineConfig:
             min_confidence=0.5,
             max_chunks_per_doc=3,
             dedup_threshold=0.9,
-            ngram_dedup_threshold=0.8,
-            rerank_model="custom-model",
+            reranking_enabled=False,
             rerank_top_n=5,
         )
 
         assert config.min_confidence == 0.5
         assert config.max_chunks_per_doc == 3
         assert config.dedup_threshold == 0.9
-        assert config.ngram_dedup_threshold == 0.8
-        assert config.rerank_model == "custom-model"
+        assert config.reranking_enabled is False
         assert config.rerank_top_n == 5
 
 
@@ -166,6 +163,7 @@ class TestSearchPipelineDocLimit:
         config = SearchPipelineConfig(
             min_confidence=0.0,
             max_chunks_per_doc=0,
+            reranking_enabled=False,
         )
         pipeline = SearchPipeline(config)
 
@@ -191,6 +189,7 @@ class TestSearchPipelineDeduplication:
         config = SearchPipelineConfig(
             min_confidence=0.0,
             dedup_threshold=0.9,
+            reranking_enabled=False,
         )
         pipeline = SearchPipeline(config)
 
@@ -293,7 +292,7 @@ class TestSearchPipelineCompressionStats:
         After reranking, scores are cross-encoder outputs (already in [0, 1]).
         The clamp ensures no score exceeds 1.0 regardless of source.
         """
-        config = SearchPipelineConfig(min_confidence=0.0)
+        config = SearchPipelineConfig(min_confidence=0.0, reranking_enabled=False)
         pipeline = SearchPipeline(config)
 
         fused = [

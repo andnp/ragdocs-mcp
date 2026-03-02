@@ -65,7 +65,6 @@ recursive = true
 semantic_weight = 0.6
 keyword_weight = 0.4
 recency_bias = 0.1
-rrf_k_constant = 60
 
 [llm]
 embedding_model = "all-MiniLM-L6-v2"
@@ -96,7 +95,6 @@ def app_with_config(tmp_path, test_docs_dir, monkeypatch):
                 semantic_weight=0.6,
                 keyword_weight=0.4,
                 recency_bias=0.1,
-                rrf_k_constant=60,
             ),
             llm=LLMConfig(
                 embedding_model="all-MiniLM-L6-v2"

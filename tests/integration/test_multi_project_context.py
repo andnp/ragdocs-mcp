@@ -66,8 +66,7 @@ def config_for_project_a(two_projects, tmp_path):
             index_path=str(tmp_path / "index_a"),
         ),
         search=SearchConfig(),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
     )
 
@@ -81,8 +80,7 @@ def config_for_project_b(two_projects, tmp_path):
             index_path=str(tmp_path / "index_b"),
         ),
         search=SearchConfig(),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
     )
 

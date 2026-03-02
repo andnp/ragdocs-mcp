@@ -63,8 +63,7 @@ def create_config(
             checkpoint_interval_secs=checkpoint_interval_secs,
         ),
         search=SearchConfig(),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 

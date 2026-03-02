@@ -52,16 +52,13 @@ def integration_config(tmp_path_factory) -> Config:
             documents_path=str(docs_path),
             index_path=str(index_path),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
             recency_bias=0.5,
-            rrf_k_constant=60,
         ),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
-        document_chunking=ChunkingConfig(),
-        memory_chunking=ChunkingConfig(),
+        chunking=ChunkingConfig(),
     )
 
 

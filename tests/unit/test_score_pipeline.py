@@ -58,10 +58,7 @@ class TestScorePipelineConfig:
         """
         config = ScorePipelineConfig()
 
-        assert config.rrf_k == 60.0
         assert config.strategy_weights == {"semantic": 0.6, "keyword": 0.3, "graph": 0.1}
-        assert config.calibration_threshold == 0.5
-        assert config.calibration_steepness == 10.0
         assert config.time_scoring_mode is None
 
     def test_custom_config(self):
@@ -69,15 +66,11 @@ class TestScorePipelineConfig:
         Custom config overrides defaults.
         """
         config = ScorePipelineConfig(
-            rrf_k=30.0,
             strategy_weights={"semantic": 1.0, "keyword": 1.0},
-            calibration_threshold=0.4,
             time_scoring_mode="tiers",
         )
 
-        assert config.rrf_k == 30.0
         assert config.strategy_weights == {"semantic": 1.0, "keyword": 1.0}
-        assert config.calibration_threshold == 0.4
         assert config.time_scoring_mode == "tiers"
 
 
