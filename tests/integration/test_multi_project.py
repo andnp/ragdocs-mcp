@@ -34,7 +34,7 @@ path = "{project_b}"
         "project_a": project_a,
         "project_b": project_b,
         "global_config": global_config_dir,
-        "tmp": tmp_path
+        "tmp": tmp_path,
     }
 
 
@@ -49,12 +49,7 @@ def test_project_isolation(projects_setup):
     config_a.indexing.index_path = str(data_dir / "project_a")
     config_a.indexing.documents_path = str(project_a)
 
-    manager_a = IndexManager(
-        config_a,
-        VectorIndex(),
-        KeywordIndex(),
-        GraphStore()
-    )
+    manager_a = IndexManager(config_a, VectorIndex(), KeywordIndex(), GraphStore())
 
     doc_a = project_a / "doc.md"
     doc_a.write_text("# Project A Document")
@@ -65,12 +60,7 @@ def test_project_isolation(projects_setup):
     config_b.indexing.index_path = str(data_dir / "project_b")
     config_b.indexing.documents_path = str(project_b)
 
-    manager_b = IndexManager(
-        config_b,
-        VectorIndex(),
-        KeywordIndex(),
-        GraphStore()
-    )
+    manager_b = IndexManager(config_b, VectorIndex(), KeywordIndex(), GraphStore())
 
     doc_b = project_b / "doc.md"
     doc_b.write_text("# Project B Document")
@@ -84,10 +74,7 @@ def test_project_isolation(projects_setup):
     assert manager_b.get_document_count() == 1
 
     manager_a_reload = IndexManager(
-        config_a,
-        VectorIndex(),
-        KeywordIndex(),
-        GraphStore()
+        config_a, VectorIndex(), KeywordIndex(), GraphStore()
     )
     manager_a_reload.load()
 

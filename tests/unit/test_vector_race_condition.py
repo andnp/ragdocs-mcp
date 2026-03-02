@@ -109,7 +109,9 @@ class TestVectorRaceCondition:
         assert len(doc_ids) > 0, "No documents found after concurrent operations"
 
     @pytest.mark.asyncio
-    async def test_concurrent_add_and_persist_async(self, tmp_path: Path, shared_embedding_model):
+    async def test_concurrent_add_and_persist_async(
+        self, tmp_path: Path, shared_embedding_model
+    ):
         """
         Test concurrent operations using asyncio (more realistic for actual server).
         """
@@ -161,7 +163,9 @@ class TestVectorRaceCondition:
         doc_ids = vector2.get_document_ids()
         assert len(doc_ids) > 0, "No documents found after async concurrent operations"
 
-    def test_multiple_persists_during_indexing(self, tmp_path: Path, shared_embedding_model):
+    def test_multiple_persists_during_indexing(
+        self, tmp_path: Path, shared_embedding_model
+    ):
         """
         Test multiple persist calls during active indexing (stress test).
         """

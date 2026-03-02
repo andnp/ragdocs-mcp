@@ -42,8 +42,14 @@ class TestIndexedFrontmatterFields:
     def test_indexed_fields_list(self):
         """Verify all expected fields are in INDEXED_FRONTMATTER_FIELDS."""
         expected = [
-            "title", "description", "summary", "keywords",
-            "author", "category", "type", "related"
+            "title",
+            "description",
+            "summary",
+            "keywords",
+            "author",
+            "category",
+            "type",
+            "related",
         ]
         assert INDEXED_FRONTMATTER_FIELDS == expected
 

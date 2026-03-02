@@ -16,11 +16,10 @@ def config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(),
-        llm=LLMConfig()
+        llm=LLMConfig(),
     )
 
 
@@ -80,7 +79,9 @@ def create_realistic_document(doc_id: int, size: str = "medium") -> str:
 
         # Add wikilink every few paragraphs
         if i % 2 == 0 and doc_id > 1:
-            content += f"See also [[Document {doc_id - 1}]] for related information.\n\n"
+            content += (
+                f"See also [[Document {doc_id - 1}]] for related information.\n\n"
+            )
 
     return content
 
@@ -126,7 +127,9 @@ def test_indexing_speed_10_documents(config, manager, tmp_path):
 
     # Performance baseline assertion (should complete in reasonable time)
     # Allow up to 5 seconds per document for embedding model load + indexing
-    assert elapsed < (num_docs * 5.0), f"Indexing too slow: {elapsed:.2f}s for {num_docs} docs"
+    assert elapsed < (num_docs * 5.0), (
+        f"Indexing too slow: {elapsed:.2f}s for {num_docs} docs"
+    )
 
 
 def test_indexing_speed_50_documents(config, manager, tmp_path):
@@ -163,7 +166,9 @@ def test_indexing_speed_50_documents(config, manager, tmp_path):
 
     # Performance baseline assertion (should complete in reasonable time)
     # Allow up to 2 seconds per document on average after model warmup
-    assert elapsed < (num_docs * 2.0), f"Indexing too slow: {elapsed:.2f}s for {num_docs} docs"
+    assert elapsed < (num_docs * 2.0), (
+        f"Indexing too slow: {elapsed:.2f}s for {num_docs} docs"
+    )
 
 
 def test_indexing_speed_100_documents(config, manager, tmp_path):
@@ -200,10 +205,14 @@ def test_indexing_speed_100_documents(config, manager, tmp_path):
 
     # Performance baseline assertion (should complete in reasonable time)
     # Allow up to 2 seconds per document on average after model warmup
-    assert elapsed < (num_docs * 2.0), f"Indexing too slow: {elapsed:.2f}s for {num_docs} docs"
+    assert elapsed < (num_docs * 2.0), (
+        f"Indexing too slow: {elapsed:.2f}s for {num_docs} docs"
+    )
 
 
-def test_indexing_speed_varying_document_sizes(config, tmp_path, shared_embedding_model):
+def test_indexing_speed_varying_document_sizes(
+    config, tmp_path, shared_embedding_model
+):
     """
     Benchmark indexing with varied document sizes.
 
@@ -226,7 +235,9 @@ def test_indexing_speed_varying_document_sizes(config, tmp_path, shared_embeddin
     isolated_vector = VectorIndex(embedding_model=shared_embedding_model)
     isolated_keyword = KeywordIndex()
     isolated_graph = GraphStore()
-    isolated_manager = IndexManager(config, isolated_vector, isolated_keyword, isolated_graph)
+    isolated_manager = IndexManager(
+        config, isolated_vector, isolated_keyword, isolated_graph
+    )
 
     # Benchmark indexing
     start_time = time.perf_counter()
@@ -254,4 +265,6 @@ def test_indexing_speed_varying_document_sizes(config, tmp_path, shared_embeddin
     print(f"Documents indexed: {doc_count}")
 
     # Performance baseline assertion
-    assert elapsed < (num_docs * 3.0), f"Indexing too slow: {elapsed:.2f}s for {num_docs} mixed docs"
+    assert elapsed < (num_docs * 3.0), (
+        f"Indexing too slow: {elapsed:.2f}s for {num_docs} mixed docs"
+    )

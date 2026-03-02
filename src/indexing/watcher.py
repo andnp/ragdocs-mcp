@@ -32,7 +32,7 @@ class FileWatcher:
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         exclude_hidden_dirs: bool = True,
-        parser_suffixes: set[str] | None = None,
+        parser_suffixes: set[str] | frozenset[str] | None = None,
         use_tasks: bool = False,
     ):
         self._documents_path = Path(documents_path)
@@ -41,10 +41,10 @@ class FileWatcher:
         self._include_patterns = include_patterns or ["**/*"]
         self._exclude_patterns = exclude_patterns or []
         self._exclude_hidden_dirs = exclude_hidden_dirs
-        self._parser_suffixes = parser_suffixes if parser_suffixes else PARSER_SUFFIXES
-        self._observer: Observer | None = None
+        self._parser_suffixes: set[str] = set(parser_suffixes) if parser_suffixes else set(PARSER_SUFFIXES)
+        self._observer: Observer | None = None  # type: ignore[reportInvalidTypeForm]
         # Bounded queue prevents memory exhaustion during high file change rates
-        self._event_queue = queue.Queue[tuple[EventType, str]](maxsize=MAX_QUEUE_SIZE)
+        self._event_queue: queue.Queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)  # items: tuple[EventType, str]
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._last_sync_time: str | None = None
@@ -117,7 +117,9 @@ class FileWatcher:
         new_dirs = [d for d in current_dirs if str(d) not in self._watched_dirs]
         for dir_path in new_dirs:
             try:
-                self._observer.schedule(self._event_handler, str(dir_path), recursive=False)
+                self._observer.schedule(
+                    self._event_handler, str(dir_path), recursive=False
+                )
                 self._watched_dirs.add(str(dir_path))
             except OSError as e:
                 logger.warning("Failed to schedule watch on %s: %s", dir_path, e)
@@ -278,9 +280,7 @@ class FileWatcher:
                             logger.info(f"Enqueued removal task: {doc_id}")
                             continue
                     # Fallback to direct execution
-                    await asyncio.to_thread(
-                        self._index_manager.remove_document, doc_id
-                    )
+                    await asyncio.to_thread(self._index_manager.remove_document, doc_id)
                     logger.info(f"Removed: {file_path}")
             except Exception as e:
                 logger.error(f"Failed to process {file_path}: {e}")
@@ -323,7 +323,7 @@ class FileWatcher:
 class _DocumentEventHandler(FileSystemEventHandler):
     def __init__(
         self,
-        event_queue: queue.Queue[tuple[EventType, str]],
+        event_queue: queue.Queue,  # items: tuple[EventType, str]
         suffixes: set[str],
         exclude_patterns: list[str] | None = None,
         exclude_hidden_dirs: bool = True,

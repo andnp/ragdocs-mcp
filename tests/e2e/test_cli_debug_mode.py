@@ -200,7 +200,9 @@ def test_query_debug_with_no_results(runner, tmp_path, indexed_docs):
 
         assert result.exit_code == 0
         # Debug tables should still appear
-        assert "Search Strategy Results" in result.output or "No results" in result.output
+        assert (
+            "Search Strategy Results" in result.output or "No results" in result.output
+        )
 
     finally:
         os.chdir(original_cwd)

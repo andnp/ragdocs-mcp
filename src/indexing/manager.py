@@ -116,7 +116,9 @@ class IndexManager:
             logger.error("Failed to prune %s: %s", doc_id, e, exc_info=True)
             return False
 
-    def _detect_changed_chunks(self, chunks: list[Chunk]) -> tuple[list[Chunk], list[str]]:
+    def _detect_changed_chunks(
+        self, chunks: list[Chunk]
+    ) -> tuple[list[Chunk], list[str]]:
         """Identify chunks with changed content.
 
         Returns:
@@ -237,7 +239,9 @@ class IndexManager:
                     continue
 
                 matching_hashes = new_hashes & old_hashes
-                match_ratio = len(matching_hashes) / max(len(old_hashes), len(new_hashes))
+                match_ratio = len(matching_hashes) / max(
+                    len(old_hashes), len(new_hashes)
+                )
 
                 if match_ratio > best_match_ratio:
                     best_match_ratio = match_ratio
@@ -271,7 +275,9 @@ class IndexManager:
             # Get old chunks for mapping
             old_chunk_data = self._hash_store.get_chunks_by_document(old_doc_id)
             if not old_chunk_data:
-                logger.debug(f"No old chunks found for {old_doc_id}, using full reindex")
+                logger.debug(
+                    f"No old chunks found for {old_doc_id}, using full reindex"
+                )
                 return False
 
             # Build hash -> old_chunk_id mapping
@@ -300,7 +306,9 @@ class IndexManager:
                 }
 
                 # Update vector index
-                if not self.vector.update_chunk_path(old_chunk_id, new_chunk.chunk_id, new_metadata):
+                if not self.vector.update_chunk_path(
+                    old_chunk_id, new_chunk.chunk_id, new_metadata
+                ):
                     failed_moves.append(new_chunk.chunk_id)
                     continue
 
@@ -325,7 +333,9 @@ class IndexManager:
             # If too many chunks failed, fall back to full re-index
             if failed_moves:
                 failure_ratio = len(failed_moves) / len(new_chunks)
-                if failure_ratio > (1.0 - self._config.indexing.move_detection_threshold):
+                if failure_ratio > (
+                    1.0 - self._config.indexing.move_detection_threshold
+                ):
                     logger.info(
                         f"Move operation had {failure_ratio:.1%} failures, "
                         "falling back to full re-index"
@@ -363,7 +373,9 @@ class IndexManager:
                 self._full_reindex_document(document.id, chunks)
             else:
                 # Delta detection
-                changed_chunks, unchanged_chunk_ids = self._detect_changed_chunks(chunks)
+                changed_chunks, unchanged_chunk_ids = self._detect_changed_chunks(
+                    chunks
+                )
 
                 if not changed_chunks:
                     logger.info(f"No changes in {file_path}, skipping re-index")
@@ -594,10 +606,7 @@ class IndexManager:
 
         # Detect file moves
         moved_files: dict[str, str] = {}
-        if (
-            files_to_add
-            and doc_ids_to_remove
-        ):
+        if files_to_add and doc_ids_to_remove:
             logger.info(
                 f"Move detection: Comparing {len(doc_ids_to_remove)} removed "
                 f"and {len(files_to_add)} added files"
@@ -609,12 +618,16 @@ class IndexManager:
                 try:
                     parser = dispatch_parser(file_path)
                     document = parser.parse(file_path)
-                    doc_id = compute_doc_id(Path(file_path).resolve(), docs_path.resolve())
+                    doc_id = compute_doc_id(
+                        Path(file_path).resolve(), docs_path.resolve()
+                    )
                     document.id = doc_id
                     chunks = self._chunker.chunk_document(document)
                     added_docs[doc_id] = chunks
                 except Exception as e:
-                    logger.warning(f"Failed to parse {file_path} for move detection: {e}")
+                    logger.warning(
+                        f"Failed to parse {file_path} for move detection: {e}"
+                    )
                     continue
 
             # Detect moves
@@ -634,7 +647,9 @@ class IndexManager:
 
                 new_chunks = added_docs.get(new_doc_id, [])
                 if not new_chunks:
-                    logger.warning(f"No chunks found for moved file {new_doc_id}, skipping")
+                    logger.warning(
+                        f"No chunks found for moved file {new_doc_id}, skipping"
+                    )
                     continue
 
                 success = self._apply_file_move(old_doc_id, new_doc_id, new_chunks)
@@ -646,13 +661,20 @@ class IndexManager:
 
                     # Find and remove the file path from files_to_add
                     for file_path in list(files_to_add):
-                        if compute_doc_id(Path(file_path).resolve(), docs_path.resolve()) == new_doc_id:
+                        if (
+                            compute_doc_id(
+                                Path(file_path).resolve(), docs_path.resolve()
+                            )
+                            == new_doc_id
+                        ):
                             files_to_add.remove(file_path)
                             break
 
                     result.moved_count += 1
                 else:
-                    logger.info(f"Move operation failed for {old_doc_id} → {new_doc_id}, using full reindex")
+                    logger.info(
+                        f"Move operation failed for {old_doc_id} → {new_doc_id}, using full reindex"
+                    )
 
         # Process remaining removals
         for doc_id in doc_ids_to_remove:

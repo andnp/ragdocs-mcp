@@ -15,20 +15,16 @@ def config(tmp_path):
     return Config(
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
-            index_path=str(tmp_path / ".index_data")
+            index_path=str(tmp_path / ".index_data"),
         ),
-        search=SearchConfig(
-            semantic_weight=1.0,
-            keyword_weight=1.0,
-            recency_bias=0.5
-        ),
+        search=SearchConfig(semantic_weight=1.0, keyword_weight=1.0, recency_bias=0.5),
         llm=LLMConfig(embedding_model="local"),
         chunking=ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=200,
             max_chunk_chars=1500,
-            overlap_chars=100
-        )
+            overlap_chars=100,
+        ),
     )
 
 
@@ -43,22 +39,13 @@ def indices(shared_embedding_model):
 
 @pytest.fixture
 def manager(config, indices):
-    return IndexManager(
-        config,
-        indices["vector"],
-        indices["keyword"],
-        indices["graph"]
-    )
+    return IndexManager(config, indices["vector"], indices["keyword"], indices["graph"])
 
 
 @pytest.fixture
 def orchestrator(config, indices, manager):
     return SearchOrchestrator(
-        indices["vector"],
-        indices["keyword"],
-        indices["graph"],
-        config,
-        manager
+        indices["vector"], indices["keyword"], indices["graph"], config, manager
     )
 
 
@@ -82,12 +69,10 @@ async def test_query_returns_chunk_result_objects(config, manager, orchestrator)
     doc1 = create_test_document(
         docs_dir,
         "authentication",
-        "# Authentication\n\nHow to configure OAuth 2.0 authentication."
+        "# Authentication\n\nHow to configure OAuth 2.0 authentication.",
     )
     doc2 = create_test_document(
-        docs_dir,
-        "security",
-        "# Security\n\nSecurity best practices and configuration."
+        docs_dir, "security", "# Security\n\nSecurity best practices and configuration."
     )
 
     manager.index_document(doc1)
@@ -133,7 +118,7 @@ async def test_chunk_result_contains_metadata(config, manager, orchestrator):
     doc = create_test_document(
         docs_dir,
         "api_guide",
-        "# API Guide\n\n## Authentication\n\nUse API keys for authentication.\n\n## Authorization\n\nRoles and permissions."
+        "# API Guide\n\n## Authentication\n\nUse API keys for authentication.\n\n## Authorization\n\nRoles and permissions.",
     )
 
     manager.index_document(doc)
@@ -156,7 +141,9 @@ async def test_chunk_result_contains_metadata(config, manager, orchestrator):
 
         # Verify chunk_id contains doc_id
         if result.doc_id:
-            assert result.doc_id in result.chunk_id or result.chunk_id.startswith(result.doc_id)
+            assert result.doc_id in result.chunk_id or result.chunk_id.startswith(
+                result.doc_id
+            )
 
     # At least one result should have metadata
     assert found_metadata
@@ -179,16 +166,26 @@ async def test_chunk_result_scores_normalized(config, manager, orchestrator):
     docs_dir.mkdir(parents=True, exist_ok=True)
 
     # Create multiple test documents
-    doc1 = create_test_document(docs_dir, "doc1", "# Document One\n\nAuthentication and security.")
-    doc2 = create_test_document(docs_dir, "doc2", "# Document Two\n\nSecurity practices.")
-    doc3 = create_test_document(docs_dir, "doc3", "# Document Three\n\nAuthentication setup guide.")
-    doc4 = create_test_document(docs_dir, "doc4", "# Document Four\n\nAPI documentation.")
+    doc1 = create_test_document(
+        docs_dir, "doc1", "# Document One\n\nAuthentication and security."
+    )
+    doc2 = create_test_document(
+        docs_dir, "doc2", "# Document Two\n\nSecurity practices."
+    )
+    doc3 = create_test_document(
+        docs_dir, "doc3", "# Document Three\n\nAuthentication setup guide."
+    )
+    doc4 = create_test_document(
+        docs_dir, "doc4", "# Document Four\n\nAPI documentation."
+    )
 
     for doc_path in [doc1, doc2, doc3, doc4]:
         manager.index_document(doc_path)
 
     # Query that should match multiple documents
-    results, _, _ = await orchestrator.query("authentication security", top_k=10, top_n=10)
+    results, _, _ = await orchestrator.query(
+        "authentication security", top_k=10, top_n=10
+    )
 
     assert len(results) >= 2, "Should have at least 2 results"
 
@@ -200,7 +197,7 @@ async def test_chunk_result_scores_normalized(config, manager, orchestrator):
 
     # Verify scores are descending
     for i in range(len(scores) - 1):
-        assert scores[i] >= scores[i+1], f"Scores should be descending: {scores}"
+        assert scores[i] >= scores[i + 1], f"Scores should be descending: {scores}"
 
     # Verify all scores in [0.0, 1.0]
     for score in scores:
@@ -208,7 +205,9 @@ async def test_chunk_result_scores_normalized(config, manager, orchestrator):
 
 
 @pytest.mark.asyncio
-async def test_query_with_missing_chunk_fallback(config, indices, manager, orchestrator):
+async def test_query_with_missing_chunk_fallback(
+    config, indices, manager, orchestrator
+):
     """
     Test fallback behavior when chunk metadata is missing.
 
@@ -227,7 +226,7 @@ async def test_query_with_missing_chunk_fallback(config, indices, manager, orche
     doc = create_test_document(
         docs_dir,
         "fallback_test",
-        "# Fallback Test\n\nTest document for fallback behavior."
+        "# Fallback Test\n\nTest document for fallback behavior.",
     )
 
     manager.index_document(doc)
@@ -277,7 +276,7 @@ async def test_chunk_result_serialization_in_pipeline(config, manager, orchestra
     doc = create_test_document(
         docs_dir,
         "serialization_test",
-        "# Serialization Test\n\nTest document content for serialization."
+        "# Serialization Test\n\nTest document content for serialization.",
     )
 
     manager.index_document(doc)
@@ -345,13 +344,15 @@ More content here.
 ### Subsection C
 
 Additional details.
-"""
+""",
     )
 
     manager.index_document(doc)
 
     # Query for content that should match
-    results, _, _ = await orchestrator.query("subsection important information", top_k=10, top_n=5)
+    results, _, _ = await orchestrator.query(
+        "subsection important information", top_k=10, top_n=5
+    )
 
     assert len(results) > 0
 

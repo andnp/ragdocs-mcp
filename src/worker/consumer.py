@@ -27,7 +27,9 @@ class HueyWorker:
 
     @property
     def is_running(self) -> bool:
-        return self._started and self._consumer is not None and self._consumer.is_alive()
+        return (
+            self._started and self._consumer is not None and self._consumer.is_alive()
+        )
 
     def start(self) -> None:
         """Start the consumer thread."""

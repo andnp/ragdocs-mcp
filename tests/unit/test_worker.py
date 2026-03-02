@@ -106,15 +106,20 @@ class TestWorkerWithLifecycle:
         class FakeContext:
             config: FakeConfig = field(default_factory=FakeConfig)
             commit_indexer: None = None
+
             async def start(self, background_index: bool = False) -> None:
                 pass
+
             async def stop(self) -> None:
                 pass
+
             async def ensure_ready(self, timeout: float = 60.0) -> None:
                 pass
 
         db = DatabaseManager(tmp_path / "test.db")
-        huey = SqliteHuey(name="test", filename=str(tmp_path / "queue.db"), immediate=False)
+        huey = SqliteHuey(
+            name="test", filename=str(tmp_path / "queue.db"), immediate=False
+        )
         worker = HueyWorker(huey)
 
         # Start as primary with worker
@@ -157,15 +162,20 @@ class TestWorkerWithLifecycle:
         class FakeContext:
             config: FakeConfig = field(default_factory=FakeConfig)
             commit_indexer: None = None
+
             async def start(self, background_index: bool = False) -> None:
                 pass
+
             async def stop(self) -> None:
                 pass
+
             async def ensure_ready(self, timeout: float = 60.0) -> None:
                 pass
 
         db = DatabaseManager(tmp_path / "test.db")
-        huey = SqliteHuey(name="test", filename=str(tmp_path / "queue.db"), immediate=False)
+        huey = SqliteHuey(
+            name="test", filename=str(tmp_path / "queue.db"), immediate=False
+        )
         worker = HueyWorker(huey)
 
         # First coordinator takes primary

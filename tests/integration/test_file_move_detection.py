@@ -75,7 +75,9 @@ async def test_move_file_preserves_embeddings(config, manager, orchestrator):
     assert doc_count_before >= 1
 
     # Query to verify content is searchable
-    results_before, _, _ = await orchestrator.query("OAuth authentication", top_k=5, top_n=3)
+    results_before, _, _ = await orchestrator.query(
+        "OAuth authentication", top_k=5, top_n=3
+    )
     assert len(results_before) > 0
     assert any("authentication" in r.content.lower() for r in results_before)
 
@@ -93,7 +95,9 @@ async def test_move_file_preserves_embeddings(config, manager, orchestrator):
     manager.index_document(str(moved_file))
 
     # Verify content still searchable
-    results_after, _, _ = await orchestrator.query("OAuth authentication", top_k=5, top_n=3)
+    results_after, _, _ = await orchestrator.query(
+        "OAuth authentication", top_k=5, top_n=3
+    )
     assert len(results_after) > 0
     assert any("authentication" in r.content.lower() for r in results_after)
 
@@ -271,7 +275,9 @@ async def test_move_multiple_files(config, manager, orchestrator):
     # Verify files are searchable in new location.
 
     for i in range(3):
-        results, _, _ = await orchestrator.query(f"document number {i}", top_k=5, top_n=2)
+        results, _, _ = await orchestrator.query(
+            f"document number {i}", top_k=5, top_n=2
+        )
         assert len(results) > 0
         assert any("archive" in r.file_path for r in results), (
             f"Document {i} should be searchable in archive location"
@@ -286,7 +292,9 @@ async def test_move_detection_with_git_rename(config, manager, orchestrator):
 
     # Create file
     original = docs_dir / "README.md"
-    content = "# Project README\n\nWelcome to the project.\n\nThis is the main documentation."
+    content = (
+        "# Project README\n\nWelcome to the project.\n\nThis is the main documentation."
+    )
 
     original.write_text(content)
     manager.index_document(str(original))
@@ -302,7 +310,10 @@ async def test_move_detection_with_git_rename(config, manager, orchestrator):
     results, _, _ = await orchestrator.query("Project README", top_k=5, top_n=2)
     assert len(results) > 0
     assert any("README_OLD.md" in r.file_path for r in results)
-    assert not any("README.md" in r.file_path or "README.md" == Path(r.file_path).name for r in results)
+    assert not any(
+        "README.md" in r.file_path or "README.md" == Path(r.file_path).name
+        for r in results
+    )
 
 
 def test_move_detection_fallback_on_failure(config, manager):

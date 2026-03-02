@@ -35,10 +35,10 @@ def base_config(tmp_path):
             index_path=str(tmp_path / "indices"),
             include=["**/*"],
             exclude=["**/.venv/**", "**/node_modules/**", "**/build/**"],
-            exclude_hidden_dirs=True
+            exclude_hidden_dirs=True,
         ),
         search=SearchConfig(),
-        llm=LLMConfig()
+        llm=LLMConfig(),
     )
 
 
@@ -87,7 +87,7 @@ def test_reconciliation_removes_newly_blacklisted_venv_files(
             "README": "README.md",
             ".venv/lib/python3.13/site-packages/flax/README": ".venv/lib/python3.13/site-packages/flax/README.md",
             ".venv/lib/python3.13/site-packages/orbax/README": ".venv/lib/python3.13/site-packages/orbax/README.md",
-        }
+        },
     )
     save_manifest(index_path, manifest)
 
@@ -105,12 +105,13 @@ def test_reconciliation_removes_newly_blacklisted_venv_files(
     pattern = str(docs_path / "**" / "*.md")
     all_files = glob.glob(pattern, recursive=True)
     discovered_files = [
-        f for f in all_files
+        f
+        for f in all_files
         if should_include_file(
             f,
             base_config.indexing.include,
             base_config.indexing.exclude,
-            base_config.indexing.exclude_hidden_dirs
+            base_config.indexing.exclude_hidden_dirs,
         )
     ]
 
@@ -127,9 +128,7 @@ def test_reconciliation_removes_newly_blacklisted_venv_files(
     assert result.failed_count == 0
 
 
-def test_reconciliation_handles_blacklist_config_change(
-    base_config, manager, tmp_path
-):
+def test_reconciliation_handles_blacklist_config_change(base_config, manager, tmp_path):
     """
     Test that changing blacklist config leads to cleanup on next reconciliation.
 
@@ -153,7 +152,7 @@ def test_reconciliation_handles_blacklist_config_change(
         indexed_files={
             "main": "main.md",
             "vendor/package/README": "vendor/package/README.md",
-        }
+        },
     )
     save_manifest(index_path, manifest)
 
@@ -168,11 +167,16 @@ def test_reconciliation_handles_blacklist_config_change(
             documents_path=str(docs_path),
             index_path=str(index_path),
             include=["**/*"],
-            exclude=["**/.venv/**", "**/node_modules/**", "**/build/**", "**/vendor/**"],
-            exclude_hidden_dirs=True
+            exclude=[
+                "**/.venv/**",
+                "**/node_modules/**",
+                "**/build/**",
+                "**/vendor/**",
+            ],
+            exclude_hidden_dirs=True,
         ),
         search=SearchConfig(),
-        llm=LLMConfig()
+        llm=LLMConfig(),
     )
 
     # Create new manager with updated config
@@ -193,12 +197,13 @@ def test_reconciliation_handles_blacklist_config_change(
     pattern = str(docs_path / "**" / "*.md")
     all_files = glob.glob(pattern, recursive=True)
     discovered_files = [
-        f for f in all_files
+        f
+        for f in all_files
         if should_include_file(
             f,
             updated_config.indexing.include,
             updated_config.indexing.exclude,
-            updated_config.indexing.exclude_hidden_dirs
+            updated_config.indexing.exclude_hidden_dirs,
         )
     ]
 
@@ -241,7 +246,7 @@ def test_reconciliation_respects_exclude_hidden_dirs_change(
             "visible": "visible.md",
             ".hidden/secret": ".hidden/secret.md",
             ".cache/data": ".cache/data.md",
-        }
+        },
     )
     save_manifest(index_path, manifest)
 
@@ -261,12 +266,13 @@ def test_reconciliation_respects_exclude_hidden_dirs_change(
     pattern = str(docs_path / "**" / "*.md")
     all_files = glob.glob(pattern, recursive=True)
     discovered_files = [
-        f for f in all_files
+        f
+        for f in all_files
         if should_include_file(
             f,
             base_config.indexing.include,
             base_config.indexing.exclude,
-            base_config.indexing.exclude_hidden_dirs
+            base_config.indexing.exclude_hidden_dirs,
         )
     ]
 
@@ -293,6 +299,7 @@ def test_reconciliation_logs_distinct_messages_for_excluded_vs_missing(
     This helps users understand WHY files are being removed.
     """
     import logging
+
     caplog.set_level(logging.INFO)
 
     docs_path = Path(base_config.indexing.documents_path)
@@ -315,7 +322,7 @@ def test_reconciliation_logs_distinct_messages_for_excluded_vs_missing(
             "active": "active.md",
             ".venv/lib/README": ".venv/lib/README.md",  # Excluded by pattern
             "deleted": "deleted.md",  # File doesn't exist
-        }
+        },
     )
     save_manifest(index_path, manifest)
 
@@ -333,12 +340,13 @@ def test_reconciliation_logs_distinct_messages_for_excluded_vs_missing(
     pattern = str(docs_path / "**" / "*.md")
     all_files = glob.glob(pattern, recursive=True)
     discovered_files = [
-        f for f in all_files
+        f
+        for f in all_files
         if should_include_file(
             f,
             base_config.indexing.include,
             base_config.indexing.exclude,
-            base_config.indexing.exclude_hidden_dirs
+            base_config.indexing.exclude_hidden_dirs,
         )
     ]
 

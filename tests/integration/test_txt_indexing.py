@@ -15,20 +15,13 @@ def config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
-        search=SearchConfig(
-            semantic_weight=1.0,
-            keyword_weight=1.0,
-            recency_bias=0.5
-        ),
+        search=SearchConfig(semantic_weight=1.0, keyword_weight=1.0, recency_bias=0.5),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         chunking=ChunkingConfig(
-            min_chunk_chars=200,
-            max_chunk_chars=2000,
-            overlap_chars=100
-        )
+            min_chunk_chars=200, max_chunk_chars=2000, overlap_chars=100
+        ),
     )
 
 
@@ -59,7 +52,9 @@ def test_index_txt_file(tmp_path, manager):
     results = manager.vector.search("neural networks", top_k=5)
 
     assert len(results) > 0
-    assert any("neural networks" in r["content"].lower() for r in results if "content" in r)
+    assert any(
+        "neural networks" in r["content"].lower() for r in results if "content" in r
+    )
 
 
 def test_txt_chunking_respects_size_limits(tmp_path, config):
@@ -143,7 +138,9 @@ def test_mixed_md_and_txt_indexing(tmp_path, manager):
     assert any("markdown" in r["content"].lower() for r in md_results if "content" in r)
 
     txt_results = manager.vector.search("plain text", top_k=5)
-    assert any("plain text" in r["content"].lower() for r in txt_results if "content" in r)
+    assert any(
+        "plain text" in r["content"].lower() for r in txt_results if "content" in r
+    )
 
 
 def test_txt_chunk_start_end_positions(tmp_path, config):

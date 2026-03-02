@@ -16,8 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 INDEXED_FRONTMATTER_FIELDS = [
-    "title", "description", "summary", "keywords",
-    "author", "category", "type", "related"
+    "title",
+    "description",
+    "summary",
+    "keywords",
+    "author",
+    "category",
+    "type",
+    "related",
 ]
 
 
@@ -51,8 +57,11 @@ class MarkdownParser(DocumentParser):
 
         if content is None:
             raise UnicodeDecodeError(
-                "utf-8", b"", 0, 1,
-                f"Could not decode {file_path} with any supported encoding. Last error: {last_error}"
+                "utf-8",
+                b"",
+                0,
+                1,
+                f"Could not decode {file_path} with any supported encoding. Last error: {last_error}",
             )
 
         content_bytes = bytes(content, "utf8")
@@ -136,7 +145,9 @@ class MarkdownParser(DocumentParser):
 
     def _extract_text_content(self, content: str, root_node: Node):
         frontmatter_pattern = r"^---\s*\n.*?\n---\s*\n"
-        text_without_frontmatter = re.sub(frontmatter_pattern, "", content, count=1, flags=re.DOTALL)
+        text_without_frontmatter = re.sub(
+            frontmatter_pattern, "", content, count=1, flags=re.DOTALL
+        )
 
         return text_without_frontmatter.strip()
 
@@ -152,7 +163,9 @@ class MarkdownParser(DocumentParser):
                 if child.type == "`":
                     if not in_backticks:
                         if child.start_byte > last_pos:
-                            text = content_bytes[last_pos:child.start_byte].decode("utf8")
+                            text = content_bytes[last_pos : child.start_byte].decode(
+                                "utf8"
+                            )
                             parts.append(text)
                         in_backticks = True
                         last_pos = child.end_byte
@@ -161,7 +174,7 @@ class MarkdownParser(DocumentParser):
                         last_pos = child.end_byte
 
             if not in_backticks and last_pos < node.end_byte:
-                text = content_bytes[last_pos:node.end_byte].decode("utf8")
+                text = content_bytes[last_pos : node.end_byte].decode("utf8")
                 parts.append(text)
 
             parts.append(" ")
@@ -216,11 +229,15 @@ class MarkdownParser(DocumentParser):
             target = match.group(1)
             position = match.start()
             header_context = self._find_header_context_at_position(headers, position)
-            links_with_context.append(LinkWithContext(target=target, header_context=header_context))
+            links_with_context.append(
+                LinkWithContext(target=target, header_context=header_context)
+            )
 
         return links_with_context
 
-    def _extract_header_positions(self, root_node: Node, content_bytes: bytes) -> list[tuple[int, int, str]]:
+    def _extract_header_positions(
+        self, root_node: Node, content_bytes: bytes
+    ) -> list[tuple[int, int, str]]:
         headers: list[tuple[int, int, str]] = []
 
         def visit(node: Node) -> None:
@@ -228,7 +245,11 @@ class MarkdownParser(DocumentParser):
                 text = ""
                 for child in node.children:
                     if child.type == "inline":
-                        text = content_bytes[child.start_byte:child.end_byte].decode("utf8").strip()
+                        text = (
+                            content_bytes[child.start_byte : child.end_byte]
+                            .decode("utf8")
+                            .strip()
+                        )
                         break
 
                 headers.append((node.start_byte, node.end_byte, text))
@@ -239,7 +260,9 @@ class MarkdownParser(DocumentParser):
         visit(root_node)
         return sorted(headers, key=lambda x: x[0])
 
-    def _find_header_context_at_position(self, headers: list[tuple[int, int, str]], position: int) -> str:
+    def _find_header_context_at_position(
+        self, headers: list[tuple[int, int, str]], position: int
+    ) -> str:
         current_header = ""
         for start, end, text in headers:
             if start <= position:

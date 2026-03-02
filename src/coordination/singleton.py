@@ -122,7 +122,7 @@ class SingletonGuard:
         try:
             os.lseek(fd, 0, os.SEEK_SET)
             content = os.read(fd, 1024).decode().strip()
-            lines = content.split('\n')
+            lines = content.split("\n")
 
             if len(lines) >= 1:
                 try:
@@ -142,7 +142,7 @@ class SingletonGuard:
         try:
             os.lseek(fd, 0, os.SEEK_SET)
             content = os.read(fd, 1024).decode().strip()
-            lines = content.split('\n')
+            lines = content.split("\n")
 
             if len(lines) >= 1:
                 try:
@@ -161,6 +161,7 @@ class SingletonGuard:
     def _is_process_alive(self, pid: int) -> bool:
         if sys.platform == "win32":
             import ctypes
+
             kernel32 = ctypes.windll.kernel32
             PROCESS_QUERY_INFORMATION = 0x0400
             handle = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
@@ -184,6 +185,7 @@ class SingletonGuard:
         try:
             if sys.platform == "win32":
                 import msvcrt
+
                 try:
                     msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
                 except Exception as e:

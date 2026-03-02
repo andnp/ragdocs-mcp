@@ -102,11 +102,13 @@ class TestLeaderElection:
 
         # Manually set heartbeat to the past (beyond the timeout)
         conn = db.get_connection()
-        stale_data = json.dumps({
-            "instance_id": "instance-1",
-            "heartbeat": time.time() - 10.0,  # 10s ago
-            "acquired_at": time.time() - 10.0,
-        })
+        stale_data = json.dumps(
+            {
+                "instance_id": "instance-1",
+                "heartbeat": time.time() - 10.0,  # 10s ago
+                "acquired_at": time.time() - 10.0,
+            }
+        )
         conn.execute(
             "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
             ("leader_id", stale_data),

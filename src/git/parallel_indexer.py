@@ -63,7 +63,9 @@ def batch_embed_texts(
     embeddings: list[list[float]] = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        batch_embeddings = [indexer._embedding_model.get_text_embedding(text) for text in batch]
+        batch_embeddings = [
+            indexer._embedding_model.get_text_embedding(text) for text in batch
+        ]
         embeddings.extend(batch_embeddings)
     return embeddings
 
@@ -83,19 +85,21 @@ def add_commits_batch(
     rows = []
     for commit, embedding in commits_with_embeddings:
         embedding_bytes = np.array(embedding, dtype=np.float32).tobytes()
-        rows.append((
-            commit.hash,
-            commit.timestamp,
-            commit.author,
-            commit.committer,
-            commit.title,
-            commit.message,
-            json.dumps(commit.files_changed),
-            commit.delta_truncated,
-            embedding_bytes,
-            indexed_at,
-            normalized_path,
-        ))
+        rows.append(
+            (
+                commit.hash,
+                commit.timestamp,
+                commit.author,
+                commit.committer,
+                commit.title,
+                commit.message,
+                json.dumps(commit.files_changed),
+                commit.delta_truncated,
+                embedding_bytes,
+                indexed_at,
+                normalized_path,
+            )
+        )
 
     conn.executemany(
         """

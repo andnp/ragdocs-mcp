@@ -49,7 +49,8 @@ def walk_included_dirs(
     for dirpath, dirnames, _ in os.walk(root, topdown=True):
         # Prune in-place so os.walk skips excluded subtrees
         dirnames[:] = [
-            d for d in dirnames
+            d
+            for d in dirnames
             if not is_excluded_dir(
                 os.path.join(dirpath, d), exclude_patterns, exclude_hidden_dirs
             )
@@ -63,7 +64,7 @@ def walk_dirs_with_files(
     root: Path,
     exclude_patterns: list[str],
     exclude_hidden_dirs: bool,
-    suffixes: set[str],
+    suffixes: set[str] | frozenset[str],
 ) -> list[Path]:
     """Walk directory tree, returning directories that contain at least one
     parseable file (matching *suffixes*), plus the root itself.
@@ -80,13 +81,16 @@ def walk_dirs_with_files(
     for dirpath, dirnames, filenames in os.walk(root, topdown=True):
         # Prune in-place so os.walk skips excluded subtrees
         dirnames[:] = [
-            d for d in dirnames
+            d
+            for d in dirnames
             if not is_excluded_dir(
                 os.path.join(dirpath, d), exclude_patterns, exclude_hidden_dirs
             )
         ]
         current = Path(dirpath)
-        if current != root and any(Path(f).suffix.lower() in suffixes for f in filenames):
+        if current != root and any(
+            Path(f).suffix.lower() in suffixes for f in filenames
+        ):
             result.append(current)
     return result
 
@@ -129,6 +133,7 @@ def discover_files(
             pass
 
     return [
-        f for f in sorted(all_files)
+        f
+        for f in sorted(all_files)
         if should_include_file(f, include, exclude, exclude_hidden_dirs)
     ]

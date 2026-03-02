@@ -15,7 +15,7 @@ from src.config import (
     IndexingConfig,
     LLMConfig,
     MemoryConfig,
-    SearchConfig
+    SearchConfig,
 )
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -39,16 +39,12 @@ def memory_config(tmp_path: Path):
 
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
-        memory=MemoryConfig(
-            enabled=True,
-            storage_strategy="project"
-        ),
+        memory=MemoryConfig(enabled=True, storage_strategy="project"),
         search=SearchConfig(),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
 
@@ -97,8 +93,9 @@ def create_memory_file(memory_path: Path, filename: str, content: str) -> Path:
 
 
 class TestMemoryIndexing:
-
-    def test_index_simple_memory(self, memory_manager: MemoryIndexManager, memory_path: Path):
+    def test_index_simple_memory(
+        self, memory_manager: MemoryIndexManager, memory_path: Path
+    ):
         """
         Verify indexing a simple memory file creates chunks in all indices.
 
@@ -106,9 +103,7 @@ class TestMemoryIndexing:
         in vector, keyword, and graph indices.
         """
         file_path = create_memory_file(
-            memory_path,
-            "simple-note",
-            "# My Note\n\nThis is a simple memory note."
+            memory_path, "simple-note", "# My Note\n\nThis is a simple memory note."
         )
 
         memory_manager.index_memory(str(file_path))
@@ -124,9 +119,7 @@ class TestMemoryIndexing:
         Graph nodes enable relationship queries between memories.
         """
         file_path = create_memory_file(
-            memory_path,
-            "graph-test",
-            "# Graph Test\n\nContent for graph testing."
+            memory_path, "graph-test", "# Graph Test\n\nContent for graph testing."
         )
 
         memory_manager.index_memory(str(file_path))
@@ -139,9 +132,7 @@ class TestMemoryIndexing:
         Verify removing a memory cleans up all indices.
         """
         file_path = create_memory_file(
-            memory_path,
-            "to-remove",
-            "# To Remove\n\nThis will be removed."
+            memory_path, "to-remove", "# To Remove\n\nThis will be removed."
         )
 
         memory_manager.index_memory(str(file_path))
@@ -158,7 +149,6 @@ class TestMemoryIndexing:
 
 
 class TestFrontmatterParsing:
-
     def test_parses_complete_frontmatter(
         self, memory_manager: MemoryIndexManager, memory_path: Path
     ):
@@ -276,7 +266,6 @@ Today's notes.
 
 
 class TestGhostNodes:
-
     def test_creates_ghost_node_for_link(
         self, memory_manager: MemoryIndexManager, memory_path: Path
     ):
@@ -366,10 +355,7 @@ Results stored in [[data/cache.json]].
 
 
 class TestPersistence:
-
-    def test_persist_and_load_cycle(
-        self, memory_config: Config, memory_path: Path
-    ):
+    def test_persist_and_load_cycle(self, memory_config: Config, memory_path: Path):
         """
         Verify memory indices survive persist/load cycle.
 
@@ -378,12 +364,14 @@ class TestPersistence:
         vector1 = VectorIndex()
         keyword1 = KeywordIndex()
         graph1 = GraphStore()
-        manager1 = MemoryIndexManager(memory_config, memory_path, vector1, keyword1, graph1)
+        manager1 = MemoryIndexManager(
+            memory_config, memory_path, vector1, keyword1, graph1
+        )
 
         file_path = create_memory_file(
             memory_path,
             "persist-test",
-            "# Persist Test\n\nContent that should survive persistence."
+            "# Persist Test\n\nContent that should survive persistence.",
         )
         manager1.index_memory(str(file_path))
         original_count = manager1.get_memory_count()
@@ -393,7 +381,9 @@ class TestPersistence:
         vector2 = VectorIndex()
         keyword2 = KeywordIndex()
         graph2 = GraphStore()
-        manager2 = MemoryIndexManager(memory_config, memory_path, vector2, keyword2, graph2)
+        manager2 = MemoryIndexManager(
+            memory_config, memory_path, vector2, keyword2, graph2
+        )
         manager2.load()
 
         assert manager2.get_memory_count() == original_count
@@ -414,12 +404,14 @@ class TestPersistence:
         vector1 = VectorIndex()
         keyword1 = KeywordIndex(db)
         graph1 = GraphStore(db)
-        manager1 = MemoryIndexManager(memory_config, memory_path, vector1, keyword1, graph1)
+        manager1 = MemoryIndexManager(
+            memory_config, memory_path, vector1, keyword1, graph1
+        )
 
         file_path = create_memory_file(
             memory_path,
             "ghost-persist",
-            "# Ghost Persist\n\nLink to [[src/module.py]] here."
+            "# Ghost Persist\n\nLink to [[src/module.py]] here.",
         )
         manager1.index_memory(str(file_path))
         manager1.persist()
@@ -427,7 +419,9 @@ class TestPersistence:
         vector2 = VectorIndex()
         keyword2 = KeywordIndex(db)
         graph2 = GraphStore(db)
-        manager2 = MemoryIndexManager(memory_config, memory_path, vector2, keyword2, graph2)
+        manager2 = MemoryIndexManager(
+            memory_config, memory_path, vector2, keyword2, graph2
+        )
         manager2.load()
 
         edges = manager2.graph.get_edges_to("ghost:src/module.py")
@@ -440,7 +434,6 @@ class TestPersistence:
 
 
 class TestReindexAndStats:
-
     def test_reindex_all(self, memory_manager: MemoryIndexManager, memory_path: Path):
         """
         Verify reindex_all processes all memory files.
@@ -453,7 +446,9 @@ class TestReindexAndStats:
 
         assert indexed_count == 3
 
-    def test_reindex_memory(self, memory_manager: MemoryIndexManager, memory_path: Path):
+    def test_reindex_memory(
+        self, memory_manager: MemoryIndexManager, memory_path: Path
+    ):
         """
         Verify reindex_memory restores a missing memory entry.
 
@@ -462,9 +457,7 @@ class TestReindexAndStats:
         - reindex_memory returns True when file exists
         """
         file_path = create_memory_file(
-            memory_path,
-            "reindex-me",
-            "# Reindex Me\n\nRecoverable memory."
+            memory_path, "reindex-me", "# Reindex Me\n\nRecoverable memory."
         )
         memory_id = compute_memory_id(memory_path, file_path)
 
@@ -481,14 +474,10 @@ class TestReindexAndStats:
         Verify get_all_tags aggregates tags across memories.
         """
         file1 = create_memory_file(
-            memory_path,
-            "tagged1",
-            "---\ntags: [\"api\", \"backend\"]\n---\n# Tagged 1"
+            memory_path, "tagged1", '---\ntags: ["api", "backend"]\n---\n# Tagged 1'
         )
         file2 = create_memory_file(
-            memory_path,
-            "tagged2",
-            "---\ntags: [\"api\", \"frontend\"]\n---\n# Tagged 2"
+            memory_path, "tagged2", '---\ntags: ["api", "frontend"]\n---\n# Tagged 2'
         )
         memory_manager.index_memory(str(file1))
         memory_manager.index_memory(str(file2))
@@ -503,19 +492,13 @@ class TestReindexAndStats:
         Verify get_all_types aggregates memory types.
         """
         file1 = create_memory_file(
-            memory_path,
-            "plan1",
-            "---\ntype: \"plan\"\n---\n# Plan 1"
+            memory_path, "plan1", '---\ntype: "plan"\n---\n# Plan 1'
         )
         file2 = create_memory_file(
-            memory_path,
-            "plan2",
-            "---\ntype: \"plan\"\n---\n# Plan 2"
+            memory_path, "plan2", '---\ntype: "plan"\n---\n# Plan 2'
         )
         file3 = create_memory_file(
-            memory_path,
-            "fact1",
-            "---\ntype: \"fact\"\n---\n# Fact 1"
+            memory_path, "fact1", '---\ntype: "fact"\n---\n# Fact 1'
         )
         memory_manager.index_memory(str(file1))
         memory_manager.index_memory(str(file2))
@@ -560,7 +543,6 @@ class TestReindexAndStats:
 
 
 class TestMetadataCache:
-
     def test_cache_updated_on_index_memory(
         self, memory_manager: MemoryIndexManager, memory_path: Path
     ):
@@ -634,9 +616,7 @@ This memory will be removed.
 
         assert size_after_both > size_after_first
 
-    def test_cache_rebuilt_on_load(
-        self, memory_config: Config, memory_path: Path
-    ):
+    def test_cache_rebuilt_on_load(self, memory_config: Config, memory_path: Path):
         """
         Verify metadata cache is rebuilt when indices are loaded.
         """
@@ -654,7 +634,9 @@ Cache should be rebuilt on load.
         vector1 = VectorIndex()
         keyword1 = KeywordIndex()
         graph1 = GraphStore()
-        manager1 = MemoryIndexManager(memory_config, memory_path, vector1, keyword1, graph1)
+        manager1 = MemoryIndexManager(
+            memory_config, memory_path, vector1, keyword1, graph1
+        )
 
         manager1.index_memory(str(file_path))
         manager1.persist()
@@ -662,7 +644,9 @@ Cache should be rebuilt on load.
         vector2 = VectorIndex()
         keyword2 = KeywordIndex()
         graph2 = GraphStore()
-        manager2 = MemoryIndexManager(memory_config, memory_path, vector2, keyword2, graph2)
+        manager2 = MemoryIndexManager(
+            memory_config, memory_path, vector2, keyword2, graph2
+        )
         manager2.load()
 
         tags = manager2.get_all_tags()
@@ -683,7 +667,7 @@ Cache should be rebuilt on load.
         calls return consistent results without file I/O.
         """
         for i in range(5):
-            content = f"---\ntype: \"journal\"\ntags: [\"batch-{i}\"]\n---\n# Note {i}"
+            content = f'---\ntype: "journal"\ntags: ["batch-{i}"]\n---\n# Note {i}'
             file_path = create_memory_file(memory_path, f"batch-{i}", content)
             memory_manager.index_memory(str(file_path))
 

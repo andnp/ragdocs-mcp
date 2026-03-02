@@ -10,13 +10,14 @@ Tests cover:
 from pathlib import Path
 
 from src.search.hyde import search_with_hypothesis
+from src.search.types import SearchResultDict
 
 
 class MockVectorIndex:
     """Test double for VectorIndex that records calls."""
 
-    def __init__(self, results: list[dict] | None = None):
-        self.results = results or []
+    def __init__(self, results: list[SearchResultDict] | None = None):
+        self.results: list[SearchResultDict] = results or []
         self.search_calls: list[dict] = []
         self.embedding_calls: list[str] = []
 
@@ -26,13 +27,15 @@ class MockVectorIndex:
         top_k: int,
         excluded_files: set[str] | None = None,
         docs_root: Path | None = None,
-    ) -> list[dict]:
-        self.search_calls.append({
-            "query": query,
-            "top_k": top_k,
-            "excluded_files": excluded_files,
-            "docs_root": docs_root,
-        })
+    ) -> list[SearchResultDict]:
+        self.search_calls.append(
+            {
+                "query": query,
+                "top_k": top_k,
+                "excluded_files": excluded_files,
+                "docs_root": docs_root,
+            }
+        )
         return self.results
 
     def get_text_embedding(self, text: str) -> list[float]:
@@ -54,7 +57,9 @@ class TestSearchWithHypothesis:
         This is the core of HyDE - embedding the hypothesis, not the query.
         """
         mock_index = MockVectorIndex()
-        hypothesis = "To add a tool, modify src/mcp_server.py and register in list_tools"
+        hypothesis = (
+            "To add a tool, modify src/mcp_server.py and register in list_tools"
+        )
 
         search_with_hypothesis(mock_index, hypothesis, top_k=10)
 
@@ -115,7 +120,7 @@ class TestSearchWithHypothesis:
         """
         Should return the results from vector search unchanged.
         """
-        expected_results = [
+        expected_results: list[SearchResultDict] = [
             {"chunk_id": "doc1_chunk_0", "doc_id": "doc1", "score": 0.9},
             {"chunk_id": "doc2_chunk_0", "doc_id": "doc2", "score": 0.8},
         ]

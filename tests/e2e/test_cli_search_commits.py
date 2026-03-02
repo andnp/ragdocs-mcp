@@ -202,7 +202,10 @@ def test_search_commits_returns_relevant_results(runner, tmp_path, indexed_repo)
         assert result.exit_code == 0
         # Should find commits related to auth
         if "No results" not in result.output:
-            assert "authentication" in result.output.lower() or "auth" in result.output.lower()
+            assert (
+                "authentication" in result.output.lower()
+                or "auth" in result.output.lower()
+            )
 
     finally:
         os.chdir(original_cwd)
@@ -364,7 +367,14 @@ def test_search_commits_timestamp_validation(runner, tmp_path, indexed_repo):
 
         result = runner.invoke(
             cli,
-            ["search-commits", "test", "--after", "1000000000", "--before", "900000000"],
+            [
+                "search-commits",
+                "test",
+                "--after",
+                "1000000000",
+                "--before",
+                "900000000",
+            ],
         )
 
         assert result.exit_code == 1
@@ -389,7 +399,14 @@ def test_search_commits_timestamp_valid_range(runner, tmp_path, indexed_repo):
 
         result = runner.invoke(
             cli,
-            ["search-commits", "test", "--after", "900000000", "--before", "1900000000"],
+            [
+                "search-commits",
+                "test",
+                "--after",
+                "900000000",
+                "--before",
+                "1900000000",
+            ],
         )
 
         assert result.exit_code == 0
@@ -503,7 +520,9 @@ embedding_model = "local"
 
         # Should succeed with empty results (not error)
         assert result.exit_code == 0
-        assert "Total commits indexed: 0" in result.output or "No results" in result.output
+        assert (
+            "Total commits indexed: 0" in result.output or "No results" in result.output
+        )
 
     finally:
         os.chdir(original_cwd)

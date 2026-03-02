@@ -20,12 +20,12 @@ ResultT = TypeVar("ResultT")
 
 @dataclass
 class HybridSearchContext:
-    vector_results: list[dict] = field(default_factory=list)
-    keyword_results: list[dict] = field(default_factory=list)
+    vector_results: list[SearchResultDict] = field(default_factory=list)
+    keyword_results: list[SearchResultDict] = field(default_factory=list)
     chunk_id_to_doc_id: dict[str, str] = field(default_factory=dict)
     all_doc_ids: set[str] = field(default_factory=set)
 
-    def merge_results(self, results: list[dict]) -> None:
+    def merge_results(self, results: list[SearchResultDict]) -> None:
         for result in results:
             chunk_id = result["chunk_id"]
             doc_id = result["doc_id"]
@@ -97,8 +97,12 @@ class BaseSearchOrchestrator(ABC, Generic[ResultT]):
         ctx: HybridSearchContext,
     ) -> dict[str, list[tuple[str, float]]]:
         return {
-            "semantic": [(r["chunk_id"], r.get("score", 0.0)) for r in ctx.vector_results],
-            "keyword": [(r["chunk_id"], r.get("score", 0.0)) for r in ctx.keyword_results],
+            "semantic": [
+                (r["chunk_id"], r.get("score", 0.0)) for r in ctx.vector_results
+            ],
+            "keyword": [
+                (r["chunk_id"], r.get("score", 0.0)) for r in ctx.keyword_results
+            ],
         }
 
     def _get_base_weights(self) -> dict[str, float]:
@@ -119,15 +123,18 @@ class BaseSearchOrchestrator(ABC, Generic[ResultT]):
     @abstractmethod
     def _build_score_pipeline_config(
         self, weights: dict[str, float]
-    ) -> ScorePipelineConfig:
-        ...
+    ) -> ScorePipelineConfig: ...
 
-    async def _search_vector_base(self, query: str, top_k: int) -> list[SearchResultDict]:
+    async def _search_vector_base(
+        self, query: str, top_k: int
+    ) -> list[SearchResultDict]:
         return await asyncio.to_thread(
             self._vector.search, query, top_k, None, self._documents_path
         )
 
-    async def _search_keyword_base(self, query: str, top_k: int) -> list[SearchResultDict]:
+    async def _search_keyword_base(
+        self, query: str, top_k: int
+    ) -> list[SearchResultDict]:
         return await asyncio.to_thread(
             self._keyword.search, query, top_k, None, self._documents_path
         )

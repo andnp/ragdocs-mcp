@@ -97,7 +97,9 @@ def vector_index_populated(shared_embedding_model):
 class TestBuildVocabularyEmptyIndex:
     """Tests for vocabulary building with empty index."""
 
-    def test_build_vocabulary_empty_index_produces_empty_vocab(self, vector_index_empty):
+    def test_build_vocabulary_empty_index_produces_empty_vocab(
+        self, vector_index_empty
+    ):
         """
         Empty index produces empty vocabulary.
 
@@ -358,9 +360,14 @@ class TestVocabularyPersistence:
 
         # Vocabulary should be loaded
         assert len(index2._concept_vocabulary) > 0
-        assert "authentication" in index2._concept_vocabulary or "security" in index2._concept_vocabulary
+        assert (
+            "authentication" in index2._concept_vocabulary
+            or "security" in index2._concept_vocabulary
+        )
 
-    def test_vocabulary_persistence_missing_file(self, shared_embedding_model, tmp_path):
+    def test_vocabulary_persistence_missing_file(
+        self, shared_embedding_model, tmp_path
+    ):
         """
         Handles missing vocabulary file gracefully.
 

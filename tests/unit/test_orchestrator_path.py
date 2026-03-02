@@ -64,7 +64,9 @@ def indices(shared_embedding_model):
 # ============================================================================
 
 
-def test_orchestrator_stores_documents_path_from_constructor(base_config, indices, tmp_path):
+def test_orchestrator_stores_documents_path_from_constructor(
+    base_config, indices, tmp_path
+):
     """
     Test that SearchOrchestrator uses the documents_path passed to constructor.
 
@@ -78,14 +80,20 @@ def test_orchestrator_stores_documents_path_from_constructor(base_config, indice
     explicit_path.mkdir()
 
     orchestrator = SearchOrchestrator(
-        vector, keyword, graph, base_config, manager,
+        vector,
+        keyword,
+        graph,
+        base_config,
+        manager,
         documents_path=explicit_path,
     )
 
     assert orchestrator.documents_path == explicit_path
 
 
-def test_orchestrator_documents_path_property_returns_correct_value(base_config, indices, tmp_path):
+def test_orchestrator_documents_path_property_returns_correct_value(
+    base_config, indices, tmp_path
+):
     """
     Test that the documents_path property returns the value set at construction.
 
@@ -98,7 +106,11 @@ def test_orchestrator_documents_path_property_returns_correct_value(base_config,
     custom_path.mkdir()
 
     orchestrator = SearchOrchestrator(
-        vector, keyword, graph, base_config, manager,
+        vector,
+        keyword,
+        graph,
+        base_config,
+        manager,
         documents_path=custom_path,
     )
 
@@ -112,7 +124,9 @@ def test_orchestrator_documents_path_property_returns_correct_value(base_config,
 # ============================================================================
 
 
-def test_config_modification_does_not_affect_orchestrator_path(base_config, indices, tmp_path):
+def test_config_modification_does_not_affect_orchestrator_path(
+    base_config, indices, tmp_path
+):
     """
     Test that modifying config.indexing.documents_path AFTER construction
     does NOT change the orchestrator's documents_path.
@@ -128,7 +142,11 @@ def test_config_modification_does_not_affect_orchestrator_path(base_config, indi
     explicit_path.mkdir()
 
     orchestrator = SearchOrchestrator(
-        vector, keyword, graph, base_config, manager,
+        vector,
+        keyword,
+        graph,
+        base_config,
+        manager,
         documents_path=explicit_path,
     )
 
@@ -145,7 +163,9 @@ def test_config_modification_does_not_affect_orchestrator_path(base_config, indi
     assert orchestrator.documents_path != Path(base_config.indexing.documents_path)
 
 
-def test_orchestrator_path_immutable_across_multiple_config_changes(base_config, indices, tmp_path):
+def test_orchestrator_path_immutable_across_multiple_config_changes(
+    base_config, indices, tmp_path
+):
     """
     Test that multiple config modifications do not affect the orchestrator's path.
 
@@ -159,7 +179,11 @@ def test_orchestrator_path_immutable_across_multiple_config_changes(base_config,
     original_path.mkdir()
 
     orchestrator = SearchOrchestrator(
-        vector, keyword, graph, base_config, manager,
+        vector,
+        keyword,
+        graph,
+        base_config,
+        manager,
         documents_path=original_path,
     )
 
@@ -188,7 +212,11 @@ def test_orchestrator_fallback_to_config_when_documents_path_none(base_config, i
     manager = IndexManager(base_config, vector, keyword, graph)
 
     orchestrator = SearchOrchestrator(
-        vector, keyword, graph, base_config, manager,
+        vector,
+        keyword,
+        graph,
+        base_config,
+        manager,
         documents_path=None,  # Explicit None
     )
 
@@ -208,7 +236,11 @@ def test_orchestrator_default_documents_path_is_none(base_config, indices):
 
     # Don't pass documents_path - should default
     orchestrator = SearchOrchestrator(
-        vector, keyword, graph, base_config, manager,
+        vector,
+        keyword,
+        graph,
+        base_config,
+        manager,
     )
 
     assert orchestrator.documents_path == Path(base_config.indexing.documents_path)
@@ -233,7 +265,11 @@ async def test_query_uses_orchestrator_documents_path(base_config, indices, tmp_
     explicit_docs.mkdir()
 
     orchestrator = SearchOrchestrator(
-        vector, keyword, graph, base_config, manager,
+        vector,
+        keyword,
+        graph,
+        base_config,
+        manager,
         documents_path=explicit_docs,
     )
 
@@ -267,7 +303,9 @@ async def test_query_uses_orchestrator_documents_path(base_config, indices, tmp_
 
 
 @pytest.mark.asyncio
-async def test_query_with_hypothesis_uses_orchestrator_documents_path(base_config, indices, tmp_path):
+async def test_query_with_hypothesis_uses_orchestrator_documents_path(
+    base_config, indices, tmp_path
+):
     """
     Test that query_with_hypothesis() uses the orchestrator's stored documents_path.
 
@@ -280,7 +318,11 @@ async def test_query_with_hypothesis_uses_orchestrator_documents_path(base_confi
     explicit_docs.mkdir()
 
     orchestrator = SearchOrchestrator(
-        vector, keyword, graph, base_config, manager,
+        vector,
+        keyword,
+        graph,
+        base_config,
+        manager,
         documents_path=explicit_docs,
     )
 
@@ -302,7 +344,9 @@ async def test_query_with_hypothesis_uses_orchestrator_documents_path(base_confi
 # ============================================================================
 
 
-def test_two_orchestrators_with_different_paths_are_isolated(base_config, tmp_path, shared_embedding_model):
+def test_two_orchestrators_with_different_paths_are_isolated(
+    base_config, tmp_path, shared_embedding_model
+):
     """
     Test that two orchestrators created with different documents_path values
     maintain their own paths independently.
@@ -326,11 +370,19 @@ def test_two_orchestrators_with_different_paths_are_isolated(base_config, tmp_pa
     path2.mkdir()
 
     orchestrator1 = SearchOrchestrator(
-        vector1, keyword1, graph1, base_config, manager1,
+        vector1,
+        keyword1,
+        graph1,
+        base_config,
+        manager1,
         documents_path=path1,
     )
     orchestrator2 = SearchOrchestrator(
-        vector2, keyword2, graph2, base_config, manager2,
+        vector2,
+        keyword2,
+        graph2,
+        base_config,
+        manager2,
         documents_path=path2,
     )
 
@@ -347,7 +399,9 @@ def test_two_orchestrators_with_different_paths_are_isolated(base_config, tmp_pa
 # ============================================================================
 
 
-def test_base_orchestrator_stores_documents_path(base_config, tmp_path, shared_embedding_model):
+def test_base_orchestrator_stores_documents_path(
+    base_config, tmp_path, shared_embedding_model
+):
     """
     Test that BaseSearchOrchestrator stores documents_path in _documents_path.
 
@@ -365,7 +419,11 @@ def test_base_orchestrator_stores_documents_path(base_config, tmp_path, shared_e
     # SearchOrchestrator extends BaseSearchOrchestrator
     manager = IndexManager(base_config, vector, keyword, graph)
     orchestrator = SearchOrchestrator(
-        vector, keyword, graph, base_config, manager,
+        vector,
+        keyword,
+        graph,
+        base_config,
+        manager,
         documents_path=custom_path,
     )
 
@@ -374,7 +432,9 @@ def test_base_orchestrator_stores_documents_path(base_config, tmp_path, shared_e
     assert orchestrator._documents_path == custom_path
 
 
-def test_base_orchestrator_passes_path_to_search_methods(base_config, indices, tmp_path):
+def test_base_orchestrator_passes_path_to_search_methods(
+    base_config, indices, tmp_path
+):
     """
     Test that BaseSearchOrchestrator passes _documents_path to search methods.
 
@@ -388,7 +448,11 @@ def test_base_orchestrator_passes_path_to_search_methods(base_config, indices, t
     explicit_path.mkdir()
 
     orchestrator = SearchOrchestrator(
-        vector, keyword, graph, base_config, manager,
+        vector,
+        keyword,
+        graph,
+        base_config,
+        manager,
         documents_path=explicit_path,
     )
 

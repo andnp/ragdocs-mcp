@@ -20,7 +20,9 @@ class CommitData:
     delta_truncated: str
 
 
-def parse_commit(git_dir: Path, commit_hash: str, max_delta_lines: int = 200) -> CommitData:
+def parse_commit(
+    git_dir: Path, commit_hash: str, max_delta_lines: int = 200
+) -> CommitData:
     """
     Extract commit metadata and truncated delta.
 
@@ -66,7 +68,12 @@ def parse_commit(git_dir: Path, commit_hash: str, max_delta_lines: int = 200) ->
                     message_lines.append(line.rstrip())
         message = "\n".join(message_lines).rstrip()
 
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, IndexError) as e:
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        ValueError,
+        IndexError,
+    ) as e:
         logger.error(f"Failed to parse commit metadata {commit_hash}: {e}")
         # Return minimal commit data
         return CommitData(

@@ -18,15 +18,10 @@ def config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
-        search=SearchConfig(
-            semantic_weight=1.0,
-            keyword_weight=1.0,
-            recency_bias=0.5
-        ),
-        llm=LLMConfig()
+        search=SearchConfig(semantic_weight=1.0, keyword_weight=1.0, recency_bias=0.5),
+        llm=LLMConfig(),
     )
 
 
@@ -59,7 +54,10 @@ def orchestrator(config, indices, manager):
 
 def create_benchmark_corpus(docs_path: Path, num_docs: int = 50):
     topics = [
-        ("Machine Learning", "machine learning algorithms neural networks deep learning"),
+        (
+            "Machine Learning",
+            "machine learning algorithms neural networks deep learning",
+        ),
         ("Cloud Infrastructure", "cloud computing AWS kubernetes docker containers"),
         ("Database Systems", "database SQL PostgreSQL optimization indexing queries"),
         ("Web Development", "web development React JavaScript TypeScript frontend"),
@@ -78,11 +76,15 @@ def create_benchmark_corpus(docs_path: Path, num_docs: int = 50):
 
         content += f"## Introduction to {topic_name}\n\n"
         content += f"This document covers essential concepts in {keywords}. "
-        content += "It provides practical examples and best practices for implementation.\n\n"
+        content += (
+            "It provides practical examples and best practices for implementation.\n\n"
+        )
 
         content += "## Core Concepts\n\n"
         content += f"Understanding {topic_name} requires knowledge of {keywords}. "
-        content += "These concepts form the foundation of modern software development.\n\n"
+        content += (
+            "These concepts form the foundation of modern software development.\n\n"
+        )
 
         content += "## Implementation Details\n\n"
         content += f"When implementing {topic_name} solutions, consider {keywords}. "
@@ -251,7 +253,9 @@ async def test_query_latency_by_top_k(config, orchestrator, indexed_corpus):
     # Verify latency increases with top_k (or stays similar)
     # Allow some variance but ensure reasonable performance
     for top_k, avg_latency in results_data:
-        assert avg_latency < 6000, f"Latency too high for top_k={top_k}: {avg_latency:.2f}ms"
+        assert avg_latency < 6000, (
+            f"Latency too high for top_k={top_k}: {avg_latency:.2f}ms"
+        )
 
 
 @pytest.mark.asyncio
@@ -298,7 +302,9 @@ async def test_query_latency_concurrent_queries(config, orchestrator, indexed_co
 
     # Performance baseline (concurrent should be faster than serial)
     # Allow up to 5s per query on average in concurrent mode
-    assert avg_time_per_query < 5000, f"Concurrent query avg too high: {avg_time_per_query:.2f}ms"
+    assert avg_time_per_query < 5000, (
+        f"Concurrent query avg too high: {avg_time_per_query:.2f}ms"
+    )
 
 
 @pytest.mark.asyncio

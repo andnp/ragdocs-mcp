@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import logging
 import re
@@ -5,7 +7,10 @@ import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Final, Protocol, cast
+from typing import TYPE_CHECKING, Any, Final, Protocol, cast
+
+if TYPE_CHECKING:
+    from src.storage.db import DatabaseManager
 
 import numpy as np
 
@@ -20,18 +25,102 @@ logger = logging.getLogger(__name__)
 MAX_VOCABULARY_SIZE: Final = 10_000  # Maximum unique terms to track
 MAX_PENDING_TERMS: Final = 5_000  # Maximum terms awaiting embedding
 
-STOPWORDS = frozenset({
-    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-    "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
-    "be", "have", "has", "had", "do", "does", "did", "will", "would",
-    "could", "should", "may", "might", "must", "shall", "can", "need",
-    "this", "that", "these", "those", "it", "its", "they", "them", "their",
-    "he", "she", "him", "her", "his", "hers", "we", "us", "our", "you",
-    "your", "i", "me", "my", "who", "what", "which", "where", "when",
-    "how", "why", "all", "each", "every", "both", "few", "more", "most",
-    "other", "some", "such", "no", "not", "only", "same", "so", "than",
-    "too", "very", "just", "also", "now", "here", "there", "then",
-})
+STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "as",
+        "is",
+        "was",
+        "are",
+        "were",
+        "been",
+        "be",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "need",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "they",
+        "them",
+        "their",
+        "he",
+        "she",
+        "him",
+        "her",
+        "his",
+        "hers",
+        "we",
+        "us",
+        "our",
+        "you",
+        "your",
+        "i",
+        "me",
+        "my",
+        "who",
+        "what",
+        "which",
+        "where",
+        "when",
+        "how",
+        "why",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "not",
+        "only",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "just",
+        "also",
+        "now",
+        "here",
+        "there",
+        "then",
+    }
+)
 
 
 class EmbeddingModel(Protocol):
@@ -39,7 +128,12 @@ class EmbeddingModel(Protocol):
 
 
 class VectorIndex:
-    def __init__(self, embedding_model_name: str = "BAAI/bge-small-en-v1.5", embedding_model: EmbeddingModel | None = None, embedding_workers: int = 4):
+    def __init__(
+        self,
+        embedding_model_name: str = "BAAI/bge-small-en-v1.5",
+        embedding_model: EmbeddingModel | None = None,
+        embedding_workers: int = 4,
+    ):
         self._embedding_model_name = embedding_model_name
         self._embedding_model: EmbeddingModel | None = embedding_model
         self._model_lock = threading.Lock()
@@ -57,6 +151,7 @@ class VectorIndex:
         # If embedding model was provided, set it in Settings immediately
         if embedding_model is not None:
             from llama_index.core import Settings
+
             Settings.embed_model = embedding_model
 
         self._doc_id_to_node_ids: dict[str, list[str]] = {}
@@ -69,12 +164,16 @@ class VectorIndex:
         self._pending_terms: set[str] = set()  # Terms that need embedding
         # FAISS index for fast vocabulary nearest-neighbor search
         self._vocab_faiss_index = None
-        self._vocab_terms: list[str] = []  # Ordered terms matching FAISS index positions
+        self._vocab_terms: list[
+            str
+        ] = []  # Ordered terms matching FAISS index positions
         # Bounded warning deduplication with LRU eviction (max 1000 entries)
         self._warned_stale_chunk_ids: OrderedDict[str, bool] = OrderedDict()
         self._max_warned_chunks = 1000
         self._tombstoned_docs: set[str] = set()
-        self._index_lock = threading.Lock()  # Protects index operations during concurrent access
+        self._index_lock = (
+            threading.Lock()
+        )  # Protects index operations during concurrent access
 
     def _ensure_model_loaded(self, timeout: float = 120.0) -> None:
         """Load the embedding model with timeout and circuit breaker protection.
@@ -92,7 +191,10 @@ class VectorIndex:
             if self._model_loaded:
                 return
 
-            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+            from concurrent.futures import (
+                ThreadPoolExecutor,
+                TimeoutError as FuturesTimeoutError,
+            )
 
             def load_model():
                 from llama_index.core import Settings
@@ -112,9 +214,7 @@ class VectorIndex:
                     self._model_loaded = True
                     logger.info(f"Embedding model loaded: {self._embedding_model_name}")
             except CircuitBreakerOpen as e:
-                error_msg = (
-                    f"Embedding model circuit breaker is OPEN. Too many recent failures. {e}"
-                )
+                error_msg = f"Embedding model circuit breaker is OPEN. Too many recent failures. {e}"
                 logger.error(error_msg)
                 raise RuntimeError(error_msg) from e
             except FuturesTimeoutError:
@@ -144,7 +244,9 @@ class VectorIndex:
             self._initialize_index()
 
         if self._index is None:
-            raise RuntimeError("VectorIndex not initialized - call load() or add_chunks() first")
+            raise RuntimeError(
+                "VectorIndex not initialized - call load() or add_chunks() first"
+            )
 
         llama_doc = LlamaDocument(
             text=document.content,
@@ -173,9 +275,15 @@ class VectorIndex:
             self._initialize_index()
 
         if self._index is None:
-            raise RuntimeError("VectorIndex not initialized - call load() or add_chunks() first")
+            raise RuntimeError(
+                "VectorIndex not initialized - call load() or add_chunks() first"
+            )
 
-        embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
+        embedding_text = (
+            f"{chunk.header_path}\n\n{chunk.content}"
+            if chunk.header_path
+            else chunk.content
+        )
 
         llama_doc = LlamaDocument(
             text=embedding_text,
@@ -228,14 +336,20 @@ class VectorIndex:
             self._initialize_index()
 
         if self._index is None:
-            raise RuntimeError("VectorIndex not initialized - call load() or add_chunks() first")
+            raise RuntimeError(
+                "VectorIndex not initialized - call load() or add_chunks() first"
+            )
 
         # Create all LlamaDocuments sequentially (trivially fast dict construction),
         # then insert in a single batch so LlamaIndex can batch-embed efficiently.
         llama_docs: list[tuple[LlamaDocument, Chunk]] = []
         for chunk in chunks:
             try:
-                embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
+                embedding_text = (
+                    f"{chunk.header_path}\n\n{chunk.content}"
+                    if chunk.header_path
+                    else chunk.content
+                )
                 llama_doc = LlamaDocument(
                     text=embedding_text,
                     metadata={
@@ -274,7 +388,11 @@ class VectorIndex:
             self._index.insert_nodes([doc for doc, _ in llama_docs])
 
         for _, chunk in llama_docs:
-            embedding_text = f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
+            embedding_text = (
+                f"{chunk.header_path}\n\n{chunk.content}"
+                if chunk.header_path
+                else chunk.content
+            )
             self.register_document_terms(embedding_text)
 
     def remove(self, document_id: str) -> None:
@@ -324,7 +442,9 @@ class VectorIndex:
                     exc_info=True,
                 )
 
-    def update_chunk_path(self, old_chunk_id: str, new_chunk_id: str, new_metadata: dict) -> bool:
+    def update_chunk_path(
+        self, old_chunk_id: str, new_chunk_id: str, new_metadata: dict
+    ) -> bool:
         """Update chunk by re-adding with new path (avoids parse/chunking overhead).
 
         Note: Due to FAISS limitations, this re-computes the embedding but reuses the content.
@@ -349,7 +469,11 @@ class VectorIndex:
                     return False
 
                 # Extract content
-                text_content = old_node.get_content() if hasattr(old_node, "get_content") else getattr(old_node, "text", "")
+                text_content = (
+                    old_node.get_content()
+                    if hasattr(old_node, "get_content")
+                    else getattr(old_node, "text", "")
+                )
                 if not text_content:
                     logger.warning(f"No content for {old_chunk_id}")
                     return False
@@ -370,8 +494,17 @@ class VectorIndex:
                 self._chunk_id_to_node_id[new_chunk_id] = new_node_id
 
                 # Update doc_id -> node_ids mapping
-                old_doc_id = old_chunk_id.split("_chunk_")[0] if "_chunk_" in old_chunk_id else old_chunk_id.split("#")[0]
-                new_doc_id = new_metadata.get("doc_id", new_chunk_id.split("_chunk_")[0] if "_chunk_" in new_chunk_id else new_chunk_id.split("#")[0])
+                old_doc_id = (
+                    old_chunk_id.split("_chunk_")[0]
+                    if "_chunk_" in old_chunk_id
+                    else old_chunk_id.split("#")[0]
+                )
+                new_doc_id = new_metadata.get(
+                    "doc_id",
+                    new_chunk_id.split("_chunk_")[0]
+                    if "_chunk_" in new_chunk_id
+                    else new_chunk_id.split("#")[0],
+                )
 
                 if old_doc_id in self._doc_id_to_node_ids:
                     if old_doc_id != new_doc_id:
@@ -393,11 +526,15 @@ class VectorIndex:
                 try:
                     docstore.delete_document(old_chunk_id)
                 except Exception as e:
-                    logger.debug(f"Could not delete old docstore entry {old_chunk_id}: {e}")
+                    logger.debug(
+                        f"Could not delete old docstore entry {old_chunk_id}: {e}"
+                    )
 
                 self._chunk_id_to_node_id.pop(old_chunk_id, None)
 
-                logger.debug(f"Moved chunk (re-embedded): {old_chunk_id} -> {new_chunk_id}")
+                logger.debug(
+                    f"Moved chunk (re-embedded): {old_chunk_id} -> {new_chunk_id}"
+                )
                 return True
 
             except Exception as e:
@@ -421,24 +558,32 @@ class VectorIndex:
                     docstore.delete_document(chunk_id)
                     removed += 1
                 elif hasattr(docstore, "delete"):
-                    docstore.delete(chunk_id)  # type: ignore[attr-defined]
+                    docstore.delete(chunk_id)  # pyright: ignore[reportAttributeAccessIssue]
                     removed += 1
             except Exception:
-                logger.debug("Docstore delete failed during prune, continuing", exc_info=True)
+                logger.debug(
+                    "Docstore delete failed during prune, continuing", exc_info=True
+                )
 
             try:
                 if hasattr(self._index, "index_store"):
-                    index_store = self._index.index_store  # type: ignore[attr-defined]
+                    index_store = self._index.index_store  # pyright: ignore[reportAttributeAccessIssue]
                     if hasattr(index_store, "delete"):
-                        index_store.delete(chunk_id)
+                        index_store.delete(chunk_id)  # type: ignore[call-non-callable]
             except Exception:
-                logger.debug("Index store delete failed during prune, continuing", exc_info=True)
+                logger.debug(
+                    "Index store delete failed during prune, continuing", exc_info=True
+                )
 
             try:
-                if self._vector_store is not None and hasattr(self._vector_store, "delete"):
+                if self._vector_store is not None and hasattr(
+                    self._vector_store, "delete"
+                ):
                     self._vector_store.delete(chunk_id)
             except Exception:
-                logger.debug("Vector store delete failed during prune, continuing", exc_info=True)
+                logger.debug(
+                    "Vector store delete failed during prune, continuing", exc_info=True
+                )
 
             self._chunk_id_to_node_id.pop(chunk_id, None)
 
@@ -446,12 +591,20 @@ class VectorIndex:
             if hasattr(self._index, "delete_ref_doc"):
                 self._index.delete_ref_doc(doc_id, delete_from_docstore=True)
         except Exception:
-            logger.debug("delete_ref_doc failed during prune, continuing", exc_info=True)
+            logger.debug(
+                "delete_ref_doc failed during prune, continuing", exc_info=True
+            )
 
         self._doc_id_to_node_ids.pop(doc_id, None)
         return removed
 
-    def search(self, query: str, top_k: int = 10, excluded_files: set[str] | None = None, docs_root: Path | None = None) -> list[SearchResultDict]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 10,
+        excluded_files: set[str] | None = None,
+        docs_root: Path | None = None,
+    ) -> list[SearchResultDict]:
         if self._index is None or not query.strip():
             return []
 
@@ -472,6 +625,7 @@ class VectorIndex:
                 file_path = node.metadata.get("file_path", "")
                 if file_path:
                     from src.search.path_utils import matches_any_excluded
+
                     if matches_any_excluded(file_path, excluded_files, docs_root):
                         continue
 
@@ -480,29 +634,37 @@ class VectorIndex:
             if doc_id and doc_id in self._tombstoned_docs:
                 continue
 
-            node_text = node.node.get_content() if hasattr(node.node, "get_content") else getattr(node.node, "text", "")
+            node_text = (
+                node.node.get_content()
+                if hasattr(node.node, "get_content")
+                else getattr(node.node, "text", "")
+            )
 
             if chunk_id:
-                results.append({
-                    "chunk_id": chunk_id,
-                    "doc_id": doc_id,
-                    "score": node.score if hasattr(node, "score") else 1.0,
-                    "header_path": node.metadata.get("header_path", ""),
-                    "file_path": node.metadata.get("file_path", ""),
-                    "content": node_text,
-                    "metadata": node.metadata,
-                })
-            else:
-                if doc_id:
-                    results.append({
-                        "chunk_id": doc_id,
+                results.append(
+                    {
+                        "chunk_id": chunk_id,
                         "doc_id": doc_id,
                         "score": node.score if hasattr(node, "score") else 1.0,
-                        "header_path": "",
+                        "header_path": node.metadata.get("header_path", ""),
                         "file_path": node.metadata.get("file_path", ""),
                         "content": node_text,
                         "metadata": node.metadata,
-                    })
+                    }
+                )
+            else:
+                if doc_id:
+                    results.append(
+                        {
+                            "chunk_id": doc_id,
+                            "doc_id": doc_id,
+                            "score": node.score if hasattr(node, "score") else 1.0,
+                            "header_path": "",
+                            "file_path": node.metadata.get("file_path", ""),
+                            "content": node_text,
+                            "metadata": node.metadata,
+                        }
+                    )
 
             if len(results) >= top_k:
                 break
@@ -529,7 +691,11 @@ class VectorIndex:
 
             if node:
                 logger.debug(f"get_chunk_by_id({chunk_id}): found in docstore")
-                node_text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
+                node_text = (
+                    node.get_content()
+                    if hasattr(node, "get_content")
+                    else getattr(node, "text", "")
+                )
                 return {
                     "chunk_id": chunk_id,
                     "doc_id": node.metadata.get("doc_id"),
@@ -541,12 +707,16 @@ class VectorIndex:
                 }
             else:
                 if chunk_id not in self._warned_stale_chunk_ids:
-                    logger.warning(f"get_chunk_by_id({chunk_id}): not found in docstore")
+                    logger.warning(
+                        f"get_chunk_by_id({chunk_id}): not found in docstore"
+                    )
                     self._log_stale_warning(chunk_id)
                 self._cleanup_stale_reference(chunk_id)
         except Exception as e:
             if chunk_id not in self._warned_stale_chunk_ids:
-                logger.warning(f"get_chunk_by_id({chunk_id}): docstore lookup failed: {e}")
+                logger.warning(
+                    f"get_chunk_by_id({chunk_id}): docstore lookup failed: {e}"
+                )
                 self._log_stale_warning(chunk_id)
             self._cleanup_stale_reference(chunk_id)
 
@@ -598,13 +768,21 @@ class VectorIndex:
                 node = docstore.get_document(chunk_id)
                 if node is None:
                     continue
-                text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
-                tokens = re.findall(r'\b[a-zA-Z][a-zA-Z0-9_-]*\b', text.lower())
+                text = (
+                    node.get_content()
+                    if hasattr(node, "get_content")
+                    else getattr(node, "text", "")
+                )
+                tokens = re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]*\b", text.lower())
                 for token in tokens:
                     if len(token) >= min_term_length and token not in STOPWORDS:
                         term_counts[token] = term_counts.get(token, 0) + 1
             except Exception:
-                logger.debug("Failed to extract terms from chunk %s, continuing", chunk_id, exc_info=True)
+                logger.debug(
+                    "Failed to extract terms from chunk %s, continuing",
+                    chunk_id,
+                    exc_info=True,
+                )
                 continue
 
         # Store term counts for future incremental updates (convert to OrderedDict)
@@ -612,7 +790,9 @@ class VectorIndex:
 
         # Filter by minimum frequency to reduce vocabulary size
         sorted_terms = sorted(term_counts.items(), key=lambda x: x[1], reverse=True)
-        top_terms = [term for term, count in sorted_terms if count >= min_frequency][:max_terms]
+        top_terms = [term for term, count in sorted_terms if count >= min_frequency][
+            :max_terms
+        ]
 
         self._ensure_model_loaded()
         if self._embedding_model is None:
@@ -637,13 +817,17 @@ class VectorIndex:
                 self._concept_vocabulary[term] = embedding
 
         self._pending_terms.clear()
-        logger.info(f"Built concept vocabulary with {len(self._concept_vocabulary)} terms")
+        logger.info(
+            f"Built concept vocabulary with {len(self._concept_vocabulary)} terms"
+        )
         self._rebuild_vocab_index()
 
-    def extract_terms_from_text(self, text: str, min_term_length: int = 3) -> dict[str, int]:
+    def extract_terms_from_text(
+        self, text: str, min_term_length: int = 3
+    ) -> dict[str, int]:
         """Extract terms and their counts from text."""
         term_counts: dict[str, int] = {}
-        tokens = re.findall(r'\b[a-zA-Z][a-zA-Z0-9_-]*\b', text.lower())
+        tokens = re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]*\b", text.lower())
         for token in tokens:
             if len(token) >= min_term_length and token not in STOPWORDS:
                 term_counts[token] = term_counts.get(token, 0) + 1
@@ -674,7 +858,9 @@ class VectorIndex:
                 self._term_counts.pop(old_term)
                 self._concept_vocabulary.pop(old_term, None)
                 self._pending_terms.discard(old_term)
-            logger.debug(f"Evicted {num_to_remove} LRU terms from vocabulary (limit: {MAX_VOCABULARY_SIZE})")
+            logger.debug(
+                f"Evicted {num_to_remove} LRU terms from vocabulary (limit: {MAX_VOCABULARY_SIZE})"
+            )
 
         # Limit pending terms by keeping most frequent
         if len(self._pending_terms) > MAX_PENDING_TERMS:
@@ -682,7 +868,7 @@ class VectorIndex:
             sorted_pending = sorted(
                 self._pending_terms,
                 key=lambda t: self._term_counts.get(t, 0),
-                reverse=True
+                reverse=True,
             )
             self._pending_terms = set(sorted_pending[:MAX_PENDING_TERMS])
             logger.debug(f"Trimmed pending terms to {MAX_PENDING_TERMS} most frequent")
@@ -705,8 +891,7 @@ class VectorIndex:
 
         # Get top terms by frequency that aren't in vocabulary yet
         pending_with_counts = [
-            (term, term_counts_snapshot.get(term, 0))
-            for term in pending_snapshot
+            (term, term_counts_snapshot.get(term, 0)) for term in pending_snapshot
         ]
         pending_with_counts.sort(key=lambda x: x[1], reverse=True)
 
@@ -717,8 +902,7 @@ class VectorIndex:
             # Vocabulary is full - only add terms with higher freq than lowest in vocab
             if vocab_snapshot:
                 min_vocab_freq = min(
-                    term_counts_snapshot.get(t, 0)
-                    for t in vocab_snapshot
+                    term_counts_snapshot.get(t, 0) for t in vocab_snapshot
                 )
                 pending_with_counts = [
                     (t, c) for t, c in pending_with_counts if c > min_vocab_freq
@@ -747,7 +931,9 @@ class VectorIndex:
                 self._pending_terms.discard(term)
                 break  # Stop processing if circuit is open
             except Exception:
-                logger.debug("Failed to embed term '%s', continuing", term, exc_info=True)
+                logger.debug(
+                    "Failed to embed term '%s', continuing", term, exc_info=True
+                )
                 self._pending_terms.discard(term)
                 continue
 
@@ -775,7 +961,7 @@ class VectorIndex:
             [self._concept_vocabulary[t] for t in terms], dtype=np.float32
         )
         # Normalize for cosine similarity via inner product
-        faiss.normalize_L2(embeddings)  # type: ignore[attr-defined]
+        faiss.normalize_L2(embeddings)
 
         index = faiss.IndexFlatIP(embeddings.shape[1])  # type: ignore[attr-defined]
         index.add(embeddings)  # type: ignore[union-attr]
@@ -879,7 +1065,11 @@ class VectorIndex:
             embedding = getattr(node, "embedding", None)
             if embedding is not None:
                 return list(embedding)
-            text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
+            text = (
+                node.get_content()
+                if hasattr(node, "get_content")
+                else getattr(node, "text", "")
+            )
             if not text:
                 return None
             return self.get_text_embedding(text)
@@ -910,7 +1100,7 @@ class VectorIndex:
             query_embedding = np.array(
                 self._protected_embed(query), dtype=np.float32
             ).reshape(1, -1)
-            faiss.normalize_L2(query_embedding)  # type: ignore[attr-defined]
+            faiss.normalize_L2(query_embedding)
 
             scores, indices = self._vocab_faiss_index.search(query_embedding, top_k)  # type: ignore[union-attr]
 
@@ -944,6 +1134,7 @@ class VectorIndex:
 
             if self._vector_store is not None:
                 import faiss
+
                 faiss_path = path / "faiss_index.bin"
                 faiss.write_index(self._vector_store._faiss_index, str(faiss_path))  # type: ignore[attr-defined]
                 fsync_path(faiss_path)
@@ -978,7 +1169,11 @@ class VectorIndex:
         return True
 
     def load(self, path: Path) -> None:
-        from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage
+        from llama_index.core import (
+            StorageContext,
+            VectorStoreIndex,
+            load_index_from_storage,
+        )
         from llama_index.vector_stores.faiss import FaissVectorStore
 
         # Check if index exists and has required files
@@ -1008,11 +1203,15 @@ class VectorIndex:
                 persist_dir=str(path),
             )
 
-            self._index = cast(VectorStoreIndex, load_index_from_storage(storage_context))
+            self._index = cast(
+                VectorStoreIndex, load_index_from_storage(storage_context)
+            )
         except Exception as e:
             logger.warning(
                 "Vector index at %s is corrupted (%s: %s); clearing and reinitializing.",
-                path, type(e).__name__, e,
+                path,
+                type(e).__name__,
+                e,
                 exc_info=True,
             )
             self._clear_index_dir(path)
@@ -1059,7 +1258,9 @@ class VectorIndex:
                 for name, fp in ordered_files.items()
             }
             results = {name: future.result() for name, future in futures.items()}
-            ordered_results = {name: future.result() for name, future in ordered_futures.items()}
+            ordered_results = {
+                name: future.result() for name, future in ordered_futures.items()
+            }
 
         doc_mapping = results["doc_id_mapping"]
         if isinstance(doc_mapping, dict):
@@ -1096,6 +1297,7 @@ class VectorIndex:
     def _clear_index_dir(self, path: Path) -> None:
         """Remove all files from an index directory so it can be rebuilt cleanly."""
         import shutil
+
         if path.exists():
             shutil.rmtree(path)
         path.mkdir(parents=True, exist_ok=True)
@@ -1112,9 +1314,7 @@ class VectorIndex:
         faiss_index = faiss.IndexFlatL2(dimension)  # type: ignore[attr-defined]
         self._vector_store = FaissVectorStore(faiss_index=faiss_index)
 
-        storage_context = StorageContext.from_defaults(
-            vector_store=self._vector_store
-        )
+        storage_context = StorageContext.from_defaults(vector_store=self._vector_store)
 
         self._index = VectorStoreIndex(
             nodes=[],
@@ -1235,7 +1435,11 @@ class VectorIndex:
                     node = docstore.get_document(chunk_id)
                     if node is None:
                         continue
-                    text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
+                    text = (
+                        node.get_content()
+                        if hasattr(node, "get_content")
+                        else getattr(node, "text", "")
+                    )
                     metadata = dict(node.metadata) if hasattr(node, "metadata") else {}
                     doc_id = metadata.get("doc_id", "")
                     embedding = getattr(node, "embedding", None)
@@ -1250,11 +1454,13 @@ class VectorIndex:
                         (chunk_id, doc_id, text, json.dumps(metadata), vector_blob),
                     )
                 except Exception:
-                    logger.warning("Failed to save chunk %s to DB", chunk_id, exc_info=True)
+                    logger.warning(
+                        "Failed to save chunk %s to DB", chunk_id, exc_info=True
+                    )
 
             # --- b) Store FAISS index binary in kv_store ---
             if self._vector_store is not None:
-                faiss_bytes = faiss.serialize_index(self._vector_store._faiss_index)  # type: ignore[attr-defined]
+                faiss_bytes = faiss.serialize_index(self._vector_store._faiss_index)
                 faiss_b64 = base64.b64encode(faiss_bytes.tobytes()).decode("ascii")
                 conn.execute(
                     "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
@@ -1276,19 +1482,21 @@ class VectorIndex:
                 )
 
             # --- d) Store LlamaIndex docstore and index_store in kv_store ---
-            docstore_dict = self._index.storage_context.docstore.to_dict()
+            docstore_dict = self._index.storage_context.docstore.to_dict()  # type: ignore[attr-defined]
             conn.execute(
                 "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
                 ("vector_index:docstore", json.dumps(docstore_dict)),
             )
-            index_store_dict = self._index.storage_context.index_store.to_dict()
+            index_store_dict = self._index.storage_context.index_store.to_dict()  # type: ignore[attr-defined]
             conn.execute(
                 "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
                 ("vector_index:index_store", json.dumps(index_store_dict)),
             )
 
         conn.commit()
-        logger.info("VectorIndex saved to SQLite (%d chunks)", len(self._chunk_id_to_node_id))
+        logger.info(
+            "VectorIndex saved to SQLite (%d chunks)", len(self._chunk_id_to_node_id)
+        )
 
     def load_from_db(self, db_manager: "DatabaseManager") -> None:
         """Restore VectorIndex state from SQLite via DatabaseManager.
@@ -1320,7 +1528,7 @@ class VectorIndex:
             # --- a) Load FAISS index ---
             faiss_b64: str = row[0] if isinstance(row, (tuple, list)) else row["value"]
             faiss_bytes = np.frombuffer(base64.b64decode(faiss_b64), dtype=np.uint8)
-            faiss_index = faiss.deserialize_index(faiss_bytes)  # type: ignore[attr-defined]
+            faiss_index = faiss.deserialize_index(faiss_bytes)
             self._vector_store = FaissVectorStore(faiss_index=faiss_index)
 
             # --- b) Load docstore ---
@@ -1328,17 +1536,22 @@ class VectorIndex:
                 "SELECT value FROM kv_store WHERE key = ?", ("vector_index:docstore",)
             ).fetchone()
             if ds_row is not None:
-                ds_json = ds_row[0] if isinstance(ds_row, (tuple, list)) else ds_row["value"]
+                ds_json = (
+                    ds_row[0] if isinstance(ds_row, (tuple, list)) else ds_row["value"]
+                )
                 docstore = SimpleDocumentStore.from_dict(json.loads(ds_json))
             else:
                 docstore = SimpleDocumentStore()
 
             # --- c) Reconstruct VectorStoreIndex ---
             is_row = conn.execute(
-                "SELECT value FROM kv_store WHERE key = ?", ("vector_index:index_store",)
+                "SELECT value FROM kv_store WHERE key = ?",
+                ("vector_index:index_store",),
             ).fetchone()
             if is_row is not None:
-                is_json = is_row[0] if isinstance(is_row, (tuple, list)) else is_row["value"]
+                is_json = (
+                    is_row[0] if isinstance(is_row, (tuple, list)) else is_row["value"]
+                )
                 index_store = SimpleIndexStore.from_dict(json.loads(is_json))
             else:
                 index_store = SimpleIndexStore()
@@ -1348,29 +1561,43 @@ class VectorIndex:
                 docstore=docstore,
                 index_store=index_store,
             )
-            self._index = load_index_from_storage(storage_context)  # type: ignore[assignment]
+            self._index = load_index_from_storage(storage_context)
 
             # --- d) Load JSON mappings ---
             def _load_kv(key: str) -> str | None:
-                r = conn.execute("SELECT value FROM kv_store WHERE key = ?", (key,)).fetchone()
+                r = conn.execute(
+                    "SELECT value FROM kv_store WHERE key = ?", (key,)
+                ).fetchone()
                 if r is None:
                     return None
                 return r[0] if isinstance(r, (tuple, list)) else r["value"]
 
             doc_mapping_raw = _load_kv("vector_index:doc_id_mapping")
-            self._doc_id_to_node_ids = json.loads(doc_mapping_raw) if doc_mapping_raw else {}
+            self._doc_id_to_node_ids = (
+                json.loads(doc_mapping_raw) if doc_mapping_raw else {}
+            )
 
             chunk_mapping_raw = _load_kv("vector_index:chunk_id_mapping")
-            self._chunk_id_to_node_id = json.loads(chunk_mapping_raw) if chunk_mapping_raw else {}
+            self._chunk_id_to_node_id = (
+                json.loads(chunk_mapping_raw) if chunk_mapping_raw else {}
+            )
 
             tombstones_raw = _load_kv("vector_index:tombstones")
-            self._tombstoned_docs = set(json.loads(tombstones_raw)) if tombstones_raw else set()
+            self._tombstoned_docs = (
+                set(json.loads(tombstones_raw)) if tombstones_raw else set()
+            )
 
             vocab_raw = _load_kv("vector_index:concept_vocabulary")
-            self._concept_vocabulary = OrderedDict(json.loads(vocab_raw)) if vocab_raw else OrderedDict()
+            self._concept_vocabulary = (
+                OrderedDict(json.loads(vocab_raw)) if vocab_raw else OrderedDict()
+            )
 
             term_counts_raw = _load_kv("vector_index:term_counts")
-            self._term_counts = OrderedDict(json.loads(term_counts_raw)) if term_counts_raw else OrderedDict()
+            self._term_counts = (
+                OrderedDict(json.loads(term_counts_raw))
+                if term_counts_raw
+                else OrderedDict()
+            )
 
             self._pending_terms.clear()
             self._warned_stale_chunk_ids.clear()
@@ -1382,7 +1609,10 @@ class VectorIndex:
                 len(self._doc_id_to_node_ids),
             )
         except Exception:
-            logger.warning("Failed to load VectorIndex from SQLite, initializing fresh", exc_info=True)
+            logger.warning(
+                "Failed to load VectorIndex from SQLite, initializing fresh",
+                exc_info=True,
+            )
             self._initialize_index()
 
     def __len__(self) -> int:

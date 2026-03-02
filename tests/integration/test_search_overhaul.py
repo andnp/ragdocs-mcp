@@ -14,13 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import (
-    Config,
-    IndexingConfig,
-    LLMConfig,
-    SearchConfig,
-    ChunkingConfig
-)
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ChunkingConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -44,16 +38,11 @@ def test_config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
-        search=SearchConfig(
-            semantic_weight=1.0,
-            keyword_weight=1.0,
-            recency_bias=0.5
-        ),
+        search=SearchConfig(semantic_weight=1.0, keyword_weight=1.0, recency_bias=0.5),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
 
@@ -146,8 +135,12 @@ Refer to [[src/main.py]] for implementation details.
         graph.add_node("doc2", {"title": "Doc 2"})
         graph.add_node("doc3", {"title": "Doc 3"})
 
-        graph.add_edge("doc1", "doc2", edge_type="tests", edge_context="Testing section")
-        graph.add_edge("doc1", "doc3", edge_type="implements", edge_context="Implementation")
+        graph.add_edge(
+            "doc1", "doc2", edge_type="tests", edge_context="Testing section"
+        )
+        graph.add_edge(
+            "doc1", "doc3", edge_type="implements", edge_context="Implementation"
+        )
 
         edges_to_doc2 = graph.get_edges_to("doc2")
         assert len(edges_to_doc2) == 1
@@ -190,8 +183,16 @@ class TestCommunityDetectionIntegration:
 
         assert len(communities) == 6
 
-        assert communities["cluster_a_1"] == communities["cluster_a_2"] == communities["cluster_a_3"]
-        assert communities["cluster_b_1"] == communities["cluster_b_2"] == communities["cluster_b_3"]
+        assert (
+            communities["cluster_a_1"]
+            == communities["cluster_a_2"]
+            == communities["cluster_a_3"]
+        )
+        assert (
+            communities["cluster_b_1"]
+            == communities["cluster_b_2"]
+            == communities["cluster_b_3"]
+        )
         assert communities["cluster_a_1"] != communities["cluster_b_1"]
 
     def test_community_lookup_by_doc_id(self, indices):
@@ -273,7 +274,7 @@ class TestCommunityDetectionIntegration:
         boosts = graph.boost_by_community(
             ["seed_doc", "same_cluster", "different_cluster"],
             {"seed_doc"},
-            boost_factor=1.2
+            boost_factor=1.2,
         )
 
         assert boosts["seed_doc"] == 1.2
@@ -290,7 +291,9 @@ class TestDynamicWeightsIntegration:
     """Tests for variance-aware dynamic weight computation in search."""
 
     @pytest.mark.asyncio
-    async def test_dynamic_weights_affect_ranking(self, test_config, manager, orchestrator):
+    async def test_dynamic_weights_affect_ranking(
+        self, test_config, manager, orchestrator
+    ):
         """
         Dynamic weights adjust strategy contributions based on score variance.
         Low variance (muddy results) reduces that strategy's influence.
@@ -298,7 +301,9 @@ class TestDynamicWeightsIntegration:
         docs_path = Path(test_config.indexing.documents_path)
 
         doc1 = docs_path / "unique_term.md"
-        doc1.write_text("# Unique Term\n\nThis document contains xyzzy123 unique keyword.")
+        doc1.write_text(
+            "# Unique Term\n\nThis document contains xyzzy123 unique keyword."
+        )
         manager.index_document(str(doc1))
 
         doc2 = docs_path / "common_concept.md"
@@ -315,8 +320,9 @@ class TestDynamicWeightsIntegration:
         # With calibration, the unique_term document should still be present
         # Check if it appears anywhere in the results (may not be #1 due to calibration)
         chunk_ids = [r.chunk_id for r in results]
-        assert any("unique_term" in chunk_id for chunk_id in chunk_ids), \
+        assert any("unique_term" in chunk_id for chunk_id in chunk_ids), (
             f"unique_term should be in results, got: {chunk_ids}"
+        )
 
 
 # ============================================================================
@@ -328,7 +334,9 @@ class TestHyDESearchIntegration:
     """Tests for HyDE (Hypothetical Document Embeddings) search."""
 
     @pytest.mark.asyncio
-    async def test_hyde_search_finds_relevant_docs(self, test_config, manager, orchestrator):
+    async def test_hyde_search_finds_relevant_docs(
+        self, test_config, manager, orchestrator
+    ):
         """
         HyDE search with a good hypothesis finds relevant documentation.
         """
@@ -366,7 +374,9 @@ Example tool registration in src/mcp_server.py.
         assert "mcp_tools" in result_doc_ids or "configuration" in result_doc_ids
 
     @pytest.mark.asyncio
-    async def test_hyde_returns_normalized_scores(self, test_config, manager, orchestrator):
+    async def test_hyde_returns_normalized_scores(
+        self, test_config, manager, orchestrator
+    ):
         """
         HyDE search returns properly normalized scores in [0, 1].
         """
@@ -441,7 +451,9 @@ A related feature that shares concepts.
 """)
         manager.index_document(str(related_doc))
 
-        results, _, _ = await orchestrator.query("feature implementation", top_k=10, top_n=5)
+        results, _, _ = await orchestrator.query(
+            "feature implementation", top_k=10, top_n=5
+        )
 
         assert len(results) > 0
 
@@ -453,7 +465,9 @@ A related feature that shares concepts.
             assert results[0].score > 0.95
 
     @pytest.mark.asyncio
-    async def test_empty_hypothesis_returns_empty(self, test_config, manager, orchestrator):
+    async def test_empty_hypothesis_returns_empty(
+        self, test_config, manager, orchestrator
+    ):
         """
         Empty hypothesis returns empty results gracefully.
         """
@@ -462,7 +476,9 @@ A related feature that shares concepts.
         doc.write_text("# Test\n\nContent.")
         manager.index_document(str(doc))
 
-        results, stats, _ = await orchestrator.query_with_hypothesis("", top_k=10, top_n=5)
+        results, stats, _ = await orchestrator.query_with_hypothesis(
+            "", top_k=10, top_n=5
+        )
 
         assert results == []
         assert stats.original_count == 0

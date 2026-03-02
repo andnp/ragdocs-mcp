@@ -12,7 +12,10 @@ def rrf_score(rank: int, k: int):
 
 
 def apply_recency_boost(
-    doc_id: str, score: float, modified_times: dict[str, float], tiers: list[tuple[int, float]]
+    doc_id: str,
+    score: float,
+    modified_times: dict[str, float],
+    tiers: list[tuple[int, float]],
 ):
     if doc_id not in modified_times:
         return score

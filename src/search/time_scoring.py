@@ -76,7 +76,9 @@ def calculate_time_score(
 
     if mode == TimeScoreMode.TIERS:
         if not isinstance(config, TierConfig):
-            raise TypeError(f"TIERS mode requires TierConfig, got {type(config).__name__}")
+            raise TypeError(
+                f"TIERS mode requires TierConfig, got {type(config).__name__}"
+            )
         return _calculate_tier_score(age_days, config)
 
     if not isinstance(config, DecayConfig):

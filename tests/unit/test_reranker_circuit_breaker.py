@@ -26,7 +26,11 @@ class FailingCrossEncoder:
     """Cross encoder that always raises an exception on predict."""
 
     def predict(
-        self, sentences: list[tuple[str, str]] | list[list[str]] | tuple[str, str] | list[str]
+        self,
+        sentences: list[tuple[str, str]]
+        | list[list[str]]
+        | tuple[str, str]
+        | list[str],
     ) -> Iterable[float]:
         raise RuntimeError("Model inference failed")
 
@@ -36,9 +40,17 @@ class FakeCrossEncoder:
     """Cross encoder that returns predictable scores based on content length."""
 
     def predict(
-        self, sentences: list[tuple[str, str]] | list[list[str]] | tuple[str, str] | list[str]
+        self,
+        sentences: list[tuple[str, str]]
+        | list[list[str]]
+        | tuple[str, str]
+        | list[str],
     ) -> Iterable[float]:
-        if isinstance(sentences, list) and sentences and isinstance(sentences[0], tuple):
+        if (
+            isinstance(sentences, list)
+            and sentences
+            and isinstance(sentences[0], tuple)
+        ):
             return [len(content) * 0.01 for _, content in sentences]
         return [0.0]
 
@@ -65,7 +77,6 @@ def candidates():
 
 
 class TestCircuitBreakerInitialState:
-
     def test_circuit_breaker_starts_closed(self):
         """Circuit breaker should start in CLOSED state."""
         reranker = ReRanker(model_name="test-model")
@@ -78,7 +89,6 @@ class TestCircuitBreakerInitialState:
 
 
 class TestCircuitBreakerTripping:
-
     def test_repeated_failures_trip_circuit(self):
         """Repeated model failures should trip the circuit to OPEN."""
         reranker = ReRanker(model_name="test-model")
@@ -104,7 +114,9 @@ class TestCircuitBreakerTripping:
 
         for _ in range(failure_threshold):
             try:
-                reranker._circuit_breaker.call(lambda: (_ for _ in ()).throw(RuntimeError("Load failed")))
+                reranker._circuit_breaker.call(
+                    lambda: (_ for _ in ()).throw(RuntimeError("Load failed"))
+                )
             except RuntimeError:
                 pass
 
@@ -112,8 +124,9 @@ class TestCircuitBreakerTripping:
 
 
 class TestCircuitBreakerFallback:
-
-    def test_rerank_returns_original_when_circuit_open(self, content_provider, candidates):
+    def test_rerank_returns_original_when_circuit_open(
+        self, content_provider, candidates
+    ):
         """When circuit is open, rerank returns original rankings truncated."""
         reranker = ReRanker(model_name="test-model")
         reranker._model = FakeCrossEncoder()
@@ -134,7 +147,9 @@ class TestCircuitBreakerFallback:
         assert result[0] == candidates[0]
         assert result[1] == candidates[1]
 
-    def test_rerank_graceful_degradation_on_predict_failure(self, content_provider, candidates):
+    def test_rerank_graceful_degradation_on_predict_failure(
+        self, content_provider, candidates
+    ):
         """Rerank returns original rankings when prediction fails and circuit opens."""
         reranker = ReRanker(model_name="test-model")
         reranker._model = FailingCrossEncoder()
@@ -163,8 +178,9 @@ class TestCircuitBreakerFallback:
 
 
 class TestCircuitBreakerIntegration:
-
-    def test_successful_rerank_does_not_trip_circuit(self, content_provider, candidates):
+    def test_successful_rerank_does_not_trip_circuit(
+        self, content_provider, candidates
+    ):
         """Successful reranking keeps circuit in CLOSED state."""
         reranker = ReRanker(model_name="test-model")
         reranker._model = FakeCrossEncoder()

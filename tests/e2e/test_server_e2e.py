@@ -31,8 +31,12 @@ def test_docs_dir(tmp_path):
     docs_dir.mkdir()
 
     # Create sample documents
-    (docs_dir / "intro.md").write_text("# Introduction\n\nWelcome to the documentation.")
-    (docs_dir / "api.md").write_text("# API Reference\n\nAPI documentation for developers.")
+    (docs_dir / "intro.md").write_text(
+        "# Introduction\n\nWelcome to the documentation."
+    )
+    (docs_dir / "api.md").write_text(
+        "# API Reference\n\nAPI documentation for developers."
+    )
     (docs_dir / "guide.md").write_text("# User Guide\n\nStep-by-step guide for users.")
 
     return docs_dir
@@ -55,7 +59,7 @@ port = 8000
 
 [indexing]
 documents_path = "{test_docs_dir}"
-index_path = "{tmp_path / 'indices'}"
+index_path = "{tmp_path / "indices"}"
 recursive = true
 
 [parsers]
@@ -94,9 +98,7 @@ def app_with_config(tmp_path, test_docs_dir, monkeypatch):
                 keyword_weight=0.4,
                 recency_bias=0.1,
             ),
-            llm=LLMConfig(
-                embedding_model="all-MiniLM-L6-v2"
-            ),
+            llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
     monkeypatch.setattr("src.context.load_config", mock_load_config)
@@ -315,7 +317,9 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
     old_manager.persist()
 
     # Add new document that should be indexed during rebuild
-    (test_docs_dir / "new_doc.md").write_text("# New Document\n\nShould be indexed on rebuild.")
+    (test_docs_dir / "new_doc.md").write_text(
+        "# New Document\n\nShould be indexed on rebuild."
+    )
 
     # Mock load_config for new server with updated version
     def mock_load_config():
@@ -325,9 +329,7 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
                 index_path=str(index_path),
             ),
             search=SearchConfig(),
-            llm=LLMConfig(
-                embedding_model="all-MiniLM-L6-v2"
-            ),
+            llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
     monkeypatch.setattr("src.context.load_config", mock_load_config)
@@ -494,8 +496,12 @@ def test_query_documents_returns_scores(client):
         score = item["score"]
 
         # Verify types
-        assert isinstance(chunk_id, str), f"chunk_id should be str, got {type(chunk_id)}"
-        assert isinstance(score, (int, float)), f"score should be numeric, got {type(score)}"
+        assert isinstance(chunk_id, str), (
+            f"chunk_id should be str, got {type(chunk_id)}"
+        )
+        assert isinstance(score, (int, float)), (
+            f"score should be numeric, got {type(score)}"
+        )
 
         # Verify score range
         assert 0.0 <= score <= 1.0, f"Score {score} out of range [0, 1]"
@@ -521,13 +527,15 @@ def test_query_documents_scores_descending(client):
         scores = [result["score"] for result in results]
 
         # Verify scores are in descending order
-        assert scores == sorted(scores, reverse=True), \
+        assert scores == sorted(scores, reverse=True), (
             f"Scores should be descending, got {scores}"
+        )
 
         # Verify each score is <= previous score
         for i in range(len(scores) - 1):
-            assert scores[i] >= scores[i+1], \
-                f"Score at position {i} ({scores[i]}) should be >= score at {i+1} ({scores[i+1]})"
+            assert scores[i] >= scores[i + 1], (
+                f"Score at position {i} ({scores[i]}) should be >= score at {i + 1} ({scores[i + 1]})"
+            )
 
 
 def test_query_documents_top_score_is_high_confidence(client):
@@ -549,8 +557,9 @@ def test_query_documents_top_score_is_high_confidence(client):
 
     if results:
         top_score = results[0]["score"]
-        assert top_score > 0.95, \
+        assert top_score > 0.95, (
             f"Top score should be > 0.95 (high confidence), got {top_score}"
+        )
 
 
 def test_query_documents_validates_top_n_range(client):

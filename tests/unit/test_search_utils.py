@@ -1,4 +1,3 @@
-
 from src.search.utils import classify_query_type, truncate_content
 
 
@@ -31,7 +30,9 @@ class TestQueryClassification:
         """
         Verify 'getting started' queries are classified as conceptual.
         """
-        assert classify_query_type("getting started with authentication") == "conceptual"
+        assert (
+            classify_query_type("getting started with authentication") == "conceptual"
+        )
 
     def test_conceptual_query_how_to(self):
         """

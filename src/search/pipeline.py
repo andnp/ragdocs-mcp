@@ -2,7 +2,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from src.models import CompressionStats
-from src.search.dedup import deduplicate_by_content_hash, deduplicate_by_ngram, deduplicate_by_similarity
+from src.search.dedup import (
+    deduplicate_by_content_hash,
+    deduplicate_by_ngram,
+    deduplicate_by_similarity,
+)
 from src.search.filters import filter_by_confidence, limit_per_document
 from src.search.reranker import ReRanker
 
@@ -93,7 +97,9 @@ class SearchPipeline:
                 self._config.rerank_top_n,
             )
 
-        final = [(chunk_id, max(0.0, min(1.0, score))) for chunk_id, score in limited[:top_n]]
+        final = [
+            (chunk_id, max(0.0, min(1.0, score))) for chunk_id, score in limited[:top_n]
+        ]
 
         stats = CompressionStats(
             original_count=original_count,

@@ -4,11 +4,13 @@ Unit tests for src/config.py configuration loader.
 Tests cover loading from local and global paths, defaults, path expansion,
 and field validation.
 """
+
 import os
 from pathlib import Path
+from typing import cast
 
 
-from src.config import load_config, LLMConfig, resolve_embedding_model
+from src.config import load_config, Config, LLMConfig, resolve_embedding_model
 
 
 def test_load_from_project_local_config(tmp_path):
@@ -512,11 +514,13 @@ def test_resolve_embedding_model_fallback_when_property_missing():
     This is a regression test for the worker subprocess bug where accessing
     config.llm.resolved_embedding_model raised AttributeError.
     """
+
     # Create a mock config with an LLMConfig that has no resolved_embedding_model
     # property (simulating the edge case that caused the bug)
     class BrokenLLMConfig:
         def __init__(self):
             self.embedding_model = "local"
+
         # No resolved_embedding_model property!
 
     class MockConfig:
@@ -526,7 +530,7 @@ def test_resolve_embedding_model_fallback_when_property_missing():
     mock_config = MockConfig()
 
     # resolve_embedding_model should handle this gracefully
-    result = resolve_embedding_model(mock_config)
+    result = resolve_embedding_model(cast(Config, mock_config))
 
     # Should still resolve to the default model
     assert result == LLMConfig.DEFAULT_LOCAL_MODEL
@@ -534,9 +538,11 @@ def test_resolve_embedding_model_fallback_when_property_missing():
 
 def test_resolve_embedding_model_fallback_with_custom_model():
     """resolve_embedding_model fallback works with custom model names."""
+
     class BrokenLLMConfig:
         def __init__(self):
             self.embedding_model = "custom/model"
+
         # No resolved_embedding_model property!
 
     class MockConfig:
@@ -545,6 +551,6 @@ def test_resolve_embedding_model_fallback_with_custom_model():
 
     mock_config = MockConfig()
 
-    result = resolve_embedding_model(mock_config)
+    result = resolve_embedding_model(cast(Config, mock_config))
 
     assert result == "custom/model"

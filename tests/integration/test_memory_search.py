@@ -16,7 +16,7 @@ from src.config import (
     IndexingConfig,
     LLMConfig,
     MemoryConfig,
-    SearchConfig
+    SearchConfig,
 )
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -41,20 +41,16 @@ def memory_config(tmp_path: Path):
 
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
         memory=MemoryConfig(
             enabled=True,
             storage_strategy="project",
             score_threshold=0.001,  # Keep low for backward compatibility with tests
         ),
-        search=SearchConfig(
-            semantic_weight=1.0,
-            keyword_weight=1.0
-        ),
+        search=SearchConfig(semantic_weight=1.0, keyword_weight=1.0),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
 
@@ -89,12 +85,16 @@ def memory_manager(memory_config: Config, memory_path: Path, memory_indices):
 
 
 @pytest.fixture
-def memory_search(memory_config: Config, memory_indices, memory_manager: MemoryIndexManager):
+def memory_search(
+    memory_config: Config, memory_indices, memory_manager: MemoryIndexManager
+):
     """
     Create MemorySearchOrchestrator instance for testing.
     """
     vector, keyword, graph = memory_indices
-    return MemorySearchOrchestrator(vector, keyword, graph, memory_config, memory_manager)
+    return MemorySearchOrchestrator(
+        vector, keyword, graph, memory_config, memory_manager
+    )
 
 
 def create_memory_file(memory_path: Path, filename: str, content: str) -> Path:
@@ -122,7 +122,7 @@ class TestApplyRecencyBoost:
             created_at=now,
             boost_window_days=14,
             max_boost_amount=0.2,
-            boost_decay_rate=0.95
+            boost_decay_rate=0.95,
         )
         # Age = 0, boost = 0.95^0 × 0.2 = 1.0 × 0.2 = 0.2
         # Final = 0.5 + 0.2 = 0.7
@@ -138,13 +138,13 @@ class TestApplyRecencyBoost:
             created_at=seven_days_ago,
             boost_window_days=14,
             max_boost_amount=0.2,
-            boost_decay_rate=0.95
+            boost_decay_rate=0.95,
         )
 
         # boost_factor = 0.95^7 ≈ 0.698
         # bonus = 0.698 × 0.2 ≈ 0.140
         # final = 0.4 + 0.140 = 0.540
-        boost_factor = 0.95 ** 7
+        boost_factor = 0.95**7
         expected = 0.4 + (boost_factor * 0.2)
         assert boosted == pytest.approx(expected, abs=1e-6)
 
@@ -158,7 +158,7 @@ class TestApplyRecencyBoost:
             created_at=very_old,
             boost_window_days=14,
             max_boost_amount=0.2,
-            boost_decay_rate=0.95
+            boost_decay_rate=0.95,
         )
 
         # Age > window, no boost, no penalty
@@ -175,7 +175,7 @@ class TestApplyRecencyBoost:
             created_at=None,
             boost_window_days=14,
             max_boost_amount=0.2,
-            boost_decay_rate=0.95
+            boost_decay_rate=0.95,
         )
         assert boosted == pytest.approx(0.5)
 
@@ -188,7 +188,7 @@ class TestApplyRecencyBoost:
             created_at=naive_dt,
             boost_window_days=14,
             max_boost_amount=0.2,
-            boost_decay_rate=0.95
+            boost_decay_rate=0.95,
         )
 
         # Should apply boost without errors
@@ -201,12 +201,20 @@ class TestApplyRecencyBoost:
 
         # Journal (faster decay of boost)
         journal_boost = apply_recency_boost(
-            0.4, seven_days_ago, 14, 0.2, 0.90  # Fast decay
+            0.4,
+            seven_days_ago,
+            14,
+            0.2,
+            0.90,  # Fast decay
         )
 
         # Fact (slower decay of boost)
         fact_boost = apply_recency_boost(
-            0.4, seven_days_ago, 14, 0.2, 0.98  # Slow decay
+            0.4,
+            seven_days_ago,
+            14,
+            0.2,
+            0.98,  # Slow decay
         )
 
         # Fact should retain more boost
@@ -218,12 +226,8 @@ class TestApplyRecencyBoost:
         at_window = now - timedelta(days=14)
         beyond_window = now - timedelta(days=15)
 
-        at_edge = apply_recency_boost(
-            0.4, at_window, 14, 0.2, 0.95
-        )
-        beyond = apply_recency_boost(
-            0.4, beyond_window, 14, 0.2, 0.95
-        )
+        at_edge = apply_recency_boost(0.4, at_window, 14, 0.2, 0.95)
+        beyond = apply_recency_boost(0.4, beyond_window, 14, 0.2, 0.95)
 
         # At edge gets boost, beyond does not
         assert at_edge > 0.4
@@ -238,7 +242,7 @@ class TestApplyRecencyBoost:
             created_at=now,
             boost_window_days=14,
             max_boost_amount=0.2,  # Would give 1.15
-            boost_decay_rate=0.95
+            boost_decay_rate=0.95,
         )
 
         # Should cap at 1.0
@@ -251,13 +255,12 @@ class TestApplyRecencyBoost:
 
 
 class TestBasicMemorySearch:
-
     @pytest.mark.asyncio
     async def test_search_returns_results(
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify basic search returns matching memories.
@@ -281,8 +284,7 @@ Implemented OAuth2 authentication with JWT tokens.
 
     @pytest.mark.asyncio
     async def test_empty_query_returns_empty(
-        self,
-        memory_search: MemorySearchOrchestrator
+        self, memory_search: MemorySearchOrchestrator
     ):
         """
         Verify empty query returns empty results.
@@ -293,8 +295,7 @@ Implemented OAuth2 authentication with JWT tokens.
 
     @pytest.mark.asyncio
     async def test_whitespace_query_returns_empty(
-        self,
-        memory_search: MemorySearchOrchestrator
+        self, memory_search: MemorySearchOrchestrator
     ):
         """
         Verify whitespace-only query returns empty results.
@@ -310,13 +311,12 @@ Implemented OAuth2 authentication with JWT tokens.
 
 
 class TestMemorySearchFilters:
-
     @pytest.mark.asyncio
     async def test_filter_by_type(
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify type filter narrows results to specified type.
@@ -324,21 +324,20 @@ class TestMemorySearchFilters:
         create_memory_file(
             memory_path,
             "plan1",
-            "---\ntype: \"plan\"\n---\n# Plan\n\nImplementation plan for feature."
+            '---\ntype: "plan"\n---\n# Plan\n\nImplementation plan for feature.',
         )
         create_memory_file(
             memory_path,
             "journal1",
-            "---\ntype: \"journal\"\n---\n# Journal\n\nDaily notes about feature."
+            '---\ntype: "journal"\n---\n# Journal\n\nDaily notes about feature.',
         )
 
         memory_manager.reindex_all()
 
         results = await memory_search.search_memories(
-            "feature",
-            limit=10,
-            filter_type="plan"
+            "feature", limit=10, filter_type="plan"
         )
+        assert isinstance(results, list)
 
         for result in results:
             assert result.frontmatter.type == "plan"
@@ -350,13 +349,12 @@ class TestMemorySearchFilters:
 
 
 class TestLinkedMemorySearch:
-
     @pytest.mark.asyncio
     async def test_search_linked_finds_memories(
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify search_linked_memories finds memories linking to target.
@@ -369,9 +367,7 @@ Found and fixed bug in [[src/server.py]] causing timeout errors.
         memory_manager.index_memory(str(file_path))
 
         results = await memory_search.search_linked_memories(
-            query="bug",
-            target_document="src/server.py",
-            limit=5
+            query="bug", target_document="src/server.py", limit=5
         )
 
         assert len(results) > 0
@@ -381,7 +377,7 @@ Found and fixed bug in [[src/server.py]] causing timeout errors.
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify linked search results include anchor context.
@@ -396,9 +392,7 @@ Need to refactor [[src/handler.py]] for better error handling.
         memory_manager.index_memory(str(file_path))
 
         results = await memory_search.search_linked_memories(
-            query="refactor",
-            target_document="src/handler.py",
-            limit=5
+            query="refactor", target_document="src/handler.py", limit=5
         )
 
         if len(results) > 0:
@@ -409,7 +403,7 @@ Need to refactor [[src/handler.py]] for better error handling.
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify linked search results include inferred edge type.
@@ -422,9 +416,7 @@ Found a bug in [[src/auth.py]] causing login failures.
         memory_manager.index_memory(str(file_path))
 
         results = await memory_search.search_linked_memories(
-            query="bug",
-            target_document="src/auth.py",
-            limit=5
+            query="bug", target_document="src/auth.py", limit=5
         )
 
         if len(results) > 0:
@@ -435,7 +427,7 @@ Found a bug in [[src/auth.py]] causing login failures.
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify search_linked_memories returns empty for unlinked targets.
@@ -448,9 +440,7 @@ This note links to [[other/file.py]] not the target.
         memory_manager.index_memory(str(file_path))
 
         results = await memory_search.search_linked_memories(
-            query="note",
-            target_document="src/server.py",
-            limit=5
+            query="note", target_document="src/server.py", limit=5
         )
 
         assert results == []
@@ -460,7 +450,7 @@ This note links to [[other/file.py]] not the target.
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify search_linked_memories finds all memories linking to target.
@@ -468,25 +458,21 @@ This note links to [[other/file.py]] not the target.
         create_memory_file(
             memory_path,
             "note1",
-            "# Note 1\n\nInvestigating [[src/api.py]] performance."
+            "# Note 1\n\nInvestigating [[src/api.py]] performance.",
         )
         create_memory_file(
-            memory_path,
-            "note2",
-            "# Note 2\n\nRefactoring [[src/api.py]] endpoints."
+            memory_path, "note2", "# Note 2\n\nRefactoring [[src/api.py]] endpoints."
         )
         create_memory_file(
             memory_path,
             "note3",
-            "# Note 3\n\nPlanning [[src/api.py]] v2 implementation."
+            "# Note 3\n\nPlanning [[src/api.py]] v2 implementation.",
         )
 
         memory_manager.reindex_all()
 
         results = await memory_search.search_linked_memories(
-            query="api",
-            target_document="src/api.py",
-            limit=10
+            query="api", target_document="src/api.py", limit=10
         )
 
         assert len(results) == 3
@@ -510,7 +496,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify only memories after timestamp are returned.
@@ -520,12 +506,12 @@ class TestTimeRangeFiltering:
         old_memory = create_memory_file(
             memory_path,
             "old-memory",
-            '---\ntype: "journal"\ncreated_at: "2025-01-01T12:00:00Z"\n---\n# Old Memory\n\nOld content about testing.'
+            '---\ntype: "journal"\ncreated_at: "2025-01-01T12:00:00Z"\n---\n# Old Memory\n\nOld content about testing.',
         )
         new_memory = create_memory_file(
             memory_path,
             "new-memory",
-            '---\ntype: "journal"\ncreated_at: "2025-01-14T12:00:00Z"\n---\n# New Memory\n\nNew content about testing.'
+            '---\ntype: "journal"\ncreated_at: "2025-01-14T12:00:00Z"\n---\n# New Memory\n\nNew content about testing.',
         )
 
         memory_manager.index_memory(str(old_memory))
@@ -536,10 +522,9 @@ class TestTimeRangeFiltering:
         after_ts = int(cutoff.timestamp())
 
         results = await memory_search.search_memories(
-            "testing",
-            limit=10,
-            after_timestamp=after_ts
+            "testing", limit=10, after_timestamp=after_ts
         )
+        assert isinstance(results, list)
 
         # Only new memory should be returned
         assert len(results) > 0
@@ -551,7 +536,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify only memories before timestamp are returned.
@@ -560,12 +545,12 @@ class TestTimeRangeFiltering:
         old_memory = create_memory_file(
             memory_path,
             "old-note",
-            '---\ntype: "fact"\ncreated_at: "2025-01-05T12:00:00Z"\n---\n# Old Note\n\nDatabase configuration notes.'
+            '---\ntype: "fact"\ncreated_at: "2025-01-05T12:00:00Z"\n---\n# Old Note\n\nDatabase configuration notes.',
         )
         new_memory = create_memory_file(
             memory_path,
             "new-note",
-            '---\ntype: "fact"\ncreated_at: "2025-01-15T12:00:00Z"\n---\n# New Note\n\nDatabase configuration notes.'
+            '---\ntype: "fact"\ncreated_at: "2025-01-15T12:00:00Z"\n---\n# New Note\n\nDatabase configuration notes.',
         )
 
         memory_manager.index_memory(str(old_memory))
@@ -576,10 +561,9 @@ class TestTimeRangeFiltering:
         before_ts = int(cutoff.timestamp())
 
         results = await memory_search.search_memories(
-            "database configuration",
-            limit=10,
-            before_timestamp=before_ts
+            "database configuration", limit=10, before_timestamp=before_ts
         )
+        assert isinstance(results, list)
 
         # Only old memory should be returned
         assert len(results) > 0
@@ -591,16 +575,25 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify combined after/before filtering (AND logic).
         """
         # Create memories at different dates
         memories = [
-            ("mem-2024-12", '---\ntype: "plan"\ncreated_at: "2024-12-20T12:00:00Z"\n---\n# Plan 2024\n\nAPI redesign plan.'),
-            ("mem-2025-01", '---\ntype: "plan"\ncreated_at: "2025-01-08T12:00:00Z"\n---\n# Plan Jan\n\nAPI redesign plan.'),
-            ("mem-2025-02", '---\ntype: "plan"\ncreated_at: "2025-02-01T12:00:00Z"\n---\n# Plan Feb\n\nAPI redesign plan.'),
+            (
+                "mem-2024-12",
+                '---\ntype: "plan"\ncreated_at: "2024-12-20T12:00:00Z"\n---\n# Plan 2024\n\nAPI redesign plan.',
+            ),
+            (
+                "mem-2025-01",
+                '---\ntype: "plan"\ncreated_at: "2025-01-08T12:00:00Z"\n---\n# Plan Jan\n\nAPI redesign plan.',
+            ),
+            (
+                "mem-2025-02",
+                '---\ntype: "plan"\ncreated_at: "2025-02-01T12:00:00Z"\n---\n# Plan Feb\n\nAPI redesign plan.',
+            ),
         ]
 
         for filename, content in memories:
@@ -615,10 +608,11 @@ class TestTimeRangeFiltering:
             "API redesign",
             limit=10,
             after_timestamp=after_ts,
-            before_timestamp=before_ts
+            before_timestamp=before_ts,
         )
 
         # Only January memory should be returned
+        assert isinstance(results, list)
         assert len(results) == 1
         assert results[0].memory_id == "memory:mem-2025-01"
 
@@ -627,7 +621,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify relative_days works correctly.
@@ -643,12 +637,12 @@ class TestTimeRangeFiltering:
         old_memory = create_memory_file(
             memory_path,
             "old-observation",
-            f'---\ntype: "observation"\ncreated_at: "{old_date}"\n---\n# Old Observation\n\nPerformance metrics observation.'
+            f'---\ntype: "observation"\ncreated_at: "{old_date}"\n---\n# Old Observation\n\nPerformance metrics observation.',
         )
         recent_memory = create_memory_file(
             memory_path,
             "recent-observation",
-            f'---\ntype: "observation"\ncreated_at: "{recent_date}"\n---\n# Recent Observation\n\nPerformance metrics observation.'
+            f'---\ntype: "observation"\ncreated_at: "{recent_date}"\n---\n# Recent Observation\n\nPerformance metrics observation.',
         )
 
         memory_manager.index_memory(str(old_memory))
@@ -656,10 +650,9 @@ class TestTimeRangeFiltering:
 
         # Filter for last 7 days
         results = await memory_search.search_memories(
-            "performance metrics",
-            limit=10,
-            relative_days=7
+            "performance metrics", limit=10, relative_days=7
         )
+        assert isinstance(results, list)
 
         # Only recent memory should be returned
         assert len(results) > 0
@@ -671,7 +664,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify relative_days takes precedence over absolute timestamps.
@@ -684,7 +677,7 @@ class TestTimeRangeFiltering:
         memory = create_memory_file(
             memory_path,
             "recent-note",
-            f'---\ntype: "journal"\ncreated_at: "{recent_date}"\n---\n# Recent Note\n\nImportant notes.'
+            f'---\ntype: "journal"\ncreated_at: "{recent_date}"\n---\n# Recent Note\n\nImportant notes.',
         )
 
         memory_manager.index_memory(str(memory))
@@ -704,8 +697,7 @@ class TestTimeRangeFiltering:
 
     @pytest.mark.asyncio
     async def test_invalid_timestamp_range_raises_error(
-        self,
-        memory_search: MemorySearchOrchestrator
+        self, memory_search: MemorySearchOrchestrator
     ):
         """
         Verify ValueError for after >= before.
@@ -713,35 +705,32 @@ class TestTimeRangeFiltering:
         after_ts = 1000000
         before_ts = 500000  # before < after (invalid)
 
-        with pytest.raises(ValueError, match="after_timestamp must be less than before_timestamp"):
+        with pytest.raises(
+            ValueError, match="after_timestamp must be less than before_timestamp"
+        ):
             await memory_search.search_memories(
                 "test query",
                 limit=5,
                 after_timestamp=after_ts,
-                before_timestamp=before_ts
+                before_timestamp=before_ts,
             )
 
     @pytest.mark.asyncio
     async def test_negative_relative_days_raises_error(
-        self,
-        memory_search: MemorySearchOrchestrator
+        self, memory_search: MemorySearchOrchestrator
     ):
         """
         Verify ValueError for relative_days < 0.
         """
         with pytest.raises(ValueError, match="relative_days must be non-negative"):
-            await memory_search.search_memories(
-                "test query",
-                limit=5,
-                relative_days=-5
-            )
+            await memory_search.search_memories("test query", limit=5, relative_days=-5)
 
     @pytest.mark.asyncio
     async def test_fallback_to_file_mtime(
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify fallback when memory_created_at missing.
@@ -753,7 +742,7 @@ class TestTimeRangeFiltering:
         memory_no_timestamp = create_memory_file(
             memory_path,
             "no-timestamp",
-            '---\ntype: "journal"\n---\n# No Timestamp\n\nContent without timestamp.'
+            '---\ntype: "journal"\n---\n# No Timestamp\n\nContent without timestamp.',
         )
 
         # Set file mtime to a specific time
@@ -768,9 +757,7 @@ class TestTimeRangeFiltering:
         after_ts = int(cutoff.timestamp())
 
         results = await memory_search.search_memories(
-            "content",
-            limit=10,
-            after_timestamp=after_ts
+            "content", limit=10, after_timestamp=after_ts
         )
 
         # Should get no results because file mtime is old
@@ -781,7 +768,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify time filter works with type filters.
@@ -794,9 +781,18 @@ class TestTimeRangeFiltering:
 
         # Create memories with different types and dates
         memories = [
-            ("recent-plan", f'---\ntype: "plan"\ncreated_at: "{recent_date}"\n---\n# Recent Plan\n\nAPI development.'),
-            ("old-plan", f'---\ntype: "plan"\ncreated_at: "{old_date}"\n---\n# Old Plan\n\nAPI development.'),
-            ("recent-fact", f'---\ntype: "fact"\ncreated_at: "{recent_date}"\n---\n# Recent Fact\n\nUI development.'),
+            (
+                "recent-plan",
+                f'---\ntype: "plan"\ncreated_at: "{recent_date}"\n---\n# Recent Plan\n\nAPI development.',
+            ),
+            (
+                "old-plan",
+                f'---\ntype: "plan"\ncreated_at: "{old_date}"\n---\n# Old Plan\n\nAPI development.',
+            ),
+            (
+                "recent-fact",
+                f'---\ntype: "fact"\ncreated_at: "{recent_date}"\n---\n# Recent Fact\n\nUI development.',
+            ),
         ]
 
         for filename, content in memories:
@@ -805,13 +801,11 @@ class TestTimeRangeFiltering:
 
         # Filter for recent plans only
         results = await memory_search.search_memories(
-            "development",
-            limit=10,
-            filter_type="plan",
-            relative_days=7
+            "development", limit=10, filter_type="plan", relative_days=7
         )
 
         # Should only get recent-plan
+        assert isinstance(results, list)
         assert len(results) == 1
         assert results[0].memory_id == "memory:recent-plan"
 
@@ -820,7 +814,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify empty list when no memories match time filter.
@@ -829,16 +823,14 @@ class TestTimeRangeFiltering:
         old_memory = create_memory_file(
             memory_path,
             "very-old",
-            '---\ntype: "journal"\ncreated_at: "2020-01-01T12:00:00Z"\n---\n# Very Old\n\nAncient notes.'
+            '---\ntype: "journal"\ncreated_at: "2020-01-01T12:00:00Z"\n---\n# Very Old\n\nAncient notes.',
         )
 
         memory_manager.index_memory(str(old_memory))
 
         # Filter for very recent memories (last 1 day)
         results = await memory_search.search_memories(
-            "ancient notes",
-            limit=10,
-            relative_days=1
+            "ancient notes", limit=10, relative_days=1
         )
 
         # Should get no results
@@ -849,7 +841,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify timezone handling for naive datetimes.
@@ -858,7 +850,7 @@ class TestTimeRangeFiltering:
         memory = create_memory_file(
             memory_path,
             "naive-tz",
-            '---\ntype: "fact"\ncreated_at: "2025-01-10T12:00:00"\n---\n# Naive TZ\n\nConfiguration details.'
+            '---\ntype: "fact"\ncreated_at: "2025-01-10T12:00:00"\n---\n# Naive TZ\n\nConfiguration details.',
         )
 
         memory_manager.index_memory(str(memory))
@@ -871,7 +863,7 @@ class TestTimeRangeFiltering:
             "configuration details",
             limit=10,
             after_timestamp=after_ts,
-            before_timestamp=before_ts
+            before_timestamp=before_ts,
         )
 
         # Should find the memory despite timezone differences
@@ -879,24 +871,26 @@ class TestTimeRangeFiltering:
 
 
 class TestSearchResultQuality:
-
     @pytest.mark.asyncio
     async def test_results_are_sorted_by_score(
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify search results are sorted by descending score.
         """
         for i in range(5):
-            content = f"---\ntype: \"journal\"\n---\n# Note {i}\n\nAuthentication content."
+            content = (
+                f'---\ntype: "journal"\n---\n# Note {i}\n\nAuthentication content.'
+            )
             create_memory_file(memory_path, f"auth-note-{i}", content)
 
         memory_manager.reindex_all()
 
         results = await memory_search.search_memories("authentication", limit=5)
+        assert isinstance(results, list)
 
         scores = [r.score for r in results]
         assert scores == sorted(scores, reverse=True)
@@ -906,13 +900,13 @@ class TestSearchResultQuality:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify search respects limit parameter.
         """
         for i in range(10):
-            content = f"---\ntype: \"fact\"\n---\n# Fact {i}\n\nDatabase configuration."
+            content = f'---\ntype: "fact"\n---\n# Fact {i}\n\nDatabase configuration.'
             create_memory_file(memory_path, f"fact-{i}", content)
 
         memory_manager.reindex_all()
@@ -928,7 +922,7 @@ class TestSearchResultQuality:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path
+        memory_path: Path,
     ):
         """
         Verify search results include complete memory metadata.
@@ -948,6 +942,7 @@ CPU usage spikes during peak hours.
         memory_manager.index_memory(str(file_path))
 
         results = await memory_search.search_memories("CPU performance", limit=1)
+        assert isinstance(results, list)
 
         assert len(results) > 0
         result = results[0]

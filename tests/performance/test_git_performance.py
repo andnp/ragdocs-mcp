@@ -196,8 +196,12 @@ def test_search_query_latency(tmp_path, shared_embedding_model):
     print(f"Average search time: {avg_search_time:.3f}s")
 
     # Performance assertion
-    assert avg_search_time < 2.0, f"Average search took {avg_search_time:.3f}s, expected < 2s"
-    assert max(search_times) < 3.0, f"Slowest search took {max(search_times):.3f}s, expected < 3s"
+    assert avg_search_time < 2.0, (
+        f"Average search took {avg_search_time:.3f}s, expected < 2s"
+    )
+    assert max(search_times) < 3.0, (
+        f"Slowest search took {max(search_times):.3f}s, expected < 3s"
+    )
 
 
 @pytest.mark.skip(reason="Long-running performance test, run manually")

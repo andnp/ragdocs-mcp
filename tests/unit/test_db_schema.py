@@ -87,7 +87,9 @@ class TestGraphEdgesCompositePK:
                 "INSERT INTO graph_edges (source, target, edge_type) VALUES ('A', 'B', 'link')"
             )
 
-    def test_different_edge_type_on_same_pair_succeeds(self, db: DatabaseManager) -> None:
+    def test_different_edge_type_on_same_pair_succeeds(
+        self, db: DatabaseManager
+    ) -> None:
         conn = db.get_connection()
         conn.execute("INSERT INTO graph_nodes (node_id) VALUES ('A')")
         conn.execute("INSERT INTO graph_nodes (node_id) VALUES ('B')")

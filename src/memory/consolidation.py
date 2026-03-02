@@ -202,9 +202,7 @@ class SlowConsolidation:
 
     async def _analyze(self, entries: list[JournalEntry]) -> list[dict]:
         """Ask AI to analyze entries and propose actions."""
-        entry_text = "\n".join(
-            f"[{i}] {e.content}" for i, e in enumerate(entries)
-        )
+        entry_text = "\n".join(f"[{i}] {e.content}" for i, e in enumerate(entries))
 
         prompt = (
             "Analyze these journal entries and propose consolidation actions.\n"

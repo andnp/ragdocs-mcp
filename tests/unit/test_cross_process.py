@@ -61,14 +61,18 @@ class TestCrossProcessConsistency:
         done.wait(timeout=15)
         proc.join(timeout=15)
 
-        assert proc.exitcode == 0, f"Writer process failed with exit code {proc.exitcode}"
+        assert proc.exitcode == 0, (
+            f"Writer process failed with exit code {proc.exitcode}"
+        )
 
         # Reader: verify the row is visible WITHOUT any explicit sync
         row = conn.execute(
             "SELECT doc_id, file_path FROM documents WHERE doc_id = ?",
             ("cross_proc_doc",),
         ).fetchone()
-        assert row is not None, "Document written by child process not visible to reader"
+        assert row is not None, (
+            "Document written by child process not visible to reader"
+        )
         assert row[0] == "cross_proc_doc"
         assert row[1] == "/test/cross.md"
 

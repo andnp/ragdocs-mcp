@@ -18,7 +18,6 @@ import sys
 from pathlib import Path
 
 
-
 class TestTokenizersParallelismEnvVar:
     """Tests for TOKENIZERS_PARALLELISM environment variable setup."""
 

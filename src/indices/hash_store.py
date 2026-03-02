@@ -141,6 +141,8 @@ class ChunkHashStore:
         """
         chunks = []
         for chunk_id, content_hash in self._hashes.items():
-            if chunk_id.startswith(f"{doc_id}_chunk_") or chunk_id.startswith(f"{doc_id}#"):
+            if chunk_id.startswith(f"{doc_id}_chunk_") or chunk_id.startswith(
+                f"{doc_id}#"
+            ):
                 chunks.append((chunk_id, content_hash))
         return chunks

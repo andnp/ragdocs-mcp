@@ -9,6 +9,7 @@ Circuit breaker behavior:
 - On repeated failures, circuit opens and rerank returns original rankings
 - Circuit automatically recovers after recovery_timeout
 """
+
 import logging
 import math
 import threading
@@ -32,7 +33,10 @@ class ContentProvider(Protocol):
 class CrossEncoderProtocol(Protocol):
     def predict(
         self,
-        sentences: list[tuple[str, str]] | list[list[str]] | tuple[str, str] | list[str],
+        sentences: list[tuple[str, str]]
+        | list[list[str]]
+        | tuple[str, str]
+        | list[str],
     ) -> Iterable[float]: ...
 
 

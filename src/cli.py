@@ -39,7 +39,11 @@ from src.context import ApplicationContext
 from src.indexing.manifest import IndexManifest, save_manifest
 from src.indexing.reconciler import build_indexed_files_map
 from src.utils import should_include_file
-from src.cli_utils.validators import validate_range, validate_timestamp_range, validate_non_negative
+from src.cli_utils.validators import (
+    validate_range,
+    validate_timestamp_range,
+    validate_non_negative,
+)
 from src.cli_utils.formatters import print_result_panel, print_debug_stats
 
 logging.basicConfig(level=logging.INFO)
@@ -113,7 +117,9 @@ def mcp(project: str | None):
 
 @cli.command()
 @click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind to")
-@click.option("--port", default=8000, type=int, show_default=True, help="Port to bind to")
+@click.option(
+    "--port", default=8000, type=int, show_default=True, help="Port to bind to"
+)
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
 )
@@ -184,7 +190,7 @@ def rebuild_index_cmd(project: str | None):
                 "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
                 "overlap_chars": ctx.config.chunking.overlap_chars,
             },
-            indexed_files=build_indexed_files_map(files_to_index, docs_path)
+            indexed_files=build_indexed_files_map(files_to_index, docs_path),
         )
         save_manifest(ctx.index_path, current_manifest)
 
@@ -288,9 +294,7 @@ def rebuild_index_cmd(project: str | None):
             )
             ctx.index_manager.persist()
             vocab_size = len(ctx.index_manager.vector._concept_vocabulary)
-            click.echo(
-                f"✅ Successfully built concept vocabulary: {vocab_size} terms"
-            )
+            click.echo(f"✅ Successfully built concept vocabulary: {vocab_size} terms")
         except Exception as e:
             logger.error(f"Concept vocabulary building failed: {e}")
             click.echo(f"⚠️  Concept vocabulary building failed: {e}", err=True)
@@ -384,13 +388,13 @@ def check_config_cmd(project: str | None):
 @click.option(
     "--top-n", default=5, type=int, help="Maximum number of results (default: 5)"
 )
-@click.option(
-    "--debug", is_flag=True, help="Display intermediate search statistics"
-)
+@click.option("--debug", is_flag=True, help="Display intermediate search statistics")
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
 )
-def query(query_text: str, output_json: bool, top_n: int, debug: bool, project: str | None):
+def query(
+    query_text: str, output_json: bool, top_n: int, debug: bool, project: str | None
+):
     try:
         console = Console()
         ctx = _create_query_context(project)
@@ -406,8 +410,15 @@ def query(query_text: str, output_json: bool, top_n: int, debug: bool, project: 
 
         with console.status("[bold green]Searching documents..."):
             top_k = max(20, top_n * 4)
-            async def _run_query_with_healing(query: str, top_k_value: int, top_n_value: int):
-                results, compression_stats, strategy_stats = await ctx.orchestrator.query(
+
+            async def _run_query_with_healing(
+                query: str, top_k_value: int, top_n_value: int
+            ):
+                (
+                    results,
+                    compression_stats,
+                    strategy_stats,
+                ) = await ctx.orchestrator.query(
                     query,
                     top_k=top_k_value,
                     top_n=top_n_value,
@@ -444,7 +455,11 @@ def query(query_text: str, output_json: bool, top_n: int, debug: bool, project: 
                     result.content,
                 ]
                 print_result_panel(
-                    console, idx, result.score, panel_content, is_last=(idx == len(results))
+                    console,
+                    idx,
+                    result.score,
+                    panel_content,
+                    is_last=(idx == len(results)),
                 )
         else:
             console.print("[yellow]No results found.[/yellow]")
@@ -468,9 +483,7 @@ def query(query_text: str, output_json: bool, top_n: int, debug: bool, project: 
 @click.option(
     "--top-n", default=5, type=int, help="Maximum number of results (default: 5)"
 )
-@click.option(
-    "--debug", is_flag=True, help="Display intermediate search statistics"
-)
+@click.option("--debug", is_flag=True, help="Display intermediate search statistics")
 @click.option(
     "--files-glob",
     default=None,
@@ -597,7 +610,11 @@ def search_commits(
                         )
 
                 print_result_panel(
-                    console, idx, commit.score, panel_content, is_last=(idx == len(response.results))
+                    console,
+                    idx,
+                    commit.score,
+                    panel_content,
+                    is_last=(idx == len(response.results)),
                 )
         else:
             console.print("[yellow]No results found.[/yellow]")
@@ -614,9 +631,7 @@ def search_commits(
 @click.option(
     "--limit", default=5, type=int, help="Maximum number of results (default: 5)"
 )
-@click.option(
-    "--debug", is_flag=True, help="Display intermediate search statistics"
-)
+@click.option("--debug", is_flag=True, help="Display intermediate search statistics")
 @click.option(
     "--type",
     "memory_type",
@@ -715,6 +730,7 @@ def search_memory(
         memory_search = ctx.memory_search
 
         with console.status("[bold green]Searching memories..."):
+
             async def _run_memory_search_with_healing():
                 results_data = await memory_search.search_memories(
                     query=query_text,
@@ -797,7 +813,11 @@ def search_memory(
                 panel_content.append(content_display)
 
                 print_result_panel(
-                    console, idx, memory.score, panel_content, is_last=(idx == len(results))
+                    console,
+                    idx,
+                    memory.score,
+                    panel_content,
+                    is_last=(idx == len(results)),
                 )
         else:
             console.print("[yellow]No results found.[/yellow]")

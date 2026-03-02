@@ -15,12 +15,11 @@ def test_config(tmp_path):
     index_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(index_path)
+            documents_path=str(docs_path), index_path=str(index_path)
         ),
         search=SearchConfig(),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5")
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
     )
 
 
@@ -28,9 +27,7 @@ def test_config(tmp_path):
 def context_with_config(test_config, monkeypatch):
     monkeypatch.setattr("src.context.load_config", lambda: test_config)
     return ApplicationContext.create(
-        project_override=None,
-        enable_watcher=False,
-        lazy_embeddings=True
+        project_override=None, enable_watcher=False, lazy_embeddings=True
     )
 
 
@@ -45,9 +42,7 @@ def test_create_initializes_components(context_with_config):
 def test_create_with_watcher_enabled(test_config, monkeypatch):
     monkeypatch.setattr("src.context.load_config", lambda: test_config)
     ctx = ApplicationContext.create(
-        project_override=None,
-        enable_watcher=True,
-        lazy_embeddings=True
+        project_override=None, enable_watcher=True, lazy_embeddings=True
     )
     assert ctx.watcher is not None
 
@@ -150,7 +145,9 @@ def test_check_and_rebuild_if_needed_returns_true_for_new_index(context_with_con
     assert needs_rebuild is True
 
 
-def test_check_and_rebuild_if_needed_returns_false_for_existing_index(context_with_config):
+def test_check_and_rebuild_if_needed_returns_false_for_existing_index(
+    context_with_config,
+):
     ctx = context_with_config
     ctx.index_path.mkdir(parents=True, exist_ok=True)
 
@@ -163,7 +160,7 @@ def test_check_and_rebuild_if_needed_returns_false_for_existing_index(context_wi
             "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
             "overlap_chars": ctx.config.chunking.overlap_chars,
         },
-        indexed_files={}
+        indexed_files={},
     )
     save_manifest(ctx.index_path, manifest)
 
@@ -183,7 +180,9 @@ async def test_startup_indexes_documents(context_with_config):
 
 
 @pytest.mark.asyncio
-async def test_startup_loads_existing_index(context_with_config, shared_embedding_model):
+async def test_startup_loads_existing_index(
+    context_with_config, shared_embedding_model
+):
     ctx = context_with_config
     docs_path = Path(ctx.config.indexing.documents_path)
     (docs_path / "test.md").write_text("# Test\n\nSome content here for indexing.")
@@ -196,7 +195,7 @@ async def test_startup_loads_existing_index(context_with_config, shared_embeddin
         ApplicationContext,
         project_override=None,
         enable_watcher=False,
-        lazy_embeddings=True
+        lazy_embeddings=True,
     )
     ctx2.config = ctx.config
     ctx2.index_path = ctx.index_path
@@ -226,9 +225,7 @@ async def test_shutdown_persists_indices(context_with_config):
 async def test_startup_with_watcher_starts_watcher(test_config, monkeypatch):
     monkeypatch.setattr("src.context.load_config", lambda: test_config)
     ctx = ApplicationContext.create(
-        project_override=None,
-        enable_watcher=True,
-        lazy_embeddings=True
+        project_override=None, enable_watcher=True, lazy_embeddings=True
     )
 
     await ctx.start(background_index=False)

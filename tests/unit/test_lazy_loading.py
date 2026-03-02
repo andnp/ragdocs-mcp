@@ -55,7 +55,9 @@ class TestVectorIndexLazyLoading:
 
         index._ensure_model_loaded = counting_ensure  # type: ignore[method-assign]
 
-        threads = [threading.Thread(target=index._ensure_model_loaded) for _ in range(10)]
+        threads = [
+            threading.Thread(target=index._ensure_model_loaded) for _ in range(10)
+        ]
         for t in threads:
             t.start()
         for t in threads:

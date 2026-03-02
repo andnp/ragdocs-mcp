@@ -117,7 +117,9 @@ class IndexLock:
 
         self._lock_fd = fd
         self._lock_mode = "shared"
-        logger.debug(f"Shared lock acquired (Windows simulation): {self.lock_file_path}")
+        logger.debug(
+            f"Shared lock acquired (Windows simulation): {self.lock_file_path}"
+        )
 
     def release(self) -> None:
         if self._lock_fd is None:
@@ -126,6 +128,7 @@ class IndexLock:
         try:
             if sys.platform == "win32" and self._lock_mode == "exclusive":
                 import msvcrt
+
                 try:
                     msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
                 except Exception as e:

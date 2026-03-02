@@ -50,7 +50,7 @@ class MemoryGardener:
         threshold: float = 0.85,
         min_cluster_size: int = 2,
         limit: int = 5,
-        filter_type: str | None = None
+        filter_type: str | None = None,
     ) -> list[MemoryCluster]:
         """
         Find clusters of related memories that are candidates for merging.
@@ -136,7 +136,8 @@ class MemoryGardener:
             # Calculate average similarity score of the cluster
             member_set = set(members)
             edge_weights = [
-                w for (u, v), w in weights.items()
+                w
+                for (u, v), w in weights.items()
                 if u in member_set and v in member_set
             ]
             if edge_weights:
@@ -144,13 +145,15 @@ class MemoryGardener:
             else:
                 avg_score = 1.0
 
-            clusters.append(MemoryCluster(
-                cluster_id=i,
-                memory_ids=members,
-                representative_title=title,
-                reason=f"High vector similarity (> {threshold})",
-                score=avg_score
-            ))
+            clusters.append(
+                MemoryCluster(
+                    cluster_id=i,
+                    memory_ids=members,
+                    representative_title=title,
+                    reason=f"High vector similarity (> {threshold})",
+                    score=avg_score,
+                )
+            )
 
         # Sort by score (tightest clusters first)
         clusters.sort(key=lambda x: x.score, reverse=True)
@@ -162,7 +165,7 @@ async def suggest_memory_merges(
     ctx: "ApplicationContext",
     threshold: float = 0.85,
     limit: int = 5,
-    filter_type: str | None = "journal"
+    filter_type: str | None = "journal",
 ) -> list[dict]:
     """
     Suggests groups of memories that could be merged based on content similarity.
@@ -175,9 +178,7 @@ async def suggest_memory_merges(
 
     try:
         clusters = gardener.find_clusters(
-            threshold=threshold,
-            limit=limit,
-            filter_type=filter_type
+            threshold=threshold, limit=limit, filter_type=filter_type
         )
 
         results = []
@@ -189,19 +190,23 @@ async def suggest_memory_merges(
                 # or just use the chunk content
                 chunk = ctx.memory_manager.vector.get_chunk_by_id(mid)
                 if chunk:
-                    memories.append({
-                        "id": mid,
-                        "file_path": chunk.get("file_path"),
-                        "preview": chunk.get("content", "")[:100] + "..."
-                    })
+                    memories.append(
+                        {
+                            "id": mid,
+                            "file_path": chunk.get("file_path"),
+                            "preview": chunk.get("content", "")[:100] + "...",
+                        }
+                    )
 
-            results.append({
-                "cluster_id": c.cluster_id,
-                "score": f"{c.score:.2f}",
-                "reason": c.reason,
-                "memory_count": len(c.memory_ids),
-                "memories": memories
-            })
+            results.append(
+                {
+                    "cluster_id": c.cluster_id,
+                    "score": f"{c.score:.2f}",
+                    "reason": c.reason,
+                    "memory_count": len(c.memory_ids),
+                    "memories": memories,
+                }
+            )
 
         return results
 

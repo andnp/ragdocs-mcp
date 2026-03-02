@@ -30,7 +30,9 @@ def sample_chunk():
     )
 
 
-def test_vector_index_load_with_corrupted_concept_vocabulary(tmp_path, shared_embedding_model, sample_chunk):
+def test_vector_index_load_with_corrupted_concept_vocabulary(
+    tmp_path, shared_embedding_model, sample_chunk
+):
     """
     VectorIndex gracefully handles corrupted concept vocabulary file.
 
@@ -56,7 +58,9 @@ def test_vector_index_load_with_corrupted_concept_vocabulary(tmp_path, shared_em
     assert index2.is_ready()
 
 
-def test_vector_index_load_with_missing_vocabulary_file(tmp_path, shared_embedding_model, sample_chunk):
+def test_vector_index_load_with_missing_vocabulary_file(
+    tmp_path, shared_embedding_model, sample_chunk
+):
     """
     VectorIndex handles missing concept vocabulary file.
 
@@ -83,7 +87,9 @@ def test_vector_index_load_with_missing_vocabulary_file(tmp_path, shared_embeddi
     assert index2._concept_vocabulary == {}
 
 
-def test_vector_index_load_with_corrupted_term_counts(tmp_path, shared_embedding_model, sample_chunk):
+def test_vector_index_load_with_corrupted_term_counts(
+    tmp_path, shared_embedding_model, sample_chunk
+):
     """
     VectorIndex handles corrupted term counts file.
 
@@ -108,7 +114,9 @@ def test_vector_index_load_with_corrupted_term_counts(tmp_path, shared_embedding
     assert index2.is_ready()
 
 
-def test_vector_index_load_with_corrupted_chunk_mapping(tmp_path, shared_embedding_model, sample_chunk):
+def test_vector_index_load_with_corrupted_chunk_mapping(
+    tmp_path, shared_embedding_model, sample_chunk
+):
     """
     VectorIndex handles corrupted chunk_id mapping file.
 
@@ -157,7 +165,9 @@ def test_vector_index_load_with_empty_files(tmp_path, shared_embedding_model):
     assert index._term_counts == {}
 
 
-def test_vector_index_persist_recovers_from_partial_write(tmp_path, shared_embedding_model, sample_chunk):
+def test_vector_index_persist_recovers_from_partial_write(
+    tmp_path, shared_embedding_model, sample_chunk
+):
     """
     VectorIndex can recover after partial persist failure.
 
@@ -209,12 +219,20 @@ def test_vector_index_load_with_invalid_json_types(tmp_path, shared_embedding_mo
     persist_path.mkdir()
 
     # Write files with wrong types
-    (persist_path / "concept_vocabulary.json").write_text(json.dumps({
-        "term": "not_a_list_should_be_vector"  # Should be list of floats
-    }))
-    (persist_path / "term_counts.json").write_text(json.dumps({
-        "term": "not_an_int"  # Should be integer
-    }))
+    (persist_path / "concept_vocabulary.json").write_text(
+        json.dumps(
+            {
+                "term": "not_a_list_should_be_vector"  # Should be list of floats
+            }
+        )
+    )
+    (persist_path / "term_counts.json").write_text(
+        json.dumps(
+            {
+                "term": "not_an_int"  # Should be integer
+            }
+        )
+    )
 
     # Load should handle gracefully
     index = VectorIndex(embedding_model=shared_embedding_model)
@@ -274,7 +292,9 @@ def test_vector_index_vocabulary_building_with_single_chunk(shared_embedding_mod
     assert isinstance(index._term_counts, dict)
 
 
-def test_vector_index_load_recovers_when_vector_store_json_is_binary(tmp_path, shared_embedding_model, sample_chunk):
+def test_vector_index_load_recovers_when_vector_store_json_is_binary(
+    tmp_path, shared_embedding_model, sample_chunk
+):
     """
     VectorIndex self-heals when a persisted index file contains binary data.
 
@@ -289,7 +309,9 @@ def test_vector_index_load_recovers_when_vector_store_json_is_binary(tmp_path, s
 
     # Overwrite docstore.json with non-UTF-8 binary bytes to simulate
     # the case where a binary file ends up in place of a JSON index file
-    (persist_path / "docstore.json").write_bytes(b"\x80\xff\xfe binary garbage \x00\x01")
+    (persist_path / "docstore.json").write_bytes(
+        b"\x80\xff\xfe binary garbage \x00\x01"
+    )
 
     index2 = VectorIndex(embedding_model=shared_embedding_model)
     index2.load(persist_path)
@@ -297,11 +319,14 @@ def test_vector_index_load_recovers_when_vector_store_json_is_binary(tmp_path, s
     # Should reinitialize clean — not crash
     assert index2.is_ready()
     # Corrupt directory should have been cleared out
-    assert not (persist_path / "docstore.json").exists() or \
-        (persist_path / "docstore.json").read_bytes()[:1] in (b"{", b"[")
+    assert not (persist_path / "docstore.json").exists() or (
+        persist_path / "docstore.json"
+    ).read_bytes()[:1] in (b"{", b"[")
 
 
-def test_vector_index_load_recovers_when_faiss_bin_is_corrupt(tmp_path, shared_embedding_model, sample_chunk):
+def test_vector_index_load_recovers_when_faiss_bin_is_corrupt(
+    tmp_path, shared_embedding_model, sample_chunk
+):
     """
     VectorIndex self-heals when faiss_index.bin is unreadable.
     """

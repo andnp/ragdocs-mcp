@@ -25,10 +25,18 @@ from src.search.reranker import ReRanker
 @dataclass
 class FakeCrossEncoder:
     def predict(
-        self, sentences: list[tuple[str, str]] | list[list[str]] | tuple[str, str] | list[str]
+        self,
+        sentences: list[tuple[str, str]]
+        | list[list[str]]
+        | tuple[str, str]
+        | list[str],
     ) -> Iterable[float]:
         # Handle the most common case: list of (query, content) pairs
-        if isinstance(sentences, list) and sentences and isinstance(sentences[0], tuple):
+        if (
+            isinstance(sentences, list)
+            and sentences
+            and isinstance(sentences[0], tuple)
+        ):
             return [len(content) * 0.01 for _, content in sentences]
         return [0.0]
 
@@ -85,8 +93,9 @@ def candidates():
 
 
 class TestReRankEmptyCandidates:
-
-    def test_rerank_empty_candidates_returns_empty(self, reranker_with_fake, content_provider):
+    def test_rerank_empty_candidates_returns_empty(
+        self, reranker_with_fake, content_provider
+    ):
         """
         Empty candidate list returns empty list.
         """
@@ -116,7 +125,6 @@ class TestReRankEmptyCandidates:
 
 
 class TestReRankScoring:
-
     def test_rerank_scores_relevant_higher(
         self, fake_cross_encoder: FakeCrossEncoder, content_provider, candidates
     ):
@@ -155,7 +163,6 @@ class TestReRankScoring:
 
 
 class TestReRankCountPreservation:
-
     def test_rerank_preserves_count_returns_top_n(
         self, reranker_with_fake, content_provider, candidates
     ):
@@ -186,11 +193,11 @@ class TestReRankCountPreservation:
 
 
 class TestReRankMissingContent:
-
     def test_rerank_handles_missing_content(self, fake_cross_encoder: FakeCrossEncoder):
         """
         Gracefully handles chunks where content not found.
         """
+
         def partial_provider(chunk_id: str) -> str | None:
             return "Found content" if chunk_id == "chunk_1" else None
 
@@ -232,7 +239,6 @@ class TestReRankMissingContent:
 
 
 class TestLazyModelLoading:
-
     def test_lazy_model_loading_not_loaded_on_init(self):
         """
         Model not loaded until first rerank call.
@@ -259,7 +265,6 @@ class TestLazyModelLoading:
 
 
 class TestReRankEdgeCases:
-
     def test_rerank_single_candidate(self, reranker_with_fake, content_provider):
         """
         Single candidate is handled correctly.

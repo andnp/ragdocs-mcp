@@ -117,7 +117,6 @@ def test_graph_store_persist_and_load(tmp_path, graph_store):
 
     # Data lives in SQLite, so a second GraphStore sharing the same DB
     # should see the same data immediately.
-    from src.storage.db import DatabaseManager
 
     new_store = GraphStore(graph_store._db)
 
@@ -269,7 +268,7 @@ def test_get_neighbors_thread_safe_with_concurrent_modifications(graph_store):
     for i in range(20):
         graph_store.add_node(f"node_{i}", {"index": i})
     for i in range(19):
-        graph_store.add_edge(f"node_{i}", f"node_{i+1}", "link")
+        graph_store.add_edge(f"node_{i}", f"node_{i + 1}", "link")
 
     errors = []
     stop_event = threading.Event()
@@ -303,14 +302,10 @@ def test_get_neighbors_thread_safe_with_concurrent_modifications(graph_store):
     with ThreadPoolExecutor(max_workers=8) as executor:
         # Submit reader tasks for different nodes
         reader_futures = [
-            executor.submit(reader_task, f"node_{i}")
-            for i in range(0, 20, 4)
+            executor.submit(reader_task, f"node_{i}") for i in range(0, 20, 4)
         ]
         # Submit writer tasks
-        writer_futures = [
-            executor.submit(writer_task, i)
-            for i in range(3)
-        ]
+        writer_futures = [executor.submit(writer_task, i) for i in range(3)]
 
         # Wait for writers to complete
         for future in as_completed(writer_futures):

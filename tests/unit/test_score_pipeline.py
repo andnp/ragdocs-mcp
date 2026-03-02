@@ -58,7 +58,11 @@ class TestScorePipelineConfig:
         """
         config = ScorePipelineConfig()
 
-        assert config.strategy_weights == {"semantic": 0.6, "keyword": 0.3, "graph": 0.1}
+        assert config.strategy_weights == {
+            "semantic": 0.6,
+            "keyword": 0.3,
+            "graph": 0.1,
+        }
         assert config.time_scoring_mode is None
 
     def test_custom_config(self):
@@ -94,13 +98,13 @@ class TestFuseStage:
         """
         Single strategy fusion preserves rank order with RRF scores.
         """
-        pipeline = ScorePipeline(ScorePipelineConfig(
-            strategy_weights={"semantic": 1.0}
-        ))
+        pipeline = ScorePipeline(
+            ScorePipelineConfig(strategy_weights={"semantic": 1.0})
+        )
 
-        results = pipeline.fuse({
-            "semantic": [("doc1", 0.9), ("doc2", 0.7), ("doc3", 0.5)]
-        })
+        results = pipeline.fuse(
+            {"semantic": [("doc1", 0.9), ("doc2", 0.7), ("doc3", 0.5)]}
+        )
 
         doc_ids = [doc_id for doc_id, _ in results]
         assert doc_ids == ["doc1", "doc2", "doc3"]
@@ -112,14 +116,16 @@ class TestFuseStage:
         """
         Documents appearing in multiple strategies get aggregated RRF scores.
         """
-        pipeline = ScorePipeline(ScorePipelineConfig(
-            strategy_weights={"semantic": 1.0, "keyword": 1.0}
-        ))
+        pipeline = ScorePipeline(
+            ScorePipelineConfig(strategy_weights={"semantic": 1.0, "keyword": 1.0})
+        )
 
-        results = pipeline.fuse({
-            "semantic": [("doc1", 0.9), ("doc2", 0.7)],
-            "keyword": [("doc2", 0.8), ("doc3", 0.6)],
-        })
+        results = pipeline.fuse(
+            {
+                "semantic": [("doc1", 0.9), ("doc2", 0.7)],
+                "keyword": [("doc2", 0.8), ("doc3", 0.6)],
+            }
+        )
 
         doc_ids = [doc_id for doc_id, _ in results]
 
@@ -133,14 +139,16 @@ class TestFuseStage:
         """
         Strategy weights affect relative ranking.
         """
-        pipeline = ScorePipeline(ScorePipelineConfig(
-            strategy_weights={"semantic": 2.0, "keyword": 1.0}
-        ))
+        pipeline = ScorePipeline(
+            ScorePipelineConfig(strategy_weights={"semantic": 2.0, "keyword": 1.0})
+        )
 
-        results = pipeline.fuse({
-            "semantic": [("doc1", 0.9)],
-            "keyword": [("doc2", 0.9)],
-        })
+        results = pipeline.fuse(
+            {
+                "semantic": [("doc1", 0.9)],
+                "keyword": [("doc2", 0.9)],
+            }
+        )
 
         # doc1 from semantic (2x weight) should rank above doc2 from keyword
         assert results[0][0] == "doc1"
@@ -279,9 +287,7 @@ class TestBoostStage:
         """
         Missing timestamps returns original results.
         """
-        pipeline = ScorePipeline(ScorePipelineConfig(
-            time_scoring_mode="tiers"
-        ))
+        pipeline = ScorePipeline(ScorePipelineConfig(time_scoring_mode="tiers"))
 
         results = [("doc1", 0.8), ("doc2", 0.6)]
         boosted = pipeline.boost(results, {})
@@ -401,9 +407,11 @@ class TestFullPipeline:
         """
         Basic pipeline run produces normalized, calibrated scores.
         """
-        pipeline = ScorePipeline(ScorePipelineConfig(
-            strategy_weights={"semantic": 1.0, "keyword": 1.0},
-        ))
+        pipeline = ScorePipeline(
+            ScorePipelineConfig(
+                strategy_weights={"semantic": 1.0, "keyword": 1.0},
+            )
+        )
 
         strategy_results = {
             "semantic": [("doc1", 0.9), ("doc2", 0.7), ("doc3", 0.5)],
@@ -464,9 +472,11 @@ class TestFullPipeline:
         confidence. This is correct: a single weak signal should not yield
         high confidence.
         """
-        pipeline = ScorePipeline(ScorePipelineConfig(
-            strategy_weights={"semantic": 1.0},
-        ))
+        pipeline = ScorePipeline(
+            ScorePipelineConfig(
+                strategy_weights={"semantic": 1.0},
+            )
+        )
 
         results = pipeline.run({"semantic": [("doc1", 0.9)]})
 

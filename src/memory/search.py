@@ -57,7 +57,7 @@ def apply_recency_boost(
     # Apply exponential additive boost for recent memories
     if age_days <= boost_window_days:
         # Exponential decay of boost amount (not score!)
-        boost_factor = boost_decay_rate ** age_days
+        boost_factor = boost_decay_rate**age_days
         bonus = boost_factor * max_boost_amount
         boosted_score = min(1.0, score + bonus)  # Cap at 1.0
         return boosted_score
@@ -95,6 +95,7 @@ def _normalize_time_filters(
         if relative_days < 0:
             raise ValueError("relative_days must be non-negative")
         from datetime import timedelta
+
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(days=relative_days)
         return int(cutoff.timestamp()), None
@@ -286,7 +287,9 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
             # Time filtering (with fallback to file mtime)
             if after_timestamp is not None or before_timestamp is not None:
                 filtering_timestamp = _get_filtering_timestamp(chunk_data)
-                if not _passes_time_filter(filtering_timestamp, after_timestamp, before_timestamp):
+                if not _passes_time_filter(
+                    filtering_timestamp, after_timestamp, before_timestamp
+                ):
                     stats.filtered_time_range += 1
                     continue
 
@@ -330,16 +333,20 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
                         full_content = Path(file_path).read_text(encoding="utf-8")
                         content = full_content
                     except Exception as e:
-                        logger.warning(f"Failed to load full memory from {file_path}: {e}")
+                        logger.warning(
+                            f"Failed to load full memory from {file_path}: {e}"
+                        )
 
-            memory_results.append(MemorySearchResult(
-                memory_id=str(chunk_data.get("doc_id", chunk_id)),
-                score=boosted_score,
-                content=content,
-                frontmatter=frontmatter,
-                file_path=str(chunk_data.get("file_path", "")),
-                header_path=str(chunk_data.get("header_path", "")),
-            ))
+            memory_results.append(
+                MemorySearchResult(
+                    memory_id=str(chunk_data.get("doc_id", chunk_id)),
+                    score=boosted_score,
+                    content=content,
+                    frontmatter=frontmatter,
+                    file_path=str(chunk_data.get("file_path", "")),
+                    header_path=str(chunk_data.get("header_path", "")),
+                )
+            )
 
             if len(memory_results) >= limit:
                 break
@@ -395,7 +402,9 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
                 for memory_id, chunk_id, base_score in memory_chunks:
                     chunk_embedding = self._vector.get_embedding_for_chunk(chunk_id)
                     if chunk_embedding:
-                        similarity = cosine_similarity_lists(query_embedding, chunk_embedding)
+                        similarity = cosine_similarity_lists(
+                            query_embedding, chunk_embedding
+                        )
                         scored_chunks.append((memory_id, chunk_id, similarity))
                     else:
                         scored_chunks.append((memory_id, chunk_id, base_score))
@@ -420,14 +429,16 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
 
             edge = edge_map.get(memory_id, {})
 
-            results.append(LinkedMemoryResult(
-                memory_id=memory_id,
-                score=score,
-                content=str(chunk_data.get("content", "")),
-                anchor_context=edge.get("edge_context", ""),
-                edge_type=edge.get("edge_type", "related_to"),
-                file_path=str(chunk_data.get("file_path", "")),
-            ))
+            results.append(
+                LinkedMemoryResult(
+                    memory_id=memory_id,
+                    score=score,
+                    content=str(chunk_data.get("content", "")),
+                    anchor_context=edge.get("edge_context", ""),
+                    edge_type=edge.get("edge_type", "related_to"),
+                    file_path=str(chunk_data.get("file_path", "")),
+                )
+            )
 
             if len(results) >= limit:
                 break
@@ -456,10 +467,18 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
             next_level = set()
             for node_id in current_level:
                 if node_id.startswith("tag:"):
-                    predecessors = [p for p in self._graph.get_neighbors(node_id, 1) if p.startswith("memory:")]
+                    predecessors = [
+                        p
+                        for p in self._graph.get_neighbors(node_id, 1)
+                        if p.startswith("memory:")
+                    ]
                     memory_ids.update(predecessors)
 
-                    tag_neighbors = [p for p in self._graph.get_neighbors(node_id, 1) if p.startswith("tag:")]
+                    tag_neighbors = [
+                        p
+                        for p in self._graph.get_neighbors(node_id, 1)
+                        if p.startswith("tag:")
+                    ]
                     next_level.update(tag_neighbors)
 
             current_level = next_level
@@ -501,14 +520,16 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
                 created_at=created_at,
             )
 
-            results.append(MemorySearchResult(
-                memory_id=memory_id,
-                score=1.0,
-                content=str(chunk_data.get("content", "")),
-                frontmatter=frontmatter,
-                file_path=str(chunk_data.get("file_path", "")),
-                header_path=str(chunk_data.get("header_path", "")),
-            ))
+            results.append(
+                MemorySearchResult(
+                    memory_id=memory_id,
+                    score=1.0,
+                    content=str(chunk_data.get("content", "")),
+                    frontmatter=frontmatter,
+                    file_path=str(chunk_data.get("file_path", "")),
+                    header_path=str(chunk_data.get("header_path", "")),
+                )
+            )
 
             if len(results) >= limit:
                 break
@@ -594,12 +615,18 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
         if not self._graph.has_node(tag_id):
             return []
 
-        memory_ids = [p for p in self._graph.get_neighbors(tag_id, 1) if p.startswith("memory:")]
+        memory_ids = [
+            p for p in self._graph.get_neighbors(tag_id, 1) if p.startswith("memory:")
+        ]
 
         tag_counts: dict[str, int] = {}
 
         for memory_id in memory_ids:
-            tag_neighbors = [p for p in self._graph.get_neighbors(memory_id, 1) if p.startswith("tag:")]
+            tag_neighbors = [
+                p
+                for p in self._graph.get_neighbors(memory_id, 1)
+                if p.startswith("tag:")
+            ]
             for tag_node_id in tag_neighbors:
                 if tag_node_id == tag_id:
                     continue
@@ -615,7 +642,11 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
         for node_id in self._graph.get_all_node_ids():
             if node_id.startswith("tag:"):
                 tag_name = node_id[4:]
-                memory_ids = [p for p in self._graph.get_neighbors(node_id, 1) if p.startswith("memory:")]
+                memory_ids = [
+                    p
+                    for p in self._graph.get_neighbors(node_id, 1)
+                    if p.startswith("memory:")
+                ]
                 tag_counts[tag_name] = len(memory_ids)
 
         return tag_counts
@@ -648,7 +679,9 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
         # Determine which edge types to query
         if relationship_type:
             if relationship_type not in edge_type_map:
-                return {"error": f"Invalid relationship type: {relationship_type}. Must be one of: {', '.join(edge_type_map.keys())}"}
+                return {
+                    "error": f"Invalid relationship type: {relationship_type}. Must be one of: {', '.join(edge_type_map.keys())}"
+                }
             edge_types_to_query = {relationship_type: edge_type_map[relationship_type]}
         else:
             edge_types_to_query = edge_type_map
@@ -668,13 +701,17 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
                 if chunk_ids:
                     chunk_data = self._vector.get_chunk_by_id(chunk_ids[0])
                     if chunk_data:
-                        chain.append({
-                            "memory_id": current_id,
-                            "file_path": str(chunk_data.get("file_path", "")),
-                        })
+                        chain.append(
+                            {
+                                "memory_id": current_id,
+                                "file_path": str(chunk_data.get("file_path", "")),
+                            }
+                        )
 
                 edges = self._graph.get_outgoing_edges(current_id)
-                supersedes_edges = [e for e in edges if e[2].get("edge_type") == "SUPERSEDES"]
+                supersedes_edges = [
+                    e for e in edges if e[2].get("edge_type") == "SUPERSEDES"
+                ]
 
                 if supersedes_edges:
                     current_id = supersedes_edges[0][1]
@@ -697,11 +734,13 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
                 if chunk_ids:
                     chunk_data = self._vector.get_chunk_by_id(chunk_ids[0])
                     if chunk_data:
-                        relationships.append({
-                            "memory_id": target_id,
-                            "file_path": str(chunk_data.get("file_path", "")),
-                            "context": edge_data.get("edge_context", ""),
-                        })
+                        relationships.append(
+                            {
+                                "memory_id": target_id,
+                                "file_path": str(chunk_data.get("file_path", "")),
+                                "context": edge_data.get("edge_context", ""),
+                            }
+                        )
 
             result[rel_type] = relationships
 

@@ -49,7 +49,13 @@ def get_memory_tools() -> list[Tool]:
                     },
                     "memory_type": {
                         "type": "string",
-                        "enum": ["plan", "journal", "fact", "observation", "reflection"],
+                        "enum": [
+                            "plan",
+                            "journal",
+                            "fact",
+                            "observation",
+                            "reflection",
+                        ],
                         "description": "Type of memory (default: journal)",
                         "default": "journal",
                     },
@@ -141,7 +147,13 @@ def get_memory_tools() -> list[Tool]:
                     },
                     "filter_type": {
                         "type": "string",
-                        "enum": ["plan", "journal", "fact", "observation", "reflection"],
+                        "enum": [
+                            "plan",
+                            "journal",
+                            "fact",
+                            "observation",
+                            "reflection",
+                        ],
                         "description": "Only return memories of this type",
                     },
                     "load_full_memory": {
@@ -318,22 +330,24 @@ async def handle_search_memories(
     output_lines = ["# Memory Search Results", ""]
 
     # Add stats summary for visibility
-    output_lines.extend([
-        "## Search Stats",
-        f"- **Total indexed memories:** {stats.get('total_indexed', 0)}",
-        f"- **Candidates:** vector={stats.get('vector_candidates', 0)}, keyword={stats.get('keyword_candidates', 0)}",
-        f"- **After fusion:** {stats.get('after_fusion', 0)}",
-        "- **Filtered out:**",
-        f"  - Missing chunk data: {stats.get('filtered_missing_chunk', 0)}",
-        f"  - Type mismatch: {stats.get('filtered_type_mismatch', 0)}",
-        f"  - Time range: {stats.get('filtered_time_range', 0)}",
-        f"  - Below threshold ({stats.get('score_threshold', 0.1):.2f}): {stats.get('filtered_below_threshold', 0)}",
-        f"- **Score range:** min={stats.get('min_score_seen', 0):.3f}, max={stats.get('max_score_seen', 0):.3f}",
-        f"- **Returned:** {stats.get('returned', 0)}",
-        "",
-        "---",
-        "",
-    ])
+    output_lines.extend(
+        [
+            "## Search Stats",
+            f"- **Total indexed memories:** {stats.get('total_indexed', 0)}",
+            f"- **Candidates:** vector={stats.get('vector_candidates', 0)}, keyword={stats.get('keyword_candidates', 0)}",
+            f"- **After fusion:** {stats.get('after_fusion', 0)}",
+            "- **Filtered out:**",
+            f"  - Missing chunk data: {stats.get('filtered_missing_chunk', 0)}",
+            f"  - Type mismatch: {stats.get('filtered_type_mismatch', 0)}",
+            f"  - Time range: {stats.get('filtered_time_range', 0)}",
+            f"  - Below threshold ({stats.get('score_threshold', 0.1):.2f}): {stats.get('filtered_below_threshold', 0)}",
+            f"- **Score range:** min={stats.get('min_score_seen', 0):.3f}, max={stats.get('max_score_seen', 0):.3f}",
+            f"- **Returned:** {stats.get('returned', 0)}",
+            "",
+            "---",
+            "",
+        ]
+    )
 
     for i, r in enumerate(results, 1):
         output_lines.extend(

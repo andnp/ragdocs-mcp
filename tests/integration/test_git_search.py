@@ -236,8 +236,7 @@ def test_glob_filtering_python_files(git_test_repo, commit_indexer):
     for result in response.results:
         # Verify at least one file matches the glob pattern
         matching_files = [
-            f for f in result.files_changed
-            if Path(f).match("src/**/*.py")
+            f for f in result.files_changed if Path(f).match("src/**/*.py")
         ]
         assert len(matching_files) > 0
 
@@ -298,8 +297,7 @@ def test_glob_filtering_test_files(git_test_repo, commit_indexer):
     # Verify all results have test files
     for result in response.results:
         matching_files = [
-            f for f in result.files_changed
-            if Path(f).match("tests/**/*.py")
+            f for f in result.files_changed if Path(f).match("tests/**/*.py")
         ]
         assert len(matching_files) > 0
 

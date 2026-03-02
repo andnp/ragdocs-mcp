@@ -211,8 +211,16 @@ class CommitIndexer:
             if self._is_corruption_error(e):
                 self._reinitialize_after_corruption()
                 self.add_commit(
-                    hash, timestamp, author, committer, title, message,
-                    files_changed, delta_truncated, commit_document, repo_path
+                    hash,
+                    timestamp,
+                    author,
+                    committer,
+                    title,
+                    message,
+                    files_changed,
+                    delta_truncated,
+                    commit_document,
+                    repo_path,
                 )
                 return
             raise
@@ -265,7 +273,9 @@ class CommitIndexer:
             for row in rows:
                 embedding = self._deserialize_embedding(row["embedding"])
                 if embedding is None:
-                    logger.warning(f"Skipping commit {row['hash'][:8]}: missing embedding")
+                    logger.warning(
+                        f"Skipping commit {row['hash'][:8]}: missing embedding"
+                    )
                     continue
                 score = self._cosine_similarity(query_vec, embedding)
 
@@ -274,18 +284,20 @@ class CommitIndexer:
                 except (json.JSONDecodeError, TypeError):
                     files_changed = []
 
-                results.append({
-                    "hash": row["hash"],
-                    "timestamp": row["timestamp"],
-                    "author": row["author"],
-                    "committer": row["committer"],
-                    "title": row["title"],
-                    "message": row["message"],
-                    "files_changed": files_changed,
-                    "delta_truncated": row["delta_truncated"],
-                    "score": float(score),
-                    "repo_path": row["repo_path"],
-                })
+                results.append(
+                    {
+                        "hash": row["hash"],
+                        "timestamp": row["timestamp"],
+                        "author": row["author"],
+                        "committer": row["committer"],
+                        "title": row["title"],
+                        "message": row["message"],
+                        "files_changed": files_changed,
+                        "delta_truncated": row["delta_truncated"],
+                        "score": float(score),
+                        "repo_path": row["repo_path"],
+                    }
+                )
 
             results.sort(key=lambda x: x["score"], reverse=True)
             return results[:top_k]

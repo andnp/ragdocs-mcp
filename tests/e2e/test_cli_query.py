@@ -103,6 +103,7 @@ def build_index(test_env):
     Helper to build index before running query tests.
     """
     import os
+
     original_cwd = os.getcwd()
     os.chdir(test_env["root"])
 
@@ -145,8 +146,9 @@ def test_query_command_basic_execution(runner, test_env):
 
         # Should have results or a no results message
         # (Rich formatting may use different text)
-        assert "results" in output.lower() or "Score:" in output or "Document:" in output, \
-            "Output should contain results or results status"
+        assert (
+            "results" in output.lower() or "Score:" in output or "Document:" in output
+        ), "Output should contain results or results status"
 
         # Verify no error messages (excluding "0 errors" which is benign)
         assert "Error:" not in output
@@ -186,7 +188,9 @@ def test_query_command_json_output(runner, test_env):
         # Verify structure
         assert "query" in data, "JSON should contain 'query' field"
         assert "results" in data, "JSON should contain 'results' field"
-        assert "answer" not in data, "JSON should not contain 'answer' field (synthesis removed)"
+        assert "answer" not in data, (
+            "JSON should not contain 'answer' field (synthesis removed)"
+        )
 
         # Verify query field
         assert data["query"] == "authentication"
@@ -265,8 +269,8 @@ def test_query_command_error_no_indices(runner, tmp_path):
     config_file = tmp_path / "config.toml"
     config_file.write_text(f"""
 [indexing]
-documents_path = "{tmp_path / 'docs'}"
-index_path = "{tmp_path / '.index_data'}"
+documents_path = "{tmp_path / "docs"}"
+index_path = "{tmp_path / ".index_data"}"
 """)
 
     (tmp_path / "docs").mkdir()
@@ -383,7 +387,9 @@ def test_query_command_subprocess_execution(test_env):
         # Verify structure
         assert "query" in data
         assert "results" in data
-        assert "answer" not in data, "JSON should not contain 'answer' field (synthesis removed)"
+        assert "answer" not in data, (
+            "JSON should not contain 'answer' field (synthesis removed)"
+        )
 
         assert isinstance(data["results"], list)
 
@@ -441,11 +447,7 @@ def test_query_command_empty_results(runner, test_env):
 
     try:
         # Query for something unlikely to match
-        result = runner.invoke(cli, [
-            "query",
-            "xyzabc123nonexistentquery456",
-            "--json"
-        ])
+        result = runner.invoke(cli, ["query", "xyzabc123nonexistentquery456", "--json"])
 
         assert result.exit_code == 0, "Should handle no results gracefully"
 
@@ -453,7 +455,9 @@ def test_query_command_empty_results(runner, test_env):
 
         # Should have empty or minimal results
         assert isinstance(data["results"], list)
-        assert "answer" not in data, "JSON should not contain 'answer' field (synthesis removed)"
+        assert "answer" not in data, (
+            "JSON should not contain 'answer' field (synthesis removed)"
+        )
 
     finally:
         os.chdir(original_cwd)
@@ -488,7 +492,9 @@ def test_query_panel_format_with_scores(runner, test_env):
         # Check if results were found (may vary with local embeddings)
         if "No results found" in output:
             # If no results with embeddings, verify structure from JSON output instead
-            result_json = runner.invoke(cli, ["query", "test", "--json", "--top-n", "5"])
+            result_json = runner.invoke(
+                cli, ["query", "test", "--json", "--top-n", "5"]
+            )
             data = json.loads(result_json.output)
 
             # If JSON has results, test the rich output format from a different angle
@@ -502,20 +508,27 @@ def test_query_panel_format_with_scores(runner, test_env):
         if "Score:" in output:
             # Check for 4 decimal place format (e.g., 0.1234, 1.0000)
             import re
+
             score_pattern = r"Score:\s*\d+\.\d{4}"
             scores_found = re.findall(score_pattern, output)
-            assert len(scores_found) > 0, "Should find scores formatted with 4 decimal places"
+            assert len(scores_found) > 0, (
+                "Should find scores formatted with 4 decimal places"
+            )
 
             # Verify panel structure elements
             assert "Document:" in output, "Should display Document field"
-            assert "Section:" in output or "File:" in output, "Should display Section or File field"
+            assert "Section:" in output or "File:" in output, (
+                "Should display Section or File field"
+            )
 
             # Verify result numbering
             assert "#1" in output, "Should show result number #1"
         else:
             # If no results, at least verify the command structure works
             assert "Query:" in output, "Should display query label"
-            assert "No relevant" in output or "results" in output.lower(), "Should show results status"
+            assert "No relevant" in output or "results" in output.lower(), (
+                "Should show results status"
+            )
 
     finally:
         os.chdir(original_cwd)
@@ -547,21 +560,28 @@ def test_query_visual_separators(runner, test_env):
 
         # Count result panels (looking for result numbers)
         import re
+
         result_numbers = re.findall(r"#(\d+)", output)
 
         if len(result_numbers) > 1:
             # Multiple results - verify they're visually separated
             # Panel titles should contain result numbers
             assert "#1" in output, "Should show first result"
-            assert "#2" in output or len(result_numbers) >= 1, "Should show additional results"
+            assert "#2" in output or len(result_numbers) >= 1, (
+                "Should show additional results"
+            )
 
             # Each result should have its own Document/Section/File info
             doc_count = output.count("Document:")
-            assert doc_count >= len(result_numbers), "Each result should have Document field"
+            assert doc_count >= len(result_numbers), (
+                "Each result should have Document field"
+            )
 
         # Verify overall structure is present
         assert "Query:" in output, "Should show query header"
-        assert "Found" in output or "results" in output.lower(), "Should indicate results found"
+        assert "Found" in output or "results" in output.lower(), (
+            "Should indicate results found"
+        )
 
     finally:
         os.chdir(original_cwd)
@@ -586,7 +606,9 @@ def test_query_score_accuracy_json(runner, test_env):
 
     try:
         # Run query with JSON output
-        result = runner.invoke(cli, ["query", "authentication", "--json", "--top-n", "5"])
+        result = runner.invoke(
+            cli, ["query", "authentication", "--json", "--top-n", "5"]
+        )
 
         assert result.exit_code == 0, f"Query failed: {result.output}"
 
@@ -597,14 +619,18 @@ def test_query_score_accuracy_json(runner, test_env):
             # Verify scores are in valid range
             for idx, res in enumerate(results):
                 score = res["score"]
-                assert 0.0 <= score <= 1.0, f"Result {idx} score {score} out of range [0, 1]"
+                assert 0.0 <= score <= 1.0, (
+                    f"Result {idx} score {score} out of range [0, 1]"
+                )
 
             # Verify scores are in descending order
             scores = [r["score"] for r in results]
             assert scores == sorted(scores, reverse=True), "Scores should be descending"
 
             # Top result should have highest score (typically 1.0 after normalization)
-            assert results[0]["score"] >= results[-1]["score"], "First result should have highest score"
+            assert results[0]["score"] >= results[-1]["score"], (
+                "First result should have highest score"
+            )
 
     finally:
         os.chdir(original_cwd)

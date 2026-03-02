@@ -57,7 +57,10 @@ def test_parallel_embedding_speedup(tmp_path, shared_embedding_model):
 
     # Log actual speedup (not an assertion, for observability)
     import logging
-    logging.info(f"Parallel speedup: {speedup:.2f}x (seq: {sequential_time:.2f}s, par: {parallel_time:.2f}s)")
+
+    logging.info(
+        f"Parallel speedup: {speedup:.2f}x (seq: {sequential_time:.2f}s, par: {parallel_time:.2f}s)"
+    )
 
 
 def test_parallel_embedding_correctness(tmp_path, shared_embedding_model):

@@ -235,6 +235,7 @@ def test_hash_store_unicode_chunk_ids(temp_hash_store):
     assert temp_hash_store.get_hash("文档#chunk-0") == "hash1"
     assert temp_hash_store.get_hash("документ#chunk-0") == "hash2"
 
+
 def test_hash_store_persist_skips_when_not_dirty(tmp_path):
     """Test persist skips write when nothing has changed."""
     storage_path = tmp_path / "chunk_hashes.json"
@@ -248,6 +249,7 @@ def test_hash_store_persist_skips_when_not_dirty(tmp_path):
 
     # Touch file with delay to ensure mtime would change
     import time
+
     time.sleep(0.01)
 
     # Call persist again without changes - should skip

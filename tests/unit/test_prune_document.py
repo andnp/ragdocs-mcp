@@ -70,7 +70,9 @@ def manager(base_config, shared_embedding_model):
 class TestPruneDocumentSuccess:
     """Tests for successful document pruning."""
 
-    def test_prune_removes_from_vector_index(self, manager: IndexManager, shared_embedding_model):
+    def test_prune_removes_from_vector_index(
+        self, manager: IndexManager, shared_embedding_model
+    ):
         """Verify prune_document removes chunks from vector index."""
         # Add a document with chunks
         doc_id = "test_doc"
@@ -92,7 +94,9 @@ class TestPruneDocumentSuccess:
     def test_prune_removes_from_keyword_index(self, manager: IndexManager):
         """Verify prune_document removes document from keyword index."""
         doc_id = "keyword_test"
-        chunks = [make_chunk(f"{doc_id}_chunk_0", doc_id, "Unique keyword searchable", 0)]
+        chunks = [
+            make_chunk(f"{doc_id}_chunk_0", doc_id, "Unique keyword searchable", 0)
+        ]
         manager.keyword.add_chunks(chunks)
 
         # Verify searchable
@@ -177,7 +181,9 @@ class TestPruneDocumentEdgeCases:
         # Should succeed (no-op for non-existent)
         assert result is True
 
-    def test_prune_manifest_without_doc_id(self, manager: IndexManager, tmp_index_path: Path):
+    def test_prune_manifest_without_doc_id(
+        self, manager: IndexManager, tmp_index_path: Path
+    ):
         """Verify prune handles manifest that doesn't contain doc_id."""
         doc_id = "not_in_manifest"
 
@@ -212,7 +218,9 @@ class TestPruneDocumentEdgeCases:
 class TestPruneDocumentFailure:
     """Tests for failure scenarios."""
 
-    def test_prune_returns_false_on_vector_error(self, base_config, shared_embedding_model):
+    def test_prune_returns_false_on_vector_error(
+        self, base_config, shared_embedding_model
+    ):
         """Verify prune_document returns False when vector.prune raises."""
         mock_vector = MagicMock(spec=VectorIndex)
         mock_vector.prune_document.side_effect = RuntimeError("Vector prune failed")

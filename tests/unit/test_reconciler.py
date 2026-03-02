@@ -30,7 +30,7 @@ def sample_manifest():
             "doc1": "doc1.md",
             "subdir/doc2": "subdir/doc2.md",
             "doc3": "doc3.md",
-        }
+        },
     )
 
 
@@ -49,9 +49,7 @@ def test_reconcile_no_changes(docs_path, sample_manifest):
     ]
 
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(
-        discovered,
-        sample_manifest,
-        docs_path
+        discovered, sample_manifest, docs_path
     )
 
     assert files_to_add == []
@@ -79,9 +77,7 @@ def test_reconcile_new_files(docs_path, sample_manifest):
     ]
 
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(
-        discovered,
-        sample_manifest,
-        docs_path
+        discovered, sample_manifest, docs_path
     )
 
     assert len(files_to_add) == 2
@@ -100,9 +96,7 @@ def test_reconcile_deleted_files(docs_path, sample_manifest):
     ]
 
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(
-        discovered,
-        sample_manifest,
-        docs_path
+        discovered, sample_manifest, docs_path
     )
 
     assert files_to_add == []
@@ -125,9 +119,7 @@ def test_reconcile_mixed_changes(docs_path, sample_manifest):
     ]
 
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(
-        discovered,
-        sample_manifest,
-        docs_path
+        discovered, sample_manifest, docs_path
     )
 
     assert len(files_to_add) == 2
@@ -145,7 +137,7 @@ def test_reconcile_empty_manifest(docs_path):
         spec_version="1.0.0",
         embedding_model="local",
         chunking_config={},
-        indexed_files={}
+        indexed_files={},
     )
 
     (docs_path / "doc1.md").write_text("# Doc 1")
@@ -157,9 +149,7 @@ def test_reconcile_empty_manifest(docs_path):
     ]
 
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(
-        discovered,
-        manifest,
-        docs_path
+        discovered, manifest, docs_path
     )
 
     assert len(files_to_add) == 2
@@ -172,7 +162,7 @@ def test_reconcile_manifest_none(docs_path):
         spec_version="1.0.0",
         embedding_model="local",
         chunking_config={},
-        indexed_files=None
+        indexed_files=None,
     )
 
     (docs_path / "doc1.md").write_text("# Doc 1")
@@ -180,9 +170,7 @@ def test_reconcile_manifest_none(docs_path):
     discovered = [str(docs_path / "doc1.md")]
 
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(
-        discovered,
-        manifest,
-        docs_path
+        discovered, manifest, docs_path
     )
 
     assert len(files_to_add) == 1
@@ -226,7 +214,7 @@ def test_reconcile_ignores_files_outside_docs_path(docs_path, tmp_path):
         spec_version="1.0.0",
         embedding_model="local",
         chunking_config={},
-        indexed_files={"doc1": "doc1.md"}
+        indexed_files={"doc1": "doc1.md"},
     )
 
     # Include outside file in discovered (should be ignored)
@@ -236,9 +224,7 @@ def test_reconcile_ignores_files_outside_docs_path(docs_path, tmp_path):
     ]
 
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(
-        discovered,
-        manifest,
-        docs_path
+        discovered, manifest, docs_path
     )
 
     # Outside file should not be added
@@ -256,7 +242,7 @@ def test_find_excluded_indexed_files_venv(docs_path):
             "normal": "normal.md",
             ".venv/lib/package/README": ".venv/lib/package/README.md",
             "docs/guide": "docs/guide.md",
-        }
+        },
     )
 
     excluded = find_excluded_indexed_files(
@@ -283,7 +269,7 @@ def test_find_excluded_indexed_files_hidden_dirs(docs_path):
             "normal": "normal.md",
             ".hidden/secret": ".hidden/secret.md",
             ".git/config": ".git/config.md",
-        }
+        },
     )
 
     excluded = find_excluded_indexed_files(
@@ -311,7 +297,7 @@ def test_find_excluded_indexed_files_multiple_patterns(docs_path):
             "build/output": "build/output.md",
             "node_modules/package/README": "node_modules/package/README.md",
             ".venv/lib/README": ".venv/lib/README.md",
-        }
+        },
     )
 
     excluded = find_excluded_indexed_files(
@@ -339,7 +325,7 @@ def test_reconcile_with_exclude_patterns(docs_path):
             "doc1": "doc1.md",
             ".venv/lib/README": ".venv/lib/README.md",
             "build/docs/api": "build/docs/api.md",
-        }
+        },
     )
 
     # Create only the valid file
@@ -378,7 +364,7 @@ def test_reconcile_blacklist_change_removes_indexed_files(docs_path):
             "docs/README": "docs/README.md",
             ".venv/lib/python/site-packages/flax/README": ".venv/lib/python/site-packages/flax/README.md",
             ".venv/lib/python/site-packages/orbax/README": ".venv/lib/python/site-packages/orbax/README.md",
-        }
+        },
     )
 
     # Only docs file exists in discovered (venv filtered out by discovery)

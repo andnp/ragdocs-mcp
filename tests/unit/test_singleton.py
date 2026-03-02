@@ -31,7 +31,7 @@ def test_singleton_acquire_success(temp_index_path: Path):
     assert guard.lock_file_path.exists()
 
     content = guard.lock_file_path.read_text()
-    lines = content.strip().split('\n')
+    lines = content.strip().split("\n")
     assert len(lines) == 2
     assert lines[0] == str(os.getpid())
 
@@ -51,7 +51,9 @@ def test_singleton_blocks_second_acquisition(temp_index_path: Path):
 
     guard1.acquire()
 
-    with pytest.raises(RuntimeError, match="Another mcp-markdown-ragdocs instance is already running"):
+    with pytest.raises(
+        RuntimeError, match="Another mcp-markdown-ragdocs instance is already running"
+    ):
         guard2.acquire()
 
     guard1.release()
@@ -98,7 +100,10 @@ def test_singleton_stale_lock_detection_unix(temp_index_path: Path):
     os.write(fd, f"{fake_pid}\n{fake_timestamp}\n".encode())
 
     try:
-        with pytest.raises(RuntimeError, match="Another mcp-markdown-ragdocs instance is already running"):
+        with pytest.raises(
+            RuntimeError,
+            match="Another mcp-markdown-ragdocs instance is already running",
+        ):
             guard.acquire()
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)

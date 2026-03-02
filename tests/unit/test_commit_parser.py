@@ -154,7 +154,9 @@ def test_multiline_message():
 
         file_path = repo_path / "test.txt"
         file_path.write_text("content")
-        subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", "."], cwd=repo_path, check=True, capture_output=True
+        )
 
         # Create commit with multi-line message
         message = "Short title\n\nDetailed description\nwith multiple lines"

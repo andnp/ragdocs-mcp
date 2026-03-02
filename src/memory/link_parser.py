@@ -4,7 +4,7 @@ from pathlib import Path
 from src.memory.models import ExtractedLink
 
 
-LINK_PATTERN = re.compile(r'\[\[([^\]]+)\]\]')
+LINK_PATTERN = re.compile(r"\[\[([^\]]+)\]\]")
 
 EDGE_TYPE_KEYWORDS: dict[str, list[str]] = {
     "refactors": ["refactor", "rewrite", "restructure", "reorganize", "cleanup"],
@@ -80,12 +80,14 @@ def extract_links(content: str, context_chars: int = 100) -> list[ExtractedLink]
         else:
             edge_type = infer_edge_type(anchor_context)
 
-        links.append(ExtractedLink(
-            target=resolved_target,
-            edge_type=edge_type,
-            anchor_context=anchor_context.strip(),
-            position=start_pos,
-            is_memory_link=is_memory,
-        ))
+        links.append(
+            ExtractedLink(
+                target=resolved_target,
+                edge_type=edge_type,
+                anchor_context=anchor_context.strip(),
+                position=start_pos,
+                is_memory_link=is_memory,
+            )
+        )
 
     return links

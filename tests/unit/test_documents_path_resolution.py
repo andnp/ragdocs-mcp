@@ -40,6 +40,7 @@ def test_resolve_documents_path_absolute():
 def test_resolve_documents_path_no_project(default_config, tmp_path):
     """When no project detected, resolve relative to CWD."""
     import os
+
     original_cwd = Path.cwd()
     try:
         os.chdir(tmp_path)
@@ -52,6 +53,7 @@ def test_resolve_documents_path_no_project(default_config, tmp_path):
 def test_resolve_documents_path_project_not_in_list(default_config, sample_projects):
     """When detected project not found in projects list, resolve relative to CWD."""
     import os
+
     original_cwd = Path.cwd()
     try:
         temp_dir = Path("/tmp")

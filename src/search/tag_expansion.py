@@ -13,18 +13,19 @@ import logging
 
 from src.indices.graph import GraphStore
 from src.indices.vector import VectorIndex
+from src.search.types import SearchResultDict
 
 logger = logging.getLogger(__name__)
 
 
 def expand_query_with_tags(
-    initial_results: list[dict],
+    initial_results: list[SearchResultDict],
     graph: GraphStore,
     vector: VectorIndex,
     top_k: int = 20,
     max_related_tags: int = 3,
     max_depth: int = 2,
-) -> list[dict]:
+) -> list[SearchResultDict]:
     """Expand search results using tag graph relationships.
 
     Args:
@@ -97,17 +98,18 @@ def expand_query_with_tags(
                 for chunk_id in chunk_ids[:2]:  # Max 2 chunks per doc
                     chunk_data = vector.get_chunk_by_id(chunk_id)
                     if chunk_data:
-                        expanded_chunks.append({
-                            "chunk_id": chunk_id,
-                            "doc_id": target,
-                            "score": 0.5,  # Lower score for expanded results
-                        })
+                        expanded_chunks.append(
+                            SearchResultDict(
+                                chunk_id=chunk_id,
+                                doc_id=target,
+                                score=0.5,  # Lower score for expanded results
+                            )
+                        )
 
     # Merge expanded results with initial results (dedupe by chunk_id)
     seen_chunk_ids = {r.get("chunk_id") for r in initial_results}
     unique_expanded = [
-        r for r in expanded_chunks
-        if r.get("chunk_id") not in seen_chunk_ids
+        r for r in expanded_chunks if r.get("chunk_id") not in seen_chunk_ids
     ]
 
     logger.debug(

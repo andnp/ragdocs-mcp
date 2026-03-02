@@ -13,7 +13,12 @@ import pytest
 
 from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from src.indexing.manager import IndexManager
-from src.indexing.manifest import IndexManifest, load_manifest, save_manifest, should_rebuild
+from src.indexing.manifest import (
+    IndexManifest,
+    load_manifest,
+    save_manifest,
+    should_rebuild,
+)
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
@@ -30,11 +35,10 @@ def config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
 
@@ -73,7 +77,7 @@ def current_manifest(config):
     return IndexManifest(
         spec_version="1.0.0",
         embedding_model=config.llm.embedding_model,
-        chunking_config={}
+        chunking_config={},
     )
 
 
@@ -91,7 +95,9 @@ def index_all_documents(manager, docs_path):
     return len(files)
 
 
-def test_startup_no_manifest_triggers_full_index(config, manager, current_manifest, tmp_path):
+def test_startup_no_manifest_triggers_full_index(
+    config, manager, current_manifest, tmp_path
+):
     """
     Test that startup with no manifest triggers a full index.
 
@@ -132,7 +138,9 @@ def test_startup_no_manifest_triggers_full_index(config, manager, current_manife
     assert saved_manifest.embedding_model == "all-MiniLM-L6-v2"
 
 
-def test_startup_matching_manifest_skips_rebuild(config, manager, current_manifest, tmp_path, shared_embedding_model):
+def test_startup_matching_manifest_skips_rebuild(
+    config, manager, current_manifest, tmp_path, shared_embedding_model
+):
     """
     Test that startup with matching manifest skips rebuild.
 
@@ -144,7 +152,9 @@ def test_startup_matching_manifest_skips_rebuild(config, manager, current_manife
     index_path = Path(config.indexing.index_path)
 
     # Create test documents
-    (docs_path / "existing.md").write_text("# Existing Document\n\nPre-indexed content.")
+    (docs_path / "existing.md").write_text(
+        "# Existing Document\n\nPre-indexed content."
+    )
 
     # Perform initial indexing
     index_all_documents(manager, docs_path)
@@ -171,7 +181,9 @@ def test_startup_matching_manifest_skips_rebuild(config, manager, current_manife
     assert doc_count == 1  # Only the pre-indexed document
 
 
-def test_startup_version_mismatch_triggers_rebuild(config, manager, current_manifest, tmp_path, shared_embedding_model):
+def test_startup_version_mismatch_triggers_rebuild(
+    config, manager, current_manifest, tmp_path, shared_embedding_model
+):
     """
     Test that startup with version mismatch triggers rebuild.
 
@@ -193,7 +205,7 @@ def test_startup_version_mismatch_triggers_rebuild(config, manager, current_mani
     old_manifest = IndexManifest(
         spec_version="0.9.0",  # Old version
         embedding_model="all-MiniLM-L6-v2",
-        chunking_config={}
+        chunking_config={},
     )
     save_manifest(index_path, old_manifest)
 
@@ -212,7 +224,9 @@ def test_startup_version_mismatch_triggers_rebuild(config, manager, current_mani
 
     # Verify both files exist before indexing
     existing_files = list(docs_path.glob("*.md"))
-    assert len(existing_files) == 2, f"Expected 2 files, found: {[f.name for f in existing_files]}"
+    assert len(existing_files) == 2, (
+        f"Expected 2 files, found: {[f.name for f in existing_files]}"
+    )
 
     # Perform full reindex with fresh indices
     # Note: We must use force=True because the hash store from the previous
@@ -233,7 +247,9 @@ def test_startup_version_mismatch_triggers_rebuild(config, manager, current_mani
 
     # Verify both old and new documents are indexed
     doc_count = manager_new.get_document_count()
-    assert doc_count == 2, f"Expected 2 documents, got {doc_count}. Files: {[f.name for f in existing_files]}"
+    assert doc_count == 2, (
+        f"Expected 2 documents, got {doc_count}. Files: {[f.name for f in existing_files]}"
+    )
 
     # Verify manifest was updated
     updated_manifest = load_manifest(index_path)

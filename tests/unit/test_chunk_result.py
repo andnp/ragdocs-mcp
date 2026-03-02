@@ -54,7 +54,14 @@ def test_chunk_result_to_dict():
     assert result_dict["content"] == ""
 
     # Verify all expected keys are present
-    expected_keys = {"chunk_id", "doc_id", "score", "header_path", "file_path", "content"}
+    expected_keys = {
+        "chunk_id",
+        "doc_id",
+        "score",
+        "header_path",
+        "file_path",
+        "content",
+    }
     assert set(result_dict.keys()) == expected_keys
 
 

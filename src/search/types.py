@@ -1,11 +1,11 @@
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
-class SearchResultDict(TypedDict, total=False):
+class SearchResultDict(TypedDict):
     chunk_id: str
     doc_id: str
-    content: str
-    score: float
-    file_path: str
-    header_path: str
-    metadata: dict
+    content: NotRequired[str]
+    score: NotRequired[float]
+    file_path: NotRequired[str]
+    header_path: NotRequired[str]
+    metadata: NotRequired[dict]

@@ -5,7 +5,6 @@ Tests the sigmoid calibration function that converts raw RRF+recency
 scores into absolute confidence scores [0, 1].
 """
 
-
 from src.search.calibration import calibrate_results as normalize_scores
 
 
@@ -127,7 +126,9 @@ class TestNormalizeScores:
         normalized_large = normalize_scores(fused_large)
 
         assert all(0.0 <= score <= 1.0 for _, score in normalized_large)
-        assert abs(normalized_large[0][1] - 1.0) < 0.01  # Very high score saturates at 1.0
+        assert (
+            abs(normalized_large[0][1] - 1.0) < 0.01
+        )  # Very high score saturates at 1.0
         assert abs(normalized_large[-1][1] - 1.0) < 0.01  # Still well above threshold
 
         # Small scores

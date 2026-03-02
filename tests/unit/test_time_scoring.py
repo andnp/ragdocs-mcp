@@ -23,7 +23,9 @@ class TestTierMode:
         timestamp = now - timedelta(days=3)
         config = TierConfig(recent_days=7, recent_boost=1.2)
 
-        score = calculate_time_score(timestamp, TimeScoreMode.TIERS, config, reference_time=now)
+        score = calculate_time_score(
+            timestamp, TimeScoreMode.TIERS, config, reference_time=now
+        )
 
         assert score == 1.2
 
@@ -33,9 +35,13 @@ class TestTierMode:
         """
         now = datetime.now(timezone.utc)
         timestamp = now - timedelta(days=15)
-        config = TierConfig(recent_days=7, recent_boost=1.2, moderate_days=30, moderate_boost=1.1)
+        config = TierConfig(
+            recent_days=7, recent_boost=1.2, moderate_days=30, moderate_boost=1.1
+        )
 
-        score = calculate_time_score(timestamp, TimeScoreMode.TIERS, config, reference_time=now)
+        score = calculate_time_score(
+            timestamp, TimeScoreMode.TIERS, config, reference_time=now
+        )
 
         assert score == 1.1
 
@@ -47,7 +53,9 @@ class TestTierMode:
         timestamp = now - timedelta(days=60)
         config = TierConfig(recent_days=7, moderate_days=30)
 
-        score = calculate_time_score(timestamp, TimeScoreMode.TIERS, config, reference_time=now)
+        score = calculate_time_score(
+            timestamp, TimeScoreMode.TIERS, config, reference_time=now
+        )
 
         assert score == 1.0
 
@@ -67,7 +75,9 @@ class TestTierMode:
         timestamp = now - timedelta(days=7)
         config = TierConfig(recent_days=7, recent_boost=1.2)
 
-        score = calculate_time_score(timestamp, TimeScoreMode.TIERS, config, reference_time=now)
+        score = calculate_time_score(
+            timestamp, TimeScoreMode.TIERS, config, reference_time=now
+        )
 
         assert score == 1.2
 
@@ -79,7 +89,9 @@ class TestTierMode:
         timestamp = now - timedelta(days=30)
         config = TierConfig(recent_days=7, moderate_days=30, moderate_boost=1.1)
 
-        score = calculate_time_score(timestamp, TimeScoreMode.TIERS, config, reference_time=now)
+        score = calculate_time_score(
+            timestamp, TimeScoreMode.TIERS, config, reference_time=now
+        )
 
         assert score == 1.1
 
@@ -95,7 +107,9 @@ class TestDecayMode:
         now = datetime.now(timezone.utc)
         config = DecayConfig(half_life_days=7.0)
 
-        score = calculate_time_score(now, TimeScoreMode.DECAY, config, reference_time=now)
+        score = calculate_time_score(
+            now, TimeScoreMode.DECAY, config, reference_time=now
+        )
 
         assert score == pytest.approx(1.0, rel=1e-6)
 
@@ -107,7 +121,9 @@ class TestDecayMode:
         timestamp = now - timedelta(days=7)
         config = DecayConfig(half_life_days=7.0, min_score=0.0)
 
-        score = calculate_time_score(timestamp, TimeScoreMode.DECAY, config, reference_time=now)
+        score = calculate_time_score(
+            timestamp, TimeScoreMode.DECAY, config, reference_time=now
+        )
 
         assert score == pytest.approx(0.5, rel=1e-6)
 
@@ -119,7 +135,9 @@ class TestDecayMode:
         timestamp = now - timedelta(days=14)
         config = DecayConfig(half_life_days=7.0, min_score=0.0)
 
-        score = calculate_time_score(timestamp, TimeScoreMode.DECAY, config, reference_time=now)
+        score = calculate_time_score(
+            timestamp, TimeScoreMode.DECAY, config, reference_time=now
+        )
 
         assert score == pytest.approx(0.25, rel=1e-6)
 
@@ -131,7 +149,9 @@ class TestDecayMode:
         timestamp = now - timedelta(days=365)
         config = DecayConfig(half_life_days=7.0, min_score=0.1)
 
-        score = calculate_time_score(timestamp, TimeScoreMode.DECAY, config, reference_time=now)
+        score = calculate_time_score(
+            timestamp, TimeScoreMode.DECAY, config, reference_time=now
+        )
 
         assert score == 0.1
 
@@ -151,7 +171,9 @@ class TestDecayMode:
         timestamp = now - timedelta(days=1)
         config = DecayConfig(half_life_days=0.0, min_score=0.1)
 
-        score = calculate_time_score(timestamp, TimeScoreMode.DECAY, config, reference_time=now)
+        score = calculate_time_score(
+            timestamp, TimeScoreMode.DECAY, config, reference_time=now
+        )
 
         assert score == 0.1
 
@@ -163,7 +185,9 @@ class TestDecayMode:
         timestamp = now - timedelta(days=10)
         config = DecayConfig(half_life_days=1.0, min_score=0.05)
 
-        score = calculate_time_score(timestamp, TimeScoreMode.DECAY, config, reference_time=now)
+        score = calculate_time_score(
+            timestamp, TimeScoreMode.DECAY, config, reference_time=now
+        )
 
         expected = 2 ** (-10)
         assert score == pytest.approx(max(0.05, expected), rel=1e-6)
@@ -181,7 +205,9 @@ class TestTimezoneHandling:
         naive_timestamp = now.replace(tzinfo=None) - timedelta(days=3)
         config = TierConfig(recent_days=7, recent_boost=1.2)
 
-        score = calculate_time_score(naive_timestamp, TimeScoreMode.TIERS, config, reference_time=now)
+        score = calculate_time_score(
+            naive_timestamp, TimeScoreMode.TIERS, config, reference_time=now
+        )
 
         assert score == 1.2
 
@@ -196,7 +222,9 @@ class TestTimezoneHandling:
         est_timestamp = (utc_now - timedelta(days=3)).astimezone(est)
         config = TierConfig(recent_days=7, recent_boost=1.2)
 
-        score = calculate_time_score(est_timestamp, TimeScoreMode.TIERS, config, reference_time=utc_now)
+        score = calculate_time_score(
+            est_timestamp, TimeScoreMode.TIERS, config, reference_time=utc_now
+        )
 
         assert score == 1.2
 
@@ -213,7 +241,9 @@ class TestApplyTimeBoost:
         timestamp = now - timedelta(days=3)
         config = TierConfig(recent_days=7, recent_boost=1.2)
 
-        boosted = apply_time_boost(0.5, timestamp, TimeScoreMode.TIERS, config, reference_time=now)
+        boosted = apply_time_boost(
+            0.5, timestamp, TimeScoreMode.TIERS, config, reference_time=now
+        )
 
         assert boosted == pytest.approx(0.6, rel=1e-6)
 
@@ -225,7 +255,9 @@ class TestApplyTimeBoost:
         timestamp = now - timedelta(days=7)
         config = DecayConfig(half_life_days=7.0, min_score=0.0)
 
-        boosted = apply_time_boost(1.0, timestamp, TimeScoreMode.DECAY, config, reference_time=now)
+        boosted = apply_time_boost(
+            1.0, timestamp, TimeScoreMode.DECAY, config, reference_time=now
+        )
 
         assert boosted == pytest.approx(0.5, rel=1e-6)
 
@@ -237,7 +269,9 @@ class TestApplyTimeBoost:
         timestamp = now - timedelta(days=1)
         config = TierConfig(recent_boost=1.5)
 
-        boosted = apply_time_boost(0.0, timestamp, TimeScoreMode.TIERS, config, reference_time=now)
+        boosted = apply_time_boost(
+            0.0, timestamp, TimeScoreMode.TIERS, config, reference_time=now
+        )
 
         assert boosted == 0.0
 
@@ -255,7 +289,9 @@ class TestConfigValidation:
         wrong_config = DecayConfig()
 
         with pytest.raises(TypeError, match="TIERS mode requires TierConfig"):
-            calculate_time_score(timestamp, TimeScoreMode.TIERS, wrong_config, reference_time=now)
+            calculate_time_score(
+                timestamp, TimeScoreMode.TIERS, wrong_config, reference_time=now
+            )
 
     def test_wrong_config_type_for_decay_raises(self):
         """
@@ -266,7 +302,9 @@ class TestConfigValidation:
         wrong_config = TierConfig()
 
         with pytest.raises(TypeError, match="DECAY mode requires DecayConfig"):
-            calculate_time_score(timestamp, TimeScoreMode.DECAY, wrong_config, reference_time=now)
+            calculate_time_score(
+                timestamp, TimeScoreMode.DECAY, wrong_config, reference_time=now
+            )
 
     def test_default_tier_config_used_when_none(self):
         """
@@ -303,7 +341,9 @@ class TestEdgeCases:
         future = now + timedelta(days=5)
         config = DecayConfig(half_life_days=7.0)
 
-        score = calculate_time_score(future, TimeScoreMode.DECAY, config, reference_time=now)
+        score = calculate_time_score(
+            future, TimeScoreMode.DECAY, config, reference_time=now
+        )
 
         assert score == pytest.approx(1.0, rel=1e-6)
 
@@ -315,6 +355,8 @@ class TestEdgeCases:
         ancient = now - timedelta(days=3650)
         config = DecayConfig(half_life_days=7.0, min_score=0.05)
 
-        score = calculate_time_score(ancient, TimeScoreMode.DECAY, config, reference_time=now)
+        score = calculate_time_score(
+            ancient, TimeScoreMode.DECAY, config, reference_time=now
+        )
 
         assert score == 0.05

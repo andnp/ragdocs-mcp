@@ -522,18 +522,34 @@ class TestIsExcludedDir:
     def test_exclude_pattern_matches(self):
         """Directories matching exclude patterns should be excluded."""
         patterns = ["**/node_modules/**", "**/.venv/**"]
-        assert is_excluded_dir("/project/node_modules", patterns, exclude_hidden_dirs=False) is True
+        assert (
+            is_excluded_dir(
+                "/project/node_modules", patterns, exclude_hidden_dirs=False
+            )
+            is True
+        )
 
     def test_normal_dir_not_excluded(self):
         """Normal directories should not be excluded."""
         patterns = ["**/node_modules/**", "**/.venv/**"]
-        assert is_excluded_dir("/project/docs", patterns, exclude_hidden_dirs=True) is False
-        assert is_excluded_dir("/project/src/utils", patterns, exclude_hidden_dirs=True) is False
+        assert (
+            is_excluded_dir("/project/docs", patterns, exclude_hidden_dirs=True)
+            is False
+        )
+        assert (
+            is_excluded_dir("/project/src/utils", patterns, exclude_hidden_dirs=True)
+            is False
+        )
 
     def test_nested_exclude_pattern(self):
         """Deeply nested excluded dirs should be detected."""
         patterns = ["**/build/**"]
-        assert is_excluded_dir("/project/libs/mylib/build", patterns, exclude_hidden_dirs=False) is True
+        assert (
+            is_excluded_dir(
+                "/project/libs/mylib/build", patterns, exclude_hidden_dirs=False
+            )
+            is True
+        )
 
 
 class TestWalkIncludedDirs:

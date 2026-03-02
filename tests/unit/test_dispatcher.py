@@ -51,4 +51,3 @@ def test_dispatch_parser_mixed_types():
 def test_dispatch_parser_case_insensitive_extension():
     parser = dispatch_parser("FILE.MD")
     assert isinstance(parser, MarkdownParser)
-

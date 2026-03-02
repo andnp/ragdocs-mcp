@@ -11,7 +11,7 @@ def get_ngrams(text: str, n: int = 3) -> set[str]:
     text = text.lower().strip()
     if len(text) < n:
         return {text} if text else set()
-    return {text[i:i + n] for i in range(len(text) - n + 1)}
+    return {text[i : i + n] for i in range(len(text) - n + 1)}
 
 
 def deduplicate_by_ngram(

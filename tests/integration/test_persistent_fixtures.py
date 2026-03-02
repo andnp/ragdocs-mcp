@@ -15,7 +15,9 @@ from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 
 
-def test_persistent_config_has_correct_paths(persistent_config, persistent_docs_path, persistent_index_path):
+def test_persistent_config_has_correct_paths(
+    persistent_config, persistent_docs_path, persistent_index_path
+):
     """
     Verify persistent config uses correct persistent paths.
 
@@ -58,6 +60,7 @@ def test_persistent_manager_can_persist_and_load(
     keyword2 = KeywordIndex()
     graph2 = GraphStore()
     from src.indexing.manager import IndexManager
+
     manager2 = IndexManager(persistent_config, vector2, keyword2, graph2)
     manager2.load()
 
@@ -177,7 +180,9 @@ def test_module_config_provides_isolated_paths(persistent_config_module):
 
 
 @pytest.mark.asyncio
-async def test_persistent_fixtures_work_with_async_tests(persistent_manager_isolated, persistent_docs_path):
+async def test_persistent_fixtures_work_with_async_tests(
+    persistent_manager_isolated, persistent_docs_path
+):
     """
     Test persistent fixtures work in async test context.
 

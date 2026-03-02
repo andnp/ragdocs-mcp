@@ -8,25 +8,46 @@ class QueryType(Enum):
     EXPLORATORY = auto()
 
 
-_CAMEL_CASE_PATTERN = re.compile(r'[a-z][A-Z]|[A-Z]{2,}[a-z]')
-_SNAKE_CASE_PATTERN = re.compile(r'\b[a-z]+_[a-z_]+\b')
-_BACKTICK_PATTERN = re.compile(r'`[^`]+`')
-_VERSION_PATTERN = re.compile(r'\b[vV]?\d+\.\d+(?:\.\d+)?(?:-\w+)?\b')
+_CAMEL_CASE_PATTERN = re.compile(r"[a-z][A-Z]|[A-Z]{2,}[a-z]")
+_SNAKE_CASE_PATTERN = re.compile(r"\b[a-z]+_[a-z_]+\b")
+_BACKTICK_PATTERN = re.compile(r"`[^`]+`")
+_VERSION_PATTERN = re.compile(r"\b[vV]?\d+\.\d+(?:\.\d+)?(?:-\w+)?\b")
 _QUOTED_PHRASE_PATTERN = re.compile(r'"[^"]+"|\'[^\']+\'')
 
-_NAVIGATIONAL_KEYWORDS = frozenset([
-    'section', 'chapter', 'guide', 'tutorial', 'documentation',
-    'doc', 'docs', 'page', 'article', 'overview',
-])
+_NAVIGATIONAL_KEYWORDS = frozenset(
+    [
+        "section",
+        "chapter",
+        "guide",
+        "tutorial",
+        "documentation",
+        "doc",
+        "docs",
+        "page",
+        "article",
+        "overview",
+    ]
+)
 _NAVIGATIONAL_PHRASES = [
-    re.compile(r'\bin\s+the\s+\w+', re.IGNORECASE),
-    re.compile(r'\[\[.+?\]\]'),
+    re.compile(r"\bin\s+the\s+\w+", re.IGNORECASE),
+    re.compile(r"\[\[.+?\]\]"),
 ]
 
-_QUESTION_WORDS = frozenset([
-    'what', 'how', 'why', 'when', 'where', 'which', 'who', 'whom',
-    'explain', 'describe', 'tell',
-])
+_QUESTION_WORDS = frozenset(
+    [
+        "what",
+        "how",
+        "why",
+        "when",
+        "where",
+        "which",
+        "who",
+        "whom",
+        "explain",
+        "describe",
+        "tell",
+    ]
+)
 
 
 def _has_factual_signals(query: str) -> bool:
@@ -59,7 +80,7 @@ def _has_exploratory_signals(query: str) -> bool:
         return False
     if words[0] in _QUESTION_WORDS:
         return True
-    if query.strip().endswith('?'):
+    if query.strip().endswith("?"):
         return True
     return False
 

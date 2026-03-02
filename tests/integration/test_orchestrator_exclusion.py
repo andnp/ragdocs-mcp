@@ -107,7 +107,9 @@ async def test_orchestrator_query_with_exclusions(orchestrator, config):
     orchestrator._keyword.add_chunk(chunk2)
 
     excluded = {"docs/api"}
-    results, stats, _ = await orchestrator.query("authentication", top_k=5, top_n=5, excluded_files=excluded)
+    results, stats, _ = await orchestrator.query(
+        "authentication", top_k=5, top_n=5, excluded_files=excluded
+    )
 
     assert len(results) > 0
     assert not any("api" in r.chunk_id for r in results)
@@ -115,7 +117,9 @@ async def test_orchestrator_query_with_exclusions(orchestrator, config):
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_query_compression_stats_with_exclusions(orchestrator, config):
+async def test_orchestrator_query_compression_stats_with_exclusions(
+    orchestrator, config
+):
     docs_path = Path(config.indexing.documents_path)
 
     chunks = []
@@ -137,7 +141,9 @@ async def test_orchestrator_query_compression_stats_with_exclusions(orchestrator
         orchestrator._keyword.add_chunk(chunk)
 
     excluded = {"docs/file0", "docs/file1"}
-    results, stats, _ = await orchestrator.query("API documentation", top_k=10, top_n=5, excluded_files=excluded)
+    results, stats, _ = await orchestrator.query(
+        "API documentation", top_k=10, top_n=5, excluded_files=excluded
+    )
 
     assert stats.original_count >= 0
     for result in results:
@@ -168,7 +174,9 @@ async def test_orchestrator_query_multiple_exclusions(orchestrator, config):
         orchestrator._keyword.add_chunk(chunk)
 
     excluded = {"docs/api", "docs/guide"}
-    results, stats, _ = await orchestrator.query("documentation", top_k=10, top_n=5, excluded_files=excluded)
+    results, stats, _ = await orchestrator.query(
+        "documentation", top_k=10, top_n=5, excluded_files=excluded
+    )
 
     for result in results:
         assert "api" not in result.chunk_id

@@ -41,7 +41,10 @@ class TestVectorSqlitePersistence:
     def test_save_and_load_100_chunks(self, db, shared_embedding_model):
         """After persisting 100 chunks to SQLite, VectorIndex populates FAISS with matching IDs."""
         vi = VectorIndex(embedding_model=shared_embedding_model)
-        chunks = [_make_chunk("doc_a", i, f"Content about topic number {i}") for i in range(100)]
+        chunks = [
+            _make_chunk("doc_a", i, f"Content about topic number {i}")
+            for i in range(100)
+        ]
         vi.add_chunks(chunks)
         vi.save_to_db(db)
 
@@ -81,7 +84,9 @@ class TestVectorSqlitePersistence:
             "vector_index:docstore",
         ]
         for key in expected_keys:
-            row = conn.execute("SELECT value FROM kv_store WHERE key = ?", (key,)).fetchone()
+            row = conn.execute(
+                "SELECT value FROM kv_store WHERE key = ?", (key,)
+            ).fetchone()
             assert row is not None, f"Missing kv_store key: {key}"
             assert row["value"], f"Empty value for key: {key}"
 

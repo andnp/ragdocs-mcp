@@ -70,7 +70,9 @@ def test_vector_search_with_exclusions_exact_match(vector_index, docs_root):
     vector_index.add_chunk(chunk2)
 
     excluded = {"docs/api"}
-    results = vector_index.search("authentication", top_k=5, excluded_files=excluded, docs_root=docs_root)
+    results = vector_index.search(
+        "authentication", top_k=5, excluded_files=excluded, docs_root=docs_root
+    )
 
     assert len(results) > 0
     assert not any("docs/api" in r["chunk_id"] for r in results)
@@ -108,7 +110,9 @@ def test_vector_search_with_exclusions_filename_match(vector_index, docs_root):
     vector_index.add_chunk(chunk2)
 
     excluded = {"README"}
-    results = vector_index.search("documentation", top_k=5, excluded_files=excluded, docs_root=docs_root)
+    results = vector_index.search(
+        "documentation", top_k=5, excluded_files=excluded, docs_root=docs_root
+    )
 
     assert len(results) > 0
     assert not any("README" in r["chunk_id"] for r in results)
@@ -131,7 +135,9 @@ def test_vector_search_with_empty_exclusion_set(vector_index, docs_root):
 
     vector_index.add_chunk(chunk1)
 
-    results_with_empty = vector_index.search("documentation", top_k=5, excluded_files=set(), docs_root=docs_root)
+    results_with_empty = vector_index.search(
+        "documentation", top_k=5, excluded_files=set(), docs_root=docs_root
+    )
     results_without = vector_index.search("documentation", top_k=5)
 
     assert len(results_with_empty) == len(results_without)
@@ -156,7 +162,9 @@ def test_vector_search_over_fetching(vector_index, docs_root):
         vector_index.add_chunk(chunk)
 
     excluded = {"docs/file0", "docs/file1"}
-    results = vector_index.search("API", top_k=3, excluded_files=excluded, docs_root=docs_root)
+    results = vector_index.search(
+        "API", top_k=3, excluded_files=excluded, docs_root=docs_root
+    )
 
     assert len(results) <= 3
     assert not any("file0" in r["chunk_id"] for r in results)
@@ -182,7 +190,9 @@ def test_vector_search_with_multiple_exclusions(vector_index, docs_root):
         vector_index.add_chunk(chunk)
 
     excluded = {"docs/api", "docs/guide"}
-    results = vector_index.search("documentation", top_k=5, excluded_files=excluded, docs_root=docs_root)
+    results = vector_index.search(
+        "documentation", top_k=5, excluded_files=excluded, docs_root=docs_root
+    )
 
     for result in results:
         assert "api" not in result["chunk_id"]

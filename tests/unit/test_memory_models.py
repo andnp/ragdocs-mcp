@@ -24,7 +24,6 @@ from src.memory.models import (
 
 
 class TestMemoryFrontmatterDefaults:
-
     def test_default_type_is_journal(self):
         """
         Verify MemoryFrontmatter defaults to 'journal' type when not specified.
@@ -63,8 +62,9 @@ class TestMemoryFrontmatterDefaults:
 
 
 class TestMemoryFrontmatterValidTypes:
-
-    @pytest.mark.parametrize("valid_type", ["plan", "journal", "fact", "observation", "reflection"])
+    @pytest.mark.parametrize(
+        "valid_type", ["plan", "journal", "fact", "observation", "reflection"]
+    )
     def test_accepts_valid_types(self, valid_type: str):
         """
         Verify MemoryFrontmatter accepts all valid type values.
@@ -92,7 +92,6 @@ class TestMemoryFrontmatterValidTypes:
 
 
 class TestMemoryFrontmatterValidStatuses:
-
     @pytest.mark.parametrize("valid_status", ["active", "archived"])
     def test_accepts_valid_statuses(self, valid_status: str):
         """
@@ -114,7 +113,6 @@ class TestMemoryFrontmatterValidStatuses:
 
 
 class TestMemoryFrontmatterWithData:
-
     def test_full_frontmatter_construction(self):
         """
         Verify MemoryFrontmatter correctly stores all provided fields.
@@ -153,7 +151,6 @@ class TestMemoryFrontmatterWithData:
 
 
 class TestExtractedLink:
-
     def test_basic_link_construction(self):
         """
         Verify ExtractedLink stores all required fields.
@@ -183,7 +180,9 @@ class TestExtractedLink:
 
         assert link.edge_type == "related_to"
 
-    @pytest.mark.parametrize("edge_type", ["refactors", "plans", "debugs", "mentions", "related_to"])
+    @pytest.mark.parametrize(
+        "edge_type", ["refactors", "plans", "debugs", "mentions", "related_to"]
+    )
     def test_all_edge_types(self, edge_type: str):
         """
         Verify ExtractedLink accepts all spec-defined edge types.
@@ -204,7 +203,6 @@ class TestExtractedLink:
 
 
 class TestMemoryDocument:
-
     def test_document_construction(self):
         """
         Verify MemoryDocument stores all required fields correctly.
@@ -262,9 +260,15 @@ class TestMemoryDocument:
         Memories can reference many other files.
         """
         links = [
-            ExtractedLink(target="file1.py", edge_type="refactors", anchor_context="", position=0),
-            ExtractedLink(target="file2.py", edge_type="plans", anchor_context="", position=50),
-            ExtractedLink(target="file3.md", edge_type="debugs", anchor_context="", position=100),
+            ExtractedLink(
+                target="file1.py", edge_type="refactors", anchor_context="", position=0
+            ),
+            ExtractedLink(
+                target="file2.py", edge_type="plans", anchor_context="", position=50
+            ),
+            ExtractedLink(
+                target="file3.md", edge_type="debugs", anchor_context="", position=100
+            ),
         ]
 
         doc = MemoryDocument(
@@ -288,7 +292,6 @@ class TestMemoryDocument:
 
 
 class TestMemorySearchResult:
-
     def test_search_result_construction(self):
         """
         Verify MemorySearchResult stores search result data.
@@ -332,7 +335,6 @@ class TestMemorySearchResult:
 
 
 class TestLinkedMemoryResult:
-
     def test_linked_result_construction(self):
         """
         Verify LinkedMemoryResult stores linked memory search data.

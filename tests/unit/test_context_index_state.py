@@ -107,7 +107,9 @@ class TestBackgroundIndexRetry:
         return ctx
 
     @pytest.mark.asyncio
-    async def test_successful_indexing_sets_ready_state(self, mock_context: Any, tmp_path: Path):
+    async def test_successful_indexing_sets_ready_state(
+        self, mock_context: Any, tmp_path: Path
+    ):
         """Verify successful indexing sets status to 'ready'."""
         # Create test files
         (tmp_path / "doc1.md").write_text("# Doc 1")
@@ -127,7 +129,9 @@ class TestBackgroundIndexRetry:
         assert mock_context._init_error is None
 
     @pytest.mark.asyncio
-    async def test_partial_failure_sets_partial_state(self, mock_context: Any, tmp_path: Path):
+    async def test_partial_failure_sets_partial_state(
+        self, mock_context: Any, tmp_path: Path
+    ):
         """Verify partial failure sets status to 'partial' with correct counts."""
         # Create test files
         (tmp_path / "doc1.md").write_text("# Doc 1")
@@ -156,7 +160,9 @@ class TestBackgroundIndexRetry:
         assert mock_context._init_error is not None
 
     @pytest.mark.asyncio
-    async def test_complete_failure_sets_failed_state(self, mock_context: Any, tmp_path: Path):
+    async def test_complete_failure_sets_failed_state(
+        self, mock_context: Any, tmp_path: Path
+    ):
         """Verify failure on first file sets status to 'failed'."""
         (tmp_path / "doc1.md").write_text("# Doc 1")
 
@@ -175,7 +181,9 @@ class TestBackgroundIndexRetry:
         assert mock_context._init_error is not None
 
     @pytest.mark.asyncio
-    async def test_retry_with_exponential_backoff(self, mock_context: Any, tmp_path: Path):
+    async def test_retry_with_exponential_backoff(
+        self, mock_context: Any, tmp_path: Path
+    ):
         """Verify retries use exponential backoff timing."""
         (tmp_path / "doc1.md").write_text("# Doc 1")
 
@@ -200,7 +208,9 @@ class TestBackgroundIndexRetry:
         assert sleep_delays[1] == pytest.approx(2.0)
 
     @pytest.mark.asyncio
-    async def test_retry_succeeds_on_second_attempt(self, mock_context: Any, tmp_path: Path):
+    async def test_retry_succeeds_on_second_attempt(
+        self, mock_context: Any, tmp_path: Path
+    ):
         """Verify successful retry results in 'ready' state."""
         (tmp_path / "doc1.md").write_text("# Doc 1")
 
@@ -227,7 +237,9 @@ class TestBackgroundIndexRetry:
         assert mock_context._init_error is None
 
     @pytest.mark.asyncio
-    async def test_state_transitions_during_indexing(self, mock_context: Any, tmp_path: Path):
+    async def test_state_transitions_during_indexing(
+        self, mock_context: Any, tmp_path: Path
+    ):
         """Verify state transitions: uninitialized → indexing → ready."""
         (tmp_path / "doc1.md").write_text("# Doc 1")
         (tmp_path / "doc2.md").write_text("# Doc 2")
@@ -239,7 +251,10 @@ class TestBackgroundIndexRetry:
 
         def tracking_index(path: str):
             observed_states.append(
-                (mock_context._index_state.status, mock_context._index_state.indexed_count)
+                (
+                    mock_context._index_state.status,
+                    mock_context._index_state.indexed_count,
+                )
             )
             mock_context.index_manager.index_calls.append(path)
 
@@ -292,7 +307,9 @@ class TestIsReadyMethods:
     def test_is_ready_returns_true_for_partial_state(self, mock_context: Any):
         """Verify is_ready() returns True for 'partial' status."""
         mock_context._ready_event.set()
-        mock_context._index_state = IndexState(status="partial", indexed_count=5, total_count=10)
+        mock_context._index_state = IndexState(
+            status="partial", indexed_count=5, total_count=10
+        )
 
         assert mock_context.is_ready() is True
 

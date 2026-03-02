@@ -17,7 +17,7 @@ from src.config import (
     IndexingConfig,
     LLMConfig,
     MemoryConfig,
-    SearchConfig
+    SearchConfig,
 )
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -34,7 +34,7 @@ from src.memory.tools import (
     read_memory,
     search_linked_memories,
     search_memories,
-    update_memory
+    update_memory,
 )
 
 
@@ -59,17 +59,14 @@ def memory_config(tmp_path: Path):
 
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
         memory=MemoryConfig(
-            enabled=True,
-            storage_strategy="project",
-            score_threshold=0.001
+            enabled=True, storage_strategy="project", score_threshold=0.001
         ),
         search=SearchConfig(),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
 
@@ -104,16 +101,22 @@ def memory_manager(memory_config: Config, memory_path: Path, memory_indices):
 
 
 @pytest.fixture
-def memory_search(memory_config: Config, memory_indices, memory_manager: MemoryIndexManager):
+def memory_search(
+    memory_config: Config, memory_indices, memory_manager: MemoryIndexManager
+):
     """
     Create MemorySearchOrchestrator instance for testing.
     """
     vector, keyword, graph = memory_indices
-    return MemorySearchOrchestrator(vector, keyword, graph, memory_config, memory_manager)
+    return MemorySearchOrchestrator(
+        vector, keyword, graph, memory_config, memory_manager
+    )
 
 
 @pytest.fixture
-def app_context(memory_manager: MemoryIndexManager, memory_search: MemorySearchOrchestrator):
+def app_context(
+    memory_manager: MemoryIndexManager, memory_search: MemorySearchOrchestrator
+):
     """
     Create a FakeApplicationContext with memory components.
 
@@ -121,8 +124,7 @@ def app_context(memory_manager: MemoryIndexManager, memory_search: MemorySearchO
     complex dependencies.
     """
     return FakeApplicationContext(
-        memory_manager=memory_manager,
-        memory_search=memory_search
+        memory_manager=memory_manager, memory_search=memory_search
     )
 
 
@@ -131,10 +133,7 @@ def disabled_context():
     """
     Create a FakeApplicationContext with memory disabled.
     """
-    return FakeApplicationContext(
-        memory_manager=None,
-        memory_search=None
-    )
+    return FakeApplicationContext(memory_manager=None, memory_search=None)
 
 
 # ============================================================================
@@ -143,7 +142,6 @@ def disabled_context():
 
 
 class TestCreateMemory:
-
     @pytest.mark.asyncio
     async def test_create_memory_success(self, app_context, memory_path: Path):
         """
@@ -156,7 +154,7 @@ class TestCreateMemory:
             filename="test-note",
             content="# Test Note\n\nThis is test content.",
             tags=["test", "example"],
-            memory_type="journal"
+            memory_type="journal",
         )
 
         assert result["status"] == "created"
@@ -181,10 +179,7 @@ class TestCreateMemory:
         file_path.write_text("# Existing\n\nExisting content.")
 
         result = await create_memory(
-            app_context,
-            filename="existing",
-            content="# New content",
-            tags=[]
+            app_context, filename="existing", content="# New content", tags=[]
         )
 
         assert "error" in result
@@ -196,10 +191,7 @@ class TestCreateMemory:
         Verify create_memory returns error when memory is disabled.
         """
         result = await create_memory(
-            disabled_context,
-            filename="disabled-test",
-            content="Content",
-            tags=[]
+            disabled_context, filename="disabled-test", content="Content", tags=[]
         )
 
         assert "error" in result
@@ -212,7 +204,6 @@ class TestCreateMemory:
 
 
 class TestReadMemory:
-
     @pytest.mark.asyncio
     async def test_read_memory_success(self, app_context, memory_path: Path):
         """
@@ -254,7 +245,6 @@ class TestReadMemory:
 
 
 class TestAppendMemory:
-
     @pytest.mark.asyncio
     async def test_append_memory_success(self, app_context, memory_path: Path):
         """
@@ -266,7 +256,7 @@ class TestAppendMemory:
         result = await append_memory(
             app_context,
             filename="appendable",
-            content="## Appended Section\n\nNew content here."
+            content="## Appended Section\n\nNew content here.",
         )
 
         assert result["status"] == "appended"
@@ -282,9 +272,7 @@ class TestAppendMemory:
         Verify append_memory returns error for non-existent file.
         """
         result = await append_memory(
-            app_context,
-            filename="nonexistent",
-            content="Content to append"
+            app_context, filename="nonexistent", content="Content to append"
         )
 
         assert "error" in result
@@ -296,9 +284,7 @@ class TestAppendMemory:
         Verify append_memory returns error when memory is disabled.
         """
         result = await append_memory(
-            disabled_context,
-            filename="any",
-            content="content"
+            disabled_context, filename="any", content="content"
         )
 
         assert "error" in result
@@ -310,7 +296,6 @@ class TestAppendMemory:
 
 
 class TestUpdateMemory:
-
     @pytest.mark.asyncio
     async def test_update_memory_success(self, app_context, memory_path: Path):
         """
@@ -322,9 +307,7 @@ class TestUpdateMemory:
         new_content = "---\ntype: plan\n---\n\n# New Content\n\nCompletely new."
 
         result = await update_memory(
-            app_context,
-            filename="updatable",
-            content=new_content
+            app_context, filename="updatable", content=new_content
         )
 
         assert result["status"] == "updated"
@@ -339,9 +322,7 @@ class TestUpdateMemory:
         Verify update_memory returns error for non-existent file.
         """
         result = await update_memory(
-            app_context,
-            filename="nonexistent",
-            content="New content"
+            app_context, filename="nonexistent", content="New content"
         )
 
         assert "error" in result
@@ -354,7 +335,6 @@ class TestUpdateMemory:
 
 
 class TestDeleteMemory:
-
     @pytest.mark.asyncio
     async def test_delete_memory_moves_to_trash(self, app_context, memory_path: Path):
         """
@@ -393,9 +373,10 @@ class TestDeleteMemory:
 
 
 class TestSearchMemories:
-
     @pytest.mark.asyncio
-    async def test_search_memories_returns_results(self, app_context, memory_path: Path):
+    async def test_search_memories_returns_results(
+        self, app_context, memory_path: Path
+    ):
         """
         Verify search_memories finds indexed memories.
         """
@@ -404,13 +385,11 @@ class TestSearchMemories:
             filename="searchable",
             content="# Authentication\n\nOAuth2 implementation details.",
             tags=["auth"],
-            memory_type="fact"
+            memory_type="fact",
         )
 
         results = await search_memories(
-            app_context,
-            query="OAuth authentication",
-            limit=5
+            app_context, query="OAuth authentication", limit=5
         )
 
         assert len(results) > 0
@@ -426,22 +405,23 @@ class TestSearchMemories:
             filename="plan-note",
             content="# Implementation Plan\n\nSteps for implementing authentication.",
             tags=["feature"],
-            memory_type="plan"
+            memory_type="plan",
         )
         await create_memory(
             app_context,
             filename="fact-note",
             content="# Feature Fact\n\nKnown behavior of feature.",
             tags=["feature"],
-            memory_type="fact"
+            memory_type="fact",
         )
 
         results = await search_memories(
             app_context,
             query="implementation authentication",
             limit=10,
-            filter_type="plan"
+            filter_type="plan",
         )
+        assert isinstance(results, list)
 
         assert len(results) > 0
         for result in results:
@@ -453,11 +433,7 @@ class TestSearchMemories:
         """
         Verify search_memories returns error when memory is disabled.
         """
-        results = await search_memories(
-            disabled_context,
-            query="test",
-            limit=5
-        )
+        results = await search_memories(disabled_context, query="test", limit=5)
 
         assert len(results) == 1
         assert "error" in results[0]
@@ -469,7 +445,6 @@ class TestSearchMemories:
 
 
 class TestSearchLinkedMemories:
-
     @pytest.mark.asyncio
     async def test_search_linked_finds_memories(self, app_context, memory_path: Path):
         """
@@ -480,14 +455,11 @@ class TestSearchLinkedMemories:
             filename="linked-note",
             content="# Bug Fix\n\nFixed issue in [[src/server.py]] causing errors.",
             tags=["bugfix"],
-            memory_type="journal"
+            memory_type="journal",
         )
 
         results = await search_linked_memories(
-            app_context,
-            query="bug",
-            target_document="src/server.py",
-            limit=5
+            app_context, query="bug", target_document="src/server.py", limit=5
         )
 
         assert len(results) > 0
@@ -504,14 +476,11 @@ class TestSearchLinkedMemories:
             filename="other-note",
             content="# Other Note\n\nNo link to the target file.",
             tags=[],
-            memory_type="journal"
+            memory_type="journal",
         )
 
         results = await search_linked_memories(
-            app_context,
-            query="note",
-            target_document="src/nonexistent.py",
-            limit=5
+            app_context, query="note", target_document="src/nonexistent.py", limit=5
         )
 
         assert results == []
@@ -523,9 +492,10 @@ class TestSearchLinkedMemories:
 
 
 class TestGetMemoryStats:
-
     @pytest.mark.asyncio
-    async def test_get_memory_stats_returns_counts(self, app_context, memory_path: Path):
+    async def test_get_memory_stats_returns_counts(
+        self, app_context, memory_path: Path
+    ):
         """
         Verify get_memory_stats returns accurate statistics.
         """
@@ -534,14 +504,14 @@ class TestGetMemoryStats:
             filename="stat1",
             content="# Stat 1",
             tags=["tag1"],
-            memory_type="plan"
+            memory_type="plan",
         )
         await create_memory(
             app_context,
             filename="stat2",
             content="# Stat 2",
             tags=["tag1", "tag2"],
-            memory_type="fact"
+            memory_type="fact",
         )
 
         stats = await get_memory_stats(app_context)
@@ -577,7 +547,6 @@ class TestGetMemoryStats:
 
 
 class TestMergeMemories:
-
     @pytest.mark.asyncio
     async def test_merge_memories_consolidates_files(
         self, app_context, memory_path: Path
@@ -589,13 +558,13 @@ class TestMergeMemories:
             app_context,
             filename="source1",
             content="# Source 1\n\nContent from source 1.",
-            tags=["merge"]
+            tags=["merge"],
         )
         await create_memory(
             app_context,
             filename="source2",
             content="# Source 2\n\nContent from source 2.",
-            tags=["merge"]
+            tags=["merge"],
         )
 
         summary = """---
@@ -612,7 +581,7 @@ Combined content from sources.
             app_context,
             source_files=["source1", "source2"],
             target_file="merged",
-            summary_content=summary
+            summary_content=summary,
         )
 
         assert result["status"] == "merged"
@@ -637,24 +606,19 @@ Combined content from sources.
         """
         Verify merge_memories fails if target file already exists.
         """
-        await create_memory(
-            app_context,
-            filename="source",
-            content="# Source",
-            tags=[]
-        )
+        await create_memory(app_context, filename="source", content="# Source", tags=[])
         await create_memory(
             app_context,
             filename="existing-target",
             content="# Existing Target",
-            tags=[]
+            tags=[],
         )
 
         result = await merge_memories(
             app_context,
             source_files=["source"],
             target_file="existing-target",
-            summary_content="# Summary"
+            summary_content="# Summary",
         )
 
         assert "error" in result
@@ -667,18 +631,13 @@ Combined content from sources.
         """
         Verify merge_memories fails if any source file is missing.
         """
-        await create_memory(
-            app_context,
-            filename="source",
-            content="# Source",
-            tags=[]
-        )
+        await create_memory(app_context, filename="source", content="# Source", tags=[])
 
         result = await merge_memories(
             app_context,
             source_files=["source", "nonexistent"],
             target_file="merged",
-            summary_content="# Summary"
+            summary_content="# Summary",
         )
 
         assert "error" in result
@@ -693,7 +652,7 @@ Combined content from sources.
             app_context,
             source_files=[],
             target_file="merged",
-            summary_content="# Summary"
+            summary_content="# Summary",
         )
 
         assert "error" in result
@@ -723,10 +682,11 @@ class TestSearchMemoriesTimeFiltering:
             query="test",
             limit=5,
             after_timestamp=2000000,
-            before_timestamp=1000000
+            before_timestamp=1000000,
         )
 
         # Should return error
+        assert isinstance(results, list)
         assert len(results) > 0
         assert "error" in results[0]
         assert "after_timestamp" in results[0]["error"].lower()
@@ -737,13 +697,11 @@ class TestSearchMemoriesTimeFiltering:
         Verify search_memories tool returns error for negative relative_days.
         """
         results = await search_memories(
-            app_context,
-            query="test",
-            limit=5,
-            relative_days=-10
+            app_context, query="test", limit=5, relative_days=-10
         )
 
         # Should return error
+        assert isinstance(results, list)
         assert len(results) > 0
         assert "error" in results[0]
         assert "non-negative" in results[0]["error"].lower()
@@ -759,10 +717,11 @@ class TestSearchMemoriesTimeFiltering:
             limit=5,
             after_timestamp=1000000,
             before_timestamp=2000000,
-            relative_days=7
+            relative_days=7,
         )
 
         # Should return error about disabled memory system
+        assert isinstance(results, list)
         assert len(results) == 1
         assert "error" in results[0]
         assert "not enabled" in results[0]["error"].lower()
@@ -774,7 +733,6 @@ class TestSearchMemoriesTimeFiltering:
 
 
 class TestMemoryToolsWorkflow:
-
     @pytest.mark.asyncio
     async def test_create_read_update_delete_cycle(
         self, app_context, memory_path: Path
@@ -789,7 +747,7 @@ class TestMemoryToolsWorkflow:
             filename="lifecycle-test",
             content="# Initial\n\nInitial content.",
             tags=["lifecycle"],
-            memory_type="journal"
+            memory_type="journal",
         )
         assert create_result["status"] == "created"
 
@@ -799,7 +757,7 @@ class TestMemoryToolsWorkflow:
         update_result = await update_memory(
             app_context,
             filename="lifecycle-test",
-            content="---\ntype: plan\n---\n\n# Updated\n\nUpdated content."
+            content="---\ntype: plan\n---\n\n# Updated\n\nUpdated content.",
         )
         assert update_result["status"] == "updated"
 
@@ -845,7 +803,7 @@ class TestMemoryToolsOrderedDictRegression:
             memory_path=memory_path,
             vector=vector1,
             keyword=keyword1,
-            graph=graph1
+            graph=graph1,
         )
 
         search1 = MemorySearchOrchestrator(
@@ -854,21 +812,20 @@ class TestMemoryToolsOrderedDictRegression:
             graph=graph1,
             config=memory_config,
             manager=manager1,
-            documents_path=memory_path
+            documents_path=memory_path,
         )
 
         ctx1: Any = FakeApplicationContext(
-            memory_manager=manager1,
-            memory_search=search1
+            memory_manager=manager1, memory_search=search1
         )
 
         # Create first memory
         result1 = await create_memory(
-            ctx1,
+            ctx1,  # type: ignore[invalid-argument-type]
             filename="first-memory",
             content="# First Memory\n\nPython asyncio and concurrent programming.",
             tags=["python", "asyncio"],
-            memory_type="journal"
+            memory_type="journal",
         )
         assert result1["status"] == "created"
 
@@ -885,7 +842,7 @@ class TestMemoryToolsOrderedDictRegression:
             memory_path=memory_path,
             vector=vector2,
             keyword=keyword2,
-            graph=graph2
+            graph=graph2,
         )
 
         # Load indices from disk
@@ -897,33 +854,35 @@ class TestMemoryToolsOrderedDictRegression:
             graph=graph2,
             config=memory_config,
             manager=manager2,
-            documents_path=memory_path
+            documents_path=memory_path,
         )
 
         ctx2: Any = FakeApplicationContext(
-            memory_manager=manager2,
-            memory_search=search2
+            memory_manager=manager2, memory_search=search2
         )
 
         # CRITICAL: Create new memory after loading (this would fail with AttributeError)
         # This simulates the original bug report where create_memory failed with:
         # {'error': "'dict' object has no attribute 'move_to_end'"}
         result2 = await create_memory(
-            ctx2,
+            ctx2,  # type: ignore[invalid-argument-type]
             filename="second-memory",
             content="# Second Memory\n\nFastAPI web framework with Pydantic models.",
             tags=["python", "fastapi"],
-            memory_type="journal"
+            memory_type="journal",
         )
 
         # Should succeed without AttributeError
-        assert result2["status"] == "created", \
+        assert result2["status"] == "created", (
             f"create_memory should succeed after load, got: {result2}"
-        assert "error" not in result2, \
+        )
+        assert "error" not in result2, (
             f"create_memory should not have error after load, got: {result2}"
+        )
 
         # Verify both memories are searchable
-        search_results = await search_memories(ctx2, query="python", limit=10)
+        search_results = await search_memories(ctx2, query="python", limit=10)  # type: ignore[invalid-argument-type]
+        assert isinstance(search_results, list)
         assert len(search_results) == 2
         memory_ids = {r["memory_id"] for r in search_results}
         assert "memory:first-memory" in memory_ids

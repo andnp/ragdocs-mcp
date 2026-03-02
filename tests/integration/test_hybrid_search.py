@@ -22,7 +22,10 @@ from src.search.orchestrator import SearchOrchestrator
 
 def _doc_in_chunk_ids(doc_id: str, results: list[ChunkResult]):
     chunk_ids = [result.chunk_id for result in results]
-    return any(chunk_id == doc_id or chunk_id.startswith(f"{doc_id}_chunk_") for chunk_id in chunk_ids)
+    return any(
+        chunk_id == doc_id or chunk_id.startswith(f"{doc_id}_chunk_")
+        for chunk_id in chunk_ids
+    )
 
 
 @pytest.fixture
@@ -36,16 +39,11 @@ def config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
-        search=SearchConfig(
-            semantic_weight=1.0,
-            keyword_weight=1.0,
-            recency_bias=0.5
-        ),
+        search=SearchConfig(semantic_weight=1.0, keyword_weight=1.0, recency_bias=0.5),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
-        chunking=ChunkingConfig()
+        chunking=ChunkingConfig(),
     )
 
 
@@ -133,6 +131,7 @@ def create_test_corpus(config, manager):
     doc4.touch()
     doc4_mtime = now - (3 * 86400)  # 3 days ago
     import os
+
     os.utime(str(doc4), (doc4_mtime, doc4_mtime))
 
     # Document 5: Hybrid match (keyword + semantic)
@@ -166,7 +165,9 @@ async def test_query_returns_results_from_multiple_strategies(
     create_test_corpus(config, manager)
 
     # Query that should match multiple strategies
-    results, _, _ = await orchestrator.query("authentication security", top_k=10, top_n=10)
+    results, _, _ = await orchestrator.query(
+        "authentication security", top_k=10, top_n=10
+    )
 
     # Verify we got results
     assert len(results) > 0
@@ -174,7 +175,9 @@ async def test_query_returns_results_from_multiple_strategies(
     # Verify scores are in valid range and properly ordered
     assert all(0.0 <= result.score <= 1.0 for result in results)
     scores = [r.score for r in results]
-    assert scores == sorted(scores, reverse=True), "Results should be descending by score"
+    assert scores == sorted(scores, reverse=True), (
+        "Results should be descending by score"
+    )
 
     # Verify results include docs from different strategies:
     # - "authentication" should match keyword search (exact term)
@@ -182,7 +185,9 @@ async def test_query_returns_results_from_multiple_strategies(
     # - "auth_guide" should match both keyword and semantic
 
     # At minimum, should include documents with explicit keyword matches
-    assert _doc_in_chunk_ids("authentication", results) or _doc_in_chunk_ids("auth_guide", results)
+    assert _doc_in_chunk_ids("authentication", results) or _doc_in_chunk_ids(
+        "auth_guide", results
+    )
 
     # Verify we got multiple results (showing fusion is working)
     assert len(results) >= 2
@@ -304,7 +309,9 @@ async def test_top_k_limits_results_correctly(config, manager, orchestrator):
         assert all(0.0 <= result.score <= 1.0 for result in results_k2)
 
     # Query with top_k=5
-    results_k5, _, _ = await orchestrator.query("authentication security", top_k=5, top_n=5)
+    results_k5, _, _ = await orchestrator.query(
+        "authentication security", top_k=5, top_n=5
+    )
     assert len(results_k5) <= 5
     if results_k5:
         assert all(0.0 <= result.score <= 1.0 for result in results_k5)
@@ -316,7 +323,9 @@ async def test_top_k_limits_results_correctly(config, manager, orchestrator):
 
 
 @pytest.mark.asyncio
-async def test_weighted_strategies_affect_ranking(config, manager, orchestrator, tmp_path, shared_embedding_model):
+async def test_weighted_strategies_affect_ranking(
+    config, manager, orchestrator, tmp_path, shared_embedding_model
+):
     """
     Test that strategy weights affect result ranking.
 
@@ -327,7 +336,9 @@ async def test_weighted_strategies_affect_ranking(config, manager, orchestrator,
     create_test_corpus(config, manager)
 
     # Baseline query with equal weights (1.0, 1.0)
-    results_balanced, _, _ = await orchestrator.query("authentication", top_k=5, top_n=5)
+    results_balanced, _, _ = await orchestrator.query(
+        "authentication", top_k=5, top_n=5
+    )
     assert len(results_balanced) > 0
     assert all(0.0 <= result.score <= 1.0 for result in results_balanced)
 
@@ -335,14 +346,14 @@ async def test_weighted_strategies_affect_ranking(config, manager, orchestrator,
     config_semantic_heavy = Config(
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs2"),
-            index_path=str(tmp_path / "indices2")
+            index_path=str(tmp_path / "indices2"),
         ),
         search=SearchConfig(
             semantic_weight=2.0,  # Double semantic weight
             keyword_weight=1.0,
-            recency_bias=0.5
+            recency_bias=0.5,
         ),
-        llm=config.llm
+        llm=config.llm,
     )
 
     # Create new directory for second corpus
@@ -353,14 +364,18 @@ async def test_weighted_strategies_affect_ranking(config, manager, orchestrator,
     vector_new = VectorIndex(embedding_model=shared_embedding_model)
     keyword_new = KeywordIndex()
     graph_new = GraphStore()
-    manager_new = IndexManager(config_semantic_heavy, vector_new, keyword_new, graph_new)
+    manager_new = IndexManager(
+        config_semantic_heavy, vector_new, keyword_new, graph_new
+    )
     create_test_corpus(config_semantic_heavy, manager_new)
     orchestrator_semantic = SearchOrchestrator(
         vector_new, keyword_new, graph_new, config_semantic_heavy, manager_new
     )
 
     # Query with semantic weight favored
-    results_semantic_heavy, _, _ = await orchestrator_semantic.query("authentication", top_k=5, top_n=5)
+    results_semantic_heavy, _, _ = await orchestrator_semantic.query(
+        "authentication", top_k=5, top_n=5
+    )
 
     # Should still get results, but ranking may differ
     assert len(results_semantic_heavy) > 0
@@ -390,9 +405,7 @@ async def test_hybrid_search_integration_end_to_end(config, manager, orchestrato
 
     # Complex query touching multiple aspects
     results, _, _ = await orchestrator.query(
-        "authentication security access control",
-        top_k=10,
-        top_n=10
+        "authentication security access control", top_k=10, top_n=10
     )
 
     # Should return multiple results from different strategies
@@ -400,13 +413,18 @@ async def test_hybrid_search_integration_end_to_end(config, manager, orchestrato
 
     # Verify result types are correct
     assert all(isinstance(item, ChunkResult) for item in results)
-    assert all(isinstance(result.chunk_id, str) and isinstance(result.score, float) for result in results)
+    assert all(
+        isinstance(result.chunk_id, str) and isinstance(result.score, float)
+        for result in results
+    )
 
     # Verify scores are valid and properly ordered
     assert all(0.0 <= result.score <= 1.0 for result in results)
     if len(results) > 1:
         scores = [r.score for r in results]
-        assert scores == sorted(scores, reverse=True), "Results should be descending by score"
+        assert scores == sorted(scores, reverse=True), (
+            "Results should be descending by score"
+        )
 
     # Extract chunk_ids for duplicate check
     chunk_ids = [result.chunk_id for result in results]
@@ -415,7 +433,9 @@ async def test_hybrid_search_integration_end_to_end(config, manager, orchestrato
     assert len(chunk_ids) == len(set(chunk_ids))
 
     # Verify results include expected documents - authentication should match
-    assert _doc_in_chunk_ids("authentication", results) or _doc_in_chunk_ids("auth_guide", results)
+    assert _doc_in_chunk_ids("authentication", results) or _doc_in_chunk_ids(
+        "auth_guide", results
+    )
 
 
 @pytest.mark.asyncio
@@ -449,7 +469,7 @@ async def test_query_returns_normalized_scores(config, manager, orchestrator):
 
         # Scores are descending
         for i in range(len(results) - 1):
-            assert results[i].score >= results[i+1].score
+            assert results[i].score >= results[i + 1].score
 
         # All chunk_ids are strings
         assert all(isinstance(chunk_id, str) for chunk_id in chunk_ids)
@@ -520,21 +540,31 @@ async def test_normalized_scores_range_0_to_1(config, manager, orchestrator):
 
         for result in results:
             # Verify types
-            assert isinstance(result.chunk_id, str), f"chunk_id must be str, got {type(result.chunk_id)}"
-            assert isinstance(result.score, float), f"score must be float, got {type(result.score)}"
+            assert isinstance(result.chunk_id, str), (
+                f"chunk_id must be str, got {type(result.chunk_id)}"
+            )
+            assert isinstance(result.score, float), (
+                f"score must be float, got {type(result.score)}"
+            )
 
             # Verify score bounds
-            assert 0.0 <= result.score <= 1.0, f"Score {result.score} out of range [0, 1] for {result.chunk_id}"
+            assert 0.0 <= result.score <= 1.0, (
+                f"Score {result.score} out of range [0, 1] for {result.chunk_id}"
+            )
 
         # If results exist, highest score should be high confidence
         if results:
             highest_score = results[0].score
-            assert highest_score >= 0.3, f"Highest score should be >= 0.3, got {highest_score}"
+            assert highest_score >= 0.3, (
+                f"Highest score should be >= 0.3, got {highest_score}"
+            )
 
         # If multiple results, lowest score must be >= 0.0
         if len(results) > 1:
             lowest_score = results[-1].score
-            assert lowest_score >= 0.0, f"Lowest score should be >= 0.0, got {lowest_score}"
+            assert lowest_score >= 0.0, (
+                f"Lowest score should be >= 0.0, got {lowest_score}"
+            )
 
 
 @pytest.mark.asyncio
@@ -555,7 +585,9 @@ async def test_top_n_greater_than_10_works_correctly(config, manager, orchestrat
     create_test_corpus(config, manager)
 
     # Request 25 results with dynamic top_k calculation
-    results_25, _, _ = await orchestrator.query("authentication security API", top_k=50, top_n=25)
+    results_25, _, _ = await orchestrator.query(
+        "authentication security API", top_k=50, top_n=25
+    )
 
     # Should return results (exact count depends on corpus size)
     # Since our test corpus has 5 documents with multiple chunks each,
@@ -571,11 +603,13 @@ async def test_top_n_greater_than_10_works_correctly(config, manager, orchestrat
 
     # Verify results are properly sorted descending
     for i in range(len(results_25) - 1):
-        assert results_25[i].score >= results_25[i+1].score
+        assert results_25[i].score >= results_25[i + 1].score
 
     # Verify that top_n=25 can return more results than top_n=10
     # (if corpus is large enough)
-    results_10, _, _ = await orchestrator.query("authentication security API", top_k=20, top_n=10)
+    results_10, _, _ = await orchestrator.query(
+        "authentication security API", top_k=20, top_n=10
+    )
 
     # The key validation: with sufficient corpus, top_n=25 should not be
     # artificially limited to 10 results by a hardcoded top_k

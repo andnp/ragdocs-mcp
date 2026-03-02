@@ -112,6 +112,7 @@ class Document:
 @dataclass
 class CommitResult:
     """Git commit search result."""
+
     hash: str
     title: str
     author: str
@@ -127,6 +128,7 @@ class CommitResult:
 @dataclass
 class GitSearchResponse:
     """Response from git history search."""
+
     results: list[CommitResult]
     query: str
     total_commits_indexed: int
@@ -135,6 +137,7 @@ class GitSearchResponse:
 @dataclass
 class ReconciliationResult:
     """Result of index reconciliation operation."""
+
     added_count: int = 0
     removed_count: int = 0
     moved_count: int = 0

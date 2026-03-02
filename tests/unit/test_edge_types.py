@@ -107,7 +107,10 @@ class TestInferEdgeTypeFromHeaderContext:
         Links under '# Implementation' header should infer IMPLEMENTS edge type.
         """
         assert infer_edge_type("Implementation", "any_target") == EdgeType.IMPLEMENTS
-        assert infer_edge_type("## Implementation Details", "any_target") == EdgeType.IMPLEMENTS
+        assert (
+            infer_edge_type("## Implementation Details", "any_target")
+            == EdgeType.IMPLEMENTS
+        )
         assert infer_edge_type("implementation", "any_target") == EdgeType.IMPLEMENTS
 
     def test_infer_implements_from_code_header(self):
@@ -148,7 +151,9 @@ class TestInferEdgeTypeFromTarget:
         but doesn't match any keywords. With empty context, LINKS_TO is returned.
         """
         assert infer_edge_type("Overview", "tests/test_foo.py") == EdgeType.TESTS
-        assert infer_edge_type("Introduction", "tests/unit/test_bar.py") == EdgeType.TESTS
+        assert (
+            infer_edge_type("Introduction", "tests/unit/test_bar.py") == EdgeType.TESTS
+        )
 
     def test_infer_tests_from_test_prefix_with_context(self):
         """
@@ -171,7 +176,10 @@ class TestInferEdgeTypeFromTarget:
         Header context should take precedence over target path inference.
         A test file linked under Implementation should be IMPLEMENTS.
         """
-        assert infer_edge_type("Implementation", "tests/test_foo.py") == EdgeType.IMPLEMENTS
+        assert (
+            infer_edge_type("Implementation", "tests/test_foo.py")
+            == EdgeType.IMPLEMENTS
+        )
         assert infer_edge_type("Related", "test_bar.py") == EdgeType.RELATED
 
 

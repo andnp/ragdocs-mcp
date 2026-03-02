@@ -23,7 +23,7 @@ class ImplicitGraphBuilder:
         """
         # Group docs by directory
         dir_groups: dict[str, list[str]] = {}
-        
+
         # Use public API to get all nodes with their metadata
         nodes = self.graph.get_all_nodes_with_metadata()
 
@@ -39,7 +39,7 @@ class ImplicitGraphBuilder:
                 try:
                     parent_dir = str(Path(doc_id).parent)
                     if parent_dir == ".":
-                        parent_dir = "" # Root
+                        parent_dir = ""  # Root
                 except Exception:
                     continue
             else:
@@ -47,7 +47,7 @@ class ImplicitGraphBuilder:
                     parent_dir = str(Path(file_path).parent)
                 except Exception:
                     continue
-            
+
             if parent_dir not in dir_groups:
                 dir_groups[parent_dir] = []
             dir_groups[parent_dir].append(doc_id)
@@ -57,23 +57,33 @@ class ImplicitGraphBuilder:
         for dir_path, doc_ids in dir_groups.items():
             if len(doc_ids) < 2:
                 continue
-            
+
             # Connect all in directory to a "hub" (first file) or clique?
             # For large directories, clique is too expensive (N^2).
             # Let's connect sequentially for now: A -> B -> C -> A (ring)
             # Or better: Connect all to the "index" file if it exists, otherwise ring.
-            
+
             sorted_ids = sorted(doc_ids)
             for i in range(len(sorted_ids)):
                 source = sorted_ids[i]
                 target = sorted_ids[(i + 1) % len(sorted_ids)]
-                
+
                 # Bi-directional link
                 if not self.graph.has_node(source) or not self.graph.has_node(target):
                     continue
 
-                self.graph.add_edge(source, target, edge_type="directory_sibling", edge_context=f"Same directory: {dir_path}")
-                self.graph.add_edge(target, source, edge_type="directory_sibling", edge_context=f"Same directory: {dir_path}")
+                self.graph.add_edge(
+                    source,
+                    target,
+                    edge_type="directory_sibling",
+                    edge_context=f"Same directory: {dir_path}",
+                )
+                self.graph.add_edge(
+                    target,
+                    source,
+                    edge_type="directory_sibling",
+                    edge_context=f"Same directory: {dir_path}",
+                )
                 edge_count += 2
 
         logger.info(f"Added {edge_count} directory_sibling edges")
@@ -91,7 +101,7 @@ class ImplicitGraphBuilder:
             tags = metadata.get("tags", [])
             if not isinstance(tags, list):
                 continue
-            
+
             for tag in tags:
                 if tag not in tag_groups:
                     tag_groups[tag] = []
@@ -101,20 +111,30 @@ class ImplicitGraphBuilder:
         for tag, doc_ids in tag_groups.items():
             if len(doc_ids) < 2:
                 continue
-            
+
             # For tags, we might have MANY documents.
             # Clique is dangerous. Ring is safe.
-            
+
             sorted_ids = sorted(doc_ids)
             for i in range(len(sorted_ids)):
                 source = sorted_ids[i]
                 target = sorted_ids[(i + 1) % len(sorted_ids)]
-                
+
                 if not self.graph.has_node(source) or not self.graph.has_node(target):
                     continue
 
-                self.graph.add_edge(source, target, edge_type="shared_tag", edge_context=f"Shared tag: #{tag}")
-                self.graph.add_edge(target, source, edge_type="shared_tag", edge_context=f"Shared tag: #{tag}")
+                self.graph.add_edge(
+                    source,
+                    target,
+                    edge_type="shared_tag",
+                    edge_context=f"Shared tag: #{tag}",
+                )
+                self.graph.add_edge(
+                    target,
+                    source,
+                    edge_type="shared_tag",
+                    edge_context=f"Shared tag: #{tag}",
+                )
                 edge_count += 2
 
         logger.info(f"Added {edge_count} shared_tag edges")

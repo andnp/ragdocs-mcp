@@ -112,6 +112,7 @@ def test_lock_timeout_behavior(temp_index_path: Path):
     lock1.acquire_exclusive()
 
     import time
+
     start = time.time()
 
     with pytest.raises(TimeoutError):

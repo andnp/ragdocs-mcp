@@ -38,17 +38,17 @@ def sample_manager():
         "mem1": {
             "metadata": {"memory_type": "journal"},
             "file_path": "/memories/mem1.md",
-            "content": "Content for mem1"
+            "content": "Content for mem1",
         },
         "mem2": {
             "metadata": {"memory_type": "journal"},
             "file_path": "/memories/mem2.md",
-            "content": "Content for mem2"
+            "content": "Content for mem2",
         },
         "mem3": {
             "metadata": {"memory_type": "journal"},
             "file_path": "/memories/mem3.md",
-            "content": "Content for mem3"
+            "content": "Content for mem3",
         },
     }
     vector = FakeVectorIndex(embeddings, chunk_data)
@@ -97,12 +97,12 @@ def test_filter_type():
         "mem1": {
             "metadata": {"memory_type": "journal"},
             "file_path": "/mem1.md",
-            "content": "content"
+            "content": "content",
         },
         "mem2": {
             "metadata": {"memory_type": "plan"},
             "file_path": "/mem2.md",
-            "content": "content"
+            "content": "content",
         },
     }
     vector = FakeVectorIndex(embeddings, chunk_data)

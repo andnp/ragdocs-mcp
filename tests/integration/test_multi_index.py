@@ -27,11 +27,10 @@ def config(tmp_path):
     """
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(tmp_path / "docs"),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(tmp_path / "docs"), index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(),
-        llm=LLMConfig()
+        llm=LLMConfig(),
     )
 
 
@@ -73,7 +72,7 @@ def sample_document():
         links=["linked-note"],
         tags=["test", "integration"],
         file_path="/test/doc1.md",
-        modified_time=datetime(2025, 12, 22, 10, 0, 0)
+        modified_time=datetime(2025, 12, 22, 10, 0, 0),
     )
 
 
@@ -171,9 +170,7 @@ def test_error_handling_malformed_file_continues_processing(manager, tmp_path):
     # Create malformed file (invalid frontmatter YAML)
     malformed_path = tmp_path / "docs" / "malformed.md"
     malformed_path.parent.mkdir(parents=True, exist_ok=True)
-    malformed_path.write_text(
-        "---\nbroken: yaml: structure:\n---\nContent"
-    )
+    malformed_path.write_text("---\nbroken: yaml: structure:\n---\nContent")
 
     # Create valid file
     valid_path = tmp_path / "docs" / "valid.md"
@@ -203,10 +200,7 @@ def test_index_document_with_links_creates_graph_edges(manager, tmp_path):
     # Create document with links
     doc_path = tmp_path / "docs" / "linked.md"
     doc_path.parent.mkdir(parents=True, exist_ok=True)
-    doc_path.write_text(
-        "# Linked Document\n\n"
-        "References [[target1]] and [[target2]]."
-    )
+    doc_path.write_text("# Linked Document\n\nReferences [[target1]] and [[target2]].")
 
     # Index document
     manager.index_document(str(doc_path))

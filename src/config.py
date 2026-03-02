@@ -237,7 +237,6 @@ class MemoryConfig:
         return self.recency_journal
 
 
-
 @dataclass
 class Config:
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
@@ -362,7 +361,9 @@ def load_config():
     )
     memory = _load_memory_config(config_data.get("memory", {}))
 
-    chunking_data = config_data.get("chunking", config_data.get("chunking_documents", {}))
+    chunking_data = config_data.get(
+        "chunking", config_data.get("chunking_documents", {})
+    )
     chunking = _load_dataclass_from_dict(ChunkingConfig, chunking_data)
 
     projects_data = config_data.get("projects", [])

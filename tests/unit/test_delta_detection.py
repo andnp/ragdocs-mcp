@@ -1,4 +1,5 @@
 """Unit tests for delta detection logic in IndexManager."""
+
 from datetime import datetime
 
 import pytest
@@ -24,7 +25,7 @@ def make_chunk(chunk_id: str, doc_id: str, content: str, chunk_index: int = 0) -
         start_pos=0,
         end_pos=len(content),
         file_path="/tmp/test.md",
-        modified_time=datetime.now()
+        modified_time=datetime.now(),
     )
 
 
@@ -37,15 +38,13 @@ def manager(tmp_path, shared_embedding_model):
         indexing=IndexingConfig(
             documents_path=str(docs_dir),
             index_path=str(tmp_path / ".index_data"),
-            delta_full_reindex_threshold=0.5
+            delta_full_reindex_threshold=0.5,
         ),
         search=SearchConfig(),
         llm=LLMConfig(embedding_model="local"),
         chunking=ChunkingConfig(
-            strategy="header_based",
-            min_chunk_chars=200,
-            max_chunk_chars=1500
-        )
+            strategy="header_based", min_chunk_chars=200, max_chunk_chars=1500
+        ),
     )
 
     vector = VectorIndex(embedding_model=shared_embedding_model)
@@ -115,8 +114,7 @@ def test_should_use_delta_indexing_below_threshold(manager):
     """Verify _should_use_delta_indexing returns True when change ratio is below threshold."""
     total_chunks = 10
     changed_chunks = [
-        make_chunk(f"doc#chunk_{i}", "doc", f"Content {i}", i)
-        for i in range(4)
+        make_chunk(f"doc#chunk_{i}", "doc", f"Content {i}", i) for i in range(4)
     ]
 
     # 4/10 = 40% < 50% threshold
@@ -129,8 +127,7 @@ def test_should_use_delta_indexing_above_threshold(manager):
     """Verify _should_use_delta_indexing returns False when change ratio exceeds threshold."""
     total_chunks = 10
     changed_chunks = [
-        make_chunk(f"doc#chunk_{i}", "doc", f"Content {i}", i)
-        for i in range(6)
+        make_chunk(f"doc#chunk_{i}", "doc", f"Content {i}", i) for i in range(6)
     ]
 
     # 6/10 = 60% > 50% threshold
@@ -143,8 +140,7 @@ def test_should_use_delta_indexing_exactly_at_threshold(manager):
     """Verify _should_use_delta_indexing behavior at exact threshold boundary."""
     total_chunks = 10
     changed_chunks = [
-        make_chunk(f"doc#chunk_{i}", "doc", f"Content {i}", i)
-        for i in range(5)
+        make_chunk(f"doc#chunk_{i}", "doc", f"Content {i}", i) for i in range(5)
     ]
 
     # 5/10 = 50% = threshold (should use delta)
@@ -242,6 +238,7 @@ def test_full_reindex_document_persists_hashes(manager, tmp_path):
 
     # Verify content
     import json
+
     with open(hash_store_path, "r") as f:
         persisted_hashes = json.load(f)
 

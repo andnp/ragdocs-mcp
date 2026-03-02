@@ -170,9 +170,7 @@ def test_delta_speedup_10_percent_change(
 
     # Assert minimum speedup (relaxed from 5x to 1.5x for CI environments)
     # CI performance is highly variable due to shared resources
-    assert (
-        speedup >= 1.5
-    ), f"Expected ≥1.5x speedup for 10% change, got {speedup:.1f}x"
+    assert speedup >= 1.5, f"Expected ≥1.5x speedup for 10% change, got {speedup:.1f}x"
 
 
 @pytest.mark.benchmark
@@ -340,9 +338,9 @@ def test_delta_speedup_50_percent_change(
 
     # At 50% threshold, should trigger full re-index
     # So times should be similar (within 2x of each other)
-    assert (
-        0.5 <= speedup <= 3.0
-    ), f"Expected similar times for full re-index, got {speedup:.1f}x"
+    assert 0.5 <= speedup <= 3.0, (
+        f"Expected similar times for full re-index, got {speedup:.1f}x"
+    )
 
 
 @pytest.mark.benchmark
@@ -451,6 +449,6 @@ def test_delta_speedup_multiple_small_edits(
     print(f"Avg per edit:         {avg_delta_time:.3f}s")
 
     # Each edit should be reasonably fast (<5s on average)
-    assert (
-        avg_delta_time < 5.0
-    ), f"Average edit time {avg_delta_time:.3f}s, expected <5s"
+    assert avg_delta_time < 5.0, (
+        f"Average edit time {avg_delta_time:.3f}s, expected <5s"
+    )

@@ -31,11 +31,10 @@ def config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(),
-        llm=LLMConfig()
+        llm=LLMConfig(),
     )
 
 
@@ -77,7 +76,7 @@ def watcher(config, manager):
         include_patterns=config.indexing.include,
         exclude_patterns=config.indexing.exclude,
         exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
-        parser_suffixes=get_parser_suffixes()
+        parser_suffixes=get_parser_suffixes(),
     )
 
 

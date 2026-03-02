@@ -19,8 +19,7 @@ def test_config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "index")
+            documents_path=str(docs_path), index_path=str(tmp_path / "index")
         )
     )
 
@@ -30,9 +29,7 @@ def context_with_config(test_config, monkeypatch):
     """Create ApplicationContext with test config."""
     monkeypatch.setattr("src.context.load_config", lambda: test_config)
     return ApplicationContext.create(
-        project_override=None,
-        enable_watcher=False,
-        lazy_embeddings=True
+        project_override=None, enable_watcher=False, lazy_embeddings=True
     )
 
 

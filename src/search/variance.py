@@ -32,7 +32,11 @@ def compute_dynamic_weights(
 
     total = adjusted_vector + adjusted_keyword
     if total > 0:
-        adjusted_vector = adjusted_vector * (base_vector_weight + base_keyword_weight) / total
-        adjusted_keyword = adjusted_keyword * (base_vector_weight + base_keyword_weight) / total
+        adjusted_vector = (
+            adjusted_vector * (base_vector_weight + base_keyword_weight) / total
+        )
+        adjusted_keyword = (
+            adjusted_keyword * (base_vector_weight + base_keyword_weight) / total
+        )
 
     return adjusted_vector, adjusted_keyword

@@ -100,7 +100,9 @@ def test_check_config_command_prints_valid_config(runner, tmp_path, config_file)
         os.chdir(original_cwd)
 
 
-def test_rebuild_index_command_rebuilds_indices(runner, tmp_path, config_file, docs_dir):
+def test_rebuild_index_command_rebuilds_indices(
+    runner, tmp_path, config_file, docs_dir
+):
     """
     Test rebuild-index command processes all markdown files.
 
@@ -273,7 +275,9 @@ def test_cli_group_shows_available_commands(runner):
 # =============================================================================
 
 
-def test_rebuild_index_with_git_enabled_indexes_commits(runner, tmp_path, config_file, docs_dir):
+def test_rebuild_index_with_git_enabled_indexes_commits(
+    runner, tmp_path, config_file, docs_dir
+):
     """
     Test rebuild-index indexes git commits when git_indexing enabled.
 
@@ -287,15 +291,39 @@ def test_rebuild_index_with_git_enabled_indexes_commits(runner, tmp_path, config
 
         # Initialize git repo with commits
         subprocess.run(["git", "init"], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "add", "."], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=docs_dir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=docs_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=docs_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "add", "."], cwd=docs_dir, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=docs_dir,
+            check=True,
+            capture_output=True,
+        )
 
         # Add another commit
         (docs_dir / "test4.md").write_text("# Test 4\n\nFourth test document.")
-        subprocess.run(["git", "add", "test4.md"], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Add test4"], cwd=docs_dir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", "test4.md"], cwd=docs_dir, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add test4"],
+            cwd=docs_dir,
+            check=True,
+            capture_output=True,
+        )
 
         # Ensure git_indexing is enabled in config
         config_dir = tmp_path / ".mcp-markdown-ragdocs"
@@ -319,7 +347,9 @@ def test_rebuild_index_with_git_enabled_indexes_commits(runner, tmp_path, config
         os.chdir(original_cwd)
 
 
-def test_rebuild_index_with_git_disabled_skips_commits(runner, tmp_path, config_file, docs_dir):
+def test_rebuild_index_with_git_disabled_skips_commits(
+    runner, tmp_path, config_file, docs_dir
+):
     """
     Test rebuild-index skips git indexing when disabled in config.
 
@@ -333,10 +363,27 @@ def test_rebuild_index_with_git_disabled_skips_commits(runner, tmp_path, config_
 
         # Initialize git repo
         subprocess.run(["git", "init"], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "add", "."], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=docs_dir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=docs_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=docs_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "add", "."], cwd=docs_dir, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=docs_dir,
+            check=True,
+            capture_output=True,
+        )
 
         # Disable git_indexing in config
         config_dir = tmp_path / ".mcp-markdown-ragdocs"
@@ -350,13 +397,18 @@ def test_rebuild_index_with_git_disabled_skips_commits(runner, tmp_path, config_
         assert result.exit_code == 0
         assert "Successfully rebuilt index" in result.output
         # Should NOT mention git commits
-        assert "git commits" not in result.output.lower() or "skipping git" in result.output.lower()
+        assert (
+            "git commits" not in result.output.lower()
+            or "skipping git" in result.output.lower()
+        )
 
     finally:
         os.chdir(original_cwd)
 
 
-def test_rebuild_index_no_git_repos_informational_message(runner, tmp_path, config_file):
+def test_rebuild_index_no_git_repos_informational_message(
+    runner, tmp_path, config_file
+):
     """
     Test rebuild-index handles absence of git repositories gracefully.
 
@@ -390,7 +442,9 @@ def test_rebuild_index_no_git_repos_informational_message(runner, tmp_path, conf
         os.chdir(original_cwd)
 
 
-def test_rebuild_index_git_error_handling_non_fatal(runner, tmp_path, config_file, docs_dir):
+def test_rebuild_index_git_error_handling_non_fatal(
+    runner, tmp_path, config_file, docs_dir
+):
     """
     Test rebuild-index handles git errors without failing entire rebuild.
 
@@ -431,7 +485,9 @@ def test_rebuild_index_git_error_handling_non_fatal(runner, tmp_path, config_fil
 # =============================================================================
 
 
-def test_rebuild_index_builds_vocabulary_when_enabled(runner, tmp_path, config_file, docs_dir):
+def test_rebuild_index_builds_vocabulary_when_enabled(
+    runner, tmp_path, config_file, docs_dir
+):
     """
     Test rebuild-index builds concept vocabulary.
 
@@ -453,7 +509,9 @@ def test_rebuild_index_builds_vocabulary_when_enabled(runner, tmp_path, config_f
         os.chdir(original_cwd)
 
 
-def test_rebuild_index_vocabulary_error_handling_non_fatal(runner, tmp_path, config_file, docs_dir):
+def test_rebuild_index_vocabulary_error_handling_non_fatal(
+    runner, tmp_path, config_file, docs_dir
+):
     """
     Test rebuild-index handles vocabulary errors without failing entire rebuild.
 
@@ -464,7 +522,10 @@ def test_rebuild_index_vocabulary_error_handling_non_fatal(runner, tmp_path, con
         os.chdir(tmp_path)
 
         # Mock build_concept_vocabulary to raise exception
-        with mock.patch("src.indices.vector.VectorIndex.build_concept_vocabulary", side_effect=Exception("Vocabulary error")):
+        with mock.patch(
+            "src.indices.vector.VectorIndex.build_concept_vocabulary",
+            side_effect=Exception("Vocabulary error"),
+        ):
             result = runner.invoke(cli, ["rebuild-index"])
 
             # Should still succeed - vocabulary error is non-fatal
@@ -478,7 +539,9 @@ def test_rebuild_index_vocabulary_error_handling_non_fatal(runner, tmp_path, con
         os.chdir(original_cwd)
 
 
-def test_rebuild_index_both_git_and_vocabulary_enabled(runner, tmp_path, config_file, docs_dir):
+def test_rebuild_index_both_git_and_vocabulary_enabled(
+    runner, tmp_path, config_file, docs_dir
+):
     """
     Test rebuild-index executes both git indexing and vocabulary building.
 
@@ -492,10 +555,27 @@ def test_rebuild_index_both_git_and_vocabulary_enabled(runner, tmp_path, config_
 
         # Initialize git repo with commits
         subprocess.run(["git", "init"], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "add", "."], cwd=docs_dir, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=docs_dir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=docs_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=docs_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "add", "."], cwd=docs_dir, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=docs_dir,
+            check=True,
+            capture_output=True,
+        )
 
         # Enable git_indexing
         config_dir = tmp_path / ".mcp-markdown-ragdocs"
@@ -512,7 +592,10 @@ def test_rebuild_index_both_git_and_vocabulary_enabled(runner, tmp_path, config_
         assert "documents indexed" in result.output
 
         # Verify git indexing happened
-        assert "Indexing git commits" in result.output or "Successfully indexed" in result.output
+        assert (
+            "Indexing git commits" in result.output
+            or "Successfully indexed" in result.output
+        )
         assert "git commits" in result.output
 
         # Verify vocabulary building happened

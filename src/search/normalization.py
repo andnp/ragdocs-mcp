@@ -14,9 +14,7 @@ def normalize_scores(scores: list[float]):
     return [(s - min_score) / (max_score - min_score) for s in scores]
 
 
-def normalize_result_scores(
-    results: list[tuple[str, float]]
-):
+def normalize_result_scores(results: list[tuple[str, float]]):
     if not results:
         return []
 
@@ -26,4 +24,6 @@ def normalize_result_scores(
     scores = [score for _, score in results]
     normalized = normalize_scores(scores)
 
-    return [(doc_id, norm_score) for (doc_id, _), norm_score in zip(results, normalized)]
+    return [
+        (doc_id, norm_score) for (doc_id, _), norm_score in zip(results, normalized)
+    ]

@@ -67,9 +67,7 @@ class GraphStore:
         with self._lock:
             try:
                 conn = self._conn()
-                conn.execute(
-                    "DELETE FROM graph_nodes WHERE node_id = ?", (doc_id,)
-                )
+                conn.execute("DELETE FROM graph_nodes WHERE node_id = ?", (doc_id,))
                 conn.commit()
             except Exception as e:
                 if is_corruption_error(e):
@@ -134,9 +132,7 @@ class GraphStore:
                 ).fetchall()
 
                 # Delete old node (CASCADE removes edges)
-                conn.execute(
-                    "DELETE FROM graph_nodes WHERE node_id = ?", (old_id,)
-                )
+                conn.execute("DELETE FROM graph_nodes WHERE node_id = ?", (old_id,))
 
                 # Insert new node
                 conn.execute(
@@ -403,9 +399,7 @@ class GraphStore:
         with self._lock:
             try:
                 conn = self._conn()
-                rows = conn.execute(
-                    "SELECT node_id FROM graph_nodes"
-                ).fetchall()
+                rows = conn.execute("SELECT node_id FROM graph_nodes").fetchall()
                 return [r[0] for r in rows]
             except Exception as e:
                 if is_corruption_error(e):
@@ -413,9 +407,7 @@ class GraphStore:
                     return []
                 raise
 
-    def get_outgoing_edges(
-        self, source: str
-    ) -> list[tuple[str, str, dict[str, str]]]:
+    def get_outgoing_edges(self, source: str) -> list[tuple[str, str, dict[str, str]]]:
         """Get outgoing edges as (source, target, edge_data) tuples.
 
         Matches the NetworkX ``out_edges(data=True)`` interface for
@@ -460,9 +452,7 @@ class GraphStore:
 
                 nodes = [
                     r[0]
-                    for r in conn.execute(
-                        "SELECT node_id FROM graph_nodes"
-                    ).fetchall()
+                    for r in conn.execute("SELECT node_id FROM graph_nodes").fetchall()
                 ]
                 edges = conn.execute(
                     "SELECT source, target FROM graph_edges"
@@ -474,9 +464,7 @@ class GraphStore:
                         adjacency[source].add(target)
                         adjacency[target].add(source)
 
-                labels: dict[str, int] = {
-                    node: i for i, node in enumerate(nodes)
-                }
+                labels: dict[str, int] = {node: i for i, node in enumerate(nodes)}
                 max_iterations = 100
                 shuffled_nodes = list(nodes)
 
@@ -485,9 +473,7 @@ class GraphStore:
                     random.shuffle(shuffled_nodes)
                     for node in shuffled_nodes:
                         neighbor_labels = [
-                            labels[n]
-                            for n in adjacency[node]
-                            if n in labels
+                            labels[n] for n in adjacency[node] if n in labels
                         ]
                         if not neighbor_labels:
                             continue
@@ -535,9 +521,9 @@ class GraphStore:
     def _should_recompute_communities(self) -> bool:
         try:
             conn = self._conn()
-            current_count = conn.execute(
-                "SELECT COUNT(*) FROM graph_nodes"
-            ).fetchone()[0]
+            current_count = conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[
+                0
+            ]
         except Exception:
             return False
 
@@ -584,9 +570,7 @@ class GraphStore:
             with open(graph_file) as f:
                 graph_data = json.load(f)
         except (json.JSONDecodeError, OSError):
-            logger.warning(
-                "Could not read legacy graph.json for migration, skipping"
-            )
+            logger.warning("Could not read legacy graph.json for migration, skipping")
             return
 
         if not isinstance(graph_data, dict):
@@ -639,9 +623,7 @@ class GraphStore:
         communities_file = index_path / "communities.json"
         if communities_file.exists():
             try:
-                communities_file.rename(
-                    communities_file.with_suffix(".json.bak")
-                )
+                communities_file.rename(communities_file.with_suffix(".json.bak"))
             except OSError:
                 logger.warning("Could not rename communities.json to .bak")
 
@@ -688,9 +670,7 @@ class GraphStore:
                     return []
                 raise
 
-    def add_document(
-        self, doc_id: str, content: str, metadata: dict[str, Any]
-    ) -> None:
+    def add_document(self, doc_id: str, content: str, metadata: dict[str, Any]) -> None:
         full_metadata = {"content": content, **metadata}
         self.add_node(doc_id, full_metadata)
 
@@ -729,9 +709,7 @@ class GraphStore:
         with self._lock:
             try:
                 conn = self._conn()
-                row = conn.execute(
-                    "SELECT COUNT(*) FROM graph_nodes"
-                ).fetchone()
+                row = conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()
                 return row[0]
             except Exception as e:
                 if is_corruption_error(e):

@@ -28,7 +28,9 @@ class TestComputeCommunityBoost:
         seed_doc_ids = {"doc1"}
         boost_factor = 1.2
 
-        boosts = compute_community_boost(doc_ids, communities, seed_doc_ids, boost_factor)
+        boosts = compute_community_boost(
+            doc_ids, communities, seed_doc_ids, boost_factor
+        )
 
         assert boosts["doc1"] == 1.2
         assert boosts["doc2"] == 1.2
@@ -43,7 +45,9 @@ class TestComputeCommunityBoost:
         seed_doc_ids = {"doc1"}
         boost_factor = 1.5
 
-        boosts = compute_community_boost(doc_ids, communities, seed_doc_ids, boost_factor)
+        boosts = compute_community_boost(
+            doc_ids, communities, seed_doc_ids, boost_factor
+        )
 
         assert boosts["doc1"] == 1.5
         assert boosts["doc2"] == 1.0
@@ -57,7 +61,9 @@ class TestComputeCommunityBoost:
         seed_doc_ids = {"doc1", "doc2"}
         boost_factor = 1.1
 
-        boosts = compute_community_boost(doc_ids, communities, seed_doc_ids, boost_factor)
+        boosts = compute_community_boost(
+            doc_ids, communities, seed_doc_ids, boost_factor
+        )
 
         assert boosts["doc1"] == 1.1
         assert boosts["doc2"] == 1.1
@@ -74,7 +80,9 @@ class TestComputeCommunityBoost:
         seed_doc_ids = set()
         boost_factor = 1.5
 
-        boosts = compute_community_boost(doc_ids, communities, seed_doc_ids, boost_factor)
+        boosts = compute_community_boost(
+            doc_ids, communities, seed_doc_ids, boost_factor
+        )
 
         assert boosts["doc1"] == 1.0
         assert boosts["doc2"] == 1.0
@@ -88,7 +96,9 @@ class TestComputeCommunityBoost:
         seed_doc_ids = {"doc1"}
         boost_factor = 1.3
 
-        boosts = compute_community_boost(doc_ids, communities, seed_doc_ids, boost_factor)
+        boosts = compute_community_boost(
+            doc_ids, communities, seed_doc_ids, boost_factor
+        )
 
         assert boosts["doc1"] == 1.3
         assert boosts["doc2"] == 1.0
@@ -102,7 +112,9 @@ class TestComputeCommunityBoost:
         seed_doc_ids = {"unknown_seed"}
         boost_factor = 1.2
 
-        boosts = compute_community_boost(doc_ids, communities, seed_doc_ids, boost_factor)
+        boosts = compute_community_boost(
+            doc_ids, communities, seed_doc_ids, boost_factor
+        )
 
         assert boosts["doc1"] == 1.0
         assert boosts["doc2"] == 1.0

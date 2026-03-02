@@ -52,7 +52,9 @@ def test_graph_store_load_with_corrupted_communities_json(tmp_path):
 
     # Create a valid graph.json with data
     graph_data = {
-        "directed": True, "multigraph": False, "graph": {},
+        "directed": True,
+        "multigraph": False,
+        "graph": {},
         "nodes": [{"id": "doc1"}, {"id": "doc2"}],
         "links": [{"source": "doc1", "target": "doc2", "edge_type": "links_to"}],
     }
@@ -91,7 +93,13 @@ def test_graph_store_load_with_empty_json_files(tmp_path):
     persist_path = tmp_path / "empty_index"
     persist_path.mkdir()
 
-    graph_data = {"directed": True, "multigraph": False, "graph": {}, "nodes": [], "edges": []}
+    graph_data = {
+        "directed": True,
+        "multigraph": False,
+        "graph": {},
+        "nodes": [],
+        "edges": [],
+    }
     (persist_path / "graph.json").write_text(json.dumps(graph_data))
     (persist_path / "communities.json").write_text("{}")
 

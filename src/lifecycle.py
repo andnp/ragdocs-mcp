@@ -78,11 +78,13 @@ class LeaderElection:
                 return False
 
         # No leader or leader timed out — try to acquire
-        leader_data_json = json.dumps({
-            "instance_id": self._instance_id,
-            "heartbeat": now,
-            "acquired_at": now,
-        })
+        leader_data_json = json.dumps(
+            {
+                "instance_id": self._instance_id,
+                "heartbeat": now,
+                "acquired_at": now,
+            }
+        )
         conn.execute(
             "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
             ("leader_id", leader_data_json),
@@ -112,10 +114,12 @@ class LeaderElection:
             return
         conn = self._db.get_connection()
         now = time.time()
-        leader_data_json = json.dumps({
-            "instance_id": self._instance_id,
-            "heartbeat": now,
-        })
+        leader_data_json = json.dumps(
+            {
+                "instance_id": self._instance_id,
+                "heartbeat": now,
+            }
+        )
         conn.execute(
             "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
             ("leader_id", leader_data_json),
@@ -163,7 +167,10 @@ class LifecycleCoordinator:
         try:
             await ctx.start(background_index=background_index)
 
-            if ctx.config.git_indexing.enabled and ctx.config.git_indexing.watch_enabled:
+            if (
+                ctx.config.git_indexing.enabled
+                and ctx.config.git_indexing.watch_enabled
+            ):
                 if ctx.commit_indexer is not None:
                     from src.git.repository import discover_git_repositories
                     from src.git.watcher import GitWatcher
@@ -182,7 +189,9 @@ class LifecycleCoordinator:
                             poll_interval=ctx.config.git_indexing.poll_interval_seconds,
                         )
                         self._git_watcher.start()
-                        logger.info(f"Git watcher started for {len(repos)} repositories")
+                        logger.info(
+                            f"Git watcher started for {len(repos)} repositories"
+                        )
 
             if background_index:
                 self._state = LifecycleState.INITIALIZING
@@ -197,7 +206,9 @@ class LifecycleCoordinator:
                         self._huey_worker.start()
                 else:
                     self._state = LifecycleState.READY_REPLICA
-                    logger.info("Lifecycle: READY_REPLICA (another instance is primary)")
+                    logger.info(
+                        "Lifecycle: READY_REPLICA (another instance is primary)"
+                    )
             else:
                 self._state = LifecycleState.READY
                 logger.info("Lifecycle: READY")
@@ -217,7 +228,9 @@ class LifecycleCoordinator:
 
         # Fail fast if initialization already failed
         if self._init_error is not None:
-            raise RuntimeError(f"Server initialization failed: {self._init_error}") from self._init_error
+            raise RuntimeError(
+                f"Server initialization failed: {self._init_error}"
+            ) from self._init_error
 
         allowed_states = (
             LifecycleState.UNINITIALIZED,
@@ -232,9 +245,13 @@ class LifecycleCoordinator:
         # Wait for UNINITIALIZED/STARTING to transition forward
         while self._state in (LifecycleState.UNINITIALIZED, LifecycleState.STARTING):
             if self._init_error is not None:
-                raise RuntimeError(f"Server initialization failed: {self._init_error}") from self._init_error
+                raise RuntimeError(
+                    f"Server initialization failed: {self._init_error}"
+                ) from self._init_error
             if time.monotonic() - start > timeout:
-                raise RuntimeError(f"Wait for ready timed out after {timeout}s (stuck in {self._state})")
+                raise RuntimeError(
+                    f"Wait for ready timed out after {timeout}s (stuck in {self._state})"
+                )
             await asyncio.sleep(0.1)
 
         if self._state in (
@@ -267,12 +284,12 @@ class LifecycleCoordinator:
             return
 
         if self._state in (
-                LifecycleState.READY,
-                LifecycleState.READY_PRIMARY,
-                LifecycleState.READY_REPLICA,
-                LifecycleState.INITIALIZING,
-                LifecycleState.STARTING,
-            ):
+            LifecycleState.READY,
+            LifecycleState.READY_PRIMARY,
+            LifecycleState.READY_REPLICA,
+            LifecycleState.INITIALIZING,
+            LifecycleState.STARTING,
+        ):
             self._state = LifecycleState.SHUTTING_DOWN
             logger.info("Lifecycle: SHUTTING_DOWN")
             self._start_emergency_timer()

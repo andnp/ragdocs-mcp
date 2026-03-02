@@ -91,7 +91,9 @@ def detect_and_migrate_legacy_index(index_path: Path) -> bool:
             logger.info("Removed legacy snapshots directory: %s", snapshots_dir)
             migrated = True
         except OSError as exc:
-            logger.warning("Could not remove snapshots directory %s: %s", snapshots_dir, exc)
+            logger.warning(
+                "Could not remove snapshots directory %s: %s", snapshots_dir, exc
+            )
 
     # ── 2. Old Whoosh keyword index directory ─────────────────────────────
     keyword_dir = index_path / "keyword"
@@ -107,6 +109,8 @@ def detect_and_migrate_legacy_index(index_path: Path) -> bool:
             _clear_manifest_indexed_files(index_path)
             migrated = True
         except OSError as exc:
-            logger.warning("Could not remove Whoosh keyword directory %s: %s", keyword_dir, exc)
+            logger.warning(
+                "Could not remove Whoosh keyword directory %s: %s", keyword_dir, exc
+            )
 
     return migrated

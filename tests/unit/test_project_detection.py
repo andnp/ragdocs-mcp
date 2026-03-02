@@ -13,42 +13,31 @@ def sample_projects():
 
 
 def test_detect_project_exact_match(sample_projects):
-    result = detect_project(
-        cwd=Path("/home/user/shallow"),
-        projects=sample_projects
-    )
+    result = detect_project(cwd=Path("/home/user/shallow"), projects=sample_projects)
     assert result == "shallow"
 
 
 def test_detect_project_subdirectory(sample_projects):
     result = detect_project(
-        cwd=Path("/home/user/shallow/src/lib"),
-        projects=sample_projects
+        cwd=Path("/home/user/shallow/src/lib"), projects=sample_projects
     )
     assert result == "shallow"
 
 
 def test_detect_project_nested_priority(sample_projects):
     result = detect_project(
-        cwd=Path("/home/user/shallow/deep/src"),
-        projects=sample_projects
+        cwd=Path("/home/user/shallow/deep/src"), projects=sample_projects
     )
     assert result == "deep"
 
 
 def test_detect_project_no_match(sample_projects):
-    result = detect_project(
-        cwd=Path("/home/other/path"),
-        projects=sample_projects
-    )
+    result = detect_project(cwd=Path("/home/other/path"), projects=sample_projects)
     assert result is None
 
 
 def test_detect_project_empty_list():
-    result = detect_project(
-        cwd=Path("/home/user/anywhere"),
-        projects=[]
-    )
+    result = detect_project(cwd=Path("/home/user/anywhere"), projects=[])
     assert result is None
 
 
@@ -86,9 +75,7 @@ def test_detect_project_override_by_name(sample_projects):
     Test manual project override using --project flag with project name.
     """
     result = detect_project(
-        cwd=Path("/home/user/other"),
-        projects=sample_projects,
-        project_override="deep"
+        cwd=Path("/home/user/other"), projects=sample_projects, project_override="deep"
     )
     assert result == "deep"
 
@@ -100,7 +87,7 @@ def test_detect_project_override_by_path(sample_projects):
     result = detect_project(
         cwd=Path("/home/user/other"),
         projects=sample_projects,
-        project_override="/home/user/shallow/deep"
+        project_override="/home/user/shallow/deep",
     )
     assert result == "deep"
 
@@ -112,7 +99,7 @@ def test_detect_project_override_not_found(sample_projects):
     result = detect_project(
         cwd=Path("/home/user/shallow"),
         projects=sample_projects,
-        project_override="nonexistent"
+        project_override="nonexistent",
     )
     assert result is None
 
@@ -124,7 +111,7 @@ def test_detect_project_override_takes_precedence(sample_projects):
     result = detect_project(
         cwd=Path("/home/user/shallow"),
         projects=sample_projects,
-        project_override="sibling"
+        project_override="sibling",
     )
     assert result == "sibling"
 
@@ -139,7 +126,7 @@ def test_detect_project_override_arbitrary_path(tmp_path, sample_projects):
     result = detect_project(
         cwd=Path("/home/user/shallow"),
         projects=sample_projects,
-        project_override=str(arbitrary_dir)
+        project_override=str(arbitrary_dir),
     )
 
     assert result == "arbitrary_project"
@@ -154,7 +141,7 @@ def test_detect_project_override_subdirectory_of_known_project(sample_projects):
     result = detect_project(
         cwd=Path("/home/user/other"),
         projects=sample_projects,
-        project_override="/home/user/shallow/src/lib"
+        project_override="/home/user/shallow/src/lib",
     )
     assert result == "shallow"
 
@@ -168,6 +155,6 @@ def test_detect_project_override_subdirectory_deepest_match(sample_projects):
     result = detect_project(
         cwd=Path("/home/user/other"),
         projects=sample_projects,
-        project_override="/home/user/shallow/deep/src"
+        project_override="/home/user/shallow/deep/src",
     )
     assert result == "deep"

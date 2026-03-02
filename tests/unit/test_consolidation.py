@@ -267,9 +267,7 @@ class TestSlowConsolidation:
 
         provider = FakeProvider(
             response={
-                "actions": [
-                    {"type": "create", "entry_indices": [99], "content": "bad"}
-                ]
+                "actions": [{"type": "create", "entry_indices": [99], "content": "bad"}]
             }
         )
 

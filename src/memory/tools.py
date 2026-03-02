@@ -391,11 +391,13 @@ async def get_tag_graph(ctx: ContextType) -> dict:
         for tag in tag_frequencies:
             related = ctx.memory_search.get_related_tags(tag)
             for related_tag, count in related[:5]:
-                co_occurrences.append({
-                    "tag": tag,
-                    "related_tag": related_tag,
-                    "count": count,
-                })
+                co_occurrences.append(
+                    {
+                        "tag": tag,
+                        "related_tag": related_tag,
+                        "count": count,
+                    }
+                )
 
         return {
             "tag_frequencies": tag_frequencies,
@@ -418,10 +420,7 @@ async def suggest_related_tags(
 
         return {
             "tag": tag,
-            "related_tags": [
-                {"tag": t, "count": c}
-                for t, c in related_tags
-            ],
+            "related_tags": [{"tag": t, "count": c} for t, c in related_tags],
         }
     except Exception as e:
         logger.error(f"Failed to suggest related tags: {e}", exc_info=True)
@@ -487,7 +486,9 @@ async def merge_memories(
             memory_id = f"memory:{source_path.stem}"
             ctx.memory_manager.remove_memory(memory_id)
 
-            trash_file = trash_path / f"{source_path.stem}_{timestamp}{source_path.suffix}"
+            trash_file = (
+                trash_path / f"{source_path.stem}_{timestamp}{source_path.suffix}"
+            )
             shutil.move(str(source_path), str(trash_file))
 
         ctx.memory_manager.persist()

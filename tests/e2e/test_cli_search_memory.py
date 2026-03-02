@@ -176,7 +176,10 @@ def test_search_memory_returns_relevant_results(runner, tmp_path, indexed_memori
         assert result.exit_code == 0
         # Should find relevant memories
         if "No results" not in result.output:
-            assert "feature" in result.output.lower() or "implementation" in result.output.lower()
+            assert (
+                "feature" in result.output.lower()
+                or "implementation" in result.output.lower()
+            )
 
     finally:
         os.chdir(original_cwd)
@@ -215,7 +218,9 @@ def test_search_memory_multiple_tags_filter(runner, tmp_path, indexed_memories):
     try:
         os.chdir(tmp_path)
 
-        result = runner.invoke(cli, ["search-memory", "test", "--tags", "backend,database"])
+        result = runner.invoke(
+            cli, ["search-memory", "test", "--tags", "backend,database"]
+        )
 
         assert result.exit_code == 0
 
@@ -233,7 +238,9 @@ def test_search_memory_tags_with_spaces(runner, tmp_path, indexed_memories):
     try:
         os.chdir(tmp_path)
 
-        result = runner.invoke(cli, ["search-memory", "test", "--tags", "backend , database "])
+        result = runner.invoke(
+            cli, ["search-memory", "test", "--tags", "backend , database "]
+        )
 
         assert result.exit_code == 0
 
@@ -317,7 +324,9 @@ def test_search_memory_all_valid_types(runner, tmp_path, indexed_memories):
         os.chdir(tmp_path)
 
         for memory_type in valid_types:
-            result = runner.invoke(cli, ["search-memory", "test", "--type", memory_type])
+            result = runner.invoke(
+                cli, ["search-memory", "test", "--type", memory_type]
+            )
             assert result.exit_code == 0, f"Type {memory_type} failed: {result.output}"
 
     finally:
@@ -456,7 +465,9 @@ def test_search_memory_relative_days_validation(runner, tmp_path, indexed_memori
         os.chdir(original_cwd)
 
 
-def test_search_memory_relative_days_overrides_absolute(runner, tmp_path, indexed_memories):
+def test_search_memory_relative_days_overrides_absolute(
+    runner, tmp_path, indexed_memories
+):
     """
     Test search-memory --relative-days overrides absolute timestamps.
 
@@ -490,7 +501,9 @@ def test_search_memory_relative_days_overrides_absolute(runner, tmp_path, indexe
 # =============================================================================
 
 
-def test_search_memory_full_flag_loads_complete_content(runner, tmp_path, indexed_memories):
+def test_search_memory_full_flag_loads_complete_content(
+    runner, tmp_path, indexed_memories
+):
     """
     Test search-memory --full loads complete memory content.
 

@@ -23,7 +23,7 @@ def make_chunk(
     doc_id: str,
     content: str,
     chunk_index: int = 0,
-    content_hash: str | None = None
+    content_hash: str | None = None,
 ):
     """Helper to create a Chunk with minimal required fields."""
     chunk = Chunk(
@@ -36,7 +36,7 @@ def make_chunk(
         start_pos=0,
         end_pos=len(content),
         file_path=f"/docs/{doc_id}.md",
-        modified_time=datetime.now(timezone.utc)
+        modified_time=datetime.now(timezone.utc),
     )
     # Override computed hash if needed for test control
     if content_hash is not None:
@@ -56,14 +56,16 @@ def config_with_move_detection(tmp_path: Path):
         indexing=IndexingConfig(
             documents_path=str(docs_path),
             index_path=str(index_path),
-            move_detection_threshold=0.8
+            move_detection_threshold=0.8,
         ),
-        llm=LLMConfig(embedding_model="local")
+        llm=LLMConfig(embedding_model="local"),
     )
 
 
 @pytest.fixture
-def manager_with_move_detection(config_with_move_detection: Config, shared_embedding_model):
+def manager_with_move_detection(
+    config_with_move_detection: Config, shared_embedding_model
+):
     """IndexManager with move detection enabled."""
     vector = VectorIndex(embedding_model=shared_embedding_model)
     keyword = KeywordIndex()
@@ -74,7 +76,9 @@ def manager_with_move_detection(config_with_move_detection: Config, shared_embed
 class TestDetectFileMoves:
     """Tests for _detect_file_moves() hash comparison logic."""
 
-    def test_detect_move_identical_content(self, manager_with_move_detection: IndexManager):
+    def test_detect_move_identical_content(
+        self, manager_with_move_detection: IndexManager
+    ):
         """
         Verify file move detection when content is identical.
 
@@ -91,8 +95,12 @@ class TestDetectFileMoves:
 
         # New chunks with same hashes (content identical)
         new_chunks = [
-            make_chunk("new_doc_chunk_0", "new_doc", "Content A", 0, content_hash="hash_a"),
-            make_chunk("new_doc_chunk_1", "new_doc", "Content B", 1, content_hash="hash_b"),
+            make_chunk(
+                "new_doc_chunk_0", "new_doc", "Content A", 0, content_hash="hash_a"
+            ),
+            make_chunk(
+                "new_doc_chunk_1", "new_doc", "Content B", 1, content_hash="hash_b"
+            ),
         ]
 
         removed_docs = {"old_doc"}
@@ -103,7 +111,9 @@ class TestDetectFileMoves:
         assert "old_doc" in moves
         assert moves["old_doc"] == "new_doc"
 
-    def test_detect_move_partial_content_change(self, manager_with_move_detection: IndexManager):
+    def test_detect_move_partial_content_change(
+        self, manager_with_move_detection: IndexManager
+    ):
         """
         Verify move detection with threshold (content partially changed).
 
@@ -123,7 +133,7 @@ class TestDetectFileMoves:
                 "new_doc",
                 f"Content {i}",
                 i,
-                content_hash=f"hash_{i}" if i < 4 else "hash_new"
+                content_hash=f"hash_{i}" if i < 4 else "hash_new",
             )
             for i in range(5)
         ]
@@ -132,7 +142,9 @@ class TestDetectFileMoves:
 
         assert "old_doc" in moves, "80% match should trigger move detection"
 
-    def test_no_move_detected_below_threshold(self, manager_with_move_detection: IndexManager):
+    def test_no_move_detected_below_threshold(
+        self, manager_with_move_detection: IndexManager
+    ):
         """
         Verify no move detected when match ratio is below threshold.
 
@@ -153,7 +165,7 @@ class TestDetectFileMoves:
                 "new_doc",
                 f"Content {i}",
                 i,
-                content_hash=f"hash_{i}" if i < 3 else f"new_hash_{i}"
+                content_hash=f"hash_{i}" if i < 3 else f"new_hash_{i}",
             )
             for i in range(5)
         ]
@@ -162,7 +174,9 @@ class TestDetectFileMoves:
 
         assert "old_doc" not in moves, "60% match should NOT trigger move detection"
 
-    def test_move_detection_best_match_selection(self, manager_with_move_detection: IndexManager):
+    def test_move_detection_best_match_selection(
+        self, manager_with_move_detection: IndexManager
+    ):
         """
         Verify move detection selects best matching removed document.
 
@@ -181,8 +195,12 @@ class TestDetectFileMoves:
 
         # New doc matches old_a better (100% vs 33%)
         new_chunks = [
-            make_chunk("new_doc_chunk_0", "new_doc", "Content", 0, content_hash="hash_1"),
-            make_chunk("new_doc_chunk_1", "new_doc", "Content", 1, content_hash="hash_2"),
+            make_chunk(
+                "new_doc_chunk_0", "new_doc", "Content", 0, content_hash="hash_1"
+            ),
+            make_chunk(
+                "new_doc_chunk_1", "new_doc", "Content", 1, content_hash="hash_2"
+            ),
         ]
 
         moves = manager._detect_file_moves({"old_a", "old_b"}, {"new_doc": new_chunks})
@@ -195,7 +213,9 @@ class TestDetectFileMoves:
 class TestApplyFileMove:
     """Tests for _apply_file_move() that updates indices without re-embedding."""
 
-    def test_apply_move_returns_false_when_no_old_chunks(self, manager_with_move_detection: IndexManager):
+    def test_apply_move_returns_false_when_no_old_chunks(
+        self, manager_with_move_detection: IndexManager
+    ):
         """
         Verify _apply_file_move returns False when old doc has no stored hashes.
 
@@ -203,7 +223,11 @@ class TestApplyFileMove:
         """
         manager = manager_with_move_detection
 
-        new_chunks = [make_chunk("new_doc_chunk_0", "new_doc", "Content", 0, content_hash="hash_a")]
+        new_chunks = [
+            make_chunk(
+                "new_doc_chunk_0", "new_doc", "Content", 0, content_hash="hash_a"
+            )
+        ]
 
         # No hashes stored for old_doc
         result = manager._apply_file_move("old_doc", "new_doc", new_chunks)
@@ -215,9 +239,7 @@ class TestFileMoveIntegration:
     """Integration tests for complete file move workflow."""
 
     def test_index_then_rename_creates_hash_store_entries(
-        self,
-        config_with_move_detection: Config,
-        shared_embedding_model
+        self, config_with_move_detection: Config, shared_embedding_model
     ):
         """
         End-to-end test: index file, verify hash store is populated.

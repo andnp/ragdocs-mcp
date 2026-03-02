@@ -119,7 +119,9 @@ def test_hash_store_maintains_reverse_lookup_on_remove(hash_store, sample_chunks
     assert hash_store.get_chunk_id_by_hash(chunk.content_hash) is None
 
 
-def test_hash_store_maintains_reverse_lookup_on_remove_document(hash_store, sample_chunks):
+def test_hash_store_maintains_reverse_lookup_on_remove_document(
+    hash_store, sample_chunks
+):
     """Test reverse lookup is maintained when removing document."""
     for chunk in sample_chunks:
         hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
@@ -182,7 +184,9 @@ def test_vector_index_update_chunk_path(shared_embedding_model):
         "header_path": "# Header",
     }
 
-    success = vector.update_chunk_path("old_path_chunk_0", "new_path_chunk_0", new_metadata)
+    success = vector.update_chunk_path(
+        "old_path_chunk_0", "new_path_chunk_0", new_metadata
+    )
     assert success is True
 
     # New chunk should be in mappings
@@ -200,9 +204,7 @@ def test_vector_index_update_chunk_path_not_found(shared_embedding_model):
     vector = VectorIndex(embedding_model=shared_embedding_model)
 
     result = vector.update_chunk_path(
-        "nonexistent_chunk",
-        "new_chunk",
-        {"doc_id": "test", "file_path": "/test.md"}
+        "nonexistent_chunk", "new_chunk", {"doc_id": "test", "file_path": "/test.md"}
     )
     assert result is False
 
@@ -289,8 +291,12 @@ def test_graph_rename_node():
     # Create nodes and edges
     graph.add_node("old_node", {"meta": "data"})
     graph.add_node("other_node", {})
-    graph.add_edge("old_node", "other_node", edge_type="links_to", edge_context="context1")
-    graph.add_edge("other_node", "old_node", edge_type="links_to", edge_context="context2")
+    graph.add_edge(
+        "old_node", "other_node", edge_type="links_to", edge_context="context1"
+    )
+    graph.add_edge(
+        "other_node", "old_node", edge_type="links_to", edge_context="context2"
+    )
 
     # Rename node
     success = graph.rename_node("old_node", "new_node")

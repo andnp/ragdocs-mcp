@@ -27,8 +27,11 @@ class PlainTextParser(DocumentParser):
 
         if content is None:
             raise UnicodeDecodeError(
-                "utf-8", b"", 0, 1,
-                f"Could not decode {file_path} with any supported encoding"
+                "utf-8",
+                b"",
+                0,
+                1,
+                f"Could not decode {file_path} with any supported encoding",
             )
 
         if encoding_used != "utf-8":
@@ -36,7 +39,9 @@ class PlainTextParser(DocumentParser):
 
         modified_time = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
 
-        metadata: dict[str, str | list[str] | int | float | bool] = {"source": str(path)}
+        metadata: dict[str, str | list[str] | int | float | bool] = {
+            "source": str(path)
+        }
         if encoding_used and encoding_used != "utf-8":
             metadata["encoding"] = encoding_used
 

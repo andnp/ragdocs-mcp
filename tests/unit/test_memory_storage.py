@@ -24,7 +24,6 @@ from src.memory.storage import (
 
 
 class TestEnsureMemoryDirs:
-
     def test_creates_memory_directory(self, tmp_path: Path):
         """
         Verify ensure_memory_dirs creates the main memory directory.
@@ -100,7 +99,6 @@ class TestEnsureMemoryDirs:
 
 
 class TestGetMemoryFilePath:
-
     def test_returns_path_with_md_extension(self, tmp_path: Path):
         """
         Verify get_memory_file_path adds .md extension if missing.
@@ -140,7 +138,6 @@ class TestGetMemoryFilePath:
 
 
 class TestGetTrashPath:
-
     def test_returns_trash_subdirectory(self, tmp_path: Path):
         """
         Verify get_trash_path returns .trash subdirectory.
@@ -156,7 +153,6 @@ class TestGetTrashPath:
 
 
 class TestGetIndicesPath:
-
     def test_returns_indices_subdirectory(self, tmp_path: Path):
         """
         Verify get_indices_path returns indices subdirectory.
@@ -172,7 +168,6 @@ class TestGetIndicesPath:
 
 
 class TestListMemoryFiles:
-
     def test_returns_empty_when_no_files(self, tmp_path: Path):
         """
         Verify list_memory_files returns empty list for empty directory.
@@ -258,7 +253,6 @@ class TestListMemoryFiles:
 
 
 class TestComputeMemoryId:
-
     def test_computes_id_from_relative_path(self, tmp_path: Path):
         """
         Verify compute_memory_id creates memory: prefixed ID from relative path.

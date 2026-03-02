@@ -30,7 +30,7 @@ def _is_corruption_error(exc: Exception) -> bool:
 def _sanitize_fts_query(query: str) -> str:
     """Sanitize a query string for safe use in FTS5 MATCH."""
     # Remove FTS5 special characters (including hyphen which acts as NOT)
-    sanitized = re.sub(r'[\"\'*\^(){}[\]<>|~!:\-]', ' ', query)
+    sanitized = re.sub(r"[\"\'*\^(){}[\]<>|~!:\-]", " ", query)
     sanitized = sanitized.strip()
     if not sanitized:
         return '""'
@@ -43,6 +43,7 @@ class KeywordIndex:
     def __init__(self, db_manager: DatabaseManager | None = None) -> None:
         if db_manager is None:
             import tempfile
+
             _tmp = tempfile.mkdtemp(prefix="keyword_idx_")
             db_manager = DatabaseManager(Path(_tmp) / "index.db")
         self._db = db_manager
@@ -74,6 +75,7 @@ class KeywordIndex:
             except OSError as e:
                 logger.warning("Could not delete %s: %s", p, e)
         import tempfile
+
         _tmp = tempfile.mkdtemp(prefix="keyword_idx_")
         self._db = DatabaseManager(Path(_tmp) / "index.db")
 
@@ -91,30 +93,58 @@ class KeywordIndex:
                 source_file = str(document.metadata.get("source_file", document.id))
                 # Include aliases, keywords, description, author, category in indexed headers field
                 aliases_list = document.metadata.get("aliases", [])
-                aliases_text = " ".join(str(a) for a in aliases_list) if isinstance(aliases_list, list) else str(aliases_list)
+                aliases_text = (
+                    " ".join(str(a) for a in aliases_list)
+                    if isinstance(aliases_list, list)
+                    else str(aliases_list)
+                )
                 keywords_list = document.metadata.get("keywords", [])
-                keywords_text = " ".join(keywords_list) if isinstance(keywords_list, list) else str(keywords_list)
-                description = str(document.metadata.get("description", "") or document.metadata.get("summary", ""))
+                keywords_text = (
+                    " ".join(keywords_list)
+                    if isinstance(keywords_list, list)
+                    else str(keywords_list)
+                )
+                description = str(
+                    document.metadata.get("description", "")
+                    or document.metadata.get("summary", "")
+                )
                 author = str(document.metadata.get("author", ""))
                 category = str(document.metadata.get("category", ""))
-                extra = " ".join(filter(None, [aliases_text, keywords_text, description, author, category]))
+                extra = " ".join(
+                    filter(
+                        None,
+                        [aliases_text, keywords_text, description, author, category],
+                    )
+                )
                 conn = self._conn()
                 # FTS5 doesn't support real UPDATE; delete old entry first, then insert
-                conn.execute("DELETE FROM search_index WHERE chunk_id = ?", (document.id,))
+                conn.execute(
+                    "DELETE FROM search_index WHERE chunk_id = ?", (document.id,)
+                )
                 conn.execute(
                     """
                     INSERT INTO search_index
                         (chunk_id, doc_id, content, title, headers, tags, source_file)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (document.id, document.id, document.content, title, extra, tags, source_file),
+                    (
+                        document.id,
+                        document.id,
+                        document.content,
+                        title,
+                        extra,
+                        tags,
+                        source_file,
+                    ),
                 )
                 conn.commit()
             except Exception as e:
                 if _is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return
-                logger.warning("Failed to add document %s: %s", document.id, e, exc_info=True)
+                logger.warning(
+                    "Failed to add document %s: %s", document.id, e, exc_info=True
+                )
                 raise
 
     def add_chunk(self, chunk: Chunk) -> None:
@@ -127,7 +157,9 @@ class KeywordIndex:
                 if _is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return
-                logger.warning("Failed to add chunk %s: %s", chunk.chunk_id, e, exc_info=True)
+                logger.warning(
+                    "Failed to add chunk %s: %s", chunk.chunk_id, e, exc_info=True
+                )
                 raise
 
     def add_chunks(self, chunks: list[Chunk]) -> None:
@@ -155,13 +187,35 @@ class KeywordIndex:
         source_file = str(metadata.get("source_file", chunk.doc_id))
         # Include aliases, keywords, description, author, category in headers field
         aliases_list = metadata.get("aliases", [])
-        aliases_text = " ".join(str(a) for a in aliases_list) if isinstance(aliases_list, list) else str(aliases_list)
+        aliases_text = (
+            " ".join(str(a) for a in aliases_list)
+            if isinstance(aliases_list, list)
+            else str(aliases_list)
+        )
         keywords_list = metadata.get("keywords", [])
-        keywords_text = " ".join(keywords_list) if isinstance(keywords_list, list) else str(keywords_list)
-        description = str(metadata.get("description", "") or metadata.get("summary", ""))
+        keywords_text = (
+            " ".join(keywords_list)
+            if isinstance(keywords_list, list)
+            else str(keywords_list)
+        )
+        description = str(
+            metadata.get("description", "") or metadata.get("summary", "")
+        )
         author = str(metadata.get("author", ""))
         category = str(metadata.get("category", ""))
-        headers = " ".join(filter(None, [header_path, aliases_text, keywords_text, description, author, category]))
+        headers = " ".join(
+            filter(
+                None,
+                [
+                    header_path,
+                    aliases_text,
+                    keywords_text,
+                    description,
+                    author,
+                    category,
+                ],
+            )
+        )
         conn = self._conn()
         # FTS5 doesn't support real UPDATE; delete old entry first, then insert
         conn.execute("DELETE FROM search_index WHERE chunk_id = ?", (chunk.chunk_id,))
@@ -171,7 +225,15 @@ class KeywordIndex:
                 (chunk_id, doc_id, content, title, headers, tags, source_file)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (chunk.chunk_id, chunk.doc_id, chunk.content, title, headers, tags, source_file),
+            (
+                chunk.chunk_id,
+                chunk.doc_id,
+                chunk.content,
+                title,
+                headers,
+                tags,
+                source_file,
+            ),
         )
 
     def remove(self, document_id: str) -> None:
@@ -191,22 +253,24 @@ class KeywordIndex:
                 if _is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return
-                logger.warning("Failed to remove document %s: %s", document_id, e, exc_info=True)
+                logger.warning(
+                    "Failed to remove document %s: %s", document_id, e, exc_info=True
+                )
 
     def remove_chunk(self, chunk_id: str) -> None:
         """Remove a specific chunk."""
         with self._lock:
             try:
                 conn = self._conn()
-                conn.execute(
-                    "DELETE FROM search_index WHERE chunk_id = ?", (chunk_id,)
-                )
+                conn.execute("DELETE FROM search_index WHERE chunk_id = ?", (chunk_id,))
                 conn.commit()
             except Exception as e:
                 if _is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return
-                logger.warning("Failed to remove chunk %s: %s", chunk_id, e, exc_info=True)
+                logger.warning(
+                    "Failed to remove chunk %s: %s", chunk_id, e, exc_info=True
+                )
 
     def remove_chunks(self, chunk_ids: list[str]) -> None:
         """Remove multiple chunks."""
@@ -233,7 +297,8 @@ class KeywordIndex:
             try:
                 conn = self._conn()
                 row = conn.execute(
-                    "SELECT chunk_id FROM search_index WHERE chunk_id = ?", (old_chunk_id,)
+                    "SELECT chunk_id FROM search_index WHERE chunk_id = ?",
+                    (old_chunk_id,),
                 ).fetchone()
                 if row is None:
                     logger.debug("Chunk %s not found in keyword index", old_chunk_id)
@@ -244,13 +309,19 @@ class KeywordIndex:
                     "DELETE FROM search_index WHERE chunk_id = ?", (old_chunk_id,)
                 )
                 conn.commit()
-                logger.debug("Moved chunk in keyword index: %s -> %s", old_chunk_id, new_chunk.chunk_id)
+                logger.debug(
+                    "Moved chunk in keyword index: %s -> %s",
+                    old_chunk_id,
+                    new_chunk.chunk_id,
+                )
                 return True
             except Exception as e:
                 if _is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return False
-                logger.warning("Failed to move chunk %s: %s", old_chunk_id, e, exc_info=True)
+                logger.warning(
+                    "Failed to move chunk %s: %s", old_chunk_id, e, exc_info=True
+                )
                 return False
 
     # ------------------------------------------------------------------
@@ -290,17 +361,27 @@ class KeywordIndex:
                     logger.warning("FTS5 query error, falling back to LIKE: %s", e)
                     try:
                         like_query = f"%{query.strip()}%"
-                        rows = self._conn().execute(
-                            """
+                        rows = (
+                            self._conn()
+                            .execute(
+                                """
                             SELECT chunk_id, doc_id, -1.0 AS score
                             FROM search_index
                             WHERE content LIKE ? OR title LIKE ?
                             LIMIT ?
                             """,
-                            (like_query, like_query, top_k * 2 if excluded_files else top_k),
-                        ).fetchall()
+                                (
+                                    like_query,
+                                    like_query,
+                                    top_k * 2 if excluded_files else top_k,
+                                ),
+                            )
+                            .fetchall()
+                        )
                     except Exception as e2:
-                        logger.warning("LIKE fallback also failed: %s", e2, exc_info=True)
+                        logger.warning(
+                            "LIKE fallback also failed: %s", e2, exc_info=True
+                        )
                         return []
                 else:
                     logger.warning("Search error: %s", e, exc_info=True)
@@ -336,6 +417,7 @@ class KeywordIndex:
     def persist(self, path: Path) -> None:
         """Copy SQLite index to the given path directory."""
         import shutil
+
         path.mkdir(parents=True, exist_ok=True)
         src = self._db._db_path
         dest = path / "index.db"
@@ -378,7 +460,8 @@ class KeywordIndex:
         except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
             logger.warning(
                 "Keyword index %s is corrupted (%s); reinitializing clean.",
-                db_file, e,
+                db_file,
+                e,
                 exc_info=True,
             )
             if candidate is not None:
@@ -421,7 +504,11 @@ class KeywordIndex:
             try:
                 title = str(metadata.get("title", ""))
                 tags_list = metadata.get("tags", [])
-                tags = ",".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
+                tags = (
+                    ",".join(tags_list)
+                    if isinstance(tags_list, list)
+                    else str(tags_list)
+                )
                 source_file = str(metadata.get("source_file", doc_id))
                 conn = self._conn()
                 conn.execute("DELETE FROM search_index WHERE chunk_id = ?", (doc_id,))
@@ -435,7 +522,9 @@ class KeywordIndex:
                 )
                 conn.commit()
             except Exception as e:
-                logger.warning("Failed to add_document %s: %s", doc_id, e, exc_info=True)
+                logger.warning(
+                    "Failed to add_document %s: %s", doc_id, e, exc_info=True
+                )
                 raise
 
     def remove_document(self, doc_id: str) -> None:
@@ -444,9 +533,9 @@ class KeywordIndex:
     def __len__(self) -> int:
         with self._lock:
             try:
-                row = self._conn().execute(
-                    "SELECT COUNT(*) FROM search_index"
-                ).fetchone()
+                row = (
+                    self._conn().execute("SELECT COUNT(*) FROM search_index").fetchone()
+                )
                 return row[0] if row else 0
             except Exception:
                 return 0

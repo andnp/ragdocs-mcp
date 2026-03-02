@@ -27,7 +27,7 @@ from src.models import Document
 logger = logging.getLogger(__name__)
 
 
-FRONTMATTER_PATTERN = re.compile(r'^---\s*\n(.*?)\n---\s*\n', re.DOTALL)
+FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
 @dataclass
@@ -40,6 +40,7 @@ class FailedMemory:
 @dataclass
 class MemoryMetadata:
     """Cached metadata for a single memory file."""
+
     memory_id: str
     tags: list[str]
     memory_type: str
@@ -128,8 +129,10 @@ class MemoryIndexManager:
             now = time.time()
 
             should_checkpoint = (
-                self._ops_since_checkpoint >= self._config.memory.checkpoint_interval_ops
-                or (now - self._last_checkpoint_time) >= self._config.memory.checkpoint_interval_secs
+                self._ops_since_checkpoint
+                >= self._config.memory.checkpoint_interval_ops
+                or (now - self._last_checkpoint_time)
+                >= self._config.memory.checkpoint_interval_secs
             )
 
             if should_checkpoint:
@@ -153,7 +156,9 @@ class MemoryIndexManager:
             created_at = data.get("created_at")
             if isinstance(created_at, str):
                 try:
-                    created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    created_at = datetime.fromisoformat(
+                        created_at.replace("Z", "+00:00")
+                    )
                 except ValueError:
                     created_at = None
             elif isinstance(created_at, datetime):
@@ -172,7 +177,7 @@ class MemoryIndexManager:
                 created_at=created_at,
             )
 
-            body = content[match.end():]
+            body = content[match.end() :]
             return frontmatter, body
 
         except yaml.YAMLError as e:
@@ -237,7 +242,9 @@ class MemoryIndexManager:
             tag_id = f"tag:{normalized_tag}"
 
             if not self._graph.has_node(tag_id):
-                self._graph.add_node(tag_id, {"is_tag": True, "tag_name": normalized_tag})
+                self._graph.add_node(
+                    tag_id, {"is_tag": True, "tag_name": normalized_tag}
+                )
 
             self._graph.add_edge(
                 source=memory_id,
@@ -259,7 +266,9 @@ class MemoryIndexManager:
                 if link.is_memory_link:
                     self._graph.add_node(target_id, {"is_memory_ghost": True})
                 else:
-                    self._graph.add_node(target_id, {"is_ghost": True, "target": link.target})
+                    self._graph.add_node(
+                        target_id, {"is_ghost": True, "target": link.target}
+                    )
 
             self._graph.add_edge(
                 source=memory_id,
@@ -281,23 +290,26 @@ class MemoryIndexManager:
                 chunk.metadata["memory_status"] = memory.frontmatter.status
                 chunk.metadata["memory_tags"] = memory.frontmatter.tags
                 if memory.frontmatter.created_at:
-                    chunk.metadata["memory_created_at"] = memory.frontmatter.created_at.isoformat()
+                    chunk.metadata["memory_created_at"] = (
+                        memory.frontmatter.created_at.isoformat()
+                    )
 
                 self._vector.add_chunk(chunk)
                 self._keyword.add_chunk(chunk)
 
-            self._graph.add_node(memory.id, {
-                "type": memory.frontmatter.type,
-                "status": memory.frontmatter.status,
-                "tags": memory.frontmatter.tags,
-            })
+            self._graph.add_node(
+                memory.id,
+                {
+                    "type": memory.frontmatter.type,
+                    "status": memory.frontmatter.status,
+                    "tags": memory.frontmatter.tags,
+                },
+            )
 
             self._add_tag_nodes_and_edges(memory.id, memory.frontmatter.tags)
             self._add_ghost_nodes_and_edges(memory.id, memory.links)
 
-            self._failed_files = [
-                f for f in self._failed_files if f.path != file_path
-            ]
+            self._failed_files = [f for f in self._failed_files if f.path != file_path]
 
             # Update metadata cache
             with self._cache_lock:
@@ -347,7 +359,11 @@ class MemoryIndexManager:
         file_path = self._resolve_memory_path(memory_id)
         if not file_path:
             if reason:
-                logger.warning("Reindex skipped for %s (reason: %s): file not found", memory_id, reason)
+                logger.warning(
+                    "Reindex skipped for %s (reason: %s): file not found",
+                    memory_id,
+                    reason,
+                )
             else:
                 logger.warning("Reindex skipped for %s: file not found", memory_id)
             return False
@@ -356,7 +372,9 @@ class MemoryIndexManager:
             self.remove_memory(memory_id)
             self.index_memory(str(file_path))
             if reason:
-                logger.info("Reindexed %s from %s (reason: %s)", memory_id, file_path, reason)
+                logger.info(
+                    "Reindexed %s from %s (reason: %s)", memory_id, file_path, reason
+                )
             else:
                 logger.info("Reindexed %s from %s", memory_id, file_path)
             return True
@@ -505,7 +523,9 @@ class MemoryIndexManager:
         with self._cache_lock:
             type_counts: dict[str, int] = {}
             for metadata in self._metadata_cache.values():
-                type_counts[metadata.memory_type] = type_counts.get(metadata.memory_type, 0) + 1
+                type_counts[metadata.memory_type] = (
+                    type_counts.get(metadata.memory_type, 0) + 1
+                )
             return type_counts
 
     def get_total_size_bytes(self) -> int:

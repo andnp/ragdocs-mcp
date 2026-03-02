@@ -14,7 +14,9 @@ class MockEmbeddingModel:
 
     def get_text_embedding(self, text: str):
         hash_val = hash(text) % 1000
-        embedding = np.random.RandomState(hash_val).randn(self.dimension).astype(np.float32)
+        embedding = (
+            np.random.RandomState(hash_val).randn(self.dimension).astype(np.float32)
+        )
         embedding = embedding / np.linalg.norm(embedding)
         return embedding.tolist()
 

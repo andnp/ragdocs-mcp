@@ -22,8 +22,7 @@ def manager_config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "index")
+            documents_path=str(docs_path), index_path=str(tmp_path / "index")
         )
     )
 

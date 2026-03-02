@@ -17,11 +17,15 @@ def _init_git_repo(path: Path):
     subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.name", "Test User"],
-        cwd=path, check=True, capture_output=True
+        cwd=path,
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.email", "test@example.com"],
-        cwd=path, check=True, capture_output=True
+        cwd=path,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -50,9 +54,7 @@ def test_discover_nested_git_repositories(tmp_path):
     _init_git_repo(sibling_repo)
 
     repos = discover_git_repositories(
-        documents_path=tmp_path,
-        exclude_patterns=[],
-        exclude_hidden_dirs=False
+        documents_path=tmp_path, exclude_patterns=[], exclude_hidden_dirs=False
     )
 
     # Current implementation stops at first .git (doesn't descend)
@@ -83,9 +85,7 @@ def test_discover_git_stops_at_repo_boundary(tmp_path):
     # Don't init - just testing we don't descend
 
     repos = discover_git_repositories(
-        documents_path=tmp_path,
-        exclude_patterns=[],
-        exclude_hidden_dirs=False
+        documents_path=tmp_path, exclude_patterns=[], exclude_hidden_dirs=False
     )
 
     # Should only find the main repo, not traverse .git contents
@@ -124,7 +124,7 @@ def test_discover_git_with_exclude_patterns(tmp_path):
     repos = discover_git_repositories(
         documents_path=tmp_path,
         exclude_patterns=["**/vendor/**", "**/node_modules/**"],
-        exclude_hidden_dirs=False
+        exclude_hidden_dirs=False,
     )
 
     # Current behavior: stops at main repo
@@ -157,7 +157,7 @@ def test_discover_git_with_hidden_dir_exclusion(tmp_path):
     repos = discover_git_repositories(
         documents_path=tmp_path,
         exclude_patterns=[],
-        exclude_hidden_dirs=True  # Default behavior
+        exclude_hidden_dirs=True,  # Default behavior
     )
 
     # Should find normal repo, but not hidden ones
@@ -178,9 +178,7 @@ def test_discover_git_empty_directory_tree(tmp_path):
     (tmp_path / "dir3").mkdir()
 
     repos = discover_git_repositories(
-        documents_path=tmp_path,
-        exclude_patterns=[],
-        exclude_hidden_dirs=True
+        documents_path=tmp_path, exclude_patterns=[], exclude_hidden_dirs=True
     )
 
     assert repos == []
@@ -206,9 +204,7 @@ def test_discover_git_deeply_nested_repositories(tmp_path):
             _init_git_repo(current)
 
     repos = discover_git_repositories(
-        documents_path=tmp_path,
-        exclude_patterns=[],
-        exclude_hidden_dirs=False
+        documents_path=tmp_path, exclude_patterns=[], exclude_hidden_dirs=False
     )
 
     # Current behavior: finds first repo (level_0), stops there
@@ -238,9 +234,7 @@ def test_discover_git_with_symlinks_to_repos(tmp_path):
     symlink_path.symlink_to(real_repo)
 
     repos = discover_git_repositories(
-        documents_path=tmp_path,
-        exclude_patterns=[],
-        exclude_hidden_dirs=False
+        documents_path=tmp_path, exclude_patterns=[], exclude_hidden_dirs=False
     )
 
     # Should find the real repo
@@ -278,9 +272,7 @@ def test_discover_git_concurrent_nested_repos(tmp_path):
     _init_git_repo(module_c)
 
     repos = discover_git_repositories(
-        documents_path=tmp_path,
-        exclude_patterns=[],
-        exclude_hidden_dirs=False
+        documents_path=tmp_path, exclude_patterns=[], exclude_hidden_dirs=False
     )
 
     # Current behavior: stops at root repo

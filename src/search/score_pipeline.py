@@ -18,9 +18,9 @@ def rrf_score(rank: int, k: float):
 
 @dataclass
 class ScorePipelineConfig:
-    strategy_weights: dict[str, float] = field(default_factory=lambda: {
-        "semantic": 0.6, "keyword": 0.3, "graph": 0.1
-    })
+    strategy_weights: dict[str, float] = field(
+        default_factory=lambda: {"semantic": 0.6, "keyword": 0.3, "graph": 0.1}
+    )
 
     time_scoring_mode: str | None = None
     time_scoring_config: TierConfig | DecayConfig | None = None
@@ -95,17 +95,13 @@ class ScorePipeline:
 
         return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
-    def normalize(
-        self, results: list[tuple[str, float]]
-    ) -> list[tuple[str, float]]:
+    def normalize(self, results: list[tuple[str, float]]) -> list[tuple[str, float]]:
         if not results:
             return []
 
         return normalize_result_scores(results)
 
-    def calibrate(
-        self, results: list[tuple[str, float]]
-    ) -> list[tuple[str, float]]:
+    def calibrate(self, results: list[tuple[str, float]]) -> list[tuple[str, float]]:
         if not results:
             return []
 

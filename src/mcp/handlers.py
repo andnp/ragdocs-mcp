@@ -23,6 +23,7 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {}
 
 def tool_handler(name: str):
     """Decorator to register a tool handler function."""
+
     def decorator(func: ToolHandler) -> ToolHandler:
         _TOOL_HANDLERS[name] = func
         return func

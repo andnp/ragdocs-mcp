@@ -173,6 +173,7 @@ def test_get_commits_after_timestamp():
 
         # Wait and create more commits
         import time
+
         time.sleep(1)
 
         for i in range(1, 3):
@@ -181,7 +182,9 @@ def test_get_commits_after_timestamp():
         git_dir = repo_path / ".git"
 
         # Get commits after first commit (--after is inclusive in git)
-        commits = get_commits_after_timestamp(git_dir, after_timestamp=first_commit_time)
+        commits = get_commits_after_timestamp(
+            git_dir, after_timestamp=first_commit_time
+        )
 
         # Should get commits after the timestamp (git --after is inclusive, so all 3)
         assert len(commits) >= 2
@@ -189,6 +192,7 @@ def test_get_commits_after_timestamp():
 
 def test_git_not_available(monkeypatch):
     """Test detection when git is not available."""
+
     def mock_run(*args, **kwargs):
         raise FileNotFoundError()
 

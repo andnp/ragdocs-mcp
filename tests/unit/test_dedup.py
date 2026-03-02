@@ -58,6 +58,7 @@ class TestDeduplicateByNgram:
 
     def test_empty_list_returns_empty(self):
         """Empty input returns empty list and 0 removed."""
+
         def get_content(chunk_id: str):
             return None
 
@@ -68,6 +69,7 @@ class TestDeduplicateByNgram:
 
     def test_single_item_returns_unchanged(self):
         """Single item returns unchanged, 0 removed."""
+
         def get_content(chunk_id: str):
             return "some content"
 
@@ -238,6 +240,7 @@ class TestDeduplicateBySimilarity:
 
     def test_empty_list_returns_empty(self):
         """Empty input returns empty list and 0 clusters merged."""
+
         def get_embedding(chunk_id: str):
             return None
 
@@ -248,6 +251,7 @@ class TestDeduplicateBySimilarity:
 
     def test_single_item_returns_unchanged(self):
         """Single item returns unchanged, 0 clusters merged."""
+
         def get_embedding(chunk_id: str):
             return [0.1, 0.2, 0.3]
 
@@ -262,7 +266,7 @@ class TestDeduplicateBySimilarity:
         embeddings = {
             "chunk_a": [1.0, 0.0, 0.0],
             "chunk_b": [0.99, 0.1, 0.0],  # Very similar to chunk_a
-            "chunk_c": [0.0, 1.0, 0.0],   # Different from both
+            "chunk_c": [0.0, 1.0, 0.0],  # Different from both
         }
 
         def get_embedding(chunk_id: str):
@@ -360,8 +364,8 @@ class TestDeduplicateBySimilarity:
         """Low threshold removes more duplicates."""
         embeddings = {
             "chunk_a": [1.0, 0.0, 0.0],
-            "chunk_b": [0.8, 0.6, 0.0],   # Somewhat similar
-            "chunk_c": [0.1, 0.9, 0.4],   # Different
+            "chunk_b": [0.8, 0.6, 0.0],  # Somewhat similar
+            "chunk_c": [0.1, 0.9, 0.4],  # Different
         }
 
         def get_embedding(chunk_id: str):
@@ -385,9 +389,9 @@ class TestDeduplicateBySimilarity:
         """Correctly counts multiple clusters being merged."""
         embeddings = {
             "chunk_a": [1.0, 0.0, 0.0],
-            "chunk_b": [1.0, 0.0, 0.0],   # Duplicate of a
-            "chunk_c": [1.0, 0.0, 0.0],   # Duplicate of a
-            "chunk_d": [0.0, 1.0, 0.0],   # Different
+            "chunk_b": [1.0, 0.0, 0.0],  # Duplicate of a
+            "chunk_c": [1.0, 0.0, 0.0],  # Duplicate of a
+            "chunk_d": [0.0, 1.0, 0.0],  # Different
         }
 
         def get_embedding(chunk_id: str):
@@ -437,6 +441,7 @@ class TestDeduplicateByContentHash:
 
     def test_empty_list_returns_empty(self):
         """Empty input returns empty list and 0 removed."""
+
         def get_content(chunk_id: str):
             return None
 
@@ -447,6 +452,7 @@ class TestDeduplicateByContentHash:
 
     def test_single_item_returns_unchanged(self):
         """Single item returns unchanged, 0 removed."""
+
         def get_content(chunk_id: str):
             return "some content"
 

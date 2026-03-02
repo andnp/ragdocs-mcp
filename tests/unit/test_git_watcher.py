@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, GitIndexingConfig, LLMConfig, SearchConfig
+from src.config import (
+    Config,
+    IndexingConfig,
+    GitIndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from src.git.commit_indexer import CommitIndexer
 from src.git.watcher import GitWatcher
 
@@ -12,15 +18,13 @@ def test_config(tmp_path):
     return Config(
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
-            index_path=str(tmp_path / ".index_data")
+            index_path=str(tmp_path / ".index_data"),
         ),
         git_indexing=GitIndexingConfig(
-            enabled=True,
-            watch_enabled=True,
-            poll_interval_seconds=5.0
+            enabled=True, watch_enabled=True, poll_interval_seconds=5.0
         ),
         search=SearchConfig(),
-        llm=LLMConfig()
+        llm=LLMConfig(),
     )
 
 
@@ -37,7 +41,7 @@ def test_git_watcher_instantiation(test_config, commit_indexer, tmp_path):
         git_repos=git_repos,
         commit_indexer=commit_indexer,
         config=test_config,
-        poll_interval=0.5
+        poll_interval=0.5,
     )
 
     assert watcher is not None
@@ -55,7 +59,7 @@ def test_git_watcher_constructor_types(test_config, commit_indexer, tmp_path):
         git_repos=git_repos,
         commit_indexer=commit_indexer,
         config=test_config,
-        poll_interval=1.0
+        poll_interval=1.0,
     )
 
     from src.git.commit_indexer import CommitIndexer
@@ -72,7 +76,7 @@ def test_git_watcher_empty_repos_list(test_config, commit_indexer):
         git_repos=[],
         commit_indexer=commit_indexer,
         config=test_config,
-        poll_interval=0.5
+        poll_interval=0.5,
     )
 
     assert watcher._git_repos == []
@@ -83,9 +87,7 @@ def test_git_watcher_default_poll_interval(test_config, commit_indexer, tmp_path
     git_repos = [tmp_path / ".git"]
 
     watcher = GitWatcher(
-        git_repos=git_repos,
-        commit_indexer=commit_indexer,
-        config=test_config
+        git_repos=git_repos, commit_indexer=commit_indexer, config=test_config
     )
 
     assert watcher._poll_interval == 30.0
@@ -98,7 +100,7 @@ def test_git_watcher_config_access(test_config, commit_indexer, tmp_path):
         git_repos=git_repos,
         commit_indexer=commit_indexer,
         config=test_config,
-        poll_interval=0.5
+        poll_interval=0.5,
     )
 
     assert watcher._config.git_indexing.poll_interval_seconds == 5.0
@@ -136,7 +138,7 @@ async def test_git_watcher_idempotent_start(test_config, commit_indexer, tmp_pat
         git_repos=[git_dir],
         commit_indexer=commit_indexer,
         config=test_config,
-        poll_interval=100.0
+        poll_interval=100.0,
     )
 
     watcher.start()
@@ -157,7 +159,7 @@ async def test_git_watcher_idempotent_stop(test_config, commit_indexer, tmp_path
         git_repos=[git_dir],
         commit_indexer=commit_indexer,
         config=test_config,
-        poll_interval=100.0
+        poll_interval=100.0,
     )
 
     watcher.start()

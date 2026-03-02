@@ -28,8 +28,14 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         index_manager: IndexManager | None = None,
         documents_path: Path | None = None,
     ):
-        super().__init__(vector_index, keyword_index, graph_store, config, documents_path)
-        self._documents_path = documents_path if documents_path is not None else Path(config.indexing.documents_path)
+        super().__init__(
+            vector_index, keyword_index, graph_store, config, documents_path
+        )
+        self._documents_path: Path = (
+            documents_path
+            if documents_path is not None
+            else Path(config.indexing.documents_path)
+        )
         self._index_manager = index_manager
         self._pipeline: SearchPipeline | None = None
         self._pending_reindex: set[str] = set()
@@ -60,15 +66,19 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         excluded_files: set[str] | None = None,
     ) -> tuple[list[ChunkResult], CompressionStats, SearchStrategyStats]:
         if not query_text or not query_text.strip():
-            return [], CompressionStats(
-                original_count=0,
-                after_threshold=0,
-                after_content_dedup=0,
-                after_ngram_dedup=0,
-                after_dedup=0,
-                after_doc_limit=0,
-                clusters_merged=0,
-            ), SearchStrategyStats()
+            return (
+                [],
+                CompressionStats(
+                    original_count=0,
+                    after_threshold=0,
+                    after_content_dedup=0,
+                    after_ngram_dedup=0,
+                    after_dedup=0,
+                    after_doc_limit=0,
+                    clusters_merged=0,
+                ),
+                SearchStrategyStats(),
+            )
 
         docs_root = self._documents_path
 
@@ -183,31 +193,39 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if chunk_data:
                 metadata = chunk_data.get("metadata", {})
-                parent_chunk_id = metadata.get("parent_chunk_id") if isinstance(metadata, dict) else None
+                parent_chunk_id = (
+                    metadata.get("parent_chunk_id")
+                    if isinstance(metadata, dict)
+                    else None
+                )
                 parent_content = None
                 if parent_chunk_id:
                     parent_content = self._vector.get_parent_content(parent_chunk_id)
 
-                chunk_results.append(ChunkResult(
-                    chunk_id=chunk_id,
-                    doc_id=str(chunk_data.get("doc_id", "")),
-                    score=score,
-                    header_path=str(chunk_data.get("header_path", "")),
-                    file_path=str(chunk_data.get("file_path", "")),
-                    content=str(chunk_data.get("content", "")),
-                    parent_chunk_id=parent_chunk_id,
-                    parent_content=parent_content,
-                ))
+                chunk_results.append(
+                    ChunkResult(
+                        chunk_id=chunk_id,
+                        doc_id=str(chunk_data.get("doc_id", "")),
+                        score=score,
+                        header_path=str(chunk_data.get("header_path", "")),
+                        file_path=str(chunk_data.get("file_path", "")),
+                        content=str(chunk_data.get("content", "")),
+                        parent_chunk_id=parent_chunk_id,
+                        parent_content=parent_content,
+                    )
+                )
             else:
                 missing_chunk_ids.append(chunk_id)
-                chunk_results.append(ChunkResult(
-                    chunk_id=chunk_id,
-                    doc_id=extract_doc_id_from_chunk_id(chunk_id),
-                    score=score,
-                    header_path="",
-                    file_path="",
-                    content="",
-                ))
+                chunk_results.append(
+                    ChunkResult(
+                        chunk_id=chunk_id,
+                        doc_id=extract_doc_id_from_chunk_id(chunk_id),
+                        score=score,
+                        header_path="",
+                        file_path="",
+                        content="",
+                    )
+                )
 
         if missing_chunk_ids:
             self._queue_reindex_for_chunks(missing_chunk_ids, "docstore lookup failed")
@@ -223,12 +241,16 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         for chunk_id, score in results:
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if not chunk_data:
-                self._queue_reindex_for_chunks([chunk_id], "docstore lookup failed during parent expansion")
+                self._queue_reindex_for_chunks(
+                    [chunk_id], "docstore lookup failed during parent expansion"
+                )
                 expanded.append((chunk_id, score))
                 continue
 
             metadata = chunk_data.get("metadata", {})
-            parent_chunk_id = metadata.get("parent_chunk_id") if isinstance(metadata, dict) else None
+            parent_chunk_id = (
+                metadata.get("parent_chunk_id") if isinstance(metadata, dict) else None
+            )
             if parent_chunk_id:
                 if parent_chunk_id not in seen_parents:
                     seen_parents.add(parent_chunk_id)
@@ -262,28 +284,48 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         if chunk_data:
             content = chunk_data.get("content")
             return str(content) if content is not None else None
-        self._queue_reindex_for_chunks([chunk_id], "docstore lookup failed during content fetch")
+        self._queue_reindex_for_chunks(
+            [chunk_id], "docstore lookup failed during content fetch"
+        )
         return None
 
-    async def _search_vector(self, query_text: str, top_k: int, excluded_files: set[str] | None, docs_root: Path):
+    async def _search_vector(
+        self,
+        query_text: str,
+        top_k: int,
+        excluded_files: set[str] | None,
+        docs_root: Path,
+    ):
         expanded_query = self._vector.expand_query(query_text)
 
         results = await asyncio.to_thread(
             self._vector.search, expanded_query, top_k, excluded_files, docs_root
         )
-        logger.info(f"Vector search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
+        logger.info(
+            f"Vector search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}"
+        )
         return results
 
-    async def _search_keyword(self, query_text: str, top_k: int, excluded_files: set[str] | None, docs_root: Path):
+    async def _search_keyword(
+        self,
+        query_text: str,
+        top_k: int,
+        excluded_files: set[str] | None,
+        docs_root: Path,
+    ):
         results = await asyncio.to_thread(
             self._keyword.search, query_text, top_k, excluded_files, docs_root
         )
-        logger.info(f"Keyword search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}")
+        logger.info(
+            f"Keyword search returned {len(results)} results with chunk_ids: {[r['chunk_id'] for r in results[:3]]}"
+        )
         return results
 
     def _get_graph_neighbors(self, doc_ids: list[str]):
         neighbors = self._graph.get_neighbors_batch(doc_ids, depth=1)
-        logger.info(f"Graph traversal for {doc_ids[:3]} returned {len(neighbors)} neighbors: {list(neighbors)[:5]}")
+        logger.info(
+            f"Graph traversal for {doc_ids[:3]} returned {len(neighbors)} neighbors: {list(neighbors)[:5]}"
+        )
         return neighbors
 
     def _apply_community_boost(
@@ -296,7 +338,11 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         for chunk_id, _ in fused:
             doc_id = chunk_id_to_doc_id.get(chunk_id)
             if doc_id is None:
-                doc_id = chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else chunk_id
+                doc_id = (
+                    chunk_id.rsplit("_chunk_", 1)[0]
+                    if "_chunk_" in chunk_id
+                    else chunk_id
+                )
             chunk_doc_ids.append(doc_id)
 
         boosts = self._graph.boost_by_community(
@@ -315,9 +361,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
     def _queue_reindex_for_chunks(self, chunk_ids: list[str], reason: str):
         doc_ids = {
-            extract_doc_id_from_chunk_id(chunk_id)
-            for chunk_id in chunk_ids
-            if chunk_id
+            extract_doc_id_from_chunk_id(chunk_id) for chunk_id in chunk_ids if chunk_id
         }
 
         if not doc_ids:
@@ -378,7 +422,9 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         if reindexed > 0:
             try:
                 self._index_manager.persist()
-                logger.info("Reindexed %d documents after missing chunk recovery", reindexed)
+                logger.info(
+                    "Reindexed %d documents after missing chunk recovery", reindexed
+                )
             except TimeoutError as e:
                 logger.warning("Reindex persist skipped (lock busy): %s", e)
 
@@ -390,19 +436,24 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         excluded_files: set[str] | None = None,
     ) -> tuple[list[ChunkResult], CompressionStats, SearchStrategyStats]:
         if not hypothesis or not hypothesis.strip():
-            return [], CompressionStats(
-                original_count=0,
-                after_threshold=0,
-                after_content_dedup=0,
-                after_ngram_dedup=0,
-                after_dedup=0,
-                after_doc_limit=0,
-                clusters_merged=0,
-            ), SearchStrategyStats()
+            return (
+                [],
+                CompressionStats(
+                    original_count=0,
+                    after_threshold=0,
+                    after_content_dedup=0,
+                    after_ngram_dedup=0,
+                    after_dedup=0,
+                    after_doc_limit=0,
+                    clusters_merged=0,
+                ),
+                SearchStrategyStats(),
+            )
 
         docs_root = self._documents_path
 
         from src.search.hyde import search_with_hypothesis
+
         vector_results = await asyncio.to_thread(
             search_with_hypothesis,
             self._vector,
@@ -450,31 +501,39 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             chunk_data = self._vector.get_chunk_by_id(chunk_id)
             if chunk_data:
                 metadata = chunk_data.get("metadata", {})
-                parent_chunk_id = metadata.get("parent_chunk_id") if isinstance(metadata, dict) else None
+                parent_chunk_id = (
+                    metadata.get("parent_chunk_id")
+                    if isinstance(metadata, dict)
+                    else None
+                )
                 parent_content = None
                 if parent_chunk_id:
                     parent_content = self._vector.get_parent_content(parent_chunk_id)
 
-                chunk_results.append(ChunkResult(
-                    chunk_id=chunk_id,
-                    doc_id=str(chunk_data.get("doc_id", "")),
-                    score=score,
-                    header_path=str(chunk_data.get("header_path", "")),
-                    file_path=str(chunk_data.get("file_path", "")),
-                    content=str(chunk_data.get("content", "")),
-                    parent_chunk_id=parent_chunk_id,
-                    parent_content=parent_content,
-                ))
+                chunk_results.append(
+                    ChunkResult(
+                        chunk_id=chunk_id,
+                        doc_id=str(chunk_data.get("doc_id", "")),
+                        score=score,
+                        header_path=str(chunk_data.get("header_path", "")),
+                        file_path=str(chunk_data.get("file_path", "")),
+                        content=str(chunk_data.get("content", "")),
+                        parent_chunk_id=parent_chunk_id,
+                        parent_content=parent_content,
+                    )
+                )
             else:
                 missing_chunk_ids.append(chunk_id)
-                chunk_results.append(ChunkResult(
-                    chunk_id=chunk_id,
-                    doc_id=extract_doc_id_from_chunk_id(chunk_id),
-                    score=score,
-                    header_path="",
-                    file_path="",
-                    content="",
-                ))
+                chunk_results.append(
+                    ChunkResult(
+                        chunk_id=chunk_id,
+                        doc_id=extract_doc_id_from_chunk_id(chunk_id),
+                        score=score,
+                        header_path="",
+                        file_path="",
+                        content="",
+                    )
+                )
 
         if missing_chunk_ids:
             self._queue_reindex_for_chunks(missing_chunk_ids, "docstore lookup failed")

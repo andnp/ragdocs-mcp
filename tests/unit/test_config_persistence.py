@@ -209,9 +209,7 @@ def test_detect_project_arbitrary_path_persists(tmp_path, temp_config_home):
     arbitrary_dir.mkdir()
 
     result = detect_project(
-        cwd=Path("/somewhere/else"),
-        projects=[],
-        project_override=str(arbitrary_dir)
+        cwd=Path("/somewhere/else"), projects=[], project_override=str(arbitrary_dir)
     )
 
     assert result == "new-project"
@@ -225,7 +223,9 @@ def test_detect_project_arbitrary_path_persists(tmp_path, temp_config_home):
     assert data["projects"][0]["path"] == str(arbitrary_dir)
 
 
-def test_detect_project_arbitrary_path_generates_unique_name(tmp_path, temp_config_home):
+def test_detect_project_arbitrary_path_generates_unique_name(
+    tmp_path, temp_config_home
+):
     """
     Test that arbitrary path generates unique name when conflicts exist.
     """
@@ -241,9 +241,7 @@ path = "/existing/my-project"
     arbitrary_dir.mkdir()
 
     result = detect_project(
-        cwd=Path("/somewhere/else"),
-        projects=None,
-        project_override=str(arbitrary_dir)
+        cwd=Path("/somewhere/else"), projects=None, project_override=str(arbitrary_dir)
     )
 
     assert result == "my-project-2"
@@ -265,9 +263,7 @@ def test_detect_project_arbitrary_path_invalid_chars(tmp_path, temp_config_home)
     arbitrary_dir.mkdir()
 
     result = detect_project(
-        cwd=Path("/somewhere/else"),
-        projects=[],
-        project_override=str(arbitrary_dir)
+        cwd=Path("/somewhere/else"), projects=[], project_override=str(arbitrary_dir)
     )
 
     assert result == "my-project"
@@ -293,11 +289,7 @@ name = "existing"
 path = "{project_dir}"
 """)
 
-    result = detect_project(
-        cwd=project_dir,
-        projects=None,
-        project_override=None
-    )
+    result = detect_project(cwd=project_dir, projects=None, project_override=None)
 
     assert result == "existing"
 
@@ -335,7 +327,9 @@ path = "/path/to/existing"
     assert data["projects"][0]["name"] == "existing"
 
 
-def test_detect_project_persistence_failure_returns_name(tmp_path, temp_config_home, monkeypatch):
+def test_detect_project_persistence_failure_returns_name(
+    tmp_path, temp_config_home, monkeypatch
+):
     """
     Test that detect_project returns project name even if persistence fails.
     """
@@ -348,15 +342,15 @@ def test_detect_project_persistence_failure_returns_name(tmp_path, temp_config_h
     monkeypatch.setattr(src.config, "persist_project_to_config", failing_persist)
 
     result = detect_project(
-        cwd=Path("/somewhere/else"),
-        projects=[],
-        project_override=str(arbitrary_dir)
+        cwd=Path("/somewhere/else"), projects=[], project_override=str(arbitrary_dir)
     )
 
     assert result == "test-project"
 
 
-def test_detect_project_cwd_auto_persists_when_not_registered(tmp_path, temp_config_home):
+def test_detect_project_cwd_auto_persists_when_not_registered(
+    tmp_path, temp_config_home
+):
     """
     Test that CWD-based detection auto-persists when no registered project matches.
     """
@@ -365,11 +359,7 @@ def test_detect_project_cwd_auto_persists_when_not_registered(tmp_path, temp_con
     project_dir = tmp_path / "unregistered-project"
     project_dir.mkdir()
 
-    result = detect_project(
-        cwd=project_dir,
-        projects=[],
-        project_override=None
-    )
+    result = detect_project(cwd=project_dir, projects=[], project_override=None)
 
     assert result == "unregistered-project"
     assert config_path.exists()
@@ -382,7 +372,9 @@ def test_detect_project_cwd_auto_persists_when_not_registered(tmp_path, temp_con
     assert data["projects"][0]["path"] == str(project_dir)
 
 
-def test_detect_project_cwd_no_persist_when_already_registered(tmp_path, temp_config_home):
+def test_detect_project_cwd_no_persist_when_already_registered(
+    tmp_path, temp_config_home
+):
     """
     Test that CWD-based detection does not re-persist when already registered.
     """
@@ -397,11 +389,7 @@ name = "registered"
 path = "{project_dir}"
 """)
 
-    result = detect_project(
-        cwd=project_dir,
-        projects=None,
-        project_override=None
-    )
+    result = detect_project(cwd=project_dir, projects=None, project_override=None)
 
     assert result == "registered"
 
@@ -411,7 +399,9 @@ path = "{project_dir}"
     assert len(data["projects"]) == 1
 
 
-def test_detect_project_cwd_auto_persist_failure_returns_none(tmp_path, temp_config_home, monkeypatch):
+def test_detect_project_cwd_auto_persist_failure_returns_none(
+    tmp_path, temp_config_home, monkeypatch
+):
     """
     Test that CWD auto-persist failure logs warning and returns None.
     """
@@ -423,10 +413,6 @@ def test_detect_project_cwd_auto_persist_failure_returns_none(tmp_path, temp_con
 
     monkeypatch.setattr(src.config, "persist_project_to_config", failing_persist)
 
-    result = detect_project(
-        cwd=project_dir,
-        projects=[],
-        project_override=None
-    )
+    result = detect_project(cwd=project_dir, projects=[], project_override=None)
 
     assert result is None

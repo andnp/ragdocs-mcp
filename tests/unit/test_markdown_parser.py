@@ -188,7 +188,8 @@ def test_parse_unicode_content(tmp_path):
     Ensures international content and modern markdown (emoji) are preserved.
     """
     md_file = tmp_path / "unicode.md"
-    md_file.write_text("""---
+    md_file.write_text(
+        """---
 title: Résumé 📝
 author: 中文用户
 ---
@@ -196,7 +197,9 @@ author: 中文用户
 # Hello 世界 🌍
 
 Content with émojis 🎉 and àccénts.
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     parser = MarkdownParser()
     doc = parser.parse(str(md_file))
@@ -294,7 +297,12 @@ Also covers #data-science topics.
     doc = parser.parse(str(md_file))
 
     assert doc.id == "inline_tags"
-    assert set(doc.tags) == {"data-science", "machine-learning", "programming", "python"}
+    assert set(doc.tags) == {
+        "data-science",
+        "machine-learning",
+        "programming",
+        "python",
+    }
 
 
 def test_code_block_exclusion_for_links_and_tags(tmp_path):

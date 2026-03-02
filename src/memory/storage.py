@@ -25,7 +25,8 @@ def list_memory_files(memory_path: Path) -> list[Path]:
     if not memory_path.exists():
         return []
     return [
-        f for f in memory_path.glob("*.md")
+        f
+        for f in memory_path.glob("*.md")
         if f.is_file() and not f.name.startswith(".")
     ]
 

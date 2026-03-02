@@ -134,8 +134,7 @@ def reconcile_indices(
 
 
 def build_indexed_files_map(
-    indexed_files: list[str],
-    docs_path: Path
+    indexed_files: list[str], docs_path: Path
 ) -> dict[str, str]:
     indexed_map: dict[str, str] = {}
     for abs_path in indexed_files:

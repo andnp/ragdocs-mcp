@@ -2,15 +2,35 @@ def classify_query_type(query: str):
     query_lower = query.lower().strip()
 
     factual_keywords = [
-        "what is", "define", "syntax", "example", "command",
-        "configure", "config", "setup", "install", "enable",
-        "disable", "usage",
+        "what is",
+        "define",
+        "syntax",
+        "example",
+        "command",
+        "configure",
+        "config",
+        "setup",
+        "install",
+        "enable",
+        "disable",
+        "usage",
     ]
 
     conceptual_keywords = [
-        "why", "explain", "architecture", "design", "compare",
-        "difference", "overview", "concept", "understand", "background",
-        "getting started", "how to", "steps to", "guide",
+        "why",
+        "explain",
+        "architecture",
+        "design",
+        "compare",
+        "difference",
+        "overview",
+        "concept",
+        "understand",
+        "background",
+        "getting started",
+        "how to",
+        "steps to",
+        "guide",
     ]
 
     for keyword in conceptual_keywords:

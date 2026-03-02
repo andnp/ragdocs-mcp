@@ -73,14 +73,20 @@ class HeaderBasedChunker(ChunkingStrategy):
                         level = 6
                         marker_start = child.start_byte
                     elif child.type == "inline":
-                        text = content_bytes[child.start_byte:child.end_byte].decode("utf8").strip()
+                        text = (
+                            content_bytes[child.start_byte : child.end_byte]
+                            .decode("utf8")
+                            .strip()
+                        )
 
-                headers.append(HeaderNode(
-                    level=level,
-                    text=text,
-                    start_pos=byte_to_char_pos(marker_start),
-                    end_pos=byte_to_char_pos(node.end_byte)
-                ))
+                headers.append(
+                    HeaderNode(
+                        level=level,
+                        text=text,
+                        start_pos=byte_to_char_pos(marker_start),
+                        end_pos=byte_to_char_pos(node.end_byte),
+                    )
+                )
 
             for child in node.children:
                 visit(child)
@@ -88,7 +94,9 @@ class HeaderBasedChunker(ChunkingStrategy):
         visit(root_node)
         return headers
 
-    def _create_initial_chunks(self, document: Document, headers: list[HeaderNode]) -> list[Chunk]:
+    def _create_initial_chunks(
+        self, document: Document, headers: list[HeaderNode]
+    ) -> list[Chunk]:
         chunks = []
         content = document.content
 
@@ -102,22 +110,24 @@ class HeaderBasedChunker(ChunkingStrategy):
 
             chunk_id = f"{document.id}_chunk_{i}"
 
-            chunks.append(Chunk(
-                chunk_id=chunk_id,
-                doc_id=document.id,
-                content=chunk_content,
-                metadata={
-                    **document.metadata,
-                    "tags": document.tags,
-                    "links": document.links,
-                },
-                chunk_index=i,
-                header_path=header_path,
-                start_pos=start_pos,
-                end_pos=end_pos,
-                file_path=document.file_path,
-                modified_time=document.modified_time,
-            ))
+            chunks.append(
+                Chunk(
+                    chunk_id=chunk_id,
+                    doc_id=document.id,
+                    content=chunk_content,
+                    metadata={
+                        **document.metadata,
+                        "tags": document.tags,
+                        "links": document.links,
+                    },
+                    chunk_index=i,
+                    header_path=header_path,
+                    start_pos=start_pos,
+                    end_pos=end_pos,
+                    file_path=document.file_path,
+                    modified_time=document.modified_time,
+                )
+            )
 
         return chunks
 
@@ -181,14 +191,16 @@ class HeaderBasedChunker(ChunkingStrategy):
                 result.append(chunk)
                 continue
 
-            paragraphs = re.split(r'\n\n+', chunk.content)
+            paragraphs = re.split(r"\n\n+", chunk.content)
             current_content = ""
             sub_index = 0
 
             for para in paragraphs:
                 if not current_content:
                     current_content = para
-                elif len(current_content) + len(para) + 2 <= self.config.max_chunk_chars:
+                elif (
+                    len(current_content) + len(para) + 2 <= self.config.max_chunk_chars
+                ):
                     current_content += "\n\n" + para
                 else:
                     sub_chunk = Chunk(
@@ -209,7 +221,9 @@ class HeaderBasedChunker(ChunkingStrategy):
 
             if current_content:
                 sub_chunk = Chunk(
-                    chunk_id=f"{chunk.chunk_id}_sub_{sub_index}" if sub_index > 0 else chunk.chunk_id,
+                    chunk_id=f"{chunk.chunk_id}_sub_{sub_index}"
+                    if sub_index > 0
+                    else chunk.chunk_id,
                     doc_id=chunk.doc_id,
                     content=current_content,
                     metadata=chunk.metadata,
@@ -245,11 +259,11 @@ class HeaderBasedChunker(ChunkingStrategy):
                     # Check if they're siblings (same parent chunk)
                     current_base = chunk.chunk_id.rsplit("_sub_", 1)[0]
                     prev_base = prev_chunk.chunk_id.rsplit("_sub_", 1)[0]
-                    should_overlap = (current_base == prev_base)
+                    should_overlap = current_base == prev_base
 
             if should_overlap:
                 prev_chunk = chunks[i - 1]
-                overlap_text = prev_chunk.content[-self.config.overlap_chars:]
+                overlap_text = prev_chunk.content[-self.config.overlap_chars :]
                 if overlap_text:
                     content = f"[...{overlap_text}]\n\n{content}"
 
@@ -272,25 +286,27 @@ class HeaderBasedChunker(ChunkingStrategy):
     def _chunk_plain_text(self, document: Document) -> list[Chunk]:
         content = document.content
         if len(content) <= self.config.max_chunk_chars:
-            return [Chunk(
-                chunk_id=f"{document.id}_chunk_0",
-                doc_id=document.id,
-                content=content,
-                metadata={
-                    **document.metadata,
-                    "tags": document.tags,
-                    "links": document.links,
-                },
-                chunk_index=0,
-                header_path="",
-                start_pos=0,
-                end_pos=len(content),
-                file_path=document.file_path,
-                modified_time=document.modified_time,
-            )]
+            return [
+                Chunk(
+                    chunk_id=f"{document.id}_chunk_0",
+                    doc_id=document.id,
+                    content=content,
+                    metadata={
+                        **document.metadata,
+                        "tags": document.tags,
+                        "links": document.links,
+                    },
+                    chunk_index=0,
+                    header_path="",
+                    start_pos=0,
+                    end_pos=len(content),
+                    file_path=document.file_path,
+                    modified_time=document.modified_time,
+                )
+            ]
 
         chunks = []
-        paragraphs = re.split(r'\n\n+', content)
+        paragraphs = re.split(r"\n\n+", content)
         current_content = ""
         chunk_index = 0
         start_pos = 0
@@ -302,7 +318,32 @@ class HeaderBasedChunker(ChunkingStrategy):
                 current_content += "\n\n" + para
             else:
                 end_pos = start_pos + len(current_content)
-                chunks.append(Chunk(
+                chunks.append(
+                    Chunk(
+                        chunk_id=f"{document.id}_chunk_{chunk_index}",
+                        doc_id=document.id,
+                        content=current_content,
+                        metadata={
+                            **document.metadata,
+                            "tags": document.tags,
+                            "links": document.links,
+                        },
+                        chunk_index=chunk_index,
+                        header_path="",
+                        start_pos=start_pos,
+                        end_pos=end_pos,
+                        file_path=document.file_path,
+                        modified_time=document.modified_time,
+                    )
+                )
+                start_pos = end_pos
+                current_content = para
+                chunk_index += 1
+
+        if current_content:
+            end_pos = start_pos + len(current_content)
+            chunks.append(
+                Chunk(
                     chunk_id=f"{document.id}_chunk_{chunk_index}",
                     doc_id=document.id,
                     content=current_content,
@@ -317,29 +358,8 @@ class HeaderBasedChunker(ChunkingStrategy):
                     end_pos=end_pos,
                     file_path=document.file_path,
                     modified_time=document.modified_time,
-                ))
-                start_pos = end_pos
-                current_content = para
-                chunk_index += 1
-
-        if current_content:
-            end_pos = start_pos + len(current_content)
-            chunks.append(Chunk(
-                chunk_id=f"{document.id}_chunk_{chunk_index}",
-                doc_id=document.id,
-                content=current_content,
-                metadata={
-                    **document.metadata,
-                    "tags": document.tags,
-                    "links": document.links,
-                },
-                chunk_index=chunk_index,
-                header_path="",
-                start_pos=start_pos,
-                end_pos=end_pos,
-                file_path=document.file_path,
-                modified_time=document.modified_time,
-            ))
+                )
+            )
 
         return chunks
 

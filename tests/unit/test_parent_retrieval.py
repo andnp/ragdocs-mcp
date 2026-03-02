@@ -6,7 +6,6 @@ from src.models import Document
 
 
 class TestParentChildChunking:
-
     def test_creates_parent_and_child_chunks_when_enabled(self):
         config = ChunkingConfig(
             strategy="header_based",

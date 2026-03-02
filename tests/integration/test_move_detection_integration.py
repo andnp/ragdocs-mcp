@@ -97,8 +97,12 @@ async def test_reconciliation_detects_moves(config, manager, orchestrator):
 
     # Assert: Move was detected and applied
     assert result.moved_count == 1, f"Expected 1 move, got {result.moved_count}"
-    assert result.removed_count == 0, f"Should not remove when move detected, got {result.removed_count}"
-    assert result.added_count == 0, f"Should not add when move detected, got {result.added_count}"
+    assert result.removed_count == 0, (
+        f"Should not remove when move detected, got {result.removed_count}"
+    )
+    assert result.added_count == 0, (
+        f"Should not add when move detected, got {result.added_count}"
+    )
 
     # Verify index has been updated (persist + query would require full end-to-end test)
     # For now, just verify the move was tracked
@@ -115,7 +119,9 @@ async def test_reconciliation_respects_move_threshold(config, manager):
     original = docs_path / "original.md"
     content_lines = ["# Test\n\n"]
     for i in range(20):
-        content_lines.append(f"## Section {i}\n\nContent paragraph {i} with some text.\n\n")
+        content_lines.append(
+            f"## Section {i}\n\nContent paragraph {i} with some text.\n\n"
+        )
     original.write_text("".join(content_lines))
 
     manager.index_document(str(original))
@@ -128,10 +134,14 @@ async def test_reconciliation_respects_move_threshold(config, manager):
     for i in range(20):
         if i < 10:
             # First 10 sections: modified
-            modified_lines.append(f"## Modified Section {i}\n\nCOMPLETELY NEW CONTENT {i}.\n\n")
+            modified_lines.append(
+                f"## Modified Section {i}\n\nCOMPLETELY NEW CONTENT {i}.\n\n"
+            )
         else:
             # Last 10 sections: unchanged
-            modified_lines.append(f"## Section {i}\n\nContent paragraph {i} with some text.\n\n")
+            modified_lines.append(
+                f"## Section {i}\n\nContent paragraph {i} with some text.\n\n"
+            )
     moved.write_text("".join(modified_lines))
     original.unlink()
 
@@ -142,8 +152,12 @@ async def test_reconciliation_respects_move_threshold(config, manager):
     result = manager.reconcile_indices(discovered, docs_path)
 
     # Assert: Falls back to full reindex (below 80% threshold)
-    assert result.moved_count == 0, f"Move should NOT be detected (below threshold), got {result.moved_count}"
-    assert result.removed_count == 1, f"Should remove old doc, got {result.removed_count}"
+    assert result.moved_count == 0, (
+        f"Move should NOT be detected (below threshold), got {result.moved_count}"
+    )
+    assert result.removed_count == 1, (
+        f"Should remove old doc, got {result.removed_count}"
+    )
     assert result.added_count == 1, f"Should add new doc, got {result.added_count}"
 
 
@@ -184,7 +198,9 @@ async def test_move_with_partial_edit_above_threshold(config, manager, orchestra
     result = manager.reconcile_indices(discovered, docs_path)
 
     # Assert: Move detected (90% >= 80% threshold)
-    assert result.moved_count == 1, f"Expected move detection (90% match), got moved={result.moved_count}"
+    assert result.moved_count == 1, (
+        f"Expected move detection (90% match), got moved={result.moved_count}"
+    )
     assert result.removed_count == 0
     assert result.added_count == 0
 

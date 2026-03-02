@@ -105,7 +105,9 @@ class TestDetectAndMigrateLegacyIndex:
         assert result is True
         assert not keyword.exists()
 
-    def test_resets_manifest_indexed_files_when_whoosh_removed(self, tmp_path: Path) -> None:
+    def test_resets_manifest_indexed_files_when_whoosh_removed(
+        self, tmp_path: Path
+    ) -> None:
         keyword = tmp_path / "keyword"
         _make_whoosh_dir(keyword)
         _save_manifest_with_files(tmp_path, {"doc1": "README.md", "doc2": "guide.md"})

@@ -57,12 +57,16 @@ def test_load_manifest_with_null_values_returns_none(tmp_path):
     Tests handling of incomplete/corrupted manifest data.
     """
     manifest_path = tmp_path / "index.manifest.json"
-    manifest_path.write_text(json.dumps({
-        "spec_version": None,
-        "embedding_model": "test-model",
-        "parsers": {},
-        "chunking_config": {}
-    }))
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "spec_version": None,
+                "embedding_model": "test-model",
+                "parsers": {},
+                "chunking_config": {},
+            }
+        )
+    )
 
     loaded = load_manifest(tmp_path)
 
@@ -79,12 +83,16 @@ def test_load_manifest_with_wrong_types_returns_none(tmp_path):
     This test verifies that wrong types don't crash loading.
     """
     manifest_path = tmp_path / "index.manifest.json"
-    manifest_path.write_text(json.dumps({
-        "spec_version": "1.0.0",
-        "embedding_model": "test-model",
-        "parsers": "should_be_dict_not_string",
-        "chunking_config": {}
-    }))
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "spec_version": "1.0.0",
+                "embedding_model": "test-model",
+                "parsers": "should_be_dict_not_string",
+                "chunking_config": {},
+            }
+        )
+    )
 
     loaded = load_manifest(tmp_path)
 
@@ -104,7 +112,7 @@ def test_reconcile_with_corrupted_indexed_files_handles_gracefully(docs_path):
         spec_version="1.0.0",
         embedding_model="local",
         chunking_config={},
-        indexed_files=None  # Corrupted state - should be dict
+        indexed_files=None,  # Corrupted state - should be dict
     )
 
     # Create actual files
@@ -113,9 +121,7 @@ def test_reconcile_with_corrupted_indexed_files_handles_gracefully(docs_path):
 
     # Should handle None indexed_files
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(
-        discovered,
-        manifest,
-        docs_path
+        discovered, manifest, docs_path
     )
 
     assert len(files_to_add) == 1
@@ -135,7 +141,7 @@ def test_reconcile_with_empty_strings_in_indexed_files(docs_path):
         indexed_files={
             "": "empty.md",  # Empty doc_id
             "valid": "valid.md",
-        }
+        },
     )
 
     (docs_path / "valid.md").write_text("# Valid")
@@ -143,9 +149,7 @@ def test_reconcile_with_empty_strings_in_indexed_files(docs_path):
 
     # Should handle empty doc_id gracefully
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(
-        discovered,
-        manifest,
-        docs_path
+        discovered, manifest, docs_path
     )
 
     # Empty string doc_id should be considered stale
@@ -168,7 +172,7 @@ def test_save_and_load_manifest_with_special_characters(tmp_path):
             "file-with-dashes": "file-with-dashes.md",
             "file_with_underscores": "file_with_underscores.md",
             "file.with.dots": "file.with.dots.md",
-        }
+        },
     )
 
     save_manifest(tmp_path, manifest)
@@ -216,7 +220,7 @@ def test_reconcile_with_absolute_and_relative_path_mix(docs_path, tmp_path):
         spec_version="1.0.0",
         embedding_model="local",
         chunking_config={},
-        indexed_files={"doc1": "doc1.md"}
+        indexed_files={"doc1": "doc1.md"},
     )
 
     (docs_path / "doc1.md").write_text("# Doc 1")
@@ -229,9 +233,7 @@ def test_reconcile_with_absolute_and_relative_path_mix(docs_path, tmp_path):
     ]
 
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(
-        discovered,
-        manifest,
-        docs_path
+        discovered, manifest, docs_path
     )
 
     # Should normalize paths correctly

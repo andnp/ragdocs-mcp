@@ -47,9 +47,10 @@ def manager(config, indices):
 def test_hash_store_initialized(manager, config):
     """Test that hash store is properly initialized with IndexManager."""
     assert manager._hash_store is not None
-    assert manager._hash_store._storage_path == Path(
-        config.indexing.index_path
-    ) / "chunk_hashes.json"
+    assert (
+        manager._hash_store._storage_path
+        == Path(config.indexing.index_path) / "chunk_hashes.json"
+    )
 
 
 def test_hash_store_persisted_with_indices(tmp_path, manager):

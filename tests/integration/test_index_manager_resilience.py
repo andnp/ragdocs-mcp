@@ -6,7 +6,6 @@ fails, and that startup reconciliation survives corrupted keyword index.
 """
 
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
@@ -29,11 +28,10 @@ def config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
 
@@ -60,7 +58,7 @@ def test_remove_document_continues_on_partial_failure(tmp_path, config):
         start_pos=0,
         end_pos=35,
         file_path="/tmp/test.md",
-        modified_time=datetime.now()
+        modified_time=datetime.now(),
     )
 
     vector.add_chunk(chunk)
@@ -105,7 +103,7 @@ def test_startup_reconciliation_survives_corrupted_keyword_index(tmp_path, confi
         start_pos=0,
         end_pos=45,
         file_path="/tmp/startup.md",
-        modified_time=datetime.now()
+        modified_time=datetime.now(),
     )
     vector.add_chunk(chunk)
     keyword.add_chunk(chunk)
@@ -134,7 +132,7 @@ def test_startup_reconciliation_survives_corrupted_keyword_index(tmp_path, confi
         start_pos=0,
         end_pos=40,
         file_path="/tmp/recovery.md",
-        modified_time=datetime.now()
+        modified_time=datetime.now(),
     )
     keyword.add_chunk(new_chunk)
 

@@ -15,7 +15,9 @@ class MockEmbeddingModel:
         """Generate deterministic embedding based on text hash."""
         # Use text hash to generate consistent embedding
         hash_val = hash(text) % 1000
-        embedding = np.random.RandomState(hash_val).randn(self.dimension).astype(np.float32)
+        embedding = (
+            np.random.RandomState(hash_val).randn(self.dimension).astype(np.float32)
+        )
         # Normalize
         embedding = embedding / np.linalg.norm(embedding)
         return embedding.tolist()
@@ -110,7 +112,9 @@ def test_update_commit_idempotent(indexer):
 
     # Verify only one commit exists with updated values
     conn = indexer._get_connection()
-    cursor = conn.execute("SELECT COUNT(*) as count FROM git_commits WHERE hash = ?", ("def456",))
+    cursor = conn.execute(
+        "SELECT COUNT(*) as count FROM git_commits WHERE hash = ?", ("def456",)
+    )
     row = cursor.fetchone()
     assert row["count"] == 1
 
@@ -137,14 +141,18 @@ def test_remove_commit(indexer):
 
     # Verify exists
     conn = indexer._get_connection()
-    cursor = conn.execute("SELECT COUNT(*) as count FROM git_commits WHERE hash = ?", ("ghi789",))
+    cursor = conn.execute(
+        "SELECT COUNT(*) as count FROM git_commits WHERE hash = ?", ("ghi789",)
+    )
     assert cursor.fetchone()["count"] == 1
 
     # Remove
     indexer.remove_commit("ghi789")
 
     # Verify deleted
-    cursor = conn.execute("SELECT COUNT(*) as count FROM git_commits WHERE hash = ?", ("ghi789",))
+    cursor = conn.execute(
+        "SELECT COUNT(*) as count FROM git_commits WHERE hash = ?", ("ghi789",)
+    )
     assert cursor.fetchone()["count"] == 0
 
 
@@ -386,7 +394,9 @@ def test_is_corruption_error_detection(mock_model, tmp_path):
         pass
 
     assert indexer._is_corruption_error(FakeError("database disk image is malformed"))
-    assert indexer._is_corruption_error(FakeError("SQLITE: database disk image is malformed"))
+    assert indexer._is_corruption_error(
+        FakeError("SQLITE: database disk image is malformed")
+    )
     assert indexer._is_corruption_error(FakeError("disk I/O error"))
     assert indexer._is_corruption_error(FakeError("unable to open database file"))
     assert indexer._is_corruption_error(FakeError("database is locked"))

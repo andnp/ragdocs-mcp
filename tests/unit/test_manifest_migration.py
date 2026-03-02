@@ -4,8 +4,6 @@ Unit tests for manifest version migration.
 GAP #8: Manifest version migration (Medium/Low, Score 3.33)
 """
 
-
-
 from src.indexing.manifest import (
     IndexManifest,
     load_manifest,
@@ -140,6 +138,7 @@ def test_load_old_manifest_without_indexed_files(tmp_path):
 
     # Write old format manifest (missing indexed_files)
     import json
+
     old_format = {
         "spec_version": "1.0.0",
         "embedding_model": "test-model",

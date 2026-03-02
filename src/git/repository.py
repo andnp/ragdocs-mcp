@@ -38,7 +38,9 @@ def discover_git_repositories(
         if git_dir.is_dir():
             # .git dirs are the target — only exclude if an explicit pattern
             # matches the repo root itself (not the .git contents pattern)
-            if not is_excluded_dir(str(root_path), exclude_patterns, exclude_hidden_dirs):
+            if not is_excluded_dir(
+                str(root_path), exclude_patterns, exclude_hidden_dirs
+            ):
                 git_repos.append(git_dir.resolve())
                 logger.debug(f"Found git repository: {git_dir}")
 
@@ -48,7 +50,8 @@ def discover_git_repositories(
 
         # Prune excluded directories in-place
         dirs[:] = [
-            d for d in dirs
+            d
+            for d in dirs
             if not is_excluded_dir(
                 os.path.join(root, d), exclude_patterns, exclude_hidden_dirs
             )
@@ -90,7 +93,9 @@ def get_commits_after_timestamp(
             timeout=30,
         )
 
-        commit_hashes = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        commit_hashes = [
+            line.strip() for line in result.stdout.splitlines() if line.strip()
+        ]
         logger.debug(f"Found {len(commit_hashes)} commits in {repo_path.name}")
         return commit_hashes
 
@@ -112,5 +117,9 @@ def is_git_available() -> bool:
             timeout=5,
         )
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
         return False

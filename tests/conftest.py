@@ -22,6 +22,7 @@ Use ephemeral fixtures (tmp_path) when:
 # MUST be set before any HuggingFace/sentence-transformers imports to suppress
 # progress bars that would pollute JSON output in E2E tests.
 import os
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TQDM_DISABLE"] = "1"
@@ -51,7 +52,9 @@ def isolate_xdg_data_home(tmp_path_factory, monkeypatch):
     # Preserve original HuggingFace cache location BEFORE modifying HOME
     # Default to ~/.cache/huggingface if not set
     original_home = os.environ.get("HOME", "")
-    original_hf_home = os.environ.get("HF_HOME", os.path.join(original_home, ".cache", "huggingface"))
+    original_hf_home = os.environ.get(
+        "HF_HOME", os.path.join(original_home, ".cache", "huggingface")
+    )
 
     # Create isolated temp directories for application data
     data_home = tmp_path_factory.mktemp("xdg-data-home")
@@ -240,7 +243,9 @@ def persistent_config(
 
 
 @pytest.fixture(scope="module")
-def persistent_indices_module(shared_embedding_model, tmp_path_factory) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
+def persistent_indices_module(
+    shared_embedding_model, tmp_path_factory
+) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
     """
     Create module-scoped indices that persist across tests in a module.
 
@@ -279,7 +284,9 @@ def persistent_manager_module(
 
 
 @pytest.fixture
-def persistent_indices_isolated(shared_embedding_model, tmp_path) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
+def persistent_indices_isolated(
+    shared_embedding_model, tmp_path
+) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
     """
     Create function-scoped indices that can use persistent storage.
 
@@ -369,7 +376,9 @@ def persistent_manager_with_module_config(
 
 
 @pytest.fixture
-def cleanup_persistent_indices(persistent_index_path: Path) -> Generator[None, None, None]:
+def cleanup_persistent_indices(
+    persistent_index_path: Path,
+) -> Generator[None, None, None]:
     """
     Clean up persistent indices after test execution.
 
@@ -389,6 +398,7 @@ def cleanup_persistent_indices(persistent_index_path: Path) -> Generator[None, N
     # Cleanup after test
     if persistent_index_path.exists():
         import shutil
+
         for item in persistent_index_path.iterdir():
             if item.is_dir():
                 shutil.rmtree(item)
@@ -419,6 +429,7 @@ def cleanup_persistent_docs(persistent_docs_path: Path) -> Generator[None, None,
         for item in persistent_docs_path.iterdir():
             if item.is_dir():
                 import shutil
+
                 shutil.rmtree(item)
             else:
                 item.unlink()

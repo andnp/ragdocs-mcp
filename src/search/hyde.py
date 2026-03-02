@@ -2,6 +2,8 @@ import logging
 from pathlib import Path
 from typing import Protocol
 
+from src.search.types import SearchResultDict
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,11 +14,9 @@ class VectorSearchable(Protocol):
         top_k: int,
         excluded_files: set[str] | None = None,
         docs_root: Path | None = None,
-    ) -> list[dict]:
-        ...
+    ) -> list[SearchResultDict]: ...
 
-    def get_text_embedding(self, text: str) -> list[float]:
-        ...
+    def get_text_embedding(self, text: str) -> list[float]: ...
 
 
 def search_with_hypothesis(

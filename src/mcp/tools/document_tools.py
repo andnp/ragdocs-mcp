@@ -243,7 +243,7 @@ async def _query_documents_impl(
 
     results_text = "\n\n".join(
         [
-            f"[{i+1}] {r.file_path or 'unknown'} § {r.header_path or '(no section)'} ({r.score:.2f})\n"
+            f"[{i + 1}] {r.file_path or 'unknown'} § {r.header_path or '(no section)'} ({r.score:.2f})\n"
             f"{truncate_content(r.content, 200) if query_type == 'factual' else r.content}"
             for i, r in enumerate(results)
         ]
@@ -333,7 +333,7 @@ async def handle_search_with_hypothesis(
 
     results_text = "\n\n".join(
         [
-            f"[{i+1}] {r.file_path or 'unknown'} § {r.header_path or '(no section)'} ({r.score:.2f})\n{r.content}"
+            f"[{i + 1}] {r.file_path or 'unknown'} § {r.header_path or '(no section)'} ({r.score:.2f})\n{r.content}"
             for i, r in enumerate(results)
         ]
     )
@@ -423,9 +423,7 @@ async def handle_search_git_history(
                 output_lines.append(f"- `{file_path}`")
 
             if len(commit.files_changed) > 10:
-                output_lines.append(
-                    f"- ... and {len(commit.files_changed) - 10} more"
-                )
+                output_lines.append(f"- ... and {len(commit.files_changed) - 10} more")
 
             output_lines.append("")
 

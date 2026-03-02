@@ -64,7 +64,9 @@ def test_vector_index_empty_query(vector_index, sample_document):
     assert results == []
 
 
-def test_vector_index_persist_and_load(tmp_path, sample_document, shared_embedding_model):
+def test_vector_index_persist_and_load(
+    tmp_path, sample_document, shared_embedding_model
+):
     index1 = VectorIndex(embedding_model=shared_embedding_model)
     index1.add(sample_document)
 
@@ -114,7 +116,10 @@ def test_vector_index_multiple_documents(vector_index):
 def test_vector_index_search_returns_unique_doc_ids(vector_index):
     doc = Document(
         id="long-doc",
-        content="# Chapter 1\n\n" + "Content paragraph. " * 100 + "\n\n# Chapter 2\n\n" + "More content here. " * 100,
+        content="# Chapter 1\n\n"
+        + "Content paragraph. " * 100
+        + "\n\n# Chapter 2\n\n"
+        + "More content here. " * 100,
         metadata={},
         links=[],
         tags=[],
@@ -158,7 +163,9 @@ def test_vector_index_very_long_document(vector_index):
     long_content = "# Very Long Document\n\n"
     long_content += "This is a paragraph with meaningful content. " * 250  # ~11k chars
     long_content += "\n\n## Section 2\n\n"
-    long_content += "More content here with searchable terms like embeddings and vectors. " * 100
+    long_content += (
+        "More content here with searchable terms like embeddings and vectors. " * 100
+    )
 
     doc = Document(
         id="long-doc",
@@ -222,7 +229,9 @@ Special: €, £, ¥, ©, ®, ™, §, ¶, †, ‡, …
 # ============================================================================
 
 
-def test_vector_index_chunk_with_header_path_includes_header_in_embedding(shared_embedding_model):
+def test_vector_index_chunk_with_header_path_includes_header_in_embedding(
+    shared_embedding_model,
+):
     """
     Chunks with header_path include header context in embedding.
 
@@ -257,7 +266,9 @@ def test_vector_index_chunk_with_header_path_includes_header_in_embedding(shared
     assert "doc1_chunk_0" in _extract_chunk_ids(results_header)
 
 
-def test_vector_index_chunk_without_header_path_uses_content_only(shared_embedding_model):
+def test_vector_index_chunk_without_header_path_uses_content_only(
+    shared_embedding_model,
+):
     """
     Chunks without header_path use content only for embedding.
 
@@ -413,7 +424,8 @@ def test_stale_warning_only_logged_once(shared_embedding_model, caplog):
 
         # Count warnings for our stale ID
         first_warning_count = sum(
-            1 for record in caplog.records
+            1
+            for record in caplog.records
             if stale_id in record.message and record.levelno == logging.WARNING
         )
         assert first_warning_count == 1
@@ -426,7 +438,8 @@ def test_stale_warning_only_logged_once(shared_embedding_model, caplog):
         vector_index.get_chunk_by_id(stale_id)
 
         second_warning_count = sum(
-            1 for record in caplog.records
+            1
+            for record in caplog.records
             if stale_id in record.message and record.levelno == logging.WARNING
         )
         assert second_warning_count == 0
@@ -469,8 +482,14 @@ def test_reconcile_mappings_removes_stale_refs(shared_embedding_model):
         vector_index._doc_id_to_node_ids[f"stale_doc_{i}"] = [stale_id]
 
     # Verify all stale refs exist
-    assert len([k for k in vector_index._chunk_id_to_node_id if k.startswith("stale_")]) == 5
-    assert len([k for k in vector_index._doc_id_to_node_ids if k.startswith("stale_")]) == 5
+    assert (
+        len([k for k in vector_index._chunk_id_to_node_id if k.startswith("stale_")])
+        == 5
+    )
+    assert (
+        len([k for k in vector_index._doc_id_to_node_ids if k.startswith("stale_")])
+        == 5
+    )
 
     # Run reconciliation
     removed_count = vector_index.reconcile_mappings()
@@ -479,11 +498,20 @@ def test_reconcile_mappings_removes_stale_refs(shared_embedding_model):
     assert removed_count == 5
 
     # Verify no stale refs remain
-    assert len([k for k in vector_index._chunk_id_to_node_id if k.startswith("stale_")]) == 0
-    assert len([k for k in vector_index._doc_id_to_node_ids if k.startswith("stale_")]) == 0
+    assert (
+        len([k for k in vector_index._chunk_id_to_node_id if k.startswith("stale_")])
+        == 0
+    )
+    assert (
+        len([k for k in vector_index._doc_id_to_node_ids if k.startswith("stale_")])
+        == 0
+    )
 
     # Real chunks should still be there
-    assert len([k for k in vector_index._chunk_id_to_node_id if k.startswith("real_")]) == 3
+    assert (
+        len([k for k in vector_index._chunk_id_to_node_id if k.startswith("real_")])
+        == 3
+    )
 
 
 def test_warned_set_cleared_on_load(shared_embedding_model, tmp_path):
@@ -537,7 +565,9 @@ def test_warned_set_cleared_on_load(shared_embedding_model, tmp_path):
     assert "persistent_chunk" in _extract_chunk_ids(results)
 
 
-def test_term_counts_and_vocabulary_loaded_as_ordereddict(shared_embedding_model, tmp_path):
+def test_term_counts_and_vocabulary_loaded_as_ordereddict(
+    shared_embedding_model, tmp_path
+):
     """
     Test that _term_counts and _concept_vocabulary are loaded as OrderedDict.
 
@@ -570,7 +600,9 @@ def test_term_counts_and_vocabulary_loaded_as_ordereddict(shared_embedding_model
     vector_index.register_document_terms("machine learning optimization algorithms")
 
     # Build vocabulary
-    vector_index.build_concept_vocabulary(min_term_length=3, max_terms=100, min_frequency=1)
+    vector_index.build_concept_vocabulary(
+        min_term_length=3, max_terms=100, min_frequency=1
+    )
 
     # Verify both are OrderedDict before persist
     assert isinstance(vector_index._term_counts, OrderedDict)
@@ -593,7 +625,9 @@ def test_term_counts_and_vocabulary_loaded_as_ordereddict(shared_embedding_model
     # Verify move_to_end() works (this would fail with plain dict)
     if vector_index2._term_counts:
         first_term = next(iter(vector_index2._term_counts))
-        vector_index2._term_counts.move_to_end(first_term)  # Should not raise AttributeError
+        vector_index2._term_counts.move_to_end(
+            first_term
+        )  # Should not raise AttributeError
 
     # Verify indexing still works after load (this triggered the original bug)
     chunk = Chunk(
@@ -615,7 +649,9 @@ def test_term_counts_and_vocabulary_loaded_as_ordereddict(shared_embedding_model
     assert "new_chunk_after_load" in _extract_chunk_ids(results)
 
 
-def test_ordered_dict_preserved_after_persist_and_load_regression(shared_embedding_model, tmp_path):
+def test_ordered_dict_preserved_after_persist_and_load_regression(
+    shared_embedding_model, tmp_path
+):
     """
     Regression test for bug where json.load() returned plain dict instead of OrderedDict,
     causing AttributeError: 'dict' object has no attribute 'move_to_end'.
@@ -647,13 +683,17 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(shared_embeddi
 
     # Populate term counts and vocabulary
     vector_index.register_document_terms("python asyncio programming")
-    vector_index.build_concept_vocabulary(min_term_length=3, max_terms=100, min_frequency=1)
+    vector_index.build_concept_vocabulary(
+        min_term_length=3, max_terms=100, min_frequency=1
+    )
 
     # Verify OrderedDict before persist
-    assert isinstance(vector_index._term_counts, OrderedDict), \
+    assert isinstance(vector_index._term_counts, OrderedDict), (
         "term_counts should be OrderedDict before persist"
-    assert isinstance(vector_index._concept_vocabulary, OrderedDict), \
+    )
+    assert isinstance(vector_index._concept_vocabulary, OrderedDict), (
         "concept_vocabulary should be OrderedDict before persist"
+    )
 
     # Persist to disk
     persist_path = tmp_path / "vector_ordered_dict_test"
@@ -664,10 +704,12 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(shared_embeddi
     vector_index2.load(persist_path)
 
     # CRITICAL: Verify both are OrderedDict after load (this was the bug)
-    assert isinstance(vector_index2._term_counts, OrderedDict), \
+    assert isinstance(vector_index2._term_counts, OrderedDict), (
         "term_counts should be OrderedDict after load (was plain dict, causing move_to_end AttributeError)"
-    assert isinstance(vector_index2._concept_vocabulary, OrderedDict), \
+    )
+    assert isinstance(vector_index2._concept_vocabulary, OrderedDict), (
         "concept_vocabulary should be OrderedDict after load"
+    )
 
     # Simulate create_memory flow: add new chunk after loading (this would fail with plain dict)
     chunk2 = Chunk(

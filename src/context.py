@@ -6,11 +6,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from src.config import Config, load_config, detect_project, resolve_index_path, resolve_documents_path, resolve_memory_path
+from src.config import (
+    Config,
+    load_config,
+    detect_project,
+    resolve_index_path,
+    resolve_documents_path,
+    resolve_memory_path,
+)
 from src.git.commit_indexer import CommitIndexer
-from src.indexing.discovery import discover_files as _discover_files, get_parser_suffixes
+from src.indexing.discovery import (
+    discover_files as _discover_files,
+    get_parser_suffixes,
+)
 from src.indexing.manager import IndexManager
-from src.indexing.manifest import IndexManifest, load_manifest, save_manifest, should_rebuild
+from src.indexing.manifest import (
+    IndexManifest,
+    load_manifest,
+    save_manifest,
+    should_rebuild,
+)
 from src.indexing.reconciler import build_indexed_files_map
 from src.indexing.watcher import FileWatcher
 from src.indices.graph import GraphStore
@@ -73,7 +88,9 @@ class ApplicationContext:
             config = load_config()
 
         index_path = resolve_index_path(config, detected_project)
-        documents_path = resolve_documents_path(config, detected_project, config.projects)
+        documents_path = resolve_documents_path(
+            config, detected_project, config.projects
+        )
 
         config.indexing.index_path = str(index_path)
         config.indexing.documents_path = documents_path
@@ -103,7 +120,11 @@ class ApplicationContext:
 
         manager = IndexManager(config, vector, keyword, graph)
         orchestrator = SearchOrchestrator(
-            vector, keyword, graph, config, manager,
+            vector,
+            keyword,
+            graph,
+            config,
+            manager,
             documents_path=Path(documents_path),
         )
 
@@ -197,7 +218,9 @@ class ApplicationContext:
         if needs_rebuild:
             logger.info("Index rebuild required - indexing all documents")
             if background_index:
-                self._background_index_task = asyncio.create_task(self._background_index())
+                self._background_index_task = asyncio.create_task(
+                    self._background_index()
+                )
             else:
                 self._full_index()
                 self._ready_event.set()
@@ -224,7 +247,9 @@ class ApplicationContext:
                 self._index_git_commits_initial_sync()
 
         if self.config.indexing.reconciliation_interval_seconds > 0:
-            self.reconciliation_task = asyncio.create_task(self._periodic_reconciliation())
+            self.reconciliation_task = asyncio.create_task(
+                self._periodic_reconciliation()
+            )
             logger.info(
                 f"Periodic reconciliation enabled (interval: "
                 f"{self.config.indexing.reconciliation_interval_seconds}s)"
@@ -248,10 +273,14 @@ class ApplicationContext:
         self.index_manager.persist()
 
         if self.current_manifest:
-            self.current_manifest.indexed_files = build_indexed_files_map(files_to_index, docs_path)
+            self.current_manifest.indexed_files = build_indexed_files_map(
+                files_to_index, docs_path
+            )
             save_manifest(self.index_path, self.current_manifest)
 
-        logger.info(f"Initial indexing complete: {len(files_to_index)} documents indexed")
+        logger.info(
+            f"Initial indexing complete: {len(files_to_index)} documents indexed"
+        )
 
     async def _background_index(self) -> None:
         max_retries = 3
@@ -261,7 +290,9 @@ class ApplicationContext:
             files_to_index: list[str] = []
             indexed_count = 0
             try:
-                logger.info(f"Starting background indexing (attempt {attempt + 1}/{max_retries})")
+                logger.info(
+                    f"Starting background indexing (attempt {attempt + 1}/{max_retries})"
+                )
                 files_to_index = await asyncio.to_thread(self.discover_files)
                 docs_path = Path(self.config.indexing.documents_path)
 
@@ -272,17 +303,25 @@ class ApplicationContext:
                 )
 
                 for file_path in files_to_index:
-                    await asyncio.to_thread(self.index_manager.index_document, file_path)
+                    await asyncio.to_thread(
+                        self.index_manager.index_document, file_path
+                    )
                     indexed_count += 1
                     self._index_state.indexed_count = indexed_count
 
                 await asyncio.to_thread(self.index_manager.persist)
 
                 if self.current_manifest:
-                    self.current_manifest.indexed_files = build_indexed_files_map(files_to_index, docs_path)
-                    await asyncio.to_thread(save_manifest, self.index_path, self.current_manifest)
+                    self.current_manifest.indexed_files = build_indexed_files_map(
+                        files_to_index, docs_path
+                    )
+                    await asyncio.to_thread(
+                        save_manifest, self.index_path, self.current_manifest
+                    )
 
-                logger.info(f"Background indexing complete: {len(files_to_index)} documents indexed")
+                logger.info(
+                    f"Background indexing complete: {len(files_to_index)} documents indexed"
+                )
                 self._index_state = IndexState(
                     status="ready",
                     indexed_count=indexed_count,
@@ -301,7 +340,7 @@ class ApplicationContext:
                 )
 
                 if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
+                    delay = base_delay * (2**attempt)
                     logger.warning(
                         f"Background indexing failed after {indexed_count}/{len(files_to_index)} files "
                         f"(attempt {attempt + 1}/{max_retries}): {e}. "
@@ -332,7 +371,9 @@ class ApplicationContext:
         if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
             self.index_manager.persist()
             if self.current_manifest:
-                self.current_manifest.indexed_files = build_indexed_files_map(discovered_files, docs_path)
+                self.current_manifest.indexed_files = build_indexed_files_map(
+                    discovered_files, docs_path
+                )
                 save_manifest(self.index_path, self.current_manifest)
             logger.info(
                 f"Reconciliation complete: "
@@ -361,10 +402,16 @@ class ApplicationContext:
                     docs_path,
                 )
 
-                if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
+                if (
+                    result.added_count > 0
+                    or result.removed_count > 0
+                    or result.moved_count > 0
+                ):
                     self.index_manager.persist()
                     if self.current_manifest:
-                        self.current_manifest.indexed_files = build_indexed_files_map(discovered_files, docs_path)
+                        self.current_manifest.indexed_files = build_indexed_files_map(
+                            discovered_files, docs_path
+                        )
                         save_manifest(self.index_path, self.current_manifest)
                     logger.info(
                         f"Periodic reconciliation: "
@@ -387,7 +434,9 @@ class ApplicationContext:
                 logger.info("Periodic reconciliation task cancelled")
                 raise
             except Exception as e:
-                logger.error(f"Error during periodic reconciliation: {e}", exc_info=True)
+                logger.error(
+                    f"Error during periodic reconciliation: {e}", exc_info=True
+                )
 
     async def _update_vocabulary_incremental(self) -> None:
         """Update concept vocabulary incrementally in background."""
@@ -467,10 +516,14 @@ class ApplicationContext:
         try:
             await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
         except asyncio.TimeoutError:
-            raise RuntimeError(f"Index initialization timed out after {timeout}s") from None
+            raise RuntimeError(
+                f"Index initialization timed out after {timeout}s"
+            ) from None
 
         if self._init_error is not None:
-            raise RuntimeError(f"Index initialization failed: {self._init_error}") from self._init_error
+            raise RuntimeError(
+                f"Index initialization failed: {self._init_error}"
+            ) from self._init_error
 
     async def stop(self) -> None:
         logger.info("Stopping ApplicationContext")
@@ -523,7 +576,10 @@ class ApplicationContext:
             ParallelIndexingConfig,
             index_commits_parallel_sync,
         )
-        from src.git.repository import discover_git_repositories, get_commits_after_timestamp
+        from src.git.repository import (
+            discover_git_repositories,
+            get_commits_after_timestamp,
+        )
 
         logger.info("Starting initial git commit indexing (parallel)")
 
@@ -538,15 +594,22 @@ class ApplicationContext:
         total_indexed = 0
         for repo_path in repos:
             try:
-                last_timestamp = self.commit_indexer.get_last_indexed_timestamp(str(repo_path.parent))
+                last_timestamp = self.commit_indexer.get_last_indexed_timestamp(
+                    str(repo_path.parent)
+                )
                 commit_hashes = get_commits_after_timestamp(repo_path, last_timestamp)
 
                 if last_timestamp is not None:
                     from datetime import datetime
+
                     last_indexed_dt = datetime.fromtimestamp(last_timestamp).isoformat()
-                    logger.info(f"Repository {repo_path.parent}: Last indexed at {last_indexed_dt}, found {len(commit_hashes)} new commits")
+                    logger.info(
+                        f"Repository {repo_path.parent}: Last indexed at {last_indexed_dt}, found {len(commit_hashes)} new commits"
+                    )
                 else:
-                    logger.info(f"Repository {repo_path.parent}: First-time indexing, found {len(commit_hashes)} commits")
+                    logger.info(
+                        f"Repository {repo_path.parent}: First-time indexing, found {len(commit_hashes)} commits"
+                    )
 
                 if len(commit_hashes) == 0:
                     logger.debug(f"No new commits to index for {repo_path.parent}")
@@ -562,7 +625,9 @@ class ApplicationContext:
                 total_indexed += indexed
 
             except Exception as e:
-                logger.error(f"Failed to index repository {repo_path}: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to index repository {repo_path}: {e}", exc_info=True
+                )
 
         logger.info(f"Initial git commit indexing complete: {total_indexed} commits")
 
@@ -577,10 +642,7 @@ class ApplicationContext:
         If timeout is reached, logs warning and continues without blocking.
         """
         try:
-            await asyncio.wait_for(
-                self._index_git_commits_initial(),
-                timeout=30.0
-            )
+            await asyncio.wait_for(self._index_git_commits_initial(), timeout=30.0)
         except asyncio.TimeoutError:
             logger.warning(
                 "Git commit indexing timed out after 30s. "

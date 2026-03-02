@@ -1,4 +1,5 @@
 """Tests for VectorIndex circuit breaker functionality."""
+
 import time
 from datetime import datetime
 
@@ -136,7 +137,9 @@ class TestCircuitBreakerStateTransitions:
         # Simulate failures by calling circuit breaker directly
         for i in range(3):
             try:
-                breaker.call(lambda: (_ for _ in ()).throw(RuntimeError("simulated failure")))
+                breaker.call(
+                    lambda: (_ for _ in ()).throw(RuntimeError("simulated failure"))
+                )
             except RuntimeError:
                 pass
 
@@ -204,7 +207,11 @@ class TestCircuitBreakerStatusReporting:
 
         # Add some failures
         current_time = time.time()
-        breaker._failure_timestamps = [current_time - 30, current_time - 20, current_time - 10]
+        breaker._failure_timestamps = [
+            current_time - 30,
+            current_time - 20,
+            current_time - 10,
+        ]
 
         status = vector_index.get_circuit_breaker_status()
         assert status["recent_failures"] == 3
@@ -330,7 +337,9 @@ class TestProtectedEmbed:
 class TestSearchCircuitBreaker:
     """Tests for search behavior when circuit breaker is open."""
 
-    def test_search_returns_empty_when_circuit_open(self, shared_embedding_model, tmp_path):
+    def test_search_returns_empty_when_circuit_open(
+        self, shared_embedding_model, tmp_path
+    ):
         """Search returns empty results when circuit breaker is open."""
         vector_index = VectorIndex(embedding_model=shared_embedding_model)
         vector_index._initialize_index()
@@ -393,6 +402,7 @@ class TestVocabularyCircuitBreaker:
 
         # Add some content
         from src.models import Chunk
+
         chunk = Chunk(
             chunk_id="doc1_chunk_0",
             doc_id="doc1",
@@ -424,7 +434,7 @@ class TestVocabularyCircuitBreaker:
 
         # Register some pending terms
         vector_index._pending_terms = {"alpha", "beta", "gamma"}
-        vector_index._term_counts = {"alpha": 5, "beta": 4, "gamma": 3}
+        vector_index._term_counts = {"alpha": 5, "beta": 4, "gamma": 3}  # type: ignore[reportAttributeAccessIssue]
 
         breaker = vector_index._embedding_circuit_breaker
 
@@ -470,7 +480,9 @@ class TestCircuitBreakerIntegration:
         # Simulate failures by calling circuit breaker directly
         for _ in range(3):
             try:
-                breaker.call(lambda: (_ for _ in ()).throw(RuntimeError("simulated failure")))
+                breaker.call(
+                    lambda: (_ for _ in ()).throw(RuntimeError("simulated failure"))
+                )
             except RuntimeError:
                 pass
 
@@ -479,6 +491,7 @@ class TestCircuitBreakerIntegration:
 
         # Subsequent call should fail fast
         from src.utils.circuit_breaker import CircuitBreakerOpen
+
         with pytest.raises(CircuitBreakerOpen):
             breaker.call(lambda: "should not execute")
 
@@ -498,7 +511,9 @@ class TestCircuitBreakerIntegration:
         embedding = vector_index.get_text_embedding("test query")
         assert len(embedding) > 0
 
-    def test_status_in_health_check_reflects_breaker_state(self, shared_embedding_model):
+    def test_status_in_health_check_reflects_breaker_state(
+        self, shared_embedding_model
+    ):
         """Health check status accurately reports circuit breaker state."""
         vector_index = VectorIndex(embedding_model=shared_embedding_model)
 

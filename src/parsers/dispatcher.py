@@ -28,4 +28,3 @@ def _instantiate_parser(parser_name: str, file_path: str) -> DocumentParser:
         return PlainTextParser()
     else:
         raise ValueError(f"Unknown parser: {parser_name} for {file_path}")
-

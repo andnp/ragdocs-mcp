@@ -4,7 +4,6 @@ Integration tests for multi-project overlapping paths.
 GAP #15: Multi-project overlapping paths (Medium/Low, Score 3.33)
 """
 
-
 import pytest
 
 from src.config import Config, IndexingConfig
@@ -23,7 +22,9 @@ def shared_docs_root(tmp_path):
     return root
 
 
-def test_overlapping_projects_same_root_different_subdirs(shared_docs_root, tmp_path, shared_embedding_model):
+def test_overlapping_projects_same_root_different_subdirs(
+    shared_docs_root, tmp_path, shared_embedding_model
+):
     """
     Multiple projects with overlapping root but different subdirectories.
 
@@ -44,15 +45,13 @@ def test_overlapping_projects_same_root_different_subdirs(shared_docs_root, tmp_
 
     config_a = Config(
         indexing=IndexingConfig(
-            documents_path=str(project_a_docs),
-            index_path=str(index_a)
+            documents_path=str(project_a_docs), index_path=str(index_a)
         )
     )
 
     config_b = Config(
         indexing=IndexingConfig(
-            documents_path=str(project_b_docs),
-            index_path=str(index_b)
+            documents_path=str(project_b_docs), index_path=str(index_b)
         )
     )
 
@@ -61,7 +60,7 @@ def test_overlapping_projects_same_root_different_subdirs(shared_docs_root, tmp_
         config_a,
         VectorIndex(embedding_model=shared_embedding_model),
         KeywordIndex(),
-        GraphStore()
+        GraphStore(),
     )
     manager_a.index_document(str(project_a_docs / "doc_a.md"))
     manager_a.persist()
@@ -70,7 +69,7 @@ def test_overlapping_projects_same_root_different_subdirs(shared_docs_root, tmp_
         config_b,
         VectorIndex(embedding_model=shared_embedding_model),
         KeywordIndex(),
-        GraphStore()
+        GraphStore(),
     )
     manager_b.index_document(str(project_b_docs / "doc_b.md"))
     manager_b.persist()
@@ -113,8 +112,7 @@ def test_overlapping_projects_nested_paths(tmp_path, shared_embedding_model):
     # Nested project config
     config_nested = Config(
         indexing=IndexingConfig(
-            documents_path=str(nested_project),
-            index_path=str(nested_index)
+            documents_path=str(nested_project), index_path=str(nested_index)
         )
     )
 
@@ -123,7 +121,7 @@ def test_overlapping_projects_nested_paths(tmp_path, shared_embedding_model):
         config_parent,
         VectorIndex(embedding_model=shared_embedding_model),
         KeywordIndex(),
-        GraphStore()
+        GraphStore(),
     )
     manager_parent.index_document(str(parent_project / "parent_doc.md"))
     manager_parent.persist()
@@ -133,7 +131,7 @@ def test_overlapping_projects_nested_paths(tmp_path, shared_embedding_model):
         config_nested,
         VectorIndex(embedding_model=shared_embedding_model),
         KeywordIndex(),
-        GraphStore()
+        GraphStore(),
     )
     manager_nested.index_document(str(nested_project / "nested_doc.md"))
     manager_nested.persist()
@@ -164,15 +162,13 @@ def test_overlapping_projects_symlinked_paths(tmp_path, shared_embedding_model):
 
     config_real = Config(
         indexing=IndexingConfig(
-            documents_path=str(real_docs),
-            index_path=str(index_real)
+            documents_path=str(real_docs), index_path=str(index_real)
         )
     )
 
     config_linked = Config(
         indexing=IndexingConfig(
-            documents_path=str(linked_docs),
-            index_path=str(index_linked)
+            documents_path=str(linked_docs), index_path=str(index_linked)
         )
     )
 
@@ -181,7 +177,7 @@ def test_overlapping_projects_symlinked_paths(tmp_path, shared_embedding_model):
         config_real,
         VectorIndex(embedding_model=shared_embedding_model),
         KeywordIndex(),
-        GraphStore()
+        GraphStore(),
     )
     manager_real.index_document(str(real_docs / "doc.md"))
     manager_real.persist()
@@ -190,7 +186,7 @@ def test_overlapping_projects_symlinked_paths(tmp_path, shared_embedding_model):
         config_linked,
         VectorIndex(embedding_model=shared_embedding_model),
         KeywordIndex(),
-        GraphStore()
+        GraphStore(),
     )
     manager_linked.index_document(str(linked_docs / "doc.md"))
     manager_linked.persist()
@@ -225,7 +221,7 @@ def test_overlapping_projects_manifest_isolation(tmp_path, shared_embedding_mode
         spec_version="1.0.0",
         embedding_model="model-a",
         chunking_config={},
-        indexed_files={"doc": "doc.md"}
+        indexed_files={"doc": "doc.md"},
     )
     save_manifest(index_a, manifest_a)
 
@@ -233,7 +229,7 @@ def test_overlapping_projects_manifest_isolation(tmp_path, shared_embedding_mode
         spec_version="1.0.0",
         embedding_model="model-b",
         chunking_config={},
-        indexed_files={"doc": "doc.md"}
+        indexed_files={"doc": "doc.md"},
     )
     save_manifest(index_b, manifest_b)
 
@@ -266,17 +262,11 @@ def test_overlapping_projects_same_relative_paths(tmp_path, shared_embedding_mod
     index_b = tmp_path / "indices" / "project_b"
 
     config_a = Config(
-        indexing=IndexingConfig(
-            documents_path=str(project_a),
-            index_path=str(index_a)
-        )
+        indexing=IndexingConfig(documents_path=str(project_a), index_path=str(index_a))
     )
 
     config_b = Config(
-        indexing=IndexingConfig(
-            documents_path=str(project_b),
-            index_path=str(index_b)
-        )
+        indexing=IndexingConfig(documents_path=str(project_b), index_path=str(index_b))
     )
 
     # Index both
@@ -284,7 +274,7 @@ def test_overlapping_projects_same_relative_paths(tmp_path, shared_embedding_mod
         config_a,
         VectorIndex(embedding_model=shared_embedding_model),
         KeywordIndex(),
-        GraphStore()
+        GraphStore(),
     )
     manager_a.index_document(str(project_a / "README.md"))
     manager_a.persist()
@@ -293,7 +283,7 @@ def test_overlapping_projects_same_relative_paths(tmp_path, shared_embedding_mod
         config_b,
         VectorIndex(embedding_model=shared_embedding_model),
         KeywordIndex(),
-        GraphStore()
+        GraphStore(),
     )
     manager_b.index_document(str(project_b / "README.md"))
     manager_b.persist()
@@ -303,7 +293,9 @@ def test_overlapping_projects_same_relative_paths(tmp_path, shared_embedding_mod
     assert manager_b.get_document_count() == 1
 
 
-def test_project_switch_same_index_path_fails_gracefully(tmp_path, shared_embedding_model):
+def test_project_switch_same_index_path_fails_gracefully(
+    tmp_path, shared_embedding_model
+):
     """
     Switching projects with same index path is handled.
 
@@ -322,8 +314,7 @@ def test_project_switch_same_index_path_fails_gracefully(tmp_path, shared_embedd
 
     config_a = Config(
         indexing=IndexingConfig(
-            documents_path=str(project_a),
-            index_path=str(shared_index)
+            documents_path=str(project_a), index_path=str(shared_index)
         )
     )
 
@@ -332,23 +323,20 @@ def test_project_switch_same_index_path_fails_gracefully(tmp_path, shared_embedd
         config_a,
         VectorIndex(embedding_model=shared_embedding_model),
         KeywordIndex(),
-        GraphStore()
+        GraphStore(),
     )
     manager_a.index_document(str(project_a / "doc_a.md"))
     manager_a.persist()
 
     manifest_a = IndexManifest(
-        spec_version="1.0.0",
-        embedding_model="test",
-        chunking_config={}
+        spec_version="1.0.0", embedding_model="test", chunking_config={}
     )
     save_manifest(shared_index, manifest_a)
 
     # Now use same index path for project B (should detect mismatch)
     config_b = Config(
         indexing=IndexingConfig(
-            documents_path=str(project_b),
-            index_path=str(shared_index)
+            documents_path=str(project_b), index_path=str(shared_index)
         )
     )
 
@@ -358,7 +346,7 @@ def test_project_switch_same_index_path_fails_gracefully(tmp_path, shared_embedd
         config_b,
         VectorIndex(embedding_model=shared_embedding_model),
         KeywordIndex(),
-        GraphStore()
+        GraphStore(),
     )
 
     # Should be able to load existing index

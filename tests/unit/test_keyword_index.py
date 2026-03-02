@@ -153,7 +153,12 @@ def test_keyword_index_exact_match_priority(keyword_index):
     results = keyword_index.search("BM25", top_k=5)
 
     assert "doc1" in _extract_chunk_ids(results)
-    assert _extract_chunk_ids(results).index("doc1") < _extract_chunk_ids(results).index("doc2") if "doc2" in results else True
+    assert (
+        _extract_chunk_ids(results).index("doc1")
+        < _extract_chunk_ids(results).index("doc2")
+        if "doc2" in results
+        else True
+    )
 
 
 def test_keyword_index_update_document(keyword_index):
@@ -652,12 +657,24 @@ def test_keyword_index_all_boosted_fields_together():
     keyword_index.add_chunk(chunk)
 
     # Search various fields
-    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("Kubernetes", top_k=5))
-    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("deploying applications", top_k=5))
-    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("k8s containers", top_k=5))
-    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("DevOps Team", top_k=5))
-    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("prerequisites", top_k=5))
-    assert "full_chunk_0" in _extract_chunk_ids(keyword_index.search("k8s-guide", top_k=5))
+    assert "full_chunk_0" in _extract_chunk_ids(
+        keyword_index.search("Kubernetes", top_k=5)
+    )
+    assert "full_chunk_0" in _extract_chunk_ids(
+        keyword_index.search("deploying applications", top_k=5)
+    )
+    assert "full_chunk_0" in _extract_chunk_ids(
+        keyword_index.search("k8s containers", top_k=5)
+    )
+    assert "full_chunk_0" in _extract_chunk_ids(
+        keyword_index.search("DevOps Team", top_k=5)
+    )
+    assert "full_chunk_0" in _extract_chunk_ids(
+        keyword_index.search("prerequisites", top_k=5)
+    )
+    assert "full_chunk_0" in _extract_chunk_ids(
+        keyword_index.search("k8s-guide", top_k=5)
+    )
 
 
 def test_keyword_index_schema_mismatch_triggers_rebuild(tmp_path):
@@ -669,8 +686,8 @@ def test_keyword_index_schema_mismatch_triggers_rebuild(tmp_path):
     avoid field errors.
     """
     pytest.importorskip("whoosh")
-    from whoosh import index as whoosh_index
-    from whoosh.fields import ID, TEXT, Schema
+    from whoosh import index as whoosh_index  # type: ignore[import-untyped]
+    from whoosh.fields import ID, TEXT, Schema  # type: ignore[import-untyped]
 
     old_schema = Schema(
         id=ID(stored=True, unique=True),
@@ -971,7 +988,7 @@ def test_remove_chunk_handles_corruption(tmp_path):
 def test_remove_chunk_before_initialization():
     """Test remove_chunk() when index not initialized."""
     keyword_index = KeywordIndex()
-    keyword_index._index = None
+    keyword_index._index = None  # type: ignore[reportAttributeAccessIssue]
 
     # Should log warning but not raise
     keyword_index.remove_chunk("any_chunk_id")
@@ -1184,6 +1201,7 @@ def test_keyword_index_search_recovers_from_malformed_mid_operation(tmp_path):
 
     # Patch _conn to simulate a mid-operation malformed error
     _ = index._conn()
+
     def _raise_malformed():
         raise sqlite3.DatabaseError("database disk image is malformed")
 

@@ -386,17 +386,12 @@ def app_with_corpus(tmp_path, docs_corpus, monkeypatch):
     def mock_load_config():
         return Config(
             indexing=IndexingConfig(
-                documents_path=str(docs_corpus),
-                index_path=str(index_path)
+                documents_path=str(docs_corpus), index_path=str(index_path)
             ),
             search=SearchConfig(
-                semantic_weight=0.6,
-                keyword_weight=0.4,
-                recency_bias=0.5
+                semantic_weight=0.6, keyword_weight=0.4, recency_bias=0.5
             ),
-            llm=LLMConfig(
-                embedding_model="all-MiniLM-L6-v2"
-            )
+            llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
     monkeypatch.setattr("src.context.load_config", mock_load_config)
@@ -443,8 +438,7 @@ def test_real_world_documentation_site_complete_workflow(client):
 
     # Query 1: Keyword match - "authenticate" + "API"
     query1_response = client.post(
-        "/query_documents",
-        json={"query": "how do I authenticate API requests?"}
+        "/query_documents", json={"query": "how do I authenticate API requests?"}
     )
     assert query1_response.status_code == 200
     query1_data = query1_response.json()
@@ -455,14 +449,14 @@ def test_real_world_documentation_site_complete_workflow(client):
     assert len(results1) > 0, "Expected at least 1 result for authentication query"
     # Check that results contain authentication-related content
     result_contents = [r["content"].lower() for r in results1]
-    assert any("auth" in content or "api" in content or "key" in content or "token" in content
-               for content in result_contents), \
-        "Results should contain authentication-related content"
+    assert any(
+        "auth" in content or "api" in content or "key" in content or "token" in content
+        for content in result_contents
+    ), "Results should contain authentication-related content"
 
     # Query 2: Semantic similarity - security concepts
     query2_response = client.post(
-        "/query_documents",
-        json={"query": "securing my application"}
+        "/query_documents", json={"query": "securing my application"}
     )
     assert query2_response.status_code == 200
     query2_data = query2_response.json()
@@ -471,15 +465,18 @@ def test_real_world_documentation_site_complete_workflow(client):
     assert isinstance(results2, list)
     assert len(results2) > 0, "Expected at least 1 result for security query"
     result_contents_2 = [r["content"].lower() for r in results2]
-    assert any("security" in content or "secure" in content or "https" in content
-               or "tls" in content or "credential" in content
-               for content in result_contents_2), \
-        "Results should contain security-related content"
+    assert any(
+        "security" in content
+        or "secure" in content
+        or "https" in content
+        or "tls" in content
+        or "credential" in content
+        for content in result_contents_2
+    ), "Results should contain security-related content"
 
     # Query 3: Graph traversal - deployment → auth → security via links
     query3_response = client.post(
-        "/query_documents",
-        json={"query": "deployment security"}
+        "/query_documents", json={"query": "deployment security"}
     )
     assert query3_response.status_code == 200
     query3_data = query3_response.json()
@@ -489,18 +486,26 @@ def test_real_world_documentation_site_complete_workflow(client):
     assert len(results3) > 0, "Expected at least 1 result for deployment security query"
     result_contents_3 = [r["content"].lower() for r in results3]
     # Should include deployment AND security concepts via graph traversal
-    has_deployment = any("deploy" in content or "deployment" in content or "production" in content
-                         for content in result_contents_3)
-    has_security = any("security" in content or "secure" in content or "firewall" in content
-                       or "https" in content or "credential" in content
-                       for content in result_contents_3)
+    has_deployment = any(
+        "deploy" in content or "deployment" in content or "production" in content
+        for content in result_contents_3
+    )
+    has_security = any(
+        "security" in content
+        or "secure" in content
+        or "firewall" in content
+        or "https" in content
+        or "credential" in content
+        for content in result_contents_3
+    )
     assert has_deployment, "Results should include deployment-related content"
-    assert has_security, "Results should include security-related content (graph traversal)"
+    assert has_security, (
+        "Results should include security-related content (graph traversal)"
+    )
 
     # Query 4: Multi-strategy combination - getting started with auth
     query4_response = client.post(
-        "/query_documents",
-        json={"query": "getting started with authentication"}
+        "/query_documents", json={"query": "getting started with authentication"}
     )
     assert query4_response.status_code == 200
     query4_data = query4_response.json()
@@ -510,8 +515,13 @@ def test_real_world_documentation_site_complete_workflow(client):
     assert len(results4) > 0, "Expected at least 1 result for getting started query"
     result_contents_4 = [r["content"].lower() for r in results4]
     # Should include authentication concepts (getting-started may or may not be in top results)
-    has_auth = any("auth" in content or "api" in content or "key" in content or "credential" in content
-                   for content in result_contents_4)
+    has_auth = any(
+        "auth" in content
+        or "api" in content
+        or "key" in content
+        or "credential" in content
+        for content in result_contents_4
+    )
     assert has_auth, "Results should include authentication content"
 
     # Verify results diversity - collect all result chunk_ids
@@ -521,15 +531,20 @@ def test_real_world_documentation_site_complete_workflow(client):
             all_chunk_ids.add(result["chunk_id"])
 
     # We should have retrieved diverse results across queries
-    assert len(all_chunk_ids) >= 4, \
+    assert len(all_chunk_ids) >= 4, (
         f"Expected diverse results across queries, got {len(all_chunk_ids)} unique chunks"
+    )
 
     # Verify all results are non-empty and have correct structure
     for i, results in enumerate([results1, results2, results3, results4], 1):
         for result in results:
-            assert isinstance(result, dict), f"Query {i} result is not dict: {type(result)}"
+            assert isinstance(result, dict), (
+                f"Query {i} result is not dict: {type(result)}"
+            )
             assert "chunk_id" in result, f"Query {i} result missing chunk_id"
             assert "score" in result, f"Query {i} result missing score"
             assert "content" in result, f"Query {i} result missing content"
-            assert isinstance(result["content"], str), f"Query {i} content is not string"
+            assert isinstance(result["content"], str), (
+                f"Query {i} content is not string"
+            )
             assert len(result["content"]) > 0, f"Query {i} content is empty"

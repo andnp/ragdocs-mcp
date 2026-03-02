@@ -6,7 +6,6 @@ from src.search.calibration import calibrate_results, calibrate_score
 
 
 class TestCalibrateScore:
-
     def test_threshold_gives_half(self):
         """
         Score at threshold yields ~0.5 confidence.
@@ -49,7 +48,9 @@ class TestCalibrateScore:
 
         for score in test_scores:
             calibrated = calibrate_score(score)
-            assert 0.0 <= calibrated <= 1.0, f"Score {score} → {calibrated} out of bounds"
+            assert 0.0 <= calibrated <= 1.0, (
+                f"Score {score} → {calibrated} out of bounds"
+            )
 
     def test_steepness_affects_curve(self):
         """
@@ -127,7 +128,6 @@ class TestCalibrateScore:
 
 
 class TestCalibrateResults:
-
     def test_calibrate_results_preserves_doc_ids(self):
         """
         Document IDs preserved after calibration.
@@ -164,7 +164,6 @@ class TestCalibrateResults:
 
 
 class TestCalibrationVsNormalization:
-
     def test_single_result_not_always_one(self):
         """
         Calibration: Single result can be < 1.0 if score is low.
@@ -172,7 +171,9 @@ class TestCalibrationVsNormalization:
         """
         low_score_result = [("doc1", 0.015)]
 
-        calibrated = calibrate_results(low_score_result, threshold=0.035, steepness=150.0)
+        calibrated = calibrate_results(
+            low_score_result, threshold=0.035, steepness=150.0
+        )
 
         assert calibrated[0][1] < 0.1
 
@@ -187,11 +188,13 @@ class TestCalibrationVsNormalization:
 
         single = calibrate_results([("doc1", score_value)])
 
-        multiple = calibrate_results([
-            ("doc1", score_value),
-            ("doc2", 0.05),
-            ("doc3", 0.02),
-        ])
+        multiple = calibrate_results(
+            [
+                ("doc1", score_value),
+                ("doc2", 0.05),
+                ("doc3", 0.02),
+            ]
+        )
 
         assert abs(single[0][1] - multiple[0][1]) < 0.001
 
@@ -219,12 +222,12 @@ class TestCalibrationVsNormalization:
 
         for score, level, min_conf, max_conf in test_cases:
             calibrated = calibrate_score(score, threshold=0.035, steepness=150.0)
-            assert min_conf <= calibrated <= max_conf, \
+            assert min_conf <= calibrated <= max_conf, (
                 f"Score {score} ({level}) → {calibrated:.3f}, expected [{min_conf}, {max_conf}]"
+            )
 
 
 class TestEdgeCases:
-
     def test_zero_score(self):
         """
         Verify a zero score produces a very low calibrated value.

@@ -60,11 +60,11 @@ def test_concurrent_server_startup_file_lock_mode():
 
         proc1 = multiprocessing.Process(
             target=run_server_file_lock_mode,
-            args=(index_path, ready_queue, error_queue)
+            args=(index_path, ready_queue, error_queue),
         )
         proc2 = multiprocessing.Process(
             target=run_server_file_lock_mode,
-            args=(index_path, ready_queue, error_queue)
+            args=(index_path, ready_queue, error_queue),
         )
 
         proc1.start()
@@ -80,7 +80,9 @@ def test_concurrent_server_startup_file_lock_mode():
         while not error_queue.empty():
             errors.append(error_queue.get())
 
-        assert len(errors) == 0, f"Expected both instances to start, but got errors: {errors}"
+        assert len(errors) == 0, (
+            f"Expected both instances to start, but got errors: {errors}"
+        )
 
         ready_count = 0
         while not ready_queue.empty():

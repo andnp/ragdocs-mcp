@@ -26,6 +26,7 @@ class MemorySearchStats:
     Provides visibility into where memories are being filtered out during search,
     helping diagnose issues with search quality and thresholds.
     """
+
     total_indexed: int = 0  # Total memories in the index
     vector_candidates: int = 0  # Results from vector search
     keyword_candidates: int = 0  # Results from keyword search

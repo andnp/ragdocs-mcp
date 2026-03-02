@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 class ValidationError(ValueError):
     """Raised when MCP tool arguments fail validation."""
+
     pass
 
 
@@ -34,7 +35,9 @@ def validate_query(arguments: dict, param_name: str = "query") -> str:
         raise ValidationError(f"{param_name} parameter is required")
 
     if not isinstance(query, str):
-        raise ValidationError(f"{param_name} must be a string, got {type(query).__name__}")
+        raise ValidationError(
+            f"{param_name} must be a string, got {type(query).__name__}"
+        )
 
     query = query.strip()
     if not query:
@@ -71,7 +74,9 @@ def validate_integer_range(
         return default
 
     if not isinstance(value, int) or isinstance(value, bool):
-        raise ValidationError(f"{param_name} must be an integer, got {type(value).__name__}")
+        raise ValidationError(
+            f"{param_name} must be an integer, got {type(value).__name__}"
+        )
 
     if not (min_val <= value <= max_val):
         raise ValidationError(
@@ -109,7 +114,9 @@ def validate_float_range(
         return default
 
     if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise ValidationError(f"{param_name} must be a number, got {type(value).__name__}")
+        raise ValidationError(
+            f"{param_name} must be a number, got {type(value).__name__}"
+        )
 
     float_value = float(value)
 
@@ -148,7 +155,9 @@ def validate_string_list(
         return default
 
     if not isinstance(value, list):
-        raise ValidationError(f"{param_name} must be a list, got {type(value).__name__}")
+        raise ValidationError(
+            f"{param_name} must be a list, got {type(value).__name__}"
+        )
 
     for i, item in enumerate(value):
         if not isinstance(item, str):
@@ -185,7 +194,9 @@ def validate_enum(
         return default
 
     if not isinstance(value, str):
-        raise ValidationError(f"{param_name} must be a string, got {type(value).__name__}")
+        raise ValidationError(
+            f"{param_name} must be a string, got {type(value).__name__}"
+        )
 
     if value not in allowed_values:
         raise ValidationError(
@@ -219,7 +230,9 @@ def validate_boolean(
         return default
 
     if not isinstance(value, bool):
-        raise ValidationError(f"{param_name} must be a boolean, got {type(value).__name__}")
+        raise ValidationError(
+            f"{param_name} must be a boolean, got {type(value).__name__}"
+        )
 
     return value
 
@@ -248,9 +261,13 @@ def validate_timestamp(
         return default
 
     if not isinstance(value, int) or isinstance(value, bool):
-        raise ValidationError(f"{param_name} must be an integer, got {type(value).__name__}")
+        raise ValidationError(
+            f"{param_name} must be an integer, got {type(value).__name__}"
+        )
 
     if value < 0:
-        raise ValidationError(f"{param_name} must be a positive Unix timestamp, got {value}")
+        raise ValidationError(
+            f"{param_name} must be a positive Unix timestamp, got {value}"
+        )
 
     return value

@@ -1,4 +1,3 @@
-
 from src.models import CompressionStats
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
 
@@ -99,7 +98,9 @@ class TestSearchPipelineThresholdFilter:
         def get_content(chunk_id: str):
             return content_map.get(chunk_id, "")
 
-        results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
+        results, stats = pipeline.process(
+            fused, get_embedding, get_content, "query", top_n=10
+        )
 
         assert len(results) >= 2
         chunk_ids = [r[0] for r in results]
@@ -126,7 +127,9 @@ class TestSearchPipelineThresholdFilter:
         def get_content(chunk_id: str):
             return f"unique content {chunk_id}"
 
-        results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
+        results, stats = pipeline.process(
+            fused, get_embedding, get_content, "query", top_n=10
+        )
 
         # All pass threshold=0.0
         assert stats.after_threshold == 3
@@ -153,7 +156,9 @@ class TestSearchPipelineDocLimit:
         def get_content(chunk_id: str):
             return f"unique content {chunk_id}"
 
-        results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
+        results, stats = pipeline.process(
+            fused, get_embedding, get_content, "query", top_n=10
+        )
 
         doc_a_chunks = [r for r in results if r[0].startswith("doc_a")]
         assert len(doc_a_chunks) <= 2
@@ -179,7 +184,9 @@ class TestSearchPipelineDocLimit:
         def get_content(chunk_id: str):
             return _diverse_content(chunk_id)
 
-        results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
+        results, stats = pipeline.process(
+            fused, get_embedding, get_content, "query", top_n=10
+        )
 
         assert len(results) == 3
 
@@ -211,7 +218,9 @@ class TestSearchPipelineDeduplication:
             ("chunk_c", 0.7),
         ]
 
-        results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
+        results, stats = pipeline.process(
+            fused, get_embedding, get_content, "query", top_n=10
+        )
 
         assert len(results) == 2
         chunk_ids = [r[0] for r in results]
@@ -240,7 +249,9 @@ class TestSearchPipelineTopN:
         def get_content(chunk_id: str):
             return f"unique content {chunk_id}"
 
-        results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=3)
+        results, stats = pipeline.process(
+            fused, get_embedding, get_content, "query", top_n=3
+        )
 
         assert len(results) <= 3
         chunk_ids = [r[0] for r in results]
@@ -276,7 +287,9 @@ class TestSearchPipelineCompressionStats:
             ("doc_b_chunk_0", 0.1),
         ]
 
-        results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
+        results, stats = pipeline.process(
+            fused, get_embedding, get_content, "query", top_n=10
+        )
 
         assert isinstance(stats, CompressionStats)
         assert stats.original_count == 4
@@ -306,7 +319,9 @@ class TestSearchPipelineCompressionStats:
         def get_content(chunk_id: str):
             return _diverse_content(chunk_id)
 
-        results, stats = pipeline.process(fused, get_embedding, get_content, "query", top_n=10)
+        results, stats = pipeline.process(
+            fused, get_embedding, get_content, "query", top_n=10
+        )
 
         assert len(results) == 2, "Both results should survive pipeline"
         # Scores are clamped to [0, 1] range

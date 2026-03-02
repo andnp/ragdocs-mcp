@@ -15,21 +15,16 @@ def manager(tmp_path, shared_embedding_model):
 
     config = Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_dir),
-            index_path=str(tmp_path / ".index_data")
+            documents_path=str(docs_dir), index_path=str(tmp_path / ".index_data")
         ),
-        search=SearchConfig(
-            semantic_weight=1.0,
-            keyword_weight=1.0,
-            recency_bias=0.5
-        ),
+        search=SearchConfig(semantic_weight=1.0, keyword_weight=1.0, recency_bias=0.5),
         llm=LLMConfig(embedding_model="local"),
         chunking=ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=200,
             max_chunk_chars=1500,
-            overlap_chars=100
-        )
+            overlap_chars=100,
+        ),
     )
 
     vector = VectorIndex(embedding_model=shared_embedding_model)

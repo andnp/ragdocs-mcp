@@ -24,9 +24,7 @@ def test_e2e_arbitrary_path_persists_and_loads(temp_home):
     project_dir.mkdir(parents=True)
 
     result = detect_project(
-        cwd=Path("/somewhere/else"),
-        projects=None,
-        project_override=str(project_dir)
+        cwd=Path("/somewhere/else"), projects=None, project_override=str(project_dir)
     )
 
     assert result == "my-awesome-project"
@@ -42,7 +40,7 @@ def test_e2e_arbitrary_path_persists_and_loads(temp_home):
     result_again = detect_project(
         cwd=Path("/somewhere/else"),
         projects=None,
-        project_override="my-awesome-project"
+        project_override="my-awesome-project",
     )
 
     assert result_again == "my-awesome-project"
@@ -62,23 +60,17 @@ def test_e2e_multiple_arbitrary_paths_with_conflicts(temp_home):
     project_dir_3.mkdir(parents=True)
 
     result_1 = detect_project(
-        cwd=Path("/somewhere"),
-        projects=None,
-        project_override=str(project_dir_1)
+        cwd=Path("/somewhere"), projects=None, project_override=str(project_dir_1)
     )
     assert result_1 == "frontend"
 
     result_2 = detect_project(
-        cwd=Path("/somewhere"),
-        projects=None,
-        project_override=str(project_dir_2)
+        cwd=Path("/somewhere"), projects=None, project_override=str(project_dir_2)
     )
     assert result_2 == "frontend-2"
 
     result_3 = detect_project(
-        cwd=Path("/somewhere"),
-        projects=None,
-        project_override=str(project_dir_3)
+        cwd=Path("/somewhere"), projects=None, project_override=str(project_dir_3)
     )
     assert result_3 == "frontend-3"
 
@@ -103,23 +95,17 @@ def test_e2e_persisted_project_available_in_next_detect(temp_home):
     subdirectory.mkdir(parents=True)
 
     result = detect_project(
-        cwd=Path("/somewhere"),
-        projects=None,
-        project_override=str(project_dir)
+        cwd=Path("/somewhere"), projects=None, project_override=str(project_dir)
     )
     assert result == "test-project"
 
     result_by_cwd = detect_project(
-        cwd=subdirectory,
-        projects=None,
-        project_override=None
+        cwd=subdirectory, projects=None, project_override=None
     )
     assert result_by_cwd == "test-project"
 
     result_by_name = detect_project(
-        cwd=Path("/other/location"),
-        projects=None,
-        project_override="test-project"
+        cwd=Path("/other/location"), projects=None, project_override="test-project"
     )
     assert result_by_name == "test-project"
 
@@ -144,11 +130,15 @@ keyword_weight = 0.5
 
     project_dir_1 = temp_home / "project-1"
     project_dir_1.mkdir()
-    detect_project(cwd=Path("/elsewhere"), projects=None, project_override=str(project_dir_1))
+    detect_project(
+        cwd=Path("/elsewhere"), projects=None, project_override=str(project_dir_1)
+    )
 
     project_dir_2 = temp_home / "project-2"
     project_dir_2.mkdir()
-    detect_project(cwd=Path("/elsewhere"), projects=None, project_override=str(project_dir_2))
+    detect_project(
+        cwd=Path("/elsewhere"), projects=None, project_override=str(project_dir_2)
+    )
 
     with open(config_path, "rb") as f:
         data = tomllib.load(f)
@@ -217,11 +207,7 @@ def test_e2e_mcp_cwd_auto_registration(temp_home):
     project_dir = temp_home / "mcp-auto-project"
     project_dir.mkdir()
 
-    result = detect_project(
-        cwd=project_dir,
-        projects=None,
-        project_override=None
-    )
+    result = detect_project(cwd=project_dir, projects=None, project_override=None)
 
     assert result == "mcp-auto-project"
     assert config_path.exists()

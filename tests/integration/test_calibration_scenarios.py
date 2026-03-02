@@ -24,16 +24,11 @@ def config(tmp_path):
     docs_path.mkdir()
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices")
+            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
         ),
-        search=SearchConfig(
-            semantic_weight=1.0,
-            keyword_weight=1.0,
-            recency_bias=0.5
-        ),
+        search=SearchConfig(semantic_weight=1.0, keyword_weight=1.0, recency_bias=0.5),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
-        chunking=ChunkingConfig()
+        chunking=ChunkingConfig(),
     )
 
 
@@ -137,9 +132,7 @@ async def test_good_match_returns_high_confidence(config, manager, orchestrator)
 
     # Precise query matching doc1 (api_reference.md)
     results, _, _ = await orchestrator.query(
-        "authentication API reference documentation",
-        top_k=10,
-        top_n=10
+        "authentication API reference documentation", top_k=10, top_n=10
     )
 
     assert len(results) > 0
@@ -166,9 +159,7 @@ async def test_weak_query_returns_varied_confidence(config, manager, orchestrato
 
     # Vague query with limited semantic signal
     results, _, _ = await orchestrator.query(
-        "general information overview",
-        top_k=10,
-        top_n=10
+        "general information overview", top_k=10, top_n=10
     )
 
     # Results should span a range of confidence levels
@@ -196,9 +187,7 @@ async def test_nonsense_query_still_returns_results(config, manager, orchestrato
 
     # Query unrelated to corpus
     results, _, _ = await orchestrator.query(
-        "quantum blockchain cryptocurrency mining",
-        top_k=10,
-        top_n=10
+        "quantum blockchain cryptocurrency mining", top_k=10, top_n=10
     )
 
     if results:
@@ -222,28 +211,25 @@ async def test_score_filtering_in_pipeline(config, manager, orchestrator):
 
     # Query without filtering
     results_all, _, _ = await orchestrator.query(
-        "security authentication",
-        top_k=10,
-        top_n=10
+        "security authentication", top_k=10, top_n=10
     )
 
     # Get fewer results with higher top_n threshold
     # (as a proxy for confidence filtering)
     results_fewer, _, _ = await orchestrator.query(
-        "security authentication",
-        top_k=10,
-        top_n=3
+        "security authentication", top_k=10, top_n=3
     )
 
     # Verify top_n limiting behavior
     assert len(results_fewer) <= 3, "top_n should limit result count"
-    assert len(results_fewer) <= len(results_all), \
-        "Fewer results with lower top_n"
+    assert len(results_fewer) <= len(results_all), "Fewer results with lower top_n"
 
     # Verify all scores are calibrated
     for results in [results_all, results_fewer]:
         for result in results:
             assert 0.0 <= result.score <= 1.0
+
+
 @pytest.mark.asyncio
 async def test_score_consistency_across_queries(config, manager, orchestrator):
     """
@@ -256,15 +242,11 @@ async def test_score_consistency_across_queries(config, manager, orchestrator):
 
     # Run same query twice
     results1, _, _ = await orchestrator.query(
-        "API authentication documentation",
-        top_k=10,
-        top_n=5
+        "API authentication documentation", top_k=10, top_n=5
     )
 
     results2, _, _ = await orchestrator.query(
-        "API authentication documentation",
-        top_k=10,
-        top_n=5
+        "API authentication documentation", top_k=10, top_n=5
     )
 
     # Results should be identical (deterministic)
@@ -272,8 +254,9 @@ async def test_score_consistency_across_queries(config, manager, orchestrator):
 
     for r1, r2 in zip(results1, results2):
         assert r1.chunk_id == r2.chunk_id
-        assert abs(r1.score - r2.score) < 0.001, \
+        assert abs(r1.score - r2.score) < 0.001, (
             f"Scores should be consistent: {r1.score} vs {r2.score}"
+        )
 
 
 @pytest.mark.asyncio
@@ -292,27 +275,25 @@ async def test_confidence_levels_interpretation(config, manager, orchestrator):
 
     # High-precision query for excellent match
     results_excellent, _, _ = await orchestrator.query(
-        "API reference authentication",
-        top_k=5,
-        top_n=5
+        "API reference authentication", top_k=5, top_n=5
     )
 
     # Moderate query for good match
     results_good, _, _ = await orchestrator.query(
-        "authentication security",
-        top_k=5,
-        top_n=5
+        "authentication security", top_k=5, top_n=5
     )
 
     # Validate score ranges
     if results_excellent:
         top_excellent = results_excellent[0].score
         # Precise query should yield excellent or good confidence
-        assert top_excellent > 0.7, \
+        assert top_excellent > 0.7, (
             f"Precise query should have >0.7 confidence, got {top_excellent}"
+        )
 
     if results_good:
         top_good = results_good[0].score
         # Moderate query should yield good or moderate confidence
-        assert top_good > 0.5, \
+        assert top_good > 0.5, (
             f"Moderate query should have >0.5 confidence, got {top_good}"
+        )

@@ -272,14 +272,16 @@ class TestComputeDynamicWeightsNormalization:
         scores = [0.1, 0.5, 0.9]
 
         v_w_equal, k_w_equal = compute_dynamic_weights(
-            scores, scores,
+            scores,
+            scores,
             base_vector_weight=1.0,
             base_keyword_weight=1.0,
             variance_threshold=0.01,
         )
 
         v_w_unequal, k_w_unequal = compute_dynamic_weights(
-            scores, scores,
+            scores,
+            scores,
             base_vector_weight=2.0,
             base_keyword_weight=1.0,
             variance_threshold=0.01,

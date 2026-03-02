@@ -48,7 +48,9 @@ async def test_parallel_indexing_with_manager(tmp_path, shared_embedding_model):
         manager.index_document(str(doc_path))
     duration = time.time() - start
 
-    assert duration < 15, f"Indexing took {duration:.2f}s, expected <15s with parallelism"
+    assert duration < 15, (
+        f"Indexing took {duration:.2f}s, expected <15s with parallelism"
+    )
 
     assert manager.get_document_count() == 20
 
@@ -126,6 +128,7 @@ async def test_parallel_vs_sequential_throughput(tmp_path, shared_embedding_mode
     # Log actual speedup for observability (not an assertion)
     if speedup < 1.2:
         import logging
+
         logging.info(
             f"Low speedup observed: {speedup:.2f}x. "
             f"This is expected with small documents or high system load."
@@ -192,7 +195,9 @@ async def test_parallel_indexing_correctness(tmp_path, shared_embedding_model):
     seq_ids = {r["chunk_id"] for r in results_seq}
     par_ids = {r["chunk_id"] for r in results_par}
 
-    assert seq_ids == par_ids, "Parallel and sequential indexing produced different results"
+    assert seq_ids == par_ids, (
+        "Parallel and sequential indexing produced different results"
+    )
 
 
 @pytest.mark.asyncio
@@ -239,7 +244,9 @@ async def test_parallel_indexing_persistence(tmp_path, shared_embedding_model):
     )
     keyword_reloaded = KeywordIndex()
     graph_reloaded = GraphStore()
-    manager_reloaded = IndexManager(config, vector_reloaded, keyword_reloaded, graph_reloaded)
+    manager_reloaded = IndexManager(
+        config, vector_reloaded, keyword_reloaded, graph_reloaded
+    )
 
     manager_reloaded.load()
 

@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 class MCPServer:
-    def __init__(self, project_override: str | None = None, ctx: ApplicationContext | None = None):
+    def __init__(
+        self, project_override: str | None = None, ctx: ApplicationContext | None = None
+    ):
         self.ctx: ApplicationContext | None = ctx
         self.project_override = project_override
         self.server = Server("mcp-markdown-ragdocs")

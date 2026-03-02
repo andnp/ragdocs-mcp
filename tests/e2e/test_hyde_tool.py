@@ -14,13 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.config import (
-    ChunkingConfig,
-    Config,
-    IndexingConfig,
-    LLMConfig,
-    SearchConfig
-)
+from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
 from src.context import ApplicationContext
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
@@ -107,15 +101,11 @@ def _create_config(tmp_path, test_docs_dir) -> Config:
 
     return Config(
         indexing=IndexingConfig(
-            documents_path=str(test_docs_dir),
-            index_path=str(index_path)
+            documents_path=str(test_docs_dir), index_path=str(index_path)
         ),
-        search=SearchConfig(
-            semantic_weight=1.0,
-            keyword_weight=1.0
-        ),
+        search=SearchConfig(semantic_weight=1.0, keyword_weight=1.0),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
 
 
@@ -189,10 +179,13 @@ class TestHyDEToolHandler:
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        result = await handler(hctx, {
-            "hypothesis": "Documentation about configuration",
-            "top_n": 3,
-        })
+        result = await handler(
+            hctx,
+            {
+                "hypothesis": "Documentation about configuration",
+                "top_n": 3,
+            },
+        )
 
         assert isinstance(result, list)
         assert len(result) > 0
@@ -218,13 +211,16 @@ class TestHyDEToolInvocation:
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        result = await handler(hctx, {
-            "hypothesis": (
-                "To add a new MCP tool, I need to modify the list_tools method "
-                "and add a handler in call_tool."
-            ),
-            "top_n": 5,
-        })
+        result = await handler(
+            hctx,
+            {
+                "hypothesis": (
+                    "To add a new MCP tool, I need to modify the list_tools method "
+                    "and add a handler in call_tool."
+                ),
+                "top_n": 5,
+            },
+        )
 
         assert len(result) == 1
         assert result[0].type == "text"
@@ -243,19 +239,22 @@ class TestHyDEToolInvocation:
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        result = await handler(hctx, {
-            "hypothesis": (
-                "The MCP server has a method called list_tools that returns Tool objects. "
-                "Each tool has a name, description, and inputSchema."
-            ),
-            "top_n": 3,
-        })
+        result = await handler(
+            hctx,
+            {
+                "hypothesis": (
+                    "The MCP server has a method called list_tools that returns Tool objects. "
+                    "Each tool has a name, description, and inputSchema."
+                ),
+                "top_n": 3,
+            },
+        )
 
         text = result[0].text
         # Verify we get results from one of our test files
-        assert any(
-            doc in text for doc in ["mcp_tools.md", "search.md", "config.md"]
-        ), f"Expected at least one test doc in results: {text}"
+        assert any(doc in text for doc in ["mcp_tools.md", "search.md", "config.md"]), (
+            f"Expected at least one test doc in results: {text}"
+        )
 
     @pytest.mark.asyncio
     async def test_invoke_with_top_n_limit(self, tmp_path, test_docs_dir):
@@ -267,15 +266,21 @@ class TestHyDEToolInvocation:
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        result_1 = await handler(hctx, {
-            "hypothesis": "Search documentation",
-            "top_n": 1,
-        })
+        result_1 = await handler(
+            hctx,
+            {
+                "hypothesis": "Search documentation",
+                "top_n": 1,
+            },
+        )
 
-        result_5 = await handler(hctx, {
-            "hypothesis": "Search documentation",
-            "top_n": 5,
-        })
+        result_5 = await handler(
+            hctx,
+            {
+                "hypothesis": "Search documentation",
+                "top_n": 5,
+            },
+        )
 
         count_1 = result_1[0].text.count("[1]")
         count_5 = result_5[0].text.count("[1]")
@@ -293,11 +298,14 @@ class TestHyDEToolInvocation:
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        result = await handler(hctx, {
-            "hypothesis": "Configuration and search settings",
-            "top_n": 5,
-            "excluded_files": ["config.md"],
-        })
+        result = await handler(
+            hctx,
+            {
+                "hypothesis": "Configuration and search settings",
+                "top_n": 5,
+                "excluded_files": ["config.md"],
+            },
+        )
 
         text = result[0].text
         matches = [
@@ -326,9 +334,12 @@ class TestHyDEParameterValidation:
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        result = await handler(hctx, {
-            "top_n": 5,
-        })
+        result = await handler(
+            hctx,
+            {
+                "top_n": 5,
+            },
+        )
 
         assert len(result) == 1
         assert "Validation error" in result[0].text
@@ -344,10 +355,13 @@ class TestHyDEParameterValidation:
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        result = await handler(hctx, {
-            "hypothesis": "",
-            "top_n": 5,
-        })
+        result = await handler(
+            hctx,
+            {
+                "hypothesis": "",
+                "top_n": 5,
+            },
+        )
 
         assert len(result) == 1
         assert "Validation error" in result[0].text
@@ -363,18 +377,24 @@ class TestHyDEParameterValidation:
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        result = await handler(hctx, {
-            "hypothesis": "test",
-            "top_n": 0,
-        })
+        result = await handler(
+            hctx,
+            {
+                "hypothesis": "test",
+                "top_n": 0,
+            },
+        )
         assert len(result) == 1
         assert "Validation error" in result[0].text
         assert "top_n" in result[0].text.lower()
 
-        result = await handler(hctx, {
-            "hypothesis": "test",
-            "top_n": 1000,
-        })
+        result = await handler(
+            hctx,
+            {
+                "hypothesis": "test",
+                "top_n": 1000,
+            },
+        )
         assert len(result) == 1
         assert "Validation error" in result[0].text
         assert "top_n" in result[0].text.lower()
@@ -402,19 +422,22 @@ class TestHyDEIntegrationWithSearchInfrastructure:
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        result = await handler(hctx, {
-            "hypothesis": (
-                "Documentation about adding new tools to the Model Context Protocol server "
-                "including the Tool class and schema definitions."
-            ),
-            "top_n": 3,
-        })
+        result = await handler(
+            hctx,
+            {
+                "hypothesis": (
+                    "Documentation about adding new tools to the Model Context Protocol server "
+                    "including the Tool class and schema definitions."
+                ),
+                "top_n": 3,
+            },
+        )
 
         text = result[0].text
         # Verify search returned results from our test docs
-        assert any(
-            doc in text.lower() for doc in ["mcp_tools", "search", "config"]
-        ), f"Expected at least one test doc in results: {text}"
+        assert any(doc in text.lower() for doc in ["mcp_tools", "search", "config"]), (
+            f"Expected at least one test doc in results: {text}"
+        )
 
     @pytest.mark.asyncio
     async def test_hyde_returns_score_in_results(self, tmp_path, test_docs_dir):
@@ -426,10 +449,13 @@ class TestHyDEIntegrationWithSearchInfrastructure:
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
 
-        result = await handler(hctx, {
-            "hypothesis": "Search system documentation",
-            "top_n": 3,
-        })
+        result = await handler(
+            hctx,
+            {
+                "hypothesis": "Search system documentation",
+                "top_n": 3,
+            },
+        )
 
         text = result[0].text
         assert "(" in text and ")" in text

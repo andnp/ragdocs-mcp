@@ -217,11 +217,11 @@ async def test_mcp_git_search_with_glob_filter(test_repo_with_history, tmp_path)
         if len(response.results) > 0:
             for result in response.results:
                 matching_files = [
-                    f for f in result.files_changed
-                    if Path(f).match("src/**/*.py")
+                    f for f in result.files_changed if Path(f).match("src/**/*.py")
                 ]
-                assert len(matching_files) > 0, \
+                assert len(matching_files) > 0, (
                     f"Result {result.hash} should have Python files in src/, got {result.files_changed}"
+                )
 
             # Verify documentation commit is excluded
             doc_commit = commit_hashes[3]  # docs/api.md commit
@@ -370,7 +370,9 @@ async def test_mcp_git_search_real_project_history():
 
 
 @pytest.mark.asyncio
-async def test_mcp_git_search_response_format_for_display(test_repo_with_history, tmp_path):
+async def test_mcp_git_search_response_format_for_display(
+    test_repo_with_history, tmp_path
+):
     """
     Test that git search response can be formatted for MCP text display.
 
@@ -414,29 +416,35 @@ async def test_mcp_git_search_response_format_for_display(test_repo_with_history
                 commit.timestamp, timezone.utc
             ).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-            output_lines.extend([
-                f"## {i}. {commit.title}",
-                "",
-                f"**Commit:** `{commit.hash[:8]}`",
-                f"**Author:** {commit.author}",
-                f"**Date:** {commit_date}",
-                f"**Score:** {commit.score:.3f}",
-                "",
-            ])
+            output_lines.extend(
+                [
+                    f"## {i}. {commit.title}",
+                    "",
+                    f"**Commit:** `{commit.hash[:8]}`",
+                    f"**Author:** {commit.author}",
+                    f"**Date:** {commit_date}",
+                    f"**Score:** {commit.score:.3f}",
+                    "",
+                ]
+            )
 
             if commit.message:
-                output_lines.extend([
-                    "### Message",
-                    "",
-                    commit.message,
-                    "",
-                ])
+                output_lines.extend(
+                    [
+                        "### Message",
+                        "",
+                        commit.message,
+                        "",
+                    ]
+                )
 
             if commit.files_changed:
-                output_lines.extend([
-                    f"### Files Changed ({len(commit.files_changed)})",
-                    "",
-                ])
+                output_lines.extend(
+                    [
+                        f"### Files Changed ({len(commit.files_changed)})",
+                        "",
+                    ]
+                )
 
                 for file_path in commit.files_changed[:10]:
                     output_lines.append(f"- `{file_path}`")

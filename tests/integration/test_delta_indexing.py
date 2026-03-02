@@ -94,7 +94,9 @@ Content for section 3 with enough text to make a chunk.
 
     # 5. Verify: document count unchanged (delta didn't add/remove documents)
     final_count = len(manager.vector._doc_id_to_node_ids)
-    assert final_count == initial_count, f"Expected {initial_count} documents, got {final_count}"
+    assert final_count == initial_count, (
+        f"Expected {initial_count} documents, got {final_count}"
+    )
 
     # 6. Verify: query results correct
     results = manager.keyword.search("MODIFIED")
@@ -144,7 +146,9 @@ Some test content here.
 
     # 5. Verify: hashes unchanged (no chunks were re-indexed)
     final_hashes = dict(manager._hash_store._hashes)
-    assert final_hashes == initial_hashes, "Hashes should not change when content unchanged"
+    assert final_hashes == initial_hashes, (
+        "Hashes should not change when content unchanged"
+    )
 
 
 def test_delta_indexing_full_reindex_threshold(tmp_path, shared_embedding_model):
@@ -262,7 +266,9 @@ Rust is great for systems programming and performance.
     # Old content should be removed or heavily de-weighted
     if results_python:
         # If any results, they should be very low relevance
-        assert all(r["score"] < 0.5 for r in results_python), "Python content should be removed/de-weighted"
+        assert all(r["score"] < 0.5 for r in results_python), (
+            "Python content should be removed/de-weighted"
+        )
 
 
 @pytest.mark.asyncio
@@ -330,7 +336,9 @@ Version 2 of section 2.
     results_v1 = manager.keyword.search("Version 1")
     # Version 1 content should be removed
     if results_v1:
-        assert all(r["score"] < 0.3 for r in results_v1), "Old content should be de-weighted"
+        assert all(r["score"] < 0.3 for r in results_v1), (
+            "Old content should be de-weighted"
+        )
 
 
 def test_delta_indexing_new_section_added(tmp_path, manager):
@@ -371,7 +379,9 @@ New section content added here.
     # 4. Verify: chunk count increased by 1
     final_count = len(manager.vector._doc_id_to_node_ids)
     # Note: We're counting documents, not chunks, so it stays the same
-    assert final_count == initial_count, f"Expected {initial_count} documents, got {final_count}"
+    assert final_count == initial_count, (
+        f"Expected {initial_count} documents, got {final_count}"
+    )
 
     # 5. Verify: query finds content from new section
     results = manager.keyword.search("New section")
@@ -419,14 +429,13 @@ Content 3.
 
     # 4. Verify: document count unchanged (still 1 document)
     final_count = len(manager.vector._doc_id_to_node_ids)
-    assert final_count == initial_count, f"Expected {initial_count} documents, got {final_count}"
+    assert final_count == initial_count, (
+        f"Expected {initial_count} documents, got {final_count}"
+    )
 
     # 5. Verify: query for section 2 content returns no results
     results_after = manager.keyword.search("removed")
     assert len(results_after) == 0, "Section 2 content should be removed"
-
-
-
 
 
 def test_delta_indexing_empty_document(tmp_path, manager):

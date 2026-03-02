@@ -16,7 +16,6 @@ from src.memory.link_parser import extract_links, infer_edge_type
 
 
 class TestInferEdgeType:
-
     def test_defaults_to_related_to(self):
         """
         Verify infer_edge_type returns 'related_to' for generic context.
@@ -35,7 +34,9 @@ class TestInferEdgeType:
 
         assert result == "related_to"
 
-    @pytest.mark.parametrize("keyword", ["refactor", "rewrite", "restructure", "reorganize", "cleanup"])
+    @pytest.mark.parametrize(
+        "keyword", ["refactor", "rewrite", "restructure", "reorganize", "cleanup"]
+    )
     def test_refactors_keywords(self, keyword: str):
         """
         Verify context containing refactor keywords maps to 'refactors' edge type.
@@ -46,7 +47,9 @@ class TestInferEdgeType:
 
         assert result == "refactors"
 
-    @pytest.mark.parametrize("keyword", ["plan", "todo", "will", "should", "need to", "going to"])
+    @pytest.mark.parametrize(
+        "keyword", ["plan", "todo", "will", "should", "need to", "going to"]
+    )
     def test_plans_keywords(self, keyword: str):
         """
         Verify context containing planning keywords maps to 'plans' edge type.
@@ -57,7 +60,9 @@ class TestInferEdgeType:
 
         assert result == "plans"
 
-    @pytest.mark.parametrize("keyword", ["bug", "fix", "issue", "error", "problem", "broken"])
+    @pytest.mark.parametrize(
+        "keyword", ["bug", "fix", "issue", "error", "problem", "broken"]
+    )
     def test_debugs_keywords(self, keyword: str):
         """
         Verify context containing debugging keywords maps to 'debugs' edge type.
@@ -68,7 +73,9 @@ class TestInferEdgeType:
 
         assert result == "debugs"
 
-    @pytest.mark.parametrize("keyword", ["note", "remember", "mention", "see also", "refer"])
+    @pytest.mark.parametrize(
+        "keyword", ["note", "remember", "mention", "see also", "refer"]
+    )
     def test_mentions_keywords(self, keyword: str):
         """
         Verify context containing mention keywords maps to 'mentions' edge type.
@@ -108,7 +115,6 @@ class TestInferEdgeType:
 
 
 class TestExtractLinksBasicPatterns:
-
     def test_extracts_simple_wikilink(self):
         """
         Verify extract_links finds basic [[target]] wikilinks.
@@ -191,7 +197,6 @@ class TestExtractLinksBasicPatterns:
 
 
 class TestExtractLinksAnchorContext:
-
     def test_captures_context_around_link(self):
         """
         Verify extract_links captures anchor context around the link.
@@ -247,7 +252,6 @@ class TestExtractLinksAnchorContext:
 
 
 class TestExtractLinksPositionTracking:
-
     def test_records_link_position(self):
         """
         Verify extract_links records character position of each link.
@@ -280,7 +284,6 @@ class TestExtractLinksPositionTracking:
 
 
 class TestExtractLinksEdgeTypeInference:
-
     def test_infers_refactors_edge_type(self):
         """
         Verify edge type is inferred from context keywords.
@@ -343,23 +346,29 @@ class TestExtractLinksEdgeTypeInference:
         Note: Context window size means nearby keywords can influence edge type.
         This test uses well-separated links to ensure distinct contexts.
         """
-        content = """
+        content = (
+            """
 ## Planning Section
 
 TODO: update [[feature]] with new API.
 
 ## Bug Section
 
-""" + "x" * 150 + """
+"""
+            + "x" * 150
+            + """
 
 Bug found in [[service]] causing errors.
 
 ## Reference Section
 
-""" + "y" * 150 + """
+"""
+            + "y" * 150
+            + """
 
 Note: see [[docs]] for reference.
 """
+        )
 
         links = extract_links(content, context_chars=50)
 
@@ -376,7 +385,6 @@ Note: see [[docs]] for reference.
 
 
 class TestExtractLinksEdgeCases:
-
     def test_handles_markdown_in_content(self):
         """
         Verify extract_links handles markdown formatting around links.

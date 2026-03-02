@@ -58,7 +58,9 @@ class System1Journal:
         assert entry_id is not None
 
         logger.info("Recorded journal entry %d (%d chars)", entry_id, len(content))
-        return JournalEntry(id=entry_id, content=content, timestamp=now, status="pending")
+        return JournalEntry(
+            id=entry_id, content=content, timestamp=now, status="pending"
+        )
 
     def get_pending(self, limit: int = 50) -> list[JournalEntry]:
         """Get pending entries, oldest first."""
@@ -68,7 +70,10 @@ class System1Journal:
             "WHERE status = 'pending' ORDER BY timestamp ASC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [JournalEntry(id=r[0], content=r[1], timestamp=r[2], status=r[3]) for r in rows]
+        return [
+            JournalEntry(id=r[0], content=r[1], timestamp=r[2], status=r[3])
+            for r in rows
+        ]
 
     def mark_processed(self, entry_ids: list[int]) -> int:
         """Mark entries as processed. Returns count updated."""
@@ -114,4 +119,7 @@ class System1Journal:
             "ORDER BY timestamp DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [JournalEntry(id=r[0], content=r[1], timestamp=r[2], status=r[3]) for r in rows]
+        return [
+            JournalEntry(id=r[0], content=r[1], timestamp=r[2], status=r[3])
+            for r in rows
+        ]
