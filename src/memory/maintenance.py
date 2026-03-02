@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import networkx as nx
 import numpy as np
 
 if TYPE_CHECKING:
@@ -11,6 +10,26 @@ if TYPE_CHECKING:
     from src.memory.manager import MemoryIndexManager
 
 logger = logging.getLogger(__name__)
+
+
+def _connected_components(adjacency: dict[str, set[str]]) -> list[set[str]]:
+    """Find connected components using BFS."""
+    visited: set[str] = set()
+    components: list[set[str]] = []
+    for node in adjacency:
+        if node in visited:
+            continue
+        component: set[str] = set()
+        queue = [node]
+        while queue:
+            current = queue.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            component.add(current)
+            queue.extend(adjacency[current] - visited)
+        components.append(component)
+    return components
 
 
 @dataclass
@@ -86,15 +105,17 @@ class MemoryGardener:
         sim_matrix = np.dot(normalized, normalized.T)
 
         # 3. Find Connected Components
-        G = nx.Graph()
-        G.add_nodes_from(valid_ids)
+        adjacency: dict[str, set[str]] = {vid: set() for vid in valid_ids}
+        weights: dict[tuple[str, str], float] = {}
 
         rows, cols = np.where(sim_matrix > threshold)
         for r, c in zip(rows, cols):
             if r < c:  # upper triangle only, avoid self-loops
-                G.add_edge(valid_ids[r], valid_ids[c], weight=float(sim_matrix[r, c]))
+                adjacency[valid_ids[r]].add(valid_ids[c])
+                adjacency[valid_ids[c]].add(valid_ids[r])
+                weights[(valid_ids[r], valid_ids[c])] = float(sim_matrix[r, c])
 
-        components = list(nx.connected_components(G))
+        components = _connected_components(adjacency)
 
         # 4. Format Results
         clusters = []
@@ -113,9 +134,13 @@ class MemoryGardener:
                 title = f"Cluster related to {Path(path).stem}"
 
             # Calculate average similarity score of the cluster
-            subgraph = G.subgraph(members)
-            if subgraph.number_of_edges() > 0:
-                avg_score = sum(d['weight'] for u, v, d in subgraph.edges(data=True)) / subgraph.number_of_edges()
+            member_set = set(members)
+            edge_weights = [
+                w for (u, v), w in weights.items()
+                if u in member_set and v in member_set
+            ]
+            if edge_weights:
+                avg_score = sum(edge_weights) / len(edge_weights)
             else:
                 avg_score = 1.0
 
