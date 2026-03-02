@@ -75,26 +75,11 @@ class SearchConfig:
     semantic_weight: float = 1.0
     keyword_weight: float = 1.0
     recency_bias: float = 0.5
-    rrf_k_constant: int = 60
     min_confidence: float = 0.3
     max_chunks_per_doc: int = 2
-    dedup_similarity_threshold: float = 0.80
-    ngram_dedup_threshold: float = 0.7
-    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    dedup_threshold: float = 0.80
+    reranking_enabled: bool = True
     rerank_top_n: int = 10
-    query_expansion_max_terms: int = 2000
-    query_expansion_min_frequency: int = 3
-    community_boost_factor: float = 1.1
-    variance_threshold: float = 0.1
-    min_weight_factor: float = 0.5
-    tag_expansion_max_tags: int = 5
-    tag_expansion_depth: int = 2
-    # Calibration converts RRF scores to [0,1] confidence via sigmoid.
-    # threshold=0.02 means RRF scores at ~0.02 map to ~0.5 confidence.
-    # Single-strategy rank-0 (RRF≈0.017) → ~0.43 confidence
-    # Two-strategy rank-0 (RRF≈0.033) → ~0.87 confidence
-    score_calibration_threshold: float = 0.02
-    score_calibration_steepness: float = 150.0
 
 
 @dataclass
@@ -149,12 +134,8 @@ class ChunkingConfig:
 @dataclass
 class GitIndexingConfig:
     enabled: bool = True
-    delta_max_lines: int = 200
-    batch_size: int = 100
     watch_enabled: bool = True
-    watch_cooldown: float = 5.0
-    parallel_workers: int = 4
-    embed_batch_size: int = 32
+    poll_interval_seconds: float = 30.0
 
 
 @dataclass
@@ -271,17 +252,9 @@ class Config:
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
-    parsers: dict[str, str] = field(
-        default_factory=lambda: {
-            "**/*.md": "MarkdownParser",
-            "**/*.markdown": "MarkdownParser",
-            "**/*.txt": "PlainTextParser",
-        }
-    )
     search: SearchConfig = field(default_factory=SearchConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
-    document_chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
-    memory_chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
+    chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     projects: list[ProjectConfig] = field(default_factory=list)
     detected_project: str | None = None
 
@@ -393,15 +366,6 @@ def load_config():
     indexing.documents_path = _expand_path(indexing.documents_path)
     indexing.index_path = _expand_path(indexing.index_path)
 
-    parsers = config_data.get(
-        "parsers",
-        {
-            "**/*.md": "MarkdownParser",
-            "**/*.markdown": "MarkdownParser",
-            "**/*.txt": "PlainTextParser",
-        },
-    )
-
     search = _load_dataclass_from_dict(SearchConfig, config_data.get("search", {}))
     llm = _load_dataclass_from_dict(LLMConfig, config_data.get("llm", {}))
     git_indexing = _load_dataclass_from_dict(
@@ -409,24 +373,8 @@ def load_config():
     )
     memory = _load_memory_config(config_data.get("memory", {}))
 
-    # Backward compatibility: if [chunking] exists, use it for both document and memory
-    # Otherwise, load separate configs
-    if "chunking" in config_data:
-        # Legacy config: single [chunking] section
-        legacy_chunking = _load_dataclass_from_dict(
-            ChunkingConfig, config_data["chunking"]
-        )
-        document_chunking = legacy_chunking
-        memory_chunking = legacy_chunking
-        logger.info("Using legacy [chunking] config for both documents and memories")
-    else:
-        # New config: separate sections
-        document_chunking = _load_dataclass_from_dict(
-            ChunkingConfig, config_data.get("chunking_documents", {})
-        )
-        memory_chunking = _load_dataclass_from_dict(
-            ChunkingConfig, config_data.get("chunking_memories", {})
-        )
+    chunking_data = config_data.get("chunking", config_data.get("chunking_documents", {}))
+    chunking = _load_dataclass_from_dict(ChunkingConfig, chunking_data)
 
     projects_data = config_data.get("projects", [])
     projects = []
@@ -448,11 +396,9 @@ def load_config():
         indexing=indexing,
         git_indexing=git_indexing,
         memory=memory,
-        parsers=parsers,
         search=search,
         llm=llm,
-        document_chunking=document_chunking,
-        memory_chunking=memory_chunking,
+        chunking=chunking,
         projects=projects,
     )
 

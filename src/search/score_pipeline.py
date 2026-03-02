@@ -18,16 +18,9 @@ def rrf_score(rank: int, k: float):
 
 @dataclass
 class ScorePipelineConfig:
-    rrf_k: float = 60.0
     strategy_weights: dict[str, float] = field(default_factory=lambda: {
         "semantic": 0.6, "keyword": 0.3, "graph": 0.1
     })
-
-    variance_threshold: float = 0.1
-    min_weight_factor: float = 0.5
-
-    calibration_threshold: float = 0.5
-    calibration_steepness: float = 10.0
 
     time_scoring_mode: str | None = None
     time_scoring_config: TierConfig | DecayConfig | None = None
@@ -85,8 +78,8 @@ class ScorePipeline:
                 keyword_scores,
                 base_vector,
                 base_keyword,
-                self.config.variance_threshold,
-                self.config.min_weight_factor,
+                0.1,
+                0.5,
             )
             weights["semantic"] = adj_vector
             weights["keyword"] = adj_keyword
@@ -97,7 +90,7 @@ class ScorePipeline:
             weight = weights.get(strategy, 1.0)
 
             for rank, (doc_id, _original_score) in enumerate(result_list):
-                rrf = rrf_score(rank, self.config.rrf_k) * weight
+                rrf = rrf_score(rank, 60.0) * weight
                 scores[doc_id] = scores.get(doc_id, 0.0) + rrf
 
         return sorted(scores.items(), key=lambda x: x[1], reverse=True)
@@ -118,8 +111,8 @@ class ScorePipeline:
 
         return calibrate_results(
             results,
-            threshold=self.config.calibration_threshold,
-            steepness=self.config.calibration_steepness,
+            threshold=0.02,
+            steepness=150.0,
         )
 
     def boost(

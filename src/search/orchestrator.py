@@ -44,9 +44,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             pipeline_config = SearchPipelineConfig(
                 min_confidence=self._config.search.min_confidence,
                 max_chunks_per_doc=self._config.search.max_chunks_per_doc,
-                dedup_threshold=self._config.search.dedup_similarity_threshold,
-                ngram_dedup_threshold=self._config.search.ngram_dedup_threshold,
-                rerank_model=self._config.search.rerank_model,
+                dedup_threshold=self._config.search.dedup_threshold,
+                reranking_enabled=self._config.search.reranking_enabled,
                 rerank_top_n=self._config.search.rerank_top_n,
             )
             self._pipeline = SearchPipeline(pipeline_config)
@@ -106,8 +105,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             graph=self._graph,
             vector=self._vector,
             top_k=top_k,
-            max_related_tags=self._config.search.tag_expansion_max_tags,
-            max_depth=self._config.search.tag_expansion_depth,
+            max_related_tags=5,
+            max_depth=2,
         )
 
         # Merge tag-expanded results into existing result sets
@@ -243,12 +242,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         self, weights: dict[str, float]
     ) -> ScorePipelineConfig:
         return ScorePipelineConfig(
-            rrf_k=self._config.search.rrf_k_constant,
             strategy_weights=weights,
-            variance_threshold=self._config.search.variance_threshold,
-            min_weight_factor=self._config.search.min_weight_factor,
-            calibration_threshold=self._config.search.score_calibration_threshold,
-            calibration_steepness=self._config.search.score_calibration_steepness,
         )
 
     def _apply_score_pipeline(
@@ -308,7 +302,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         boosts = self._graph.boost_by_community(
             chunk_doc_ids,
             seed_doc_ids,
-            self._config.search.community_boost_factor,
+            1.1,
         )
 
         boosted = []

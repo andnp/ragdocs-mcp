@@ -81,8 +81,8 @@ class BaseSearchOrchestrator(ABC, Generic[ResultT]):
             graph=self._graph,
             vector=self._vector,
             top_k=top_k,
-            max_related_tags=self._config.search.tag_expansion_max_tags,
-            max_depth=self._config.search.tag_expansion_depth,
+            max_related_tags=5,
+            max_depth=2,
         )
 
         existing_chunk_ids = {r["chunk_id"] for r in ctx.vector_results}

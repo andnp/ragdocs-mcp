@@ -187,10 +187,7 @@ class MemorySearchOrchestrator(BaseSearchOrchestrator[MemorySearchResult]):
         self, weights: dict[str, float]
     ) -> ScorePipelineConfig:
         return ScorePipelineConfig(
-            rrf_k=self._config.search.rrf_k_constant,
             strategy_weights=weights,
-            calibration_threshold=self._config.search.score_calibration_threshold,
-            calibration_steepness=self._config.search.score_calibration_steepness,
         )
 
     async def search_memories(

@@ -12,8 +12,7 @@ class SearchPipelineConfig:
     min_confidence: float = 0.0
     max_chunks_per_doc: int = 0
     dedup_threshold: float = 0.85
-    ngram_dedup_threshold: float = 0.7
-    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranking_enabled: bool = True
     rerank_top_n: int = 10
 
 
@@ -66,7 +65,7 @@ class SearchPipeline:
             ngram_deduped, _ = deduplicate_by_ngram(
                 content_deduped,
                 cached_get_content,
-                self._config.ngram_dedup_threshold,
+                0.7,
             )
             after_ngram_dedup = len(ngram_deduped)
 
@@ -85,7 +84,7 @@ class SearchPipeline:
         limited = limit_per_document(dedup_results, self._config.max_chunks_per_doc)
         after_doc_limit = len(limited)
 
-        if limited:
+        if limited and self._config.reranking_enabled:
             reranker = self._get_reranker()
             limited = reranker.rerank(
                 query,
@@ -110,5 +109,5 @@ class SearchPipeline:
 
     def _get_reranker(self) -> ReRanker:
         if self._reranker is None:
-            self._reranker = ReRanker(model_name=self._config.rerank_model)
+            self._reranker = ReRanker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
         return self._reranker
