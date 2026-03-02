@@ -73,7 +73,7 @@ class LifecycleCoordinator:
                             git_repos=repos,
                             commit_indexer=ctx.commit_indexer,
                             config=ctx.config,
-                            cooldown=ctx.config.git_indexing.watch_cooldown,
+                            poll_interval=ctx.config.git_indexing.poll_interval_seconds,
                         )
                         self._git_watcher.start()
                         logger.info(f"Git watcher started for {len(repos)} repositories")

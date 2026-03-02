@@ -1,6 +1,1 @@
-__all__ = [
-    "CommitIndexer",
-    "CommitResult",
-    "GitSearchResponse",
-    "search_git_history",
-]
+__all__: list[str] = []
