@@ -15,6 +15,7 @@ from src.mcp.validation import (
     validate_timestamp,
 )
 from src.memory import tools as memory_tools_impl
+from src.memory.journal import System1Journal
 
 
 def get_memory_tools() -> list[Tool]:
@@ -163,6 +164,25 @@ def get_memory_tools() -> list[Tool]:
                     },
                 },
                 "required": ["query"],
+            },
+        ),
+        Tool(
+            name="record_thought",
+            description=(
+                "Record a raw observation or thought into the System 1 journal. "
+                "These entries accumulate and are later consolidated into refined memories. "
+                "Use this for fleeting observations, hypotheses, or notes that should be "
+                "captured but don't warrant a full memory yet."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The thought or observation to record.",
+                    },
+                },
+                "required": ["text"],
             },
         ),
     ]
@@ -329,3 +349,26 @@ async def handle_search_memories(
         )
 
     return text_response("\n".join(output_lines))
+
+
+@tool_handler("record_thought")
+async def handle_record_thought(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
+    text = arguments.get("text", "").strip()
+    if not text:
+        raise ValueError("text parameter is required and cannot be empty")
+
+    await hctx.wait_for_ready()
+    ctx = hctx.require_ctx()
+
+    if ctx.db_manager is None:
+        raise RuntimeError("Database not available")
+
+    journal = System1Journal(ctx.db_manager)
+    entry = journal.record(text)
+
+    return text_response(
+        f"Thought recorded (id={entry.id}, {len(entry.content)} chars). "
+        f"Status: {entry.status}"
+    )
