@@ -33,12 +33,6 @@ class ProjectConfig:
 
 
 @dataclass
-class ServerConfig:
-    host: str = "127.0.0.1"
-    port: int = 8000
-
-
-@dataclass
 class IndexingConfig:
     documents_path: str = "."
     index_path: str = ".index_data/"
@@ -63,8 +57,6 @@ class IndexingConfig:
     )
     exclude_hidden_dirs: bool = True
     reconciliation_interval_seconds: int = 3600  # 1 hour, 0 to disable
-    coordination_mode: str = "file_lock"
-    lock_timeout_seconds: float = 5.0
     embedding_workers: int = 4
     delta_full_reindex_threshold: float = 0.5
     move_detection_threshold: float = 0.8
@@ -248,7 +240,6 @@ class MemoryConfig:
 
 @dataclass
 class Config:
-    server: ServerConfig = field(default_factory=ServerConfig)
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -355,8 +346,6 @@ def load_config():
                 config_data = tomllib.load(f)
             break
 
-    server = _load_dataclass_from_dict(ServerConfig, config_data.get("server", {}))
-
     indexing = _load_dataclass_from_dict(
         IndexingConfig,
         config_data.get("indexing", {}),
@@ -392,7 +381,6 @@ def load_config():
     _validate_projects(projects)
 
     return Config(
-        server=server,
         indexing=indexing,
         git_indexing=git_indexing,
         memory=memory,

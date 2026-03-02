@@ -112,24 +112,21 @@ def mcp(project: str | None):
 
 
 @cli.command()
-@click.option("--host", default=None, help="Override host from config")
-@click.option("--port", default=None, type=int, help="Override port from config")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind to")
+@click.option("--port", default=8000, type=int, show_default=True, help="Port to bind to")
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
 )
-def run(host: str | None, port: int | None, project: str | None):
+def run(host: str, port: int, project: str | None):
     try:
         config = load_config()
         config = _apply_project_detection(config, project)
 
-        server_host = host or config.server.host
-        server_port = port or config.server.port
-
-        logger.info(f"Starting server on {server_host}:{server_port}")
+        logger.info(f"Starting server on {host}:{port}")
         uvicorn.run(
             "src.server:create_app",
-            host=server_host,
-            port=server_port,
+            host=host,
+            port=port,
             factory=True,
         )
     except Exception as e:
@@ -181,11 +178,6 @@ def rebuild_index_cmd(project: str | None):
         current_manifest = IndexManifest(
             spec_version="1.0.0",
             embedding_model=ctx.config.llm.embedding_model,
-            parsers={
-                "**/*.md": "MarkdownParser",
-                "**/*.markdown": "MarkdownParser",
-                "**/*.txt": "PlainTextParser",
-            },
             chunking_config={
                 "strategy": ctx.config.chunking.strategy,
                 "min_chunk_chars": ctx.config.chunking.min_chunk_chars,
@@ -324,9 +316,6 @@ def check_config_cmd(project: str | None):
         table = Table(title="Configuration", show_header=True)
         table.add_column("Setting", style="cyan")
         table.add_column("Value", style="green")
-
-        table.add_row("Server Host", config.server.host)
-        table.add_row("Server Port", str(config.server.port))
 
         table.add_row("Documents Path", config.indexing.documents_path)
         table.add_row("Index Path", config.indexing.index_path)

@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Literal
 
 from src.config import Config, load_config, detect_project, resolve_index_path, resolve_documents_path, resolve_memory_path
-from src.coordination import SingletonGuard
 from src.git.commit_indexer import CommitIndexer
 from src.indexing.discovery import discover_files as _discover_files, get_parser_suffixes
 from src.indexing.manager import IndexManager
@@ -24,11 +23,6 @@ from src.storage.db import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
-_PARSERS_MANIFEST: dict[str, str] = {
-    "**/*.md": "MarkdownParser",
-    "**/*.markdown": "MarkdownParser",
-    "**/*.txt": "PlainTextParser",
-}
 
 @dataclass
 class IndexState:
@@ -56,7 +50,6 @@ class ApplicationContext:
     _background_index_task: asyncio.Task | None = field(default=None, repr=False)
     _ready_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _init_error: Exception | None = field(default=None, repr=False)
-    _singleton_guard: SingletonGuard | None = field(default=None, repr=False)
     _index_state: IndexState = field(
         default_factory=lambda: IndexState(status="uninitialized"),
         repr=False,
@@ -176,7 +169,6 @@ class ApplicationContext:
         return IndexManifest(
             spec_version="1.0.0",
             embedding_model=self.config.llm.embedding_model,
-            parsers=_PARSERS_MANIFEST,
             chunking_config={
                 "strategy": self.config.chunking.strategy,
                 "min_chunk_chars": self.config.chunking.min_chunk_chars,
@@ -200,20 +192,6 @@ class ApplicationContext:
         return should_rebuild(self.current_manifest, saved_manifest)
 
     async def start(self, background_index: bool = False) -> None:
-        coordination_mode_str = self.config.indexing.coordination_mode.lower()
-
-        if coordination_mode_str == "singleton":
-            self._singleton_guard = SingletonGuard(self.index_path)
-            try:
-                self._singleton_guard.acquire()
-            except RuntimeError as e:
-                logger.error(f"Failed to acquire singleton lock: {e}")
-                raise
-            logger.warning(
-                "Using singleton mode - only one instance can run at a time. "
-                "For multi-instance support, set coordination_mode='file_lock' in config."
-            )
-
         needs_rebuild = self._check_and_rebuild_if_needed()
 
         if needs_rebuild:
@@ -496,12 +474,6 @@ class ApplicationContext:
 
     async def stop(self) -> None:
         logger.info("Stopping ApplicationContext")
-
-        if self._singleton_guard is not None:
-            try:
-                self._singleton_guard.release()
-            except Exception as e:
-                logger.error(f"Failed to release singleton lock: {e}")
 
         tasks_to_cancel: list[asyncio.Task] = []
         if self._background_index_task and not self._background_index_task.done():

@@ -490,17 +490,12 @@ class IndexManager:
         """
         index_path = Path(self._config.indexing.index_path)
 
-        coordination_mode_str = self._config.indexing.coordination_mode.lower()
-
-        if coordination_mode_str == "file_lock":
-            lock = IndexLock(index_path, self._config.indexing.lock_timeout_seconds)
-            lock.acquire_exclusive()
-            try:
-                self._persist_indices_with_retry(index_path)
-            finally:
-                lock.release()
-        else:
+        lock = IndexLock(index_path, timeout_seconds=5.0)
+        lock.acquire_exclusive()
+        try:
             self._persist_indices_with_retry(index_path)
+        finally:
+            lock.release()
 
     @retry(
         stop=stop_after_attempt(3),
@@ -535,17 +530,12 @@ class IndexManager:
     def load(self):
         index_path = Path(self._config.indexing.index_path)
 
-        coordination_mode_str = self._config.indexing.coordination_mode.lower()
-
-        if coordination_mode_str == "file_lock":
-            lock = IndexLock(index_path, self._config.indexing.lock_timeout_seconds)
-            lock.acquire_shared()
-            try:
-                self._load_indices(index_path)
-            finally:
-                lock.release()
-        else:
+        lock = IndexLock(index_path, timeout_seconds=5.0)
+        lock.acquire_shared()
+        try:
             self._load_indices(index_path)
+        finally:
+            lock.release()
 
     def _load_indices(self, index_path: Path):
         try:

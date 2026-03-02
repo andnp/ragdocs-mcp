@@ -1,3 +1,5 @@
+# TODO: This module is no longer used and can be deleted in a future cleanup.
+# coordination_mode="singleton" has been removed from the configuration.
 import logging
 import os
 import sys
