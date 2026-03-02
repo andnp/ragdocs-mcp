@@ -128,6 +128,17 @@ def get_metadata_tools() -> list[Tool]:
                 "required": ["filename"],
             },
         ),
+        Tool(
+            name="get_system_status",
+            description=(
+                "Get system status including lifecycle state, journal entry counts, "
+                "and last consolidation timestamp. Useful for monitoring system health."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
     ]
 
 
@@ -332,3 +343,48 @@ async def handle_get_memory_relationships(
                 )
 
     return text_response("\n".join(output_lines))
+
+
+@tool_handler("get_system_status")
+async def handle_get_system_status(
+    hctx: HandlerContext, arguments: dict
+) -> list[TextContent]:
+    await hctx.wait_for_ready()
+    ctx = hctx.require_ctx()
+
+    status_lines: list[str] = []
+
+    # Lifecycle state
+    status_lines.append(f"**Lifecycle State:** {hctx.coordinator.state.value}")
+
+    # Journal stats and consolidation info from database
+    if ctx.db_manager is not None:
+        import json
+
+        from src.memory.journal import System1Journal
+
+        journal = System1Journal(ctx.db_manager)
+        counts = journal.count_by_status()
+        total = sum(counts.values())
+        status_lines.append(f"\n**Journal Entries:** {total} total")
+        for status, count in sorted(counts.items()):
+            status_lines.append(f"  - {status}: {count}")
+
+        # Last consolidation timestamp
+        conn = ctx.db_manager.get_connection()
+        row = conn.execute(
+            "SELECT value FROM system_state WHERE key = 'last_consolidation'"
+        ).fetchone()
+        if row is not None:
+            try:
+                data = json.loads(row[0])
+                ts = data.get("timestamp", "unknown")
+                status_lines.append(f"\n**Last Consolidation:** {ts}")
+            except (json.JSONDecodeError, AttributeError):
+                status_lines.append(f"\n**Last Consolidation:** {row[0]}")
+        else:
+            status_lines.append("\n**Last Consolidation:** never")
+    else:
+        status_lines.append("\n**Database:** not available")
+
+    return text_response("\n".join(status_lines))
