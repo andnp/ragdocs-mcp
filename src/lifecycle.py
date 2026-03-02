@@ -18,6 +18,7 @@ from src.git.watcher import GitWatcher
 
 if TYPE_CHECKING:
     from src.storage.db import DatabaseManager
+    from src.worker.consumer import HueyWorker
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,7 @@ class LifecycleCoordinator:
     _emergency_timeout: float = field(default=3.5, repr=False)
     _init_error: BaseException | None = field(default=None, repr=False)
     _leader_election: LeaderElection | None = field(default=None, repr=False)
+    _huey_worker: HueyWorker | None = field(default=None, repr=False)
 
     @property
     def state(self) -> LifecycleState:
@@ -150,6 +152,7 @@ class LifecycleCoordinator:
         *,
         background_index: bool = False,
         db_manager: DatabaseManager | None = None,
+        huey_worker: HueyWorker | None = None,
     ) -> None:
         if self._state != LifecycleState.UNINITIALIZED:
             raise RuntimeError(f"Cannot start from state {self._state}")
@@ -189,6 +192,9 @@ class LifecycleCoordinator:
                 if self._leader_election.try_acquire():
                     self._state = LifecycleState.READY_PRIMARY
                     logger.info("Lifecycle: READY_PRIMARY (leader elected)")
+                    if huey_worker is not None:
+                        self._huey_worker = huey_worker
+                        self._huey_worker.start()
                 else:
                     self._state = LifecycleState.READY_REPLICA
                     logger.info("Lifecycle: READY_REPLICA (another instance is primary)")
@@ -316,6 +322,13 @@ class LifecycleCoordinator:
 
     async def _cleanup_resources(self) -> None:
         self._cancel_emergency_timer()
+
+        if self._huey_worker is not None:
+            try:
+                self._huey_worker.stop()
+            except Exception as e:
+                logger.error(f"Error stopping Huey worker: {e}", exc_info=True)
+            self._huey_worker = None
 
         if self._leader_election is not None:
             try:
