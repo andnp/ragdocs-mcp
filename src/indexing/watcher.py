@@ -3,21 +3,17 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import logging
-import os
 import queue
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
-from src.indexing.discovery import DEFAULT_SUFFIXES, is_excluded_dir, walk_included_dirs
+from src.indexing.discovery import PARSER_SUFFIXES, walk_dirs_with_files
 from src.indexing.manager import IndexManager
 from src.utils import should_include_file
-
-if TYPE_CHECKING:
-    from watchdog.observers.api import BaseObserver
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +40,8 @@ class FileWatcher:
         self._include_patterns = include_patterns or ["**/*"]
         self._exclude_patterns = exclude_patterns or []
         self._exclude_hidden_dirs = exclude_hidden_dirs
-        self._parser_suffixes = parser_suffixes if parser_suffixes else DEFAULT_SUFFIXES
-        self._observer: BaseObserver | None = None
+        self._parser_suffixes = parser_suffixes if parser_suffixes else PARSER_SUFFIXES
+        self._observer: Observer | None = None
         # Bounded queue prevents memory exhaustion during high file change rates
         self._event_queue = queue.Queue[tuple[EventType, str]](maxsize=MAX_QUEUE_SIZE)
         self._running = False
@@ -53,6 +49,7 @@ class FileWatcher:
         self._last_sync_time: str | None = None
         self._stopped_cleanly: bool = True
         self._event_handler: _DocumentEventHandler | None = None
+        self._watched_dirs: set[str] = set()
 
     @property
     def stopped_cleanly(self) -> bool:
@@ -73,17 +70,12 @@ class FileWatcher:
         if self._running:
             return
 
-        included_dirs = walk_included_dirs(
-            self._documents_path, self._exclude_patterns, self._exclude_hidden_dirs
+        watched_dirs = walk_dirs_with_files(
+            self._documents_path,
+            self._exclude_patterns,
+            self._exclude_hidden_dirs,
+            self._parser_suffixes,
         )
-        if len(included_dirs) > 1000:
-            logger.warning(
-                "Large directory tree detected (%d dirs). "
-                "May exhaust inotify watches. Consider setting "
-                "[tool.ragdocs.worker] enabled = true in pyproject.toml "
-                "to use multiprocess mode with reduced watching.",
-                len(included_dirs),
-            )
 
         self._running = True
         self._event_handler = _DocumentEventHandler(
@@ -93,18 +85,47 @@ class FileWatcher:
             exclude_hidden_dirs=self._exclude_hidden_dirs,
         )
         observer = Observer()
-        for dir_path in included_dirs:
+        self._watched_dirs: set[str] = set()
+        for dir_path in watched_dirs:
             observer.schedule(self._event_handler, str(dir_path), recursive=False)
+            self._watched_dirs.add(str(dir_path))
         observer.start()
         self._observer = observer
-        # Give handler access to observer for dynamic directory scheduling
-        self._event_handler.set_observer(observer)
         self._task = asyncio.create_task(self._process_events())
         logger.info(
-            "File watcher started for %s (%d directories)",
+            "File watcher started for %s (%d directories with parseable files)",
             self._documents_path,
-            len(included_dirs),
+            len(watched_dirs),
         )
+
+    def refresh_watches(self) -> None:
+        """Register inotify watches for any new directories that have appeared
+        since startup or the last refresh.  Called after each reconciliation
+        cycle so that newly-created directories are picked up without requiring
+        a restart."""
+        if not self._running or self._observer is None or self._event_handler is None:
+            return
+
+        current_dirs = walk_dirs_with_files(
+            self._documents_path,
+            self._exclude_patterns,
+            self._exclude_hidden_dirs,
+            self._parser_suffixes,
+        )
+        new_dirs = [d for d in current_dirs if str(d) not in self._watched_dirs]
+        for dir_path in new_dirs:
+            try:
+                self._observer.schedule(self._event_handler, str(dir_path), recursive=False)
+                self._watched_dirs.add(str(dir_path))
+            except OSError as e:
+                logger.warning("Failed to schedule watch on %s: %s", dir_path, e)
+
+        if new_dirs:
+            logger.info(
+                "File watcher: added %d new watched directories (total: %d)",
+                len(new_dirs),
+                len(self._watched_dirs),
+            )
 
     async def stop(self):
         """Stop file watcher and drain remaining events before shutdown.
@@ -296,14 +317,9 @@ class _DocumentEventHandler(FileSystemEventHandler):
         self._suffixes = suffixes
         self._exclude_patterns = exclude_patterns or []
         self._exclude_hidden_dirs = exclude_hidden_dirs
-        self._observer: BaseObserver | None = None
         self._lock = threading.Lock()
         self._dropped_events = 0  # Track backpressure events (total)
         self._dropped_since_last_reconcile = 0  # Track drops since last reconcile
-
-    def set_observer(self, observer: BaseObserver) -> None:
-        """Set the observer reference for dynamic directory scheduling."""
-        self._observer = observer
 
     def _is_supported_file(self, path: str | bytes) -> bool:
         path_str = path if isinstance(path, str) else path.decode("utf-8")
@@ -346,40 +362,9 @@ class _DocumentEventHandler(FileSystemEventHandler):
                     dropped_since_reconcile,
                 )
 
-    def _schedule_new_directory(self, dir_path: str) -> None:
-        """Schedule a watch on a newly created directory and its subdirectories."""
-        if self._observer is None:
-            return
-
-        new_dirs = walk_included_dirs(
-            Path(dir_path), self._exclude_patterns, self._exclude_hidden_dirs
-        )
-        for d in new_dirs:
-            try:
-                self._observer.schedule(self, str(d), recursive=False)
-            except OSError as e:
-                logger.warning("Failed to schedule watch on %s: %s", d, e)
-
-        # Queue events for any supported files already present in the new directory
-        for d in new_dirs:
-            try:
-                for entry in os.scandir(str(d)):
-                    if entry.is_file() and self._is_supported_file(entry.path):
-                        self._queue_event("created", entry.path)
-            except OSError:
-                pass
-
     def on_created(self, event: FileSystemEvent):
+        # Directory creation is handled by refresh_watches() after reconciliation.
         if event.is_directory:
-            path_str = (
-                event.src_path
-                if isinstance(event.src_path, str)
-                else event.src_path.decode("utf-8")
-            )
-            if not is_excluded_dir(
-                path_str, self._exclude_patterns, self._exclude_hidden_dirs
-            ):
-                self._schedule_new_directory(path_str)
             return
 
         if self._is_supported_file(event.src_path):

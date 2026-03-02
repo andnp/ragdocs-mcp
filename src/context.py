@@ -24,6 +24,11 @@ from src.storage.db import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
+_PARSERS_MANIFEST: dict[str, str] = {
+    "**/*.md": "MarkdownParser",
+    "**/*.markdown": "MarkdownParser",
+    "**/*.txt": "PlainTextParser",
+}
 
 @dataclass
 class IndexState:
@@ -117,7 +122,7 @@ class ApplicationContext:
                 include_patterns=config.indexing.include,
                 exclude_patterns=config.indexing.exclude,
                 exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
-                parser_suffixes=get_parser_suffixes(config.parsers),
+                parser_suffixes=get_parser_suffixes(),
             )
 
         # Initialize commit indexer if enabled and git available
@@ -171,19 +176,18 @@ class ApplicationContext:
         return IndexManifest(
             spec_version="1.0.0",
             embedding_model=self.config.llm.embedding_model,
-            parsers=self.config.parsers,
+            parsers=_PARSERS_MANIFEST,
             chunking_config={
-                "strategy": self.config.document_chunking.strategy,
-                "min_chunk_chars": self.config.document_chunking.min_chunk_chars,
-                "max_chunk_chars": self.config.document_chunking.max_chunk_chars,
-                "overlap_chars": self.config.document_chunking.overlap_chars,
+                "strategy": self.config.chunking.strategy,
+                "min_chunk_chars": self.config.chunking.min_chunk_chars,
+                "max_chunk_chars": self.config.chunking.max_chunk_chars,
+                "overlap_chars": self.config.chunking.overlap_chars,
             },
         )
 
     def discover_files(self) -> list[str]:
         return _discover_files(
             documents_path=self.config.indexing.documents_path,
-            parsers=self.config.parsers,
             include_patterns=self.config.indexing.include,
             exclude_patterns=self.config.indexing.exclude,
             exclude_hidden_dirs=self.config.indexing.exclude_hidden_dirs,
@@ -394,6 +398,10 @@ class ApplicationContext:
                 else:
                     logger.debug("Periodic reconciliation: no changes needed")
 
+                # Register inotify watches for any directories that appeared since startup
+                if self.watcher:
+                    self.watcher.refresh_watches()
+
                 # Incrementally build vocabulary in background
                 await self._update_vocabulary_incremental()
 
@@ -435,8 +443,8 @@ class ApplicationContext:
             logger.info("Building concept vocabulary in background...")
             await asyncio.to_thread(
                 self.index_manager.vector.build_concept_vocabulary,
-                max_terms=self.config.search.query_expansion_max_terms,
-                min_frequency=self.config.search.query_expansion_min_frequency,
+                max_terms=2000,
+                min_frequency=3,
             )
             await asyncio.to_thread(self.index_manager.persist)
             logger.info("Concept vocabulary built and persisted")
@@ -553,11 +561,7 @@ class ApplicationContext:
             self.config.indexing.exclude_hidden_dirs,
         )
 
-        parallel_config = ParallelIndexingConfig(
-            max_workers=self.config.git_indexing.parallel_workers,
-            batch_size=self.config.git_indexing.batch_size,
-            embed_batch_size=self.config.git_indexing.embed_batch_size,
-        )
+        parallel_config = ParallelIndexingConfig()
 
         total_indexed = 0
         for repo_path in repos:
@@ -581,7 +585,7 @@ class ApplicationContext:
                     repo_path,
                     self.commit_indexer,
                     parallel_config,
-                    self.config.git_indexing.delta_max_lines,
+                    200,
                 )
                 total_indexed += indexed
 
