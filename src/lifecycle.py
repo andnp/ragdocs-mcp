@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -10,9 +11,13 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from src.context import ApplicationContext
 from src.git.watcher import GitWatcher
+
+if TYPE_CHECKING:
+    from src.storage.db import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +27,99 @@ class LifecycleState(StrEnum):
     STARTING = "starting"
     INITIALIZING = "initializing"
     READY = "ready"
+    READY_PRIMARY = "ready_primary"
+    READY_REPLICA = "ready_replica"
     SHUTTING_DOWN = "shutting_down"
     TERMINATED = "terminated"
+
+
+class LeaderElection:
+    """SQLite-based leader election using system_state table."""
+
+    def __init__(
+        self,
+        db_manager: DatabaseManager,
+        instance_id: str | None = None,
+    ) -> None:
+        self._db = db_manager
+        self._instance_id = instance_id or f"pid_{os.getpid()}_{time.monotonic_ns()}"
+        self._heartbeat_interval = 5.0  # seconds
+        self._leader_timeout = 15.0  # seconds
+        self._heartbeat_task: asyncio.Task[None] | None = None
+        self._is_leader = False
+
+    @property
+    def is_leader(self) -> bool:
+        return self._is_leader
+
+    @property
+    def instance_id(self) -> str:
+        return self._instance_id
+
+    def try_acquire(self) -> bool:
+        """Try to become the leader. Returns True if acquired."""
+        conn = self._db.get_connection()
+        now = time.time()
+
+        row = conn.execute(
+            "SELECT value FROM system_state WHERE key = 'leader_id'"
+        ).fetchone()
+
+        if row is not None:
+            leader_data = json.loads(row[0])
+            last_heartbeat = leader_data.get("heartbeat", 0)
+
+            # Leader is still alive — can't take over
+            if now - last_heartbeat < self._leader_timeout:
+                if leader_data.get("instance_id") == self._instance_id:
+                    self._is_leader = True
+                    return True
+                return False
+
+        # No leader or leader timed out — try to acquire
+        leader_data_json = json.dumps({
+            "instance_id": self._instance_id,
+            "heartbeat": now,
+            "acquired_at": now,
+        })
+        conn.execute(
+            "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
+            ("leader_id", leader_data_json),
+        )
+        conn.commit()
+        self._is_leader = True
+        return True
+
+    def release(self) -> None:
+        """Release leadership."""
+        if not self._is_leader:
+            return
+        conn = self._db.get_connection()
+        row = conn.execute(
+            "SELECT value FROM system_state WHERE key = 'leader_id'"
+        ).fetchone()
+        if row:
+            leader_data = json.loads(row[0])
+            if leader_data.get("instance_id") == self._instance_id:
+                conn.execute("DELETE FROM system_state WHERE key = 'leader_id'")
+                conn.commit()
+        self._is_leader = False
+
+    def heartbeat(self) -> None:
+        """Update heartbeat timestamp."""
+        if not self._is_leader:
+            return
+        conn = self._db.get_connection()
+        now = time.time()
+        leader_data_json = json.dumps({
+            "instance_id": self._instance_id,
+            "heartbeat": now,
+        })
+        conn.execute(
+            "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
+            ("leader_id", leader_data_json),
+        )
+        conn.commit()
 
 
 @dataclass
@@ -37,6 +133,7 @@ class LifecycleCoordinator:
     _forced_timeout: float = field(default=1.0, repr=False)
     _emergency_timeout: float = field(default=3.5, repr=False)
     _init_error: BaseException | None = field(default=None, repr=False)
+    _leader_election: LeaderElection | None = field(default=None, repr=False)
 
     @property
     def state(self) -> LifecycleState:
@@ -47,7 +144,13 @@ class LifecycleCoordinator:
         self._init_error = error
         logger.error("Initialization failed: %s", error)
 
-    async def start(self, ctx: ApplicationContext, *, background_index: bool = False) -> None:
+    async def start(
+        self,
+        ctx: ApplicationContext,
+        *,
+        background_index: bool = False,
+        db_manager: DatabaseManager | None = None,
+    ) -> None:
         if self._state != LifecycleState.UNINITIALIZED:
             raise RuntimeError(f"Cannot start from state {self._state}")
 
@@ -81,6 +184,14 @@ class LifecycleCoordinator:
             if background_index:
                 self._state = LifecycleState.INITIALIZING
                 logger.info("Lifecycle: INITIALIZING (indices loading in background)")
+            elif db_manager is not None:
+                self._leader_election = LeaderElection(db_manager)
+                if self._leader_election.try_acquire():
+                    self._state = LifecycleState.READY_PRIMARY
+                    logger.info("Lifecycle: READY_PRIMARY (leader elected)")
+                else:
+                    self._state = LifecycleState.READY_REPLICA
+                    logger.info("Lifecycle: READY_REPLICA (another instance is primary)")
             else:
                 self._state = LifecycleState.READY
                 logger.info("Lifecycle: READY")
@@ -91,7 +202,11 @@ class LifecycleCoordinator:
             raise
 
     async def wait_ready(self, timeout: float = 60.0) -> None:
-        if self._state == LifecycleState.READY:
+        if self._state in (
+            LifecycleState.READY,
+            LifecycleState.READY_PRIMARY,
+            LifecycleState.READY_REPLICA,
+        ):
             return
 
         # Fail fast if initialization already failed
@@ -116,7 +231,11 @@ class LifecycleCoordinator:
                 raise RuntimeError(f"Wait for ready timed out after {timeout}s (stuck in {self._state})")
             await asyncio.sleep(0.1)
 
-        if self._state == LifecycleState.READY:
+        if self._state in (
+            LifecycleState.READY,
+            LifecycleState.READY_PRIMARY,
+            LifecycleState.READY_REPLICA,
+        ):
             return
 
         if self._ctx is not None:
@@ -141,7 +260,13 @@ class LifecycleCoordinator:
         if self._state == LifecycleState.SHUTTING_DOWN:
             return
 
-        if self._state in (LifecycleState.READY, LifecycleState.INITIALIZING, LifecycleState.STARTING):
+        if self._state in (
+                LifecycleState.READY,
+                LifecycleState.READY_PRIMARY,
+                LifecycleState.READY_REPLICA,
+                LifecycleState.INITIALIZING,
+                LifecycleState.STARTING,
+            ):
             self._state = LifecycleState.SHUTTING_DOWN
             logger.info("Lifecycle: SHUTTING_DOWN")
             self._start_emergency_timer()
@@ -191,6 +316,13 @@ class LifecycleCoordinator:
 
     async def _cleanup_resources(self) -> None:
         self._cancel_emergency_timer()
+
+        if self._leader_election is not None:
+            try:
+                self._leader_election.release()
+            except Exception as e:
+                logger.error(f"Error releasing leader lock: {e}", exc_info=True)
+            self._leader_election = None
 
         if self._git_watcher:
             try:
