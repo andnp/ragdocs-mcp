@@ -1211,13 +1211,179 @@ class VectorIndex:
     def save(self, path: Path) -> None:
         self.persist(path)
 
-    def save_to_db(self, db_manager: Any) -> None:
-        """Stub: SQLite-backed vector persistence (future enhancement)."""
-        pass
+    def save_to_db(self, db_manager: "DatabaseManager") -> None:
+        """Persist VectorIndex state to SQLite via DatabaseManager.
 
-    def load_from_db(self, db_manager: Any) -> None:
-        """Stub: SQLite-backed vector loading (future enhancement)."""
-        pass
+        Stores:
+        - Individual chunk vectors in the ``chunks`` table
+        - FAISS binary, docstore, and JSON mappings in ``kv_store``
+        """
+        import base64
+
+        import faiss
+
+        if self._index is None:
+            return
+
+        conn = db_manager.get_connection()
+
+        with self._index_lock:
+            # --- a) Store each chunk's vector in the chunks table ---
+            docstore = self._index.docstore
+            for chunk_id in list(self._chunk_id_to_node_id.keys()):
+                try:
+                    node = docstore.get_document(chunk_id)
+                    if node is None:
+                        continue
+                    text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "")
+                    metadata = dict(node.metadata) if hasattr(node, "metadata") else {}
+                    doc_id = metadata.get("doc_id", "")
+                    embedding = getattr(node, "embedding", None)
+                    vector_blob: bytes | None = None
+                    if embedding is not None:
+                        vector_blob = np.array(embedding, dtype=np.float32).tobytes()
+
+                    conn.execute(
+                        """INSERT OR REPLACE INTO chunks
+                           (chunk_id, doc_id, content, metadata, vector, indexed_at)
+                           VALUES (?, ?, ?, ?, ?, strftime('%%s', 'now'))""",
+                        (chunk_id, doc_id, text, json.dumps(metadata), vector_blob),
+                    )
+                except Exception:
+                    logger.warning("Failed to save chunk %s to DB", chunk_id, exc_info=True)
+
+            # --- b) Store FAISS index binary in kv_store ---
+            if self._vector_store is not None:
+                faiss_bytes = faiss.serialize_index(self._vector_store._faiss_index)  # type: ignore[attr-defined]
+                faiss_b64 = base64.b64encode(faiss_bytes.tobytes()).decode("ascii")
+                conn.execute(
+                    "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+                    ("vector_index:faiss_binary", faiss_b64),
+                )
+
+            # --- c) Store JSON mappings in kv_store ---
+            mappings: dict[str, str] = {
+                "vector_index:doc_id_mapping": json.dumps(self._doc_id_to_node_ids),
+                "vector_index:chunk_id_mapping": json.dumps(self._chunk_id_to_node_id),
+                "vector_index:tombstones": json.dumps(sorted(self._tombstoned_docs)),
+                "vector_index:concept_vocabulary": json.dumps(self._concept_vocabulary),
+                "vector_index:term_counts": json.dumps(self._term_counts),
+            }
+            for key, value in mappings.items():
+                conn.execute(
+                    "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+                    (key, value),
+                )
+
+            # --- d) Store LlamaIndex docstore and index_store in kv_store ---
+            docstore_dict = self._index.storage_context.docstore.to_dict()
+            conn.execute(
+                "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+                ("vector_index:docstore", json.dumps(docstore_dict)),
+            )
+            index_store_dict = self._index.storage_context.index_store.to_dict()
+            conn.execute(
+                "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+                ("vector_index:index_store", json.dumps(index_store_dict)),
+            )
+
+        conn.commit()
+        logger.info("VectorIndex saved to SQLite (%d chunks)", len(self._chunk_id_to_node_id))
+
+    def load_from_db(self, db_manager: "DatabaseManager") -> None:
+        """Restore VectorIndex state from SQLite via DatabaseManager.
+
+        Loads FAISS binary, docstore, and all JSON mappings from the database.
+        Falls back to a fresh index if no data is found.
+        """
+        import base64
+
+        import faiss
+        from llama_index.core import StorageContext, load_index_from_storage
+        from llama_index.core.storage.docstore import SimpleDocumentStore
+        from llama_index.core.storage.index_store import SimpleIndexStore
+        from llama_index.vector_stores.faiss import FaissVectorStore
+
+        conn = db_manager.get_connection()
+
+        # Check if data exists
+        row = conn.execute(
+            "SELECT value FROM kv_store WHERE key = ?", ("vector_index:faiss_binary",)
+        ).fetchone()
+        if row is None:
+            self._initialize_index()
+            return
+
+        self._ensure_model_loaded()
+
+        try:
+            # --- a) Load FAISS index ---
+            faiss_b64: str = row[0] if isinstance(row, (tuple, list)) else row["value"]
+            faiss_bytes = np.frombuffer(base64.b64decode(faiss_b64), dtype=np.uint8)
+            faiss_index = faiss.deserialize_index(faiss_bytes)  # type: ignore[attr-defined]
+            self._vector_store = FaissVectorStore(faiss_index=faiss_index)
+
+            # --- b) Load docstore ---
+            ds_row = conn.execute(
+                "SELECT value FROM kv_store WHERE key = ?", ("vector_index:docstore",)
+            ).fetchone()
+            if ds_row is not None:
+                ds_json = ds_row[0] if isinstance(ds_row, (tuple, list)) else ds_row["value"]
+                docstore = SimpleDocumentStore.from_dict(json.loads(ds_json))
+            else:
+                docstore = SimpleDocumentStore()
+
+            # --- c) Reconstruct VectorStoreIndex ---
+            is_row = conn.execute(
+                "SELECT value FROM kv_store WHERE key = ?", ("vector_index:index_store",)
+            ).fetchone()
+            if is_row is not None:
+                is_json = is_row[0] if isinstance(is_row, (tuple, list)) else is_row["value"]
+                index_store = SimpleIndexStore.from_dict(json.loads(is_json))
+            else:
+                index_store = SimpleIndexStore()
+
+            storage_context = StorageContext.from_defaults(
+                vector_store=self._vector_store,
+                docstore=docstore,
+                index_store=index_store,
+            )
+            self._index = load_index_from_storage(storage_context)  # type: ignore[assignment]
+
+            # --- d) Load JSON mappings ---
+            def _load_kv(key: str) -> str | None:
+                r = conn.execute("SELECT value FROM kv_store WHERE key = ?", (key,)).fetchone()
+                if r is None:
+                    return None
+                return r[0] if isinstance(r, (tuple, list)) else r["value"]
+
+            doc_mapping_raw = _load_kv("vector_index:doc_id_mapping")
+            self._doc_id_to_node_ids = json.loads(doc_mapping_raw) if doc_mapping_raw else {}
+
+            chunk_mapping_raw = _load_kv("vector_index:chunk_id_mapping")
+            self._chunk_id_to_node_id = json.loads(chunk_mapping_raw) if chunk_mapping_raw else {}
+
+            tombstones_raw = _load_kv("vector_index:tombstones")
+            self._tombstoned_docs = set(json.loads(tombstones_raw)) if tombstones_raw else set()
+
+            vocab_raw = _load_kv("vector_index:concept_vocabulary")
+            self._concept_vocabulary = OrderedDict(json.loads(vocab_raw)) if vocab_raw else OrderedDict()
+
+            term_counts_raw = _load_kv("vector_index:term_counts")
+            self._term_counts = OrderedDict(json.loads(term_counts_raw)) if term_counts_raw else OrderedDict()
+
+            self._pending_terms.clear()
+            self._warned_stale_chunk_ids.clear()
+            self._rebuild_vocab_index()
+
+            logger.info(
+                "VectorIndex loaded from SQLite (%d chunks, %d docs)",
+                len(self._chunk_id_to_node_id),
+                len(self._doc_id_to_node_ids),
+            )
+        except Exception:
+            logger.warning("Failed to load VectorIndex from SQLite, initializing fresh", exc_info=True)
+            self._initialize_index()
 
     def __len__(self) -> int:
         return len(self._doc_id_to_node_ids)
