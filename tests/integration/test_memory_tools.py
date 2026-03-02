@@ -17,8 +17,7 @@ from src.config import (
     IndexingConfig,
     LLMConfig,
     MemoryConfig,
-    SearchConfig,
-    ServerConfig,
+    SearchConfig
 )
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -35,7 +34,7 @@ from src.memory.tools import (
     read_memory,
     search_linked_memories,
     search_memories,
-    update_memory,
+    update_memory
 )
 
 
@@ -59,19 +58,18 @@ def memory_config(tmp_path: Path):
     docs_path.mkdir()
 
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices"),
+            index_path=str(tmp_path / "indices")
         ),
         memory=MemoryConfig(
             enabled=True,
             storage_strategy="project",
-            score_threshold=0.001,
+            score_threshold=0.001
         ),
         search=SearchConfig(),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
     )
 
 
@@ -124,7 +122,7 @@ def app_context(memory_manager: MemoryIndexManager, memory_search: MemorySearchO
     """
     return FakeApplicationContext(
         memory_manager=memory_manager,
-        memory_search=memory_search,
+        memory_search=memory_search
     )
 
 
@@ -135,7 +133,7 @@ def disabled_context():
     """
     return FakeApplicationContext(
         memory_manager=None,
-        memory_search=None,
+        memory_search=None
     )
 
 
@@ -158,7 +156,7 @@ class TestCreateMemory:
             filename="test-note",
             content="# Test Note\n\nThis is test content.",
             tags=["test", "example"],
-            memory_type="journal",
+            memory_type="journal"
         )
 
         assert result["status"] == "created"
@@ -186,7 +184,7 @@ class TestCreateMemory:
             app_context,
             filename="existing",
             content="# New content",
-            tags=[],
+            tags=[]
         )
 
         assert "error" in result
@@ -201,7 +199,7 @@ class TestCreateMemory:
             disabled_context,
             filename="disabled-test",
             content="Content",
-            tags=[],
+            tags=[]
         )
 
         assert "error" in result
@@ -406,13 +404,13 @@ class TestSearchMemories:
             filename="searchable",
             content="# Authentication\n\nOAuth2 implementation details.",
             tags=["auth"],
-            memory_type="fact",
+            memory_type="fact"
         )
 
         results = await search_memories(
             app_context,
             query="OAuth authentication",
-            limit=5,
+            limit=5
         )
 
         assert len(results) > 0
@@ -428,21 +426,21 @@ class TestSearchMemories:
             filename="plan-note",
             content="# Implementation Plan\n\nSteps for implementing authentication.",
             tags=["feature"],
-            memory_type="plan",
+            memory_type="plan"
         )
         await create_memory(
             app_context,
             filename="fact-note",
             content="# Feature Fact\n\nKnown behavior of feature.",
             tags=["feature"],
-            memory_type="fact",
+            memory_type="fact"
         )
 
         results = await search_memories(
             app_context,
             query="implementation authentication",
             limit=10,
-            filter_type="plan",
+            filter_type="plan"
         )
 
         assert len(results) > 0
@@ -458,7 +456,7 @@ class TestSearchMemories:
         results = await search_memories(
             disabled_context,
             query="test",
-            limit=5,
+            limit=5
         )
 
         assert len(results) == 1
@@ -482,14 +480,14 @@ class TestSearchLinkedMemories:
             filename="linked-note",
             content="# Bug Fix\n\nFixed issue in [[src/server.py]] causing errors.",
             tags=["bugfix"],
-            memory_type="journal",
+            memory_type="journal"
         )
 
         results = await search_linked_memories(
             app_context,
             query="bug",
             target_document="src/server.py",
-            limit=5,
+            limit=5
         )
 
         assert len(results) > 0
@@ -506,14 +504,14 @@ class TestSearchLinkedMemories:
             filename="other-note",
             content="# Other Note\n\nNo link to the target file.",
             tags=[],
-            memory_type="journal",
+            memory_type="journal"
         )
 
         results = await search_linked_memories(
             app_context,
             query="note",
             target_document="src/nonexistent.py",
-            limit=5,
+            limit=5
         )
 
         assert results == []
@@ -536,14 +534,14 @@ class TestGetMemoryStats:
             filename="stat1",
             content="# Stat 1",
             tags=["tag1"],
-            memory_type="plan",
+            memory_type="plan"
         )
         await create_memory(
             app_context,
             filename="stat2",
             content="# Stat 2",
             tags=["tag1", "tag2"],
-            memory_type="fact",
+            memory_type="fact"
         )
 
         stats = await get_memory_stats(app_context)
@@ -591,13 +589,13 @@ class TestMergeMemories:
             app_context,
             filename="source1",
             content="# Source 1\n\nContent from source 1.",
-            tags=["merge"],
+            tags=["merge"]
         )
         await create_memory(
             app_context,
             filename="source2",
             content="# Source 2\n\nContent from source 2.",
-            tags=["merge"],
+            tags=["merge"]
         )
 
         summary = """---
@@ -614,7 +612,7 @@ Combined content from sources.
             app_context,
             source_files=["source1", "source2"],
             target_file="merged",
-            summary_content=summary,
+            summary_content=summary
         )
 
         assert result["status"] == "merged"
@@ -643,20 +641,20 @@ Combined content from sources.
             app_context,
             filename="source",
             content="# Source",
-            tags=[],
+            tags=[]
         )
         await create_memory(
             app_context,
             filename="existing-target",
             content="# Existing Target",
-            tags=[],
+            tags=[]
         )
 
         result = await merge_memories(
             app_context,
             source_files=["source"],
             target_file="existing-target",
-            summary_content="# Summary",
+            summary_content="# Summary"
         )
 
         assert "error" in result
@@ -673,14 +671,14 @@ Combined content from sources.
             app_context,
             filename="source",
             content="# Source",
-            tags=[],
+            tags=[]
         )
 
         result = await merge_memories(
             app_context,
             source_files=["source", "nonexistent"],
             target_file="merged",
-            summary_content="# Summary",
+            summary_content="# Summary"
         )
 
         assert "error" in result
@@ -695,7 +693,7 @@ Combined content from sources.
             app_context,
             source_files=[],
             target_file="merged",
-            summary_content="# Summary",
+            summary_content="# Summary"
         )
 
         assert "error" in result
@@ -725,7 +723,7 @@ class TestSearchMemoriesTimeFiltering:
             query="test",
             limit=5,
             after_timestamp=2000000,
-            before_timestamp=1000000,
+            before_timestamp=1000000
         )
 
         # Should return error
@@ -742,7 +740,7 @@ class TestSearchMemoriesTimeFiltering:
             app_context,
             query="test",
             limit=5,
-            relative_days=-10,
+            relative_days=-10
         )
 
         # Should return error
@@ -761,7 +759,7 @@ class TestSearchMemoriesTimeFiltering:
             limit=5,
             after_timestamp=1000000,
             before_timestamp=2000000,
-            relative_days=7,
+            relative_days=7
         )
 
         # Should return error about disabled memory system
@@ -791,7 +789,7 @@ class TestMemoryToolsWorkflow:
             filename="lifecycle-test",
             content="# Initial\n\nInitial content.",
             tags=["lifecycle"],
-            memory_type="journal",
+            memory_type="journal"
         )
         assert create_result["status"] == "created"
 
@@ -801,7 +799,7 @@ class TestMemoryToolsWorkflow:
         update_result = await update_memory(
             app_context,
             filename="lifecycle-test",
-            content="---\ntype: plan\n---\n\n# Updated\n\nUpdated content.",
+            content="---\ntype: plan\n---\n\n# Updated\n\nUpdated content."
         )
         assert update_result["status"] == "updated"
 
@@ -847,7 +845,7 @@ class TestMemoryToolsOrderedDictRegression:
             memory_path=memory_path,
             vector=vector1,
             keyword=keyword1,
-            graph=graph1,
+            graph=graph1
         )
 
         search1 = MemorySearchOrchestrator(
@@ -856,12 +854,12 @@ class TestMemoryToolsOrderedDictRegression:
             graph=graph1,
             config=memory_config,
             manager=manager1,
-            documents_path=memory_path,
+            documents_path=memory_path
         )
 
         ctx1: Any = FakeApplicationContext(
             memory_manager=manager1,
-            memory_search=search1,
+            memory_search=search1
         )
 
         # Create first memory
@@ -870,7 +868,7 @@ class TestMemoryToolsOrderedDictRegression:
             filename="first-memory",
             content="# First Memory\n\nPython asyncio and concurrent programming.",
             tags=["python", "asyncio"],
-            memory_type="journal",
+            memory_type="journal"
         )
         assert result1["status"] == "created"
 
@@ -887,7 +885,7 @@ class TestMemoryToolsOrderedDictRegression:
             memory_path=memory_path,
             vector=vector2,
             keyword=keyword2,
-            graph=graph2,
+            graph=graph2
         )
 
         # Load indices from disk
@@ -899,12 +897,12 @@ class TestMemoryToolsOrderedDictRegression:
             graph=graph2,
             config=memory_config,
             manager=manager2,
-            documents_path=memory_path,
+            documents_path=memory_path
         )
 
         ctx2: Any = FakeApplicationContext(
             memory_manager=manager2,
-            memory_search=search2,
+            memory_search=search2
         )
 
         # CRITICAL: Create new memory after loading (this would fail with AttributeError)
@@ -915,7 +913,7 @@ class TestMemoryToolsOrderedDictRegression:
             filename="second-memory",
             content="# Second Memory\n\nFastAPI web framework with Pydantic models.",
             tags=["python", "fastapi"],
-            memory_type="journal",
+            memory_type="journal"
         )
 
         # Should succeed without AttributeError

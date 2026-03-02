@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from src.server import create_app
 
 
@@ -385,20 +385,18 @@ def app_with_corpus(tmp_path, docs_corpus, monkeypatch):
 
     def mock_load_config():
         return Config(
-            server=ServerConfig(host="127.0.0.1", port=8000),
             indexing=IndexingConfig(
                 documents_path=str(docs_corpus),
-                index_path=str(index_path),
+                index_path=str(index_path)
             ),
-            parsers={"**/*.md": "MarkdownParser"},
             search=SearchConfig(
                 semantic_weight=0.6,
                 keyword_weight=0.4,
-                recency_bias=0.5,
+                recency_bias=0.5
             ),
             llm=LLMConfig(
                 embedding_model="all-MiniLM-L6-v2"
-            ),
+            )
         )
 
     monkeypatch.setattr("src.context.load_config", mock_load_config)
@@ -446,7 +444,7 @@ def test_real_world_documentation_site_complete_workflow(client):
     # Query 1: Keyword match - "authenticate" + "API"
     query1_response = client.post(
         "/query_documents",
-        json={"query": "how do I authenticate API requests?"},
+        json={"query": "how do I authenticate API requests?"}
     )
     assert query1_response.status_code == 200
     query1_data = query1_response.json()
@@ -464,7 +462,7 @@ def test_real_world_documentation_site_complete_workflow(client):
     # Query 2: Semantic similarity - security concepts
     query2_response = client.post(
         "/query_documents",
-        json={"query": "securing my application"},
+        json={"query": "securing my application"}
     )
     assert query2_response.status_code == 200
     query2_data = query2_response.json()
@@ -481,7 +479,7 @@ def test_real_world_documentation_site_complete_workflow(client):
     # Query 3: Graph traversal - deployment → auth → security via links
     query3_response = client.post(
         "/query_documents",
-        json={"query": "deployment security"},
+        json={"query": "deployment security"}
     )
     assert query3_response.status_code == 200
     query3_data = query3_response.json()
@@ -502,7 +500,7 @@ def test_real_world_documentation_site_complete_workflow(client):
     # Query 4: Multi-strategy combination - getting started with auth
     query4_response = client.post(
         "/query_documents",
-        json={"query": "getting started with authentication"},
+        json={"query": "getting started with authentication"}
     )
     assert query4_response.status_code == 200
     query4_data = query4_response.json()

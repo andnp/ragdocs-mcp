@@ -18,8 +18,7 @@ from src.config import (
     IndexingConfig,
     LLMConfig,
     MemoryConfig,
-    SearchConfig,
-    ServerConfig,
+    SearchConfig
 )
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -44,27 +43,26 @@ def memory_path(tmp_path: Path) -> Path:
 def create_config(
     tmp_path: Path,
     checkpoint_interval_ops: int = 10,
-    checkpoint_interval_secs: int = 300,
+    checkpoint_interval_secs: int = 300
 ) -> Config:
     """Create test configuration with custom checkpoint settings."""
     docs_path = tmp_path / "docs"
     docs_path.mkdir(exist_ok=True)
 
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices"),
+            index_path=str(tmp_path / "indices")
         ),
         memory=MemoryConfig(
             enabled=True,
             storage_strategy="project",
             checkpoint_interval_ops=checkpoint_interval_ops,
-            checkpoint_interval_secs=checkpoint_interval_secs,
+            checkpoint_interval_secs=checkpoint_interval_secs
         ),
         search=SearchConfig(),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
     )
 
 
@@ -394,7 +392,7 @@ class TestCheckpointConfigValidation:
         """Verify valid checkpoint config values are accepted."""
         config = MemoryConfig(
             checkpoint_interval_ops=5,
-            checkpoint_interval_secs=60,
+            checkpoint_interval_secs=60
         )
         assert config.checkpoint_interval_ops == 5
         assert config.checkpoint_interval_secs == 60

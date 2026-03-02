@@ -108,7 +108,6 @@ def test_manifest_persistence_with_persistent_fixtures(
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={"**/*.md": "MarkdownParser", "**/*.markdown": "MarkdownParser", "**/*.txt": "PlainTextParser"},
         chunking_config={},
     )
     save_manifest(persistent_index_path, manifest)

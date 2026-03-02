@@ -32,7 +32,7 @@ from typing import Any, Generator
 import pytest
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -76,7 +76,6 @@ def make_test_config(tmp_path: Path, **overrides):
     index_path.mkdir(exist_ok=True)
 
     defaults: dict[str, Any] = {
-        "server": ServerConfig(host="localhost", port=8080),
         "indexing": IndexingConfig(
             documents_path=str(docs_path),
             index_path=str(index_path),
@@ -222,7 +221,6 @@ def persistent_config(
     Returns Config object configured for persistent storage.
     """
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(persistent_docs_path),
             index_path=str(persistent_index_path),
@@ -335,7 +333,6 @@ def persistent_config_module(tmp_path_factory) -> Config:
     index_path.mkdir(parents=True, exist_ok=True)
 
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
             index_path=str(index_path),

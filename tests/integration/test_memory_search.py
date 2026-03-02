@@ -16,8 +16,7 @@ from src.config import (
     IndexingConfig,
     LLMConfig,
     MemoryConfig,
-    SearchConfig,
-    ServerConfig,
+    SearchConfig
 )
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -41,10 +40,9 @@ def memory_config(tmp_path: Path):
     docs_path.mkdir()
 
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices"),
+            index_path=str(tmp_path / "indices")
         ),
         memory=MemoryConfig(
             enabled=True,
@@ -53,10 +51,10 @@ def memory_config(tmp_path: Path):
         ),
         search=SearchConfig(
             semantic_weight=1.0,
-            keyword_weight=1.0,
+            keyword_weight=1.0
         ),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
     )
 
 
@@ -124,7 +122,7 @@ class TestApplyRecencyBoost:
             created_at=now,
             boost_window_days=14,
             max_boost_amount=0.2,
-            boost_decay_rate=0.95,
+            boost_decay_rate=0.95
         )
         # Age = 0, boost = 0.95^0 × 0.2 = 1.0 × 0.2 = 0.2
         # Final = 0.5 + 0.2 = 0.7
@@ -140,7 +138,7 @@ class TestApplyRecencyBoost:
             created_at=seven_days_ago,
             boost_window_days=14,
             max_boost_amount=0.2,
-            boost_decay_rate=0.95,
+            boost_decay_rate=0.95
         )
 
         # boost_factor = 0.95^7 ≈ 0.698
@@ -160,7 +158,7 @@ class TestApplyRecencyBoost:
             created_at=very_old,
             boost_window_days=14,
             max_boost_amount=0.2,
-            boost_decay_rate=0.95,
+            boost_decay_rate=0.95
         )
 
         # Age > window, no boost, no penalty
@@ -177,7 +175,7 @@ class TestApplyRecencyBoost:
             created_at=None,
             boost_window_days=14,
             max_boost_amount=0.2,
-            boost_decay_rate=0.95,
+            boost_decay_rate=0.95
         )
         assert boosted == pytest.approx(0.5)
 
@@ -190,7 +188,7 @@ class TestApplyRecencyBoost:
             created_at=naive_dt,
             boost_window_days=14,
             max_boost_amount=0.2,
-            boost_decay_rate=0.95,
+            boost_decay_rate=0.95
         )
 
         # Should apply boost without errors
@@ -240,7 +238,7 @@ class TestApplyRecencyBoost:
             created_at=now,
             boost_window_days=14,
             max_boost_amount=0.2,  # Would give 1.15
-            boost_decay_rate=0.95,
+            boost_decay_rate=0.95
         )
 
         # Should cap at 1.0
@@ -259,7 +257,7 @@ class TestBasicMemorySearch:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify basic search returns matching memories.
@@ -284,7 +282,7 @@ Implemented OAuth2 authentication with JWT tokens.
     @pytest.mark.asyncio
     async def test_empty_query_returns_empty(
         self,
-        memory_search: MemorySearchOrchestrator,
+        memory_search: MemorySearchOrchestrator
     ):
         """
         Verify empty query returns empty results.
@@ -296,7 +294,7 @@ Implemented OAuth2 authentication with JWT tokens.
     @pytest.mark.asyncio
     async def test_whitespace_query_returns_empty(
         self,
-        memory_search: MemorySearchOrchestrator,
+        memory_search: MemorySearchOrchestrator
     ):
         """
         Verify whitespace-only query returns empty results.
@@ -318,7 +316,7 @@ class TestMemorySearchFilters:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify type filter narrows results to specified type.
@@ -358,7 +356,7 @@ class TestLinkedMemorySearch:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify search_linked_memories finds memories linking to target.
@@ -383,7 +381,7 @@ Found and fixed bug in [[src/server.py]] causing timeout errors.
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify linked search results include anchor context.
@@ -411,7 +409,7 @@ Need to refactor [[src/handler.py]] for better error handling.
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify linked search results include inferred edge type.
@@ -437,7 +435,7 @@ Found a bug in [[src/auth.py]] causing login failures.
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify search_linked_memories returns empty for unlinked targets.
@@ -462,7 +460,7 @@ This note links to [[other/file.py]] not the target.
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify search_linked_memories finds all memories linking to target.
@@ -512,7 +510,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify only memories after timestamp are returned.
@@ -540,7 +538,7 @@ class TestTimeRangeFiltering:
         results = await memory_search.search_memories(
             "testing",
             limit=10,
-            after_timestamp=after_ts,
+            after_timestamp=after_ts
         )
 
         # Only new memory should be returned
@@ -553,7 +551,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify only memories before timestamp are returned.
@@ -580,7 +578,7 @@ class TestTimeRangeFiltering:
         results = await memory_search.search_memories(
             "database configuration",
             limit=10,
-            before_timestamp=before_ts,
+            before_timestamp=before_ts
         )
 
         # Only old memory should be returned
@@ -593,7 +591,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify combined after/before filtering (AND logic).
@@ -617,7 +615,7 @@ class TestTimeRangeFiltering:
             "API redesign",
             limit=10,
             after_timestamp=after_ts,
-            before_timestamp=before_ts,
+            before_timestamp=before_ts
         )
 
         # Only January memory should be returned
@@ -629,7 +627,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify relative_days works correctly.
@@ -660,7 +658,7 @@ class TestTimeRangeFiltering:
         results = await memory_search.search_memories(
             "performance metrics",
             limit=10,
-            relative_days=7,
+            relative_days=7
         )
 
         # Only recent memory should be returned
@@ -673,7 +671,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify relative_days takes precedence over absolute timestamps.
@@ -707,7 +705,7 @@ class TestTimeRangeFiltering:
     @pytest.mark.asyncio
     async def test_invalid_timestamp_range_raises_error(
         self,
-        memory_search: MemorySearchOrchestrator,
+        memory_search: MemorySearchOrchestrator
     ):
         """
         Verify ValueError for after >= before.
@@ -720,13 +718,13 @@ class TestTimeRangeFiltering:
                 "test query",
                 limit=5,
                 after_timestamp=after_ts,
-                before_timestamp=before_ts,
+                before_timestamp=before_ts
             )
 
     @pytest.mark.asyncio
     async def test_negative_relative_days_raises_error(
         self,
-        memory_search: MemorySearchOrchestrator,
+        memory_search: MemorySearchOrchestrator
     ):
         """
         Verify ValueError for relative_days < 0.
@@ -735,7 +733,7 @@ class TestTimeRangeFiltering:
             await memory_search.search_memories(
                 "test query",
                 limit=5,
-                relative_days=-5,
+                relative_days=-5
             )
 
     @pytest.mark.asyncio
@@ -743,7 +741,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify fallback when memory_created_at missing.
@@ -772,7 +770,7 @@ class TestTimeRangeFiltering:
         results = await memory_search.search_memories(
             "content",
             limit=10,
-            after_timestamp=after_ts,
+            after_timestamp=after_ts
         )
 
         # Should get no results because file mtime is old
@@ -783,7 +781,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify time filter works with type filters.
@@ -810,7 +808,7 @@ class TestTimeRangeFiltering:
             "development",
             limit=10,
             filter_type="plan",
-            relative_days=7,
+            relative_days=7
         )
 
         # Should only get recent-plan
@@ -822,7 +820,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify empty list when no memories match time filter.
@@ -840,7 +838,7 @@ class TestTimeRangeFiltering:
         results = await memory_search.search_memories(
             "ancient notes",
             limit=10,
-            relative_days=1,
+            relative_days=1
         )
 
         # Should get no results
@@ -851,7 +849,7 @@ class TestTimeRangeFiltering:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify timezone handling for naive datetimes.
@@ -873,7 +871,7 @@ class TestTimeRangeFiltering:
             "configuration details",
             limit=10,
             after_timestamp=after_ts,
-            before_timestamp=before_ts,
+            before_timestamp=before_ts
         )
 
         # Should find the memory despite timezone differences
@@ -887,7 +885,7 @@ class TestSearchResultQuality:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify search results are sorted by descending score.
@@ -908,7 +906,7 @@ class TestSearchResultQuality:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify search respects limit parameter.
@@ -930,7 +928,7 @@ class TestSearchResultQuality:
         self,
         memory_manager: MemoryIndexManager,
         memory_search: MemorySearchOrchestrator,
-        memory_path: Path,
+        memory_path: Path
     ):
         """
         Verify search results include complete memory metadata.

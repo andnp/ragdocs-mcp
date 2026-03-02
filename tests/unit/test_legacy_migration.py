@@ -40,7 +40,6 @@ def _save_manifest_with_files(index_path: Path, files: dict[str, str]) -> None:
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={},
         chunking_config={},
         indexed_files=files,
     )

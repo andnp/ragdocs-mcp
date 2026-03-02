@@ -25,7 +25,6 @@ def sample_manifest():
     return IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
         indexed_files={
             "doc1": "doc1.md",
@@ -145,7 +144,6 @@ def test_reconcile_empty_manifest(docs_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files={}
     )
@@ -173,7 +171,6 @@ def test_reconcile_manifest_none(docs_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files=None
     )
@@ -228,7 +225,6 @@ def test_reconcile_ignores_files_outside_docs_path(docs_path, tmp_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files={"doc1": "doc1.md"}
     )
@@ -255,7 +251,6 @@ def test_find_excluded_indexed_files_venv(docs_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files={
             "normal": "normal.md",
@@ -283,7 +278,6 @@ def test_find_excluded_indexed_files_hidden_dirs(docs_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files={
             "normal": "normal.md",
@@ -311,7 +305,6 @@ def test_find_excluded_indexed_files_multiple_patterns(docs_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files={
             "normal": "normal.md",
@@ -341,7 +334,6 @@ def test_reconcile_with_exclude_patterns(docs_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files={
             "doc1": "doc1.md",
@@ -381,7 +373,6 @@ def test_reconcile_blacklist_change_removes_indexed_files(docs_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files={
             "docs/README": "docs/README.md",

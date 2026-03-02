@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, SearchConfig, ChunkingConfig, LLMConfig, ServerConfig
+from src.config import Config, IndexingConfig, SearchConfig, ChunkingConfig, LLMConfig
 from src.context import ApplicationContext
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
@@ -60,28 +60,26 @@ def two_projects(tmp_path):
 @pytest.fixture
 def config_for_project_a(two_projects, tmp_path):
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(two_projects["project_a_docs"]),
-            index_path=str(tmp_path / "index_a"),
+            index_path=str(tmp_path / "index_a")
         ),
         search=SearchConfig(),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5")
     )
 
 
 @pytest.fixture
 def config_for_project_b(two_projects, tmp_path):
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(two_projects["project_b_docs"]),
-            index_path=str(tmp_path / "index_b"),
+            index_path=str(tmp_path / "index_b")
         ),
         search=SearchConfig(),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5")
     )
 
 
@@ -93,7 +91,7 @@ def config_for_project_b(two_projects, tmp_path):
 def test_orchestrators_for_different_projects_have_different_paths(
     config_for_project_a,
     config_for_project_b,
-    two_projects,
+    two_projects
 ):
     """
     Test that orchestrators created for different projects maintain separate paths.
@@ -108,7 +106,7 @@ def test_orchestrators_for_different_projects_have_different_paths(
     manager_a = IndexManager(config_for_project_a, vector_a, keyword_a, graph_a)
     orchestrator_a = SearchOrchestrator(
         vector_a, keyword_a, graph_a, config_for_project_a, manager_a,
-        documents_path=Path(config_for_project_a.indexing.documents_path),
+        documents_path=Path(config_for_project_a.indexing.documents_path)
     )
 
     # Create orchestrator for Project B
@@ -118,7 +116,7 @@ def test_orchestrators_for_different_projects_have_different_paths(
     manager_b = IndexManager(config_for_project_b, vector_b, keyword_b, graph_b)
     orchestrator_b = SearchOrchestrator(
         vector_b, keyword_b, graph_b, config_for_project_b, manager_b,
-        documents_path=Path(config_for_project_b.indexing.documents_path),
+        documents_path=Path(config_for_project_b.indexing.documents_path)
     )
 
     # Verify paths are different
@@ -136,7 +134,7 @@ def test_orchestrators_for_different_projects_have_different_paths(
 async def test_queries_return_results_from_correct_project(
     config_for_project_a,
     config_for_project_b,
-    two_projects,
+    two_projects
 ):
     """
     Test that querying each orchestrator returns results only from its project.
@@ -151,7 +149,7 @@ async def test_queries_return_results_from_correct_project(
     manager_a = IndexManager(config_for_project_a, vector_a, keyword_a, graph_a)
     orchestrator_a = SearchOrchestrator(
         vector_a, keyword_a, graph_a, config_for_project_a, manager_a,
-        documents_path=Path(config_for_project_a.indexing.documents_path),
+        documents_path=Path(config_for_project_a.indexing.documents_path)
     )
 
     # Add Project A specific chunk
@@ -165,7 +163,7 @@ async def test_queries_return_results_from_correct_project(
         start_pos=0,
         end_pos=30,
         file_path=str(two_projects["project_a_docs"] / "readme.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now()
     )
     vector_a.add_chunk(chunk_a)
     keyword_a.add_chunk(chunk_a)
@@ -177,7 +175,7 @@ async def test_queries_return_results_from_correct_project(
     manager_b = IndexManager(config_for_project_b, vector_b, keyword_b, graph_b)
     orchestrator_b = SearchOrchestrator(
         vector_b, keyword_b, graph_b, config_for_project_b, manager_b,
-        documents_path=Path(config_for_project_b.indexing.documents_path),
+        documents_path=Path(config_for_project_b.indexing.documents_path)
     )
 
     # Add Project B specific chunk
@@ -191,7 +189,7 @@ async def test_queries_return_results_from_correct_project(
         start_pos=0,
         end_pos=30,
         file_path=str(two_projects["project_b_docs"] / "readme.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now()
     )
     vector_b.add_chunk(chunk_b)
     keyword_b.add_chunk(chunk_b)
@@ -223,7 +221,7 @@ async def test_queries_return_results_from_correct_project(
 def test_application_context_creates_orchestrator_with_correct_path(
     config_for_project_a,
     two_projects,
-    monkeypatch,
+    monkeypatch
 ):
     """
     Test that ApplicationContext.create() passes the correct documents_path
@@ -236,7 +234,7 @@ def test_application_context_creates_orchestrator_with_correct_path(
     ctx = ApplicationContext.create(
         project_override=None,
         enable_watcher=False,
-        lazy_embeddings=True,
+        lazy_embeddings=True
     )
 
     # Orchestrator should have the correct documents_path
@@ -247,7 +245,7 @@ def test_multiple_contexts_have_isolated_orchestrator_paths(
     config_for_project_a,
     config_for_project_b,
     two_projects,
-    monkeypatch,
+    monkeypatch
 ):
     """
     Test that creating multiple ApplicationContexts for different projects
@@ -261,7 +259,7 @@ def test_multiple_contexts_have_isolated_orchestrator_paths(
     ctx_a = ApplicationContext.create(
         project_override=None,
         enable_watcher=False,
-        lazy_embeddings=True,
+        lazy_embeddings=True
     )
 
     # Create context for Project B (need to update monkeypatch)
@@ -269,7 +267,7 @@ def test_multiple_contexts_have_isolated_orchestrator_paths(
     ctx_b = ApplicationContext.create(
         project_override=None,
         enable_watcher=False,
-        lazy_embeddings=True,
+        lazy_embeddings=True
     )
 
     # Verify paths are different and correct
@@ -286,7 +284,7 @@ def test_multiple_contexts_have_isolated_orchestrator_paths(
 def test_config_modification_does_not_affect_existing_context(
     config_for_project_a,
     two_projects,
-    monkeypatch,
+    monkeypatch
 ):
     """
     Test that modifying config after context creation does not affect
@@ -299,7 +297,7 @@ def test_config_modification_does_not_affect_existing_context(
     ctx = ApplicationContext.create(
         project_override=None,
         enable_watcher=False,
-        lazy_embeddings=True,
+        lazy_embeddings=True
     )
 
     original_path = ctx.orchestrator.documents_path
@@ -320,7 +318,7 @@ def test_config_modification_does_not_affect_existing_context(
 @pytest.mark.asyncio
 async def test_file_exclusions_resolve_against_orchestrator_path(
     config_for_project_a,
-    two_projects,
+    two_projects
 ):
     """
     Test that excluded_files in queries resolve against the orchestrator's
@@ -335,7 +333,7 @@ async def test_file_exclusions_resolve_against_orchestrator_path(
 
     orchestrator = SearchOrchestrator(
         vector, keyword, graph, config_for_project_a, manager,
-        documents_path=Path(config_for_project_a.indexing.documents_path),
+        documents_path=Path(config_for_project_a.indexing.documents_path)
     )
 
     # Add multiple chunks
@@ -350,7 +348,7 @@ async def test_file_exclusions_resolve_against_orchestrator_path(
             start_pos=0,
             end_pos=50,
             file_path=str(two_projects["project_a_docs"] / f"{name}.md"),
-            modified_time=datetime.now(),
+            modified_time=datetime.now()
         )
         vector.add_chunk(chunk)
         keyword.add_chunk(chunk)
@@ -364,7 +362,7 @@ async def test_file_exclusions_resolve_against_orchestrator_path(
         "Content Project",
         top_k=10,
         top_n=10,
-        excluded_files={"readme"},
+        excluded_files={"readme"}
     )
 
     # Should have results but NOT from readme
@@ -382,7 +380,7 @@ async def test_context_persistence_maintains_path_isolation(
     config_for_project_a,
     two_projects,
     tmp_path,
-    monkeypatch,
+    monkeypatch
 ):
     """
     Test that after persisting and reloading indices, the orchestrator
@@ -394,7 +392,7 @@ async def test_context_persistence_maintains_path_isolation(
     ctx = ApplicationContext.create(
         project_override=None,
         enable_watcher=False,
-        lazy_embeddings=True,
+        lazy_embeddings=True
     )
 
     original_docs_path = ctx.orchestrator.documents_path

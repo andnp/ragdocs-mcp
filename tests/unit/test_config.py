@@ -20,10 +20,6 @@ def test_load_from_project_local_config(tmp_path):
     config_dir.mkdir()
     local_config = config_dir / "config.toml"
     local_config.write_text("""
-[server]
-host = "192.168.1.1"
-port = 9000
-
 [indexing]
 documents_path = "/data/docs"
 index_path = "/data/index"
@@ -35,8 +31,6 @@ index_path = "/data/index"
         os.chdir(tmp_path)
         config = load_config()
 
-        assert config.server.host == "192.168.1.1"
-        assert config.server.port == 9000
         assert config.indexing.documents_path == "/data/docs"
         assert config.indexing.index_path == "/data/index"
     finally:
@@ -56,10 +50,6 @@ def test_load_from_user_global_path(tmp_path, monkeypatch):
     global_config_dir.mkdir(parents=True)
     global_config_path = global_config_dir / "config.toml"
     global_config_path.write_text("""
-[server]
-host = "10.0.0.1"
-port = 7000
-
 [indexing]
 documents_path = "~/documents"
 """)
@@ -72,8 +62,6 @@ documents_path = "~/documents"
         os.chdir(work_dir)
         config = load_config()
 
-        assert config.server.host == "10.0.0.1"
-        assert config.server.port == 7000
         # Path should be expanded from ~
         assert config.indexing.documents_path.startswith(str(tmp_path))
         assert "documents" in config.indexing.documents_path
@@ -93,8 +81,6 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         config = load_config()
 
         # Verify all default values are used
-        assert config.server.host == "127.0.0.1"
-        assert config.server.port == 8000
         assert config.search.semantic_weight == 1.0
         assert config.search.keyword_weight == 1.0
         assert config.search.recency_bias == 0.5
@@ -140,21 +126,19 @@ def test_validation_of_required_fields(tmp_path):
     Validate that config loads without validation errors.
     Tests that the loader handles TOML parsing and basic structure.
     """
-    # Test that config with string port loads (TOML validation)
     config_dir = tmp_path / ".mcp-markdown-ragdocs"
     config_dir.mkdir()
     config_with_string = config_dir / "config.toml"
     config_with_string.write_text("""
-[server]
-port = "not_a_number"
+[search]
+semantic_weight = 0.7
 """)
 
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
         config = load_config()
-        # Config loads but port will be string (no runtime validation)
-        assert config.server.port == "not_a_number"
+        assert config.search.semantic_weight == 0.7
     finally:
         os.chdir(original_cwd)
 
@@ -168,8 +152,8 @@ def test_partial_config_with_defaults(tmp_path):
     config_dir.mkdir()
     partial_config = config_dir / "config.toml"
     partial_config.write_text("""
-[server]
-port = 3000
+[search]
+keyword_weight = 0.5
 """)
 
     original_cwd = os.getcwd()
@@ -178,9 +162,8 @@ port = 3000
         config = load_config()
 
         # User-provided value
-        assert config.server.port == 3000
+        assert config.search.keyword_weight == 0.5
         # Default values for missing fields
-        assert config.server.host == "127.0.0.1"
         assert config.llm.embedding_model == "local"
     finally:
         os.chdir(original_cwd)
@@ -195,10 +178,6 @@ def test_all_sections_present_in_config(tmp_path):
     config_dir.mkdir()
     full_config = config_dir / "config.toml"
     full_config.write_text("""
-[server]
-host = "0.0.0.0"
-port = 5000
-
 [indexing]
 documents_path = "/srv/docs"
 index_path = "/srv/index"
@@ -217,8 +196,6 @@ embedding_model = "custom"
         os.chdir(tmp_path)
         config = load_config()
 
-        assert config.server.host == "0.0.0.0"
-        assert config.server.port == 5000
         assert config.indexing.documents_path == "/srv/docs"
         assert config.indexing.index_path == "/srv/index"
         assert config.search.semantic_weight == 0.8
@@ -239,9 +216,8 @@ def test_monorepo_walks_up_directory_tree(tmp_path):
     config_dir.mkdir()
     parent_config = config_dir / "config.toml"
     parent_config.write_text("""
-[server]
-host = "monorepo.local"
-port = 6000
+[search]
+semantic_weight = 0.9
 """)
 
     # Create subdirectory structure (monorepo/project-a/src)
@@ -255,8 +231,7 @@ port = 6000
         config = load_config()
 
         # Should find parent config
-        assert config.server.host == "monorepo.local"
-        assert config.server.port == 6000
+        assert config.search.semantic_weight == 0.9
     finally:
         os.chdir(original_cwd)
 
@@ -271,9 +246,8 @@ def test_local_config_takes_precedence_over_parent(tmp_path):
     parent_config_dir.mkdir()
     parent_config = parent_config_dir / "config.toml"
     parent_config.write_text("""
-[server]
-host = "parent.local"
-port = 5000
+[search]
+semantic_weight = 0.5
 """)
 
     # Create child directory with its own config
@@ -283,9 +257,8 @@ port = 5000
     child_config_dir.mkdir()
     child_config = child_config_dir / "config.toml"
     child_config.write_text("""
-[server]
-host = "child.local"
-port = 6000
+[search]
+semantic_weight = 0.8
 """)
 
     original_cwd = os.getcwd()
@@ -295,8 +268,7 @@ port = 6000
         config = load_config()
 
         # Should use child config, not parent
-        assert config.server.host == "child.local"
-        assert config.server.port == 6000
+        assert config.search.semantic_weight == 0.8
     finally:
         os.chdir(original_cwd)
 

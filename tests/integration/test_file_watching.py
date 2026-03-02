@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from src.indexing.discovery import get_parser_suffixes
 from src.indexing.manager import IndexManager
 from src.indexing.watcher import FileWatcher
@@ -30,13 +30,12 @@ def config(tmp_path):
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices"),
+            index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(),
-        llm=LLMConfig(),
+        llm=LLMConfig()
     )
 
 
@@ -78,7 +77,7 @@ def watcher(config, manager):
         include_patterns=config.indexing.include,
         exclude_patterns=config.indexing.exclude,
         exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
-        parser_suffixes=get_parser_suffixes(),
+        parser_suffixes=get_parser_suffixes()
     )
 
 
@@ -278,9 +277,9 @@ async def test_watcher_handles_non_markdown_files(watcher, manager, config, tmp_
         # Wait for debounce + processing
         await asyncio.sleep(1.0)
 
-        # Verify only markdown file was indexed (count == 1)
+        # .md and .txt are both supported by default; .py is not indexed
         doc_count = manager.get_document_count()
-        assert doc_count == 1
+        assert doc_count == 2
     finally:
         await watcher.stop()
 

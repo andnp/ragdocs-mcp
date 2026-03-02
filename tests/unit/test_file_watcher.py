@@ -493,7 +493,7 @@ class TestFileWatcherParserSuffixes:
             index_manager=mock_index_manager,
             parser_suffixes=None,
         )
-        assert watcher._parser_suffixes == {".md", ".markdown"}
+        assert watcher._parser_suffixes == {".md", ".markdown", ".txt"}
 
     def test_custom_suffixes_passed_through(self, tmp_path, mock_index_manager):
         """FileWatcher should store custom parser_suffixes."""

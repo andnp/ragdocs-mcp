@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from src.compression.thresholding import filter_by_score
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig, ChunkingConfig
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ChunkingConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -47,18 +47,17 @@ def integration_config(tmp_path_factory) -> Config:
     index_path.mkdir(parents=True, exist_ok=True)
 
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(index_path),
+            index_path=str(index_path)
         ),
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
-            recency_bias=0.5,
+            recency_bias=0.5
         ),
         llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
-        chunking=ChunkingConfig(),
+        chunking=ChunkingConfig()
     )
 
 
@@ -74,7 +73,7 @@ def embedding_model(shared_embedding_model):
 
 @pytest.fixture(scope="module")
 def integration_indices(
-    embedding_model,
+    embedding_model
 ) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
     """
     Create module-scoped indices for integration tests.
@@ -90,7 +89,7 @@ def integration_indices(
 @pytest.fixture(scope="module")
 def integration_manager(
     integration_config: Config,
-    integration_indices: tuple[VectorIndex, KeywordIndex, GraphStore],
+    integration_indices: tuple[VectorIndex, KeywordIndex, GraphStore]
 ) -> IndexManager:
     """
     Create module-scoped IndexManager for integration tests.
@@ -105,7 +104,7 @@ def integration_manager(
 def integration_orchestrator(
     integration_indices: tuple[VectorIndex, KeywordIndex, GraphStore],
     integration_config: Config,
-    integration_manager: IndexManager,
+    integration_manager: IndexManager
 ) -> SearchOrchestrator:
     """
     Create module-scoped SearchOrchestrator for integration tests.
@@ -119,7 +118,7 @@ def integration_orchestrator(
 @pytest.fixture(scope="module")
 def indexed_documents(
     integration_config: Config,
-    integration_manager: IndexManager,
+    integration_manager: IndexManager
 ) -> list[str]:
     """
     Create and index test documents for compression testing.
@@ -224,7 +223,7 @@ class TestCompressionPipeline:
     async def test_query_with_compression_returns_results(
         self,
         integration_orchestrator: SearchOrchestrator,
-        indexed_documents: list[str],
+        indexed_documents: list[str]
     ) -> None:
         """
         Tests that compressed query returns valid results with stats.
@@ -235,7 +234,7 @@ class TestCompressionPipeline:
         results, _, _ = await integration_orchestrator.query(
             "What is Python programming?",
             top_k=20,
-            top_n=20,
+            top_n=20
         )
 
         assert len(results) > 0
@@ -248,7 +247,7 @@ class TestCompressionPipeline:
     async def test_score_threshold_filters_results(
         self,
         integration_orchestrator: SearchOrchestrator,
-        indexed_documents: list[str],
+        indexed_documents: list[str]
     ) -> None:
         """
         Tests that score threshold effectively filters low-relevance results.
@@ -258,7 +257,7 @@ class TestCompressionPipeline:
         results, _, _ = await integration_orchestrator.query(
             "Python variables and types",
             top_k=20,
-            top_n=20,
+            top_n=20
         )
 
         # Low threshold: most results pass
@@ -274,7 +273,7 @@ class TestCompressionPipeline:
         self,
         integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
-        embedding_model,
+        embedding_model
     ) -> None:
         """
         Tests that deduplication merges semantically similar chunks.
@@ -284,14 +283,14 @@ class TestCompressionPipeline:
         """
         pipeline_config = SearchPipelineConfig(
             min_confidence=0.0,
-            dedup_threshold=0.85,
+            dedup_threshold=0.85
         )
 
         results, stats, _ = await integration_orchestrator.query(
             "Introduction to Python programming language",
             top_k=20,
             top_n=20,
-            pipeline_config=pipeline_config,
+            pipeline_config=pipeline_config
         )
 
         assert stats.original_count >= 0
@@ -311,7 +310,7 @@ class TestCompressionStats:
         self,
         integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
-        embedding_model,
+        embedding_model
     ) -> None:
         """
         Tests that compression stats are correctly computed.
@@ -320,14 +319,14 @@ class TestCompressionStats:
         """
         pipeline_config = SearchPipelineConfig(
             min_confidence=0.3,
-            dedup_threshold=0.85,
+            dedup_threshold=0.85
         )
 
         results, stats, _ = await integration_orchestrator.query(
             "database query optimization",
             top_k=20,
             top_n=20,
-            pipeline_config=pipeline_config,
+            pipeline_config=pipeline_config
         )
 
         assert stats.original_count >= stats.after_threshold
@@ -347,7 +346,7 @@ class TestCompressionStats:
             after_ngram_dedup=13,
             after_dedup=12,
             after_doc_limit=10,
-            clusters_merged=5,
+            clusters_merged=5
         )
 
         stats_dict = stats.to_dict()
@@ -373,7 +372,7 @@ class TestParameterHandling:
         self,
         integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
-        embedding_model,
+        embedding_model
     ) -> None:
         """
         Tests that top_n parameter limits final result count.
@@ -382,14 +381,14 @@ class TestParameterHandling:
         """
         pipeline_config = SearchPipelineConfig(
             min_confidence=0.1,
-            dedup_threshold=0.85,
+            dedup_threshold=0.85
         )
 
         results, _, _ = await integration_orchestrator.query(
             "programming language introduction",
             top_k=20,
             top_n=3,
-            pipeline_config=pipeline_config,
+            pipeline_config=pipeline_config
         )
 
         assert len(results) <= 3
@@ -398,7 +397,7 @@ class TestParameterHandling:
     async def test_min_score_parameter_effect(
         self,
         integration_orchestrator: SearchOrchestrator,
-        indexed_documents: list[str],
+        indexed_documents: list[str]
     ) -> None:
         """
         Tests that min_score parameter controls threshold filtering.
@@ -408,7 +407,7 @@ class TestParameterHandling:
         results, _, _ = await integration_orchestrator.query(
             "Rust ownership memory safety",
             top_k=20,
-            top_n=20,
+            top_n=20
         )
 
         filtered_0_1 = filter_by_score(results, min_score=0.1)
@@ -423,7 +422,7 @@ class TestParameterHandling:
         self,
         integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
-        embedding_model,
+        embedding_model
     ) -> None:
         """
         Tests that similarity_threshold parameter controls deduplication.
@@ -432,26 +431,26 @@ class TestParameterHandling:
         """
         config_high = SearchPipelineConfig(
             min_confidence=0.2,
-            dedup_threshold=0.95,
+            dedup_threshold=0.95
         )
 
         config_low = SearchPipelineConfig(
             min_confidence=0.2,
-            dedup_threshold=0.7,
+            dedup_threshold=0.7
         )
 
         _, stats_high, _ = await integration_orchestrator.query(
             "Python programming basics",
             top_k=20,
             top_n=20,
-            pipeline_config=config_high,
+            pipeline_config=config_high
         )
 
         _, stats_low, _ = await integration_orchestrator.query(
             "Python programming basics",
             top_k=20,
             top_n=20,
-            pipeline_config=config_low,
+            pipeline_config=config_low
         )
 
         assert stats_low.after_dedup <= stats_high.after_dedup
@@ -469,7 +468,7 @@ class TestEdgeCases:
     async def test_query_with_no_results(
         self,
         integration_orchestrator: SearchOrchestrator,
-        indexed_documents: list[str],
+        indexed_documents: list[str]
     ) -> None:
         """
         Tests compression with query that returns no results.
@@ -479,7 +478,7 @@ class TestEdgeCases:
         results, _, _ = await integration_orchestrator.query(
             "xyzzy completely unrelated nonsense query 12345",
             top_k=5,
-            top_n=5,
+            top_n=5
         )
 
         filtered = filter_by_score(results, min_score=0.9)
@@ -492,7 +491,7 @@ class TestEdgeCases:
         self,
         integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
-        embedding_model,
+        embedding_model
     ) -> None:
         """
         Tests that single result passes through unchanged.
@@ -501,14 +500,14 @@ class TestEdgeCases:
         """
         pipeline_config = SearchPipelineConfig(
             min_confidence=0.1,
-            dedup_threshold=0.85,
+            dedup_threshold=0.85
         )
 
         results, stats, _ = await integration_orchestrator.query(
             "Rust fearless concurrency type system",
             top_k=5,
             top_n=1,
-            pipeline_config=pipeline_config,
+            pipeline_config=pipeline_config
         )
 
         assert len(results) <= 1
@@ -519,7 +518,7 @@ class TestEdgeCases:
     async def test_all_results_filtered_by_threshold(
         self,
         integration_orchestrator: SearchOrchestrator,
-        indexed_documents: list[str],
+        indexed_documents: list[str]
     ) -> None:
         """
         Tests behavior when all results are below threshold.
@@ -529,7 +528,7 @@ class TestEdgeCases:
         results, _, _ = await integration_orchestrator.query(
             "general programming concepts",
             top_k=10,
-            top_n=10,
+            top_n=10
         )
 
         # Very high threshold
@@ -550,12 +549,12 @@ class TestEmbeddingsIntegration:
         self,
         integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
-        embedding_model,
+        embedding_model
     ) -> None:
         results, _, _ = await integration_orchestrator.query(
             "Python introduction",
             top_k=5,
-            top_n=5,
+            top_n=5
         )
 
         if len(results) > 0:
@@ -572,12 +571,12 @@ class TestEmbeddingsIntegration:
         self,
         integration_orchestrator: SearchOrchestrator,
         indexed_documents: list[str],
-        embedding_model,
+        embedding_model
     ) -> None:
         results, _, _ = await integration_orchestrator.query(
             "Python programming language overview",
             top_k=10,
-            top_n=10,
+            top_n=10
         )
 
         if len(results) > 1:

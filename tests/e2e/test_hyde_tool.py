@@ -19,8 +19,7 @@ from src.config import (
     Config,
     IndexingConfig,
     LLMConfig,
-    SearchConfig,
-    ServerConfig,
+    SearchConfig
 )
 from src.context import ApplicationContext
 from src.indexing.manager import IndexManager
@@ -107,18 +106,16 @@ def _create_config(tmp_path, test_docs_dir) -> Config:
     index_path.mkdir(parents=True, exist_ok=True)
 
     return Config(
-        server=ServerConfig(host="127.0.0.1", port=8000),
         indexing=IndexingConfig(
             documents_path=str(test_docs_dir),
-            index_path=str(index_path),
+            index_path=str(index_path)
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(
             semantic_weight=1.0,
-            keyword_weight=1.0,
+            keyword_weight=1.0
         ),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
     )
 
 

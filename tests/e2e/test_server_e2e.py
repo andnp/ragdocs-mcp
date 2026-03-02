@@ -11,7 +11,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from src.indexing.manager import IndexManager
 from src.indexing.manifest import IndexManifest, save_manifest
 from src.indices.graph import GraphStore
@@ -85,12 +85,10 @@ def app_with_config(tmp_path, test_docs_dir, monkeypatch):
 
     def mock_load_config():
         return Config(
-            server=ServerConfig(host="127.0.0.1", port=8000),
             indexing=IndexingConfig(
                 documents_path=str(test_docs_dir),
                 index_path=str(index_path),
             ),
-            parsers={"**/*.md": "MarkdownParser"},
             search=SearchConfig(
                 semantic_weight=0.6,
                 keyword_weight=0.4,
@@ -293,7 +291,6 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
     old_manifest = IndexManifest(
         spec_version="0.9.0",  # Old version
         embedding_model="all-MiniLM-L6-v2",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
     save_manifest(index_path, old_manifest)
@@ -303,12 +300,10 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
     keyword = KeywordIndex()
     graph = GraphStore()
     old_config = Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(test_docs_dir),
             index_path=str(index_path),
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
@@ -325,12 +320,10 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
     # Mock load_config for new server with updated version
     def mock_load_config():
         return Config(
-            server=ServerConfig(host="127.0.0.1", port=8000),
             indexing=IndexingConfig(
                 documents_path=str(test_docs_dir),
                 index_path=str(index_path),
             ),
-            parsers={"**/*.md": "MarkdownParser"},
             search=SearchConfig(),
             llm=LLMConfig(
                 embedding_model="all-MiniLM-L6-v2"

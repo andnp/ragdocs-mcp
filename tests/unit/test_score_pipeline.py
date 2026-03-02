@@ -226,14 +226,11 @@ class TestCalibrateStage:
 
     def test_calibrate_threshold_gives_half(self):
         """
-        Score at threshold produces ~0.5 confidence.
+        Score at the hardcoded threshold (0.02) produces ~0.5 confidence.
         """
-        pipeline = ScorePipeline(ScorePipelineConfig(
-            calibration_threshold=0.5,
-            calibration_steepness=10.0,
-        ))
+        pipeline = ScorePipeline()
 
-        result = pipeline.calibrate([("doc1", 0.5)])
+        result = pipeline.calibrate([("doc1", 0.02)])
 
         assert result[0][1] == pytest.approx(0.5, abs=0.05)
 
@@ -241,12 +238,9 @@ class TestCalibrateStage:
         """
         Scores above threshold produce higher confidence.
         """
-        pipeline = ScorePipeline(ScorePipelineConfig(
-            calibration_threshold=0.5,
-            calibration_steepness=10.0,
-        ))
+        pipeline = ScorePipeline()
 
-        result = pipeline.calibrate([("doc1", 0.8)])
+        result = pipeline.calibrate([("doc1", 0.04)])
 
         assert result[0][1] > 0.7
 
@@ -254,12 +248,9 @@ class TestCalibrateStage:
         """
         Scores below threshold produce lower confidence.
         """
-        pipeline = ScorePipeline(ScorePipelineConfig(
-            calibration_threshold=0.5,
-            calibration_steepness=10.0,
-        ))
+        pipeline = ScorePipeline()
 
-        result = pipeline.calibrate([("doc1", 0.2)])
+        result = pipeline.calibrate([("doc1", 0.005)])
 
         assert result[0][1] < 0.3
 
@@ -412,8 +403,6 @@ class TestFullPipeline:
         """
         pipeline = ScorePipeline(ScorePipelineConfig(
             strategy_weights={"semantic": 1.0, "keyword": 1.0},
-            calibration_threshold=0.5,
-            calibration_steepness=10.0,
         ))
 
         strategy_results = {
@@ -437,8 +426,6 @@ class TestFullPipeline:
         """
         config = ScorePipelineConfig(
             strategy_weights={"semantic": 1.0},
-            calibration_threshold=0.5,
-            calibration_steepness=5.0,
             time_scoring_mode="tiers",
             time_scoring_config=TierConfig(
                 recent_days=7,
@@ -479,9 +466,6 @@ class TestFullPipeline:
         """
         pipeline = ScorePipeline(ScorePipelineConfig(
             strategy_weights={"semantic": 1.0},
-            # Use production calibration params tuned for RRF scores
-            calibration_threshold=0.035,
-            calibration_steepness=150.0,
         ))
 
         results = pipeline.run({"semantic": [("doc1", 0.9)]})

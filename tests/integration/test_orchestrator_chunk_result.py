@@ -1,6 +1,6 @@
 import pytest
 
-from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -13,23 +13,22 @@ from tests.conftest import create_test_document
 @pytest.fixture
 def config(tmp_path):
     return Config(
-        server=ServerConfig(host="127.0.0.1", port=8000),
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
-            index_path=str(tmp_path / ".index_data"),
+            index_path=str(tmp_path / ".index_data")
         ),
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
-            recency_bias=0.5,
+            recency_bias=0.5
         ),
         llm=LLMConfig(embedding_model="local"),
         chunking=ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=200,
             max_chunk_chars=1500,
-            overlap_chars=100,
-        ),
+            overlap_chars=100
+        )
     )
 
 
@@ -48,7 +47,7 @@ def manager(config, indices):
         config,
         indices["vector"],
         indices["keyword"],
-        indices["graph"],
+        indices["graph"]
     )
 
 
@@ -59,7 +58,7 @@ def orchestrator(config, indices, manager):
         indices["keyword"],
         indices["graph"],
         config,
-        manager,
+        manager
     )
 
 
@@ -83,12 +82,12 @@ async def test_query_returns_chunk_result_objects(config, manager, orchestrator)
     doc1 = create_test_document(
         docs_dir,
         "authentication",
-        "# Authentication\n\nHow to configure OAuth 2.0 authentication.",
+        "# Authentication\n\nHow to configure OAuth 2.0 authentication."
     )
     doc2 = create_test_document(
         docs_dir,
         "security",
-        "# Security\n\nSecurity best practices and configuration.",
+        "# Security\n\nSecurity best practices and configuration."
     )
 
     manager.index_document(doc1)
@@ -134,7 +133,7 @@ async def test_chunk_result_contains_metadata(config, manager, orchestrator):
     doc = create_test_document(
         docs_dir,
         "api_guide",
-        "# API Guide\n\n## Authentication\n\nUse API keys for authentication.\n\n## Authorization\n\nRoles and permissions.",
+        "# API Guide\n\n## Authentication\n\nUse API keys for authentication.\n\n## Authorization\n\nRoles and permissions."
     )
 
     manager.index_document(doc)
@@ -228,7 +227,7 @@ async def test_query_with_missing_chunk_fallback(config, indices, manager, orche
     doc = create_test_document(
         docs_dir,
         "fallback_test",
-        "# Fallback Test\n\nTest document for fallback behavior.",
+        "# Fallback Test\n\nTest document for fallback behavior."
     )
 
     manager.index_document(doc)
@@ -278,7 +277,7 @@ async def test_chunk_result_serialization_in_pipeline(config, manager, orchestra
     doc = create_test_document(
         docs_dir,
         "serialization_test",
-        "# Serialization Test\n\nTest document content for serialization.",
+        "# Serialization Test\n\nTest document content for serialization."
     )
 
     manager.index_document(doc)
@@ -346,7 +345,7 @@ More content here.
 ### Subsection C
 
 Additional details.
-""",
+"""
     )
 
     manager.index_document(doc)

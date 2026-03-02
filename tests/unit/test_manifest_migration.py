@@ -24,7 +24,6 @@ def test_should_rebuild_triggers_on_version_upgrade(tmp_path):
     old_manifest = IndexManifest(
         spec_version="0.9.0",
         embedding_model="test-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
 
@@ -32,7 +31,6 @@ def test_should_rebuild_triggers_on_version_upgrade(tmp_path):
     current_manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
 
@@ -49,7 +47,6 @@ def test_should_rebuild_triggers_on_version_downgrade(tmp_path):
     newer_manifest = IndexManifest(
         spec_version="2.0.0",
         embedding_model="test-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
 
@@ -57,7 +54,6 @@ def test_should_rebuild_triggers_on_version_downgrade(tmp_path):
     current_manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
 
@@ -73,7 +69,6 @@ def test_should_not_rebuild_when_versions_match(tmp_path):
     manifest1 = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
         indexed_files={},  # Add indexed_files to avoid rebuild trigger
     )
@@ -81,7 +76,6 @@ def test_should_not_rebuild_when_versions_match(tmp_path):
     manifest2 = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
         indexed_files={},
     )
@@ -98,14 +92,12 @@ def test_version_format_variations(tmp_path):
     manifest_v1 = IndexManifest(
         spec_version="1.0",
         embedding_model="test-model",
-        parsers={},
         chunking_config={},
     )
 
     manifest_v2 = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={},
         chunking_config={},
     )
 
@@ -123,7 +115,6 @@ def test_should_rebuild_with_missing_indexed_files_field():
     old_manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={},
         chunking_config={},
         indexed_files=None,
     )
@@ -131,7 +122,6 @@ def test_should_rebuild_with_missing_indexed_files_field():
     current_manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={},
         chunking_config={},
         indexed_files={},
     )
@@ -175,7 +165,6 @@ def test_save_and_load_manifest_preserves_version(tmp_path):
     manifest = IndexManifest(
         spec_version="1.2.3-beta",
         embedding_model="test-model",
-        parsers={},
         chunking_config={},
     )
 
@@ -195,7 +184,6 @@ def test_should_rebuild_with_chunking_config_changes():
     old_manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={},
         chunking_config={
             "strategy": "hierarchical",
             "max_chunk_chars": 1000,
@@ -205,7 +193,6 @@ def test_should_rebuild_with_chunking_config_changes():
     new_manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={},
         chunking_config={
             "strategy": "hierarchical",
             "max_chunk_chars": 2000,  # Changed
@@ -224,7 +211,6 @@ def test_should_rebuild_with_empty_chunking_configs():
     manifest1 = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={},
         chunking_config={},
         indexed_files={},
     )
@@ -232,7 +218,6 @@ def test_should_rebuild_with_empty_chunking_configs():
     manifest2 = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={},
         chunking_config={},
         indexed_files={},
     )
@@ -249,17 +234,12 @@ def test_should_rebuild_with_parser_changes():
     old_manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
 
     new_manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={
-            "**/*.md": "MarkdownParser",
-            "**/*.txt": "PlainTextParser",  # Added new parser
-        },
         chunking_config={},
     )
 
@@ -276,7 +256,6 @@ def test_manifest_migration_path_from_0_9_to_1_0(tmp_path):
     old_manifest = IndexManifest(
         spec_version="0.9.0",
         embedding_model="old-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
         indexed_files=None,  # Old format didn't have this
     )
@@ -289,7 +268,6 @@ def test_manifest_migration_path_from_0_9_to_1_0(tmp_path):
     current_manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="old-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
         indexed_files={},
     )

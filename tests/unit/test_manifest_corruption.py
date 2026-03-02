@@ -103,7 +103,6 @@ def test_reconcile_with_corrupted_indexed_files_handles_gracefully(docs_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files=None  # Corrupted state - should be dict
     )
@@ -132,7 +131,6 @@ def test_reconcile_with_empty_strings_in_indexed_files(docs_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files={
             "": "empty.md",  # Empty doc_id
@@ -164,7 +162,6 @@ def test_save_and_load_manifest_with_special_characters(tmp_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
         indexed_files={
             "file with spaces": "file with spaces.md",
@@ -218,7 +215,6 @@ def test_reconcile_with_absolute_and_relative_path_mix(docs_path, tmp_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={},
         chunking_config={},
         indexed_files={"doc1": "doc1.md"}
     )

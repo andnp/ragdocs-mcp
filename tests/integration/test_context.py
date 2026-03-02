@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, ChunkingConfig, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import Config, ChunkingConfig, IndexingConfig, LLMConfig, SearchConfig
 from src.context import ApplicationContext
 from src.indexing.manifest import save_manifest, IndexManifest
 
@@ -14,14 +14,13 @@ def test_config(tmp_path):
     index_path = tmp_path / "index"
     index_path.mkdir()
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(index_path),
+            index_path=str(index_path)
         ),
         search=SearchConfig(),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5")
     )
 
 
@@ -31,7 +30,7 @@ def context_with_config(test_config, monkeypatch):
     return ApplicationContext.create(
         project_override=None,
         enable_watcher=False,
-        lazy_embeddings=True,
+        lazy_embeddings=True
     )
 
 
@@ -48,7 +47,7 @@ def test_create_with_watcher_enabled(test_config, monkeypatch):
     ctx = ApplicationContext.create(
         project_override=None,
         enable_watcher=True,
-        lazy_embeddings=True,
+        lazy_embeddings=True
     )
     assert ctx.watcher is not None
 
@@ -142,11 +141,6 @@ def test_build_manifest_creates_correct_structure(context_with_config):
 
     assert manifest.spec_version == "1.0.0"
     assert manifest.embedding_model == ctx.config.llm.embedding_model
-    assert manifest.parsers == {
-        "**/*.md": "MarkdownParser",
-        "**/*.markdown": "MarkdownParser",
-        "**/*.txt": "PlainTextParser",
-    }
     assert "strategy" in manifest.chunking_config
 
 
@@ -163,18 +157,13 @@ def test_check_and_rebuild_if_needed_returns_false_for_existing_index(context_wi
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model=ctx.config.llm.embedding_model,
-        parsers={
-            "**/*.md": "MarkdownParser",
-            "**/*.markdown": "MarkdownParser",
-            "**/*.txt": "PlainTextParser",
-        },
         chunking_config={
             "strategy": ctx.config.chunking.strategy,
             "min_chunk_chars": ctx.config.chunking.min_chunk_chars,
             "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
             "overlap_chars": ctx.config.chunking.overlap_chars,
         },
-        indexed_files={},
+        indexed_files={}
     )
     save_manifest(ctx.index_path, manifest)
 
@@ -207,7 +196,7 @@ async def test_startup_loads_existing_index(context_with_config, shared_embeddin
         ApplicationContext,
         project_override=None,
         enable_watcher=False,
-        lazy_embeddings=True,
+        lazy_embeddings=True
     )
     ctx2.config = ctx.config
     ctx2.index_path = ctx.index_path
@@ -240,7 +229,7 @@ async def test_startup_with_watcher_starts_watcher(test_config, monkeypatch):
     ctx = ApplicationContext.create(
         project_override=None,
         enable_watcher=True,
-        lazy_embeddings=True,
+        lazy_embeddings=True
     )
 
     await ctx.start(background_index=False)

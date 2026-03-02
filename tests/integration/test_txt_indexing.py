@@ -1,6 +1,6 @@
 import pytest
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig, ChunkingConfig
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ChunkingConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -14,22 +14,21 @@ def config(tmp_path):
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices"),
+            index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
-            recency_bias=0.5,
+            recency_bias=0.5
         ),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         chunking=ChunkingConfig(
             min_chunk_chars=200,
             max_chunk_chars=2000,
-            overlap_chars=100,
-        ),
+            overlap_chars=100
+        )
     )
 
 

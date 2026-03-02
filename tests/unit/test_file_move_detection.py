@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, LLMConfig, ServerConfig
+from src.config import Config, IndexingConfig, LLMConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -23,7 +23,7 @@ def make_chunk(
     doc_id: str,
     content: str,
     chunk_index: int = 0,
-    content_hash: str | None = None,
+    content_hash: str | None = None
 ):
     """Helper to create a Chunk with minimal required fields."""
     chunk = Chunk(
@@ -36,7 +36,7 @@ def make_chunk(
         start_pos=0,
         end_pos=len(content),
         file_path=f"/docs/{doc_id}.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(timezone.utc)
     )
     # Override computed hash if needed for test control
     if content_hash is not None:
@@ -53,14 +53,12 @@ def config_with_move_detection(tmp_path: Path):
     index_path.mkdir()
 
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
             index_path=str(index_path),
-            move_detection_threshold=0.8,
+            move_detection_threshold=0.8
         ),
-        parsers={"**/*.md": "MarkdownParser"},
-        llm=LLMConfig(embedding_model="local"),
+        llm=LLMConfig(embedding_model="local")
     )
 
 
@@ -125,7 +123,7 @@ class TestDetectFileMoves:
                 "new_doc",
                 f"Content {i}",
                 i,
-                content_hash=f"hash_{i}" if i < 4 else "hash_new",
+                content_hash=f"hash_{i}" if i < 4 else "hash_new"
             )
             for i in range(5)
         ]
@@ -155,7 +153,7 @@ class TestDetectFileMoves:
                 "new_doc",
                 f"Content {i}",
                 i,
-                content_hash=f"hash_{i}" if i < 3 else f"new_hash_{i}",
+                content_hash=f"hash_{i}" if i < 3 else f"new_hash_{i}"
             )
             for i in range(5)
         ]
@@ -219,7 +217,7 @@ class TestFileMoveIntegration:
     def test_index_then_rename_creates_hash_store_entries(
         self,
         config_with_move_detection: Config,
-        shared_embedding_model,
+        shared_embedding_model
     ):
         """
         End-to-end test: index file, verify hash store is populated.

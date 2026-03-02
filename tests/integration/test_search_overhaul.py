@@ -19,8 +19,7 @@ from src.config import (
     IndexingConfig,
     LLMConfig,
     SearchConfig,
-    ServerConfig,
-    ChunkingConfig,
+    ChunkingConfig
 )
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
@@ -44,18 +43,17 @@ def test_config(tmp_path):
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices"),
+            index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
-            recency_bias=0.5,
+            recency_bias=0.5
         ),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
+        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2")
     )
 
 
@@ -273,7 +271,7 @@ class TestCommunityDetectionIntegration:
         boosts = graph.boost_by_community(
             ["seed_doc", "same_cluster", "different_cluster"],
             {"seed_doc"},
-            boost_factor=1.2,
+            boost_factor=1.2
         )
 
         assert boosts["seed_doc"] == 1.2

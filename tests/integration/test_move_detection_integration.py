@@ -24,7 +24,6 @@ def _save_manifest_for_files(manager, config, files: list[Path]):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={"**/*.md": "MarkdownParser", "**/*.markdown": "MarkdownParser", "**/*.txt": "PlainTextParser"},
         chunking_config={},
         indexed_files=build_indexed_files_map([str(f) for f in files], docs_path),
     )

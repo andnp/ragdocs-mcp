@@ -38,9 +38,7 @@ class TestDiscoverFiles:
 
     def test_single_pattern_finds_matching_files(self, docs_structure):
         """Basic discovery with single glob pattern."""
-        parsers = {"**/*.md": "markdown"}
-
-        files = discover_files(docs_structure, parsers)
+        files = discover_files(docs_structure)
 
         assert len(files) >= 4
         assert any("README.md" in f for f in files)
@@ -50,12 +48,7 @@ class TestDiscoverFiles:
 
     def test_multiple_patterns_combine_results(self, docs_structure):
         """Discovery with multiple glob patterns."""
-        parsers = {
-            "**/*.md": "markdown",
-            "**/*.txt": "plaintext",
-        }
-
-        files = discover_files(docs_structure, parsers)
+        files = discover_files(docs_structure)
 
         assert any("README.md" in f for f in files)
         assert any("notes.txt" in f for f in files)
@@ -65,17 +58,13 @@ class TestDiscoverFiles:
         docs = tmp_path / "empty"
         docs.mkdir()
 
-        parsers = {"**/*.md": "markdown"}
-
-        files = discover_files(docs, parsers)
+        files = discover_files(docs)
 
         assert files == []
 
     def test_excludes_hidden_dirs_by_default(self, docs_structure):
         """Hidden directories are excluded by default."""
-        parsers = {"**/*.md": "markdown"}
-
-        files = discover_files(docs_structure, parsers)
+        files = discover_files(docs_structure)
 
         assert not any(".hidden" in f for f in files)
 
@@ -85,14 +74,8 @@ class TestDiscoverFiles:
         Note: glob's ** pattern doesn't match hidden directories by default,
         so an explicit pattern must include them.
         """
-        parsers = {
-            "**/*.md": "markdown",
-            ".hidden/*.md": "markdown",  # Explicit pattern for hidden dir
-        }
-
         files = discover_files(
             docs_structure,
-            parsers,
             exclude_hidden_dirs=False,
         )
 
@@ -100,11 +83,8 @@ class TestDiscoverFiles:
 
     def test_exclude_patterns_filter_out_files(self, docs_structure):
         """Exclude patterns remove matching files from results."""
-        parsers = {"**/*.md": "markdown"}
-
         files = discover_files(
             docs_structure,
-            parsers,
             include_patterns=["*"],
             exclude_patterns=["**/api/*"],
         )
@@ -115,17 +95,13 @@ class TestDiscoverFiles:
 
     def test_returns_sorted_list(self, docs_structure):
         """Results are returned in sorted order."""
-        parsers = {"**/*.md": "markdown"}
-
-        files = discover_files(docs_structure, parsers)
+        files = discover_files(docs_structure)
 
         assert files == sorted(files)
 
     def test_returns_absolute_paths(self, docs_structure):
         """All returned paths are absolute."""
-        parsers = {"**/*.md": "markdown"}
-
-        files = discover_files(docs_structure, parsers)
+        files = discover_files(docs_structure)
 
         # glob.glob returns absolute paths when given absolute base
         for f in files:
@@ -133,16 +109,12 @@ class TestDiscoverFiles:
 
     def test_accepts_path_object(self, docs_structure):
         """Documents path can be a Path object."""
-        parsers = {"**/*.md": "markdown"}
-
-        files = discover_files(Path(docs_structure), parsers)
+        files = discover_files(Path(docs_structure))
 
         assert len(files) >= 2
 
     def test_accepts_string_path(self, docs_structure):
         """Documents path can be a string."""
-        parsers = {"**/*.md": "markdown"}
-
-        files = discover_files(str(docs_structure), parsers)
+        files = discover_files(str(docs_structure))
 
         assert len(files) >= 2

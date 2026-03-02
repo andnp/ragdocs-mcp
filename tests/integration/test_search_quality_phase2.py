@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -22,17 +22,16 @@ def config_query_expansion(tmp_path):
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices"),
+            index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
             recency_bias=0.0,  # Disable recency for predictable tests
         ),
-        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5")
     )
 
 
@@ -41,18 +40,17 @@ def config_reranking(tmp_path):
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(tmp_path / "indices"),
+            index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
             recency_bias=0.0,
-            rerank_top_n=5,
+            rerank_top_n=5
         ),
-        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5")
     )
 
 
@@ -83,7 +81,7 @@ class TestQueryExpansionInOrchestrator:
     async def test_query_expansion_in_orchestrator_basic(
         self,
         config_query_expansion,
-        indices,
+        indices
     ):
         """
         Expanded query used in search returns results.
@@ -108,7 +106,7 @@ class TestQueryExpansionInOrchestrator:
 Authentication is the process of verifying user identity.
 Users must provide valid credentials to authenticate.
 The authentication system supports multiple auth providers.
-""",
+"""
         )
         create_test_document(
             docs_path,
@@ -117,7 +115,7 @@ The authentication system supports multiple auth providers.
 
 Authorization determines what authenticated users can access.
 Permissions are granted based on user roles.
-""",
+"""
         )
 
         # Index documents
@@ -140,7 +138,7 @@ Permissions are granted based on user roles.
     async def test_query_expansion_finds_related_documents(
         self,
         config_query_expansion,
-        indices,
+        indices
     ):
         """
         Query expansion helps find documents with related but different terms.
@@ -165,7 +163,7 @@ Permissions are granted based on user roles.
 The authentication system verifies user credentials.
 Strong authentication is required for all users.
 Multi-factor authentication is recommended.
-""",
+"""
         )
         create_test_document(
             docs_path,
@@ -174,7 +172,7 @@ Multi-factor authentication is recommended.
 
 PostgreSQL configuration for production environments.
 Connection pooling and query optimization.
-""",
+"""
         )
 
         for doc_file in docs_path.glob("*.md"):
@@ -203,7 +201,7 @@ class TestRerankingInPipeline:
     async def test_reranking_in_pipeline_basic(
         self,
         config_reranking,
-        shared_embedding_model,
+        shared_embedding_model
     ):
         """
         Re-ranking applied after dedup in pipeline.
@@ -229,7 +227,7 @@ class TestRerankingInPipeline:
 This comprehensive guide covers machine learning fundamentals.
 We will explore supervised learning, neural networks, and deep learning.
 Machine learning applications include image recognition and NLP.
-""",
+"""
         )
         create_test_document(
             docs_path,
@@ -238,7 +236,7 @@ Machine learning applications include image recognition and NLP.
 
 Data science involves statistics and programming.
 Machine learning is one component of data science.
-""",
+"""
         )
         create_test_document(
             docs_path,
@@ -247,7 +245,7 @@ Machine learning is one component of data science.
 
 Python is a popular programming language.
 It is used for web development and scripting.
-""",
+"""
         )
 
         for doc_file in docs_path.glob("*.md"):
@@ -257,7 +255,7 @@ It is used for web development and scripting.
         results, stats, _ = await orchestrator.query(
             "machine learning tutorial",
             top_k=10,
-            top_n=3,
+            top_n=3
         )
 
         # Should return results
@@ -272,7 +270,7 @@ It is used for web development and scripting.
     async def test_reranking_respects_top_n_config(
         self,
         config_reranking,
-        shared_embedding_model,
+        shared_embedding_model
     ):
         """
         Re-ranking respects rerank_top_n configuration.
@@ -299,7 +297,7 @@ It is used for web development and scripting.
 This is document number {i} about testing.
 It contains content for search testing purposes.
 Document {i} is part of the test corpus.
-""",
+"""
             )
 
         for doc_file in docs_path.glob("*.md"):
@@ -329,7 +327,7 @@ class TestQueryExpansionAndReranking:
     async def test_expansion_and_reranking_together(
         self,
         tmp_path,
-        shared_embedding_model,
+        shared_embedding_model
     ):
         """
         Query expansion and re-ranking work together.
@@ -340,18 +338,17 @@ class TestQueryExpansionAndReranking:
         docs_path.mkdir()
 
         config = Config(
-            server=ServerConfig(),
             indexing=IndexingConfig(
                 documents_path=str(docs_path),
-                index_path=str(tmp_path / "indices"),
+                index_path=str(tmp_path / "indices")
             ),
             search=SearchConfig(
                 semantic_weight=1.0,
                 keyword_weight=1.0,
                 recency_bias=0.0,
-                rerank_top_n=3,
+                rerank_top_n=3
             ),
-            llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+            llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5")
         )
 
         vector = VectorIndex(embedding_model=shared_embedding_model)
@@ -368,7 +365,7 @@ class TestQueryExpansionAndReranking:
 Complete guide to authentication and identity verification.
 Learn about OAuth, SAML, and other authentication protocols.
 Secure your applications with proper authentication.
-""",
+"""
         )
         create_test_document(
             docs_path,
@@ -377,7 +374,7 @@ Secure your applications with proper authentication.
 
 REST API endpoints and usage examples.
 Authentication required for protected endpoints.
-""",
+"""
         )
 
         for doc_file in docs_path.glob("*.md"):

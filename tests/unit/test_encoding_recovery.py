@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, ServerConfig
+from src.config import Config, IndexingConfig
 from src.indexing.manager import IndexManager
 from src.indices.vector import VectorIndex
 from src.indices.keyword import KeywordIndex
@@ -21,12 +21,10 @@ def manager_config(tmp_path):
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(tmp_path / "index"),
-        ),
-        parsers={"**/*.md": "MarkdownParser"}
+            index_path=str(tmp_path / "index")
+        )
     )
 
 

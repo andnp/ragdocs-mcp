@@ -92,8 +92,6 @@ def test_check_config_command_prints_valid_config(runner, tmp_path, config_file)
         assert result.exit_code == 0
 
         assert "Configuration" in result.output
-        assert "Server Host" in result.output
-        assert "Server Port" in result.output
         assert "Documents Path" in result.output
         assert "Index Path" in result.output
         assert "✅ Configuration is valid" in result.output

@@ -126,7 +126,6 @@ class TestPruneDocumentSuccess:
         manifest = IndexManifest(
             spec_version="1.0",
             embedding_model="test",
-            parsers={},
             chunking_config={},
             indexed_files={doc_id: "hash123"},
         )
@@ -186,7 +185,6 @@ class TestPruneDocumentEdgeCases:
         manifest = IndexManifest(
             spec_version="1.0",
             embedding_model="test",
-            parsers={},
             chunking_config={},
             indexed_files={"other_doc": "hash456"},
         )

@@ -13,7 +13,6 @@ def sample_manifest():
     return IndexManifest(
         spec_version="1.0.0",
         embedding_model="all-MiniLM-L6-v2",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
 
@@ -31,7 +30,6 @@ def test_save_and_load_manifest(tmp_path, sample_manifest):
     assert loaded is not None
     assert loaded.spec_version == "1.0.0"
     assert loaded.embedding_model == "all-MiniLM-L6-v2"
-    assert loaded.parsers == {"**/*.md": "MarkdownParser"}
 
 
 def test_load_manifest_missing_file(tmp_path):
@@ -93,7 +91,6 @@ def test_should_rebuild_when_spec_version_differs(sample_manifest):
     saved = IndexManifest(
         spec_version="0.9.0",
         embedding_model="all-MiniLM-L6-v2",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
 
@@ -111,7 +108,6 @@ def test_should_rebuild_when_embedding_model_differs(sample_manifest):
     saved = IndexManifest(
         spec_version="1.0.0",
         embedding_model="different-model",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
     )
 
@@ -120,17 +116,17 @@ def test_should_rebuild_when_embedding_model_differs(sample_manifest):
     assert result is True
 
 
-def test_should_rebuild_when_parsers_differ(sample_manifest):
+def test_should_rebuild_when_chunking_config_differs(sample_manifest):
     """
-    Trigger rebuild when parser configuration changes.
+    Trigger rebuild when chunking configuration changes.
 
-    Parser changes affect document processing.
+    Chunking changes affect document processing.
     """
     saved = IndexManifest(
         spec_version="1.0.0",
         embedding_model="all-MiniLM-L6-v2",
-        parsers={"**/*.txt": "TextParser"},
-        chunking_config={},
+        chunking_config={"strategy": "different"},
+        indexed_files={},
     )
 
     result = should_rebuild(sample_manifest, saved)
@@ -147,7 +143,6 @@ def test_should_not_rebuild_when_manifests_identical(sample_manifest):
     saved = IndexManifest(
         spec_version="1.0.0",
         embedding_model="all-MiniLM-L6-v2",
-        parsers={"**/*.md": "MarkdownParser"},
         chunking_config={},
         indexed_files={},  # Must have indexed_files to skip rebuild
     )
@@ -167,7 +162,6 @@ def test_save_manifest_creates_parent_directory(tmp_path):
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="test-model",
-        parsers={},
         chunking_config={},
     )
 

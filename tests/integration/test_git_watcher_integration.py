@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, GitIndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import Config, IndexingConfig, GitIndexingConfig, LLMConfig, SearchConfig
 from src.git.commit_indexer import CommitIndexer
 from src.git.watcher import GitWatcher
 from src.git.repository import is_git_available
@@ -15,13 +15,13 @@ def _init_git_repo(path: Path):
         ["git", "config", "user.name", "Test User"],
         cwd=path,
         check=True,
-        capture_output=True,
+        capture_output=True
     )
     subprocess.run(
         ["git", "config", "user.email", "test@example.com"],
         cwd=path,
         check=True,
-        capture_output=True,
+        capture_output=True
     )
 
 
@@ -33,25 +33,24 @@ def _create_commit(repo_path: Path, file_name: str, content: str, message: str):
         ["git", "commit", "-m", message],
         cwd=repo_path,
         check=True,
-        capture_output=True,
+        capture_output=True
     )
 
 
 @pytest.fixture
 def test_config(tmp_path):
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
-            index_path=str(tmp_path / ".index_data"),
+            index_path=str(tmp_path / ".index_data")
         ),
         git_indexing=GitIndexingConfig(
             enabled=True,
             watch_enabled=True,
-            poll_interval_seconds=0.5,
+            poll_interval_seconds=0.5
         ),
         search=SearchConfig(),
-        llm=LLMConfig(),
+        llm=LLMConfig()
     )
 
 
@@ -100,7 +99,7 @@ async def test_git_watcher_idempotent_start(test_config, commit_indexer, git_rep
         git_repos=[git_dir],
         commit_indexer=commit_indexer,
         config=test_config,
-        poll_interval=100.0,
+        poll_interval=100.0
     )
 
     watcher.start()
@@ -121,7 +120,7 @@ async def test_git_watcher_idempotent_stop(test_config, commit_indexer, git_repo
         git_repos=[git_dir],
         commit_indexer=commit_indexer,
         config=test_config,
-        poll_interval=100.0,
+        poll_interval=100.0
     )
 
     watcher.start()
@@ -153,7 +152,7 @@ async def test_git_watcher_multiple_repos(test_config, commit_indexer, tmp_path)
         git_repos=[git_dir1, git_dir2],
         commit_indexer=commit_indexer,
         config=test_config,
-        poll_interval=100.0,
+        poll_interval=100.0
     )
 
     watcher.start()
@@ -175,7 +174,7 @@ async def test_git_watcher_nonexistent_paths_skipped(test_config, commit_indexer
         git_repos=[git_dir_exists, git_dir_missing],
         commit_indexer=commit_indexer,
         config=test_config,
-        poll_interval=100.0,
+        poll_interval=100.0
     )
 
     # Should not raise: missing paths are just polled and return empty commit lists

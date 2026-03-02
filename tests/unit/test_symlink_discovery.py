@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from src.context import ApplicationContext
-from src.config import Config, IndexingConfig, ServerConfig
+from src.config import Config, IndexingConfig
 
 
 @pytest.fixture
@@ -18,12 +18,10 @@ def test_config(tmp_path):
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
-            index_path=str(tmp_path / "index"),
-        ),
-        parsers={"**/*.md": "MarkdownParser"}
+            index_path=str(tmp_path / "index")
+        )
     )
 
 
@@ -34,7 +32,7 @@ def context_with_config(test_config, monkeypatch):
     return ApplicationContext.create(
         project_override=None,
         enable_watcher=False,
-        lazy_embeddings=True,
+        lazy_embeddings=True
     )
 
 

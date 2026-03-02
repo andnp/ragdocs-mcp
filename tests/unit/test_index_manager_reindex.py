@@ -1,6 +1,6 @@
 import pytest
 
-from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -14,24 +14,22 @@ def manager(tmp_path, shared_embedding_model):
     docs_dir.mkdir(parents=True, exist_ok=True)
 
     config = Config(
-        server=ServerConfig(host="127.0.0.1", port=8000),
         indexing=IndexingConfig(
             documents_path=str(docs_dir),
-            index_path=str(tmp_path / ".index_data"),
+            index_path=str(tmp_path / ".index_data")
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(
             semantic_weight=1.0,
             keyword_weight=1.0,
-            recency_bias=0.5,
+            recency_bias=0.5
         ),
         llm=LLMConfig(embedding_model="local"),
         chunking=ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=200,
             max_chunk_chars=1500,
-            overlap_chars=100,
-        ),
+            overlap_chars=100
+        )
     )
 
     vector = VectorIndex(embedding_model=shared_embedding_model)

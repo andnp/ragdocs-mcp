@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, ServerConfig, SearchConfig, LLMConfig
+from src.config import Config, IndexingConfig, SearchConfig, LLMConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -26,13 +26,12 @@ def config(tmp_path):
     Uses tmp_path for isolated test storage to avoid conflicts.
     """
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(tmp_path / "docs"),
-            index_path=str(tmp_path / "indices"),
+            index_path=str(tmp_path / "indices")
         ),
         search=SearchConfig(),
-        llm=LLMConfig(),
+        llm=LLMConfig()
     )
 
 
@@ -74,7 +73,7 @@ def sample_document():
         links=["linked-note"],
         tags=["test", "integration"],
         file_path="/test/doc1.md",
-        modified_time=datetime(2025, 12, 22, 10, 0, 0),
+        modified_time=datetime(2025, 12, 22, 10, 0, 0)
     )
 
 

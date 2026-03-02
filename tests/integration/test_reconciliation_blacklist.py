@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ServerConfig
+from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from src.indexing.manager import IndexManager
 from src.indexing.manifest import IndexManifest, save_manifest
 from src.indices.graph import GraphStore
@@ -30,17 +30,15 @@ def base_config(tmp_path):
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
     return Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
             index_path=str(tmp_path / "indices"),
             include=["**/*"],
             exclude=["**/.venv/**", "**/node_modules/**", "**/build/**"],
-            exclude_hidden_dirs=True,
+            exclude_hidden_dirs=True
         ),
-        parsers={"**/*.md": "MarkdownParser"},
         search=SearchConfig(),
-        llm=LLMConfig(),
+        llm=LLMConfig()
     )
 
 
@@ -84,7 +82,6 @@ def test_reconciliation_removes_newly_blacklisted_venv_files(
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={"**/*.md": "MarkdownParser", "**/*.markdown": "MarkdownParser", "**/*.txt": "PlainTextParser"},
         chunking_config={},
         indexed_files={
             "README": "README.md",
@@ -113,7 +110,7 @@ def test_reconciliation_removes_newly_blacklisted_venv_files(
             f,
             base_config.indexing.include,
             base_config.indexing.exclude,
-            base_config.indexing.exclude_hidden_dirs,
+            base_config.indexing.exclude_hidden_dirs
         )
     ]
 
@@ -152,7 +149,6 @@ def test_reconciliation_handles_blacklist_config_change(
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={"**/*.md": "MarkdownParser", "**/*.markdown": "MarkdownParser", "**/*.txt": "PlainTextParser"},
         chunking_config={},
         indexed_files={
             "main": "main.md",
@@ -168,16 +164,15 @@ def test_reconciliation_handles_blacklist_config_change(
 
     # Update config to add vendor to exclude patterns
     updated_config = Config(
-        server=ServerConfig(),
         indexing=IndexingConfig(
             documents_path=str(docs_path),
             index_path=str(index_path),
             include=["**/*"],
             exclude=["**/.venv/**", "**/node_modules/**", "**/build/**", "**/vendor/**"],
-            exclude_hidden_dirs=True,
+            exclude_hidden_dirs=True
         ),
         search=SearchConfig(),
-        llm=LLMConfig(),
+        llm=LLMConfig()
     )
 
     # Create new manager with updated config
@@ -203,7 +198,7 @@ def test_reconciliation_handles_blacklist_config_change(
             f,
             updated_config.indexing.include,
             updated_config.indexing.exclude,
-            updated_config.indexing.exclude_hidden_dirs,
+            updated_config.indexing.exclude_hidden_dirs
         )
     ]
 
@@ -241,7 +236,6 @@ def test_reconciliation_respects_exclude_hidden_dirs_change(
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={"**/*.md": "MarkdownParser", "**/*.markdown": "MarkdownParser", "**/*.txt": "PlainTextParser"},
         chunking_config={},
         indexed_files={
             "visible": "visible.md",
@@ -272,7 +266,7 @@ def test_reconciliation_respects_exclude_hidden_dirs_change(
             f,
             base_config.indexing.include,
             base_config.indexing.exclude,
-            base_config.indexing.exclude_hidden_dirs,
+            base_config.indexing.exclude_hidden_dirs
         )
     ]
 
@@ -316,7 +310,6 @@ def test_reconciliation_logs_distinct_messages_for_excluded_vs_missing(
     manifest = IndexManifest(
         spec_version="1.0.0",
         embedding_model="local",
-        parsers={"**/*.md": "MarkdownParser", "**/*.markdown": "MarkdownParser", "**/*.txt": "PlainTextParser"},
         chunking_config={},
         indexed_files={
             "active": "active.md",
@@ -345,7 +338,7 @@ def test_reconciliation_logs_distinct_messages_for_excluded_vs_missing(
             f,
             base_config.indexing.include,
             base_config.indexing.exclude,
-            base_config.indexing.exclude_hidden_dirs,
+            base_config.indexing.exclude_hidden_dirs
         )
     ]
 
