@@ -181,12 +181,16 @@ def rebuild_index_cmd(project: str | None):
         current_manifest = IndexManifest(
             spec_version="1.0.0",
             embedding_model=ctx.config.llm.embedding_model,
-            parsers=ctx.config.parsers,
+            parsers={
+                "**/*.md": "MarkdownParser",
+                "**/*.markdown": "MarkdownParser",
+                "**/*.txt": "PlainTextParser",
+            },
             chunking_config={
-                "strategy": ctx.config.document_chunking.strategy,
-                "min_chunk_chars": ctx.config.document_chunking.min_chunk_chars,
-                "max_chunk_chars": ctx.config.document_chunking.max_chunk_chars,
-                "overlap_chars": ctx.config.document_chunking.overlap_chars,
+                "strategy": ctx.config.chunking.strategy,
+                "min_chunk_chars": ctx.config.chunking.min_chunk_chars,
+                "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
+                "overlap_chars": ctx.config.chunking.overlap_chars,
             },
             indexed_files=build_indexed_files_map(files_to_index, docs_path)
         )
@@ -233,11 +237,7 @@ def rebuild_index_cmd(project: str | None):
                                 continue
 
                         if total_commits > 0:
-                            parallel_config = ParallelIndexingConfig(
-                                max_workers=ctx.config.git_indexing.parallel_workers,
-                                batch_size=ctx.config.git_indexing.batch_size,
-                                embed_batch_size=ctx.config.git_indexing.embed_batch_size,
-                            )
+                            parallel_config = ParallelIndexingConfig()
 
                             with Progress(
                                 TextColumn("[bold blue]{task.description}"),
@@ -265,7 +265,7 @@ def rebuild_index_cmd(project: str | None):
                                             repo_path,
                                             ctx.commit_indexer,
                                             parallel_config,
-                                            ctx.config.git_indexing.delta_max_lines,
+                                            200,
                                         )
                                         indexed_count += indexed
                                         progress.advance(task)
@@ -291,8 +291,8 @@ def rebuild_index_cmd(project: str | None):
         try:
             click.echo("Building concept vocabulary...")
             ctx.index_manager.vector.build_concept_vocabulary(
-                max_terms=ctx.config.search.query_expansion_max_terms,
-                min_frequency=ctx.config.search.query_expansion_min_frequency,
+                max_terms=2000,
+                min_frequency=3,
             )
             ctx.index_manager.persist()
             vocab_size = len(ctx.index_manager.vector._concept_vocabulary)
@@ -441,7 +441,7 @@ def query(query_text: str, output_json: bool, top_n: int, debug: bool, project: 
         console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
 
         if debug:
-            print_debug_stats(console, strategy_stats, compression_stats, ctx.config.search.score_calibration_threshold)
+            print_debug_stats(console, strategy_stats, compression_stats, 0.02)
 
         if results:
             console.print(f"[bold]Found {len(results)} results:[/bold]\n")
@@ -727,7 +727,7 @@ def search_memory(
 
         with console.status("[bold green]Searching memories..."):
             async def _run_memory_search_with_healing():
-                results = await memory_search.search_memories(
+                results_data = await memory_search.search_memories(
                     query=query_text,
                     limit=limit,
                     filter_type=memory_type,
@@ -736,11 +736,19 @@ def search_memory(
                     after_timestamp=after_timestamp,
                     before_timestamp=before_timestamp,
                     relative_days=relative_days,
+                    include_stats=True,
                 )
                 await memory_search.drain_reindex()
-                return results
+                return results_data
 
-            results = asyncio.run(_run_memory_search_with_healing())
+            results_data = asyncio.run(_run_memory_search_with_healing())
+
+        # Type narrowing: unpack the union type
+        if isinstance(results_data, tuple):
+            results, stats = results_data
+        else:
+            results = results_data
+            _ = None
 
         if output_json:
             output = {

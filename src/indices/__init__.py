@@ -1,5 +1,1 @@
-__all__ = [
-    "VectorIndex",
-    "KeywordIndex",
-    "GraphStore",
-]
+__all__: list[str] = []

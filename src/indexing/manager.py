@@ -43,7 +43,7 @@ class IndexManager:
         self.keyword = keyword
         self.graph = graph
         self._failed_files: list[FailedFile] = []
-        self._chunker = get_chunker(config.document_chunking)
+        self._chunker = get_chunker(config.chunking)
 
         # Initialize hash store for delta indexing
         index_path = Path(config.indexing.index_path)
@@ -55,13 +55,12 @@ class IndexManager:
             f"(mode: {'parallel' if config.indexing.embedding_workers > 1 else 'sequential'})"
         )
 
-    def _get_parser_suffixes(self, fallback_suffixes: list[str] | None = None):
-        fallback = set(fallback_suffixes) if fallback_suffixes else None
-        return sorted(get_parser_suffixes(self._config.parsers, fallback=fallback))
+    def _get_parser_suffixes(self) -> list[str]:
+        return sorted(get_parser_suffixes())
 
     def reindex_document(self, doc_id: str, reason: str | None = None):
         docs_path = Path(self._config.indexing.documents_path)
-        suffixes = self._get_parser_suffixes([".md", ".markdown", ".txt"])
+        suffixes = self._get_parser_suffixes()
         resolved_path = resolve_doc_path(doc_id, docs_path, suffixes)
         if not resolved_path:
             self.prune_document(doc_id, reason=reason)
@@ -349,7 +348,7 @@ class IndexManager:
 
     def index_document(self, file_path: str, force: bool = False):
         try:
-            parser = dispatch_parser(file_path, self._config)
+            parser = dispatch_parser(file_path)
             document = parser.parse(file_path)
 
             docs_path = Path(self._config.indexing.documents_path)
@@ -426,7 +425,7 @@ class IndexManager:
                     logger.info(
                         f"Attempting to read {file_path} with {encoding} encoding"
                     )
-                    parser = dispatch_parser(file_path, self._config)
+                    parser = dispatch_parser(file_path)
                     # This will re-attempt parsing with different encoding
                     # Note: We'd need to modify parsers to accept encoding parameter
                     # For now, just skip the file and log it
@@ -618,7 +617,7 @@ class IndexManager:
             added_docs: dict[str, list[Chunk]] = {}
             for file_path in files_to_add:
                 try:
-                    parser = dispatch_parser(file_path, self._config)
+                    parser = dispatch_parser(file_path)
                     document = parser.parse(file_path)
                     doc_id = compute_doc_id(Path(file_path).resolve(), docs_path.resolve())
                     document.id = doc_id

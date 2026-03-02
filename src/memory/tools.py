@@ -230,7 +230,8 @@ async def search_memories(
             include_stats=include_stats,
         )
 
-        if include_stats:
+        # Type narrowing: unpack the union type
+        if isinstance(result, tuple):
             results, stats = result
             results_list = [
                 {

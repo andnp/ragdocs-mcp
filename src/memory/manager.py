@@ -73,7 +73,7 @@ class MemoryIndexManager:
         self._keyword = keyword
         self._graph = graph
         self._failed_files: list[FailedMemory] = []
-        self._chunker = get_chunker(config.memory_chunking)
+        self._chunker = get_chunker(config.chunking)
 
         # Checkpoint tracking (protected by _checkpoint_lock)
         self._checkpoint_lock = threading.Lock()
