@@ -18,6 +18,7 @@ dependencies = [
     "faiss-cpu>=1.9.0",
     "watchdog>=6.0.0",
     "fastapi>=0.115.0",
+    "huey>=2.5.0",
     "uvicorn>=0.34.0",
     "click>=8.1.0",
     "rich>=13.0.0",
