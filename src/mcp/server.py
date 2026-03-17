@@ -19,11 +19,19 @@ from src.daemon.health import (
     DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
     request_daemon_socket,
 )
-from src.daemon.management import start_daemon
+from src.daemon.management import (
+    inspect_daemon,
+    start_daemon,
+    wait_for_daemon_ready,
+)
 from src.mcp.tools.document_tools import get_document_tools
 import src.mcp.tools.document_tools  # noqa: F401 - registers handlers
 
 logger = logging.getLogger(__name__)
+
+_MCP_DAEMON_START_TIMEOUT_SECONDS = 30.0
+_MCP_DAEMON_READY_WAIT_SECONDS = 120.0
+_MCP_DAEMON_REQUEST_TIMEOUT_SECONDS = 60.0
 
 
 class MCPServer:
@@ -42,20 +50,58 @@ class MCPServer:
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return await self._call_remote_tool(name, arguments)
 
-    async def _get_remote_tools(self) -> list[Tool]:
-        try:
-            metadata = await asyncio.to_thread(
-                start_daemon,
-                project_override=self.project_override,
+    def _get_ready_daemon_metadata(self) -> tuple[Path, str]:
+        metadata = start_daemon(
+            project_override=self.project_override,
+            timeout_seconds=_MCP_DAEMON_START_TIMEOUT_SECONDS,
+        )
+        if not metadata.socket_path:
+            raise RuntimeError("Daemon did not provide a socket path")
+
+        if metadata.status not in {"ready", "ready_primary", "ready_replica"}:
+            metadata = wait_for_daemon_ready(
+                timeout_seconds=_MCP_DAEMON_READY_WAIT_SECONDS,
             )
             if not metadata.socket_path:
                 raise RuntimeError("Daemon did not provide a socket path")
+
+        return Path(metadata.socket_path), metadata.status
+
+    def _request_daemon_with_retry(
+        self,
+        socket_path: Path,
+        path: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        response = request_daemon_socket(
+            socket_path,
+            path,
+            payload,
+            timeout_seconds=_MCP_DAEMON_REQUEST_TIMEOUT_SECONDS,
+        )
+        if response.get("error") != "daemon_request_timed_out":
+            return response
+
+        inspection = inspect_daemon()
+        if inspection.metadata is not None and inspection.running:
+            wait_for_daemon_ready(timeout_seconds=_MCP_DAEMON_READY_WAIT_SECONDS)
+            return request_daemon_socket(
+                socket_path,
+                path,
+                payload,
+                timeout_seconds=_MCP_DAEMON_REQUEST_TIMEOUT_SECONDS,
+            )
+
+        return response
+
+    async def _get_remote_tools(self) -> list[Tool]:
+        try:
+            socket_path, _status = await asyncio.to_thread(self._get_ready_daemon_metadata)
             response = await asyncio.to_thread(
-                request_daemon_socket,
-                Path(metadata.socket_path),
+                self._request_daemon_with_retry,
+                socket_path,
                 "/api/mcp/tools",
                 {},
-                timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
             )
             if response.get("status") == "error":
                 raise RuntimeError(str(response.get("details") or response.get("error")))
@@ -81,18 +127,12 @@ class MCPServer:
         arguments: dict,
     ) -> list[TextContent]:
         try:
-            metadata = await asyncio.to_thread(
-                start_daemon,
-                project_override=self.project_override,
-            )
-            if not metadata.socket_path:
-                raise RuntimeError("Daemon did not provide a socket path")
+            socket_path, _status = await asyncio.to_thread(self._get_ready_daemon_metadata)
             response = await asyncio.to_thread(
-                request_daemon_socket,
-                Path(metadata.socket_path),
+                self._request_daemon_with_retry,
+                socket_path,
                 "/api/mcp/tool",
                 {"name": name, "arguments": arguments},
-                timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
             )
             if response.get("status") == "error":
                 raise RuntimeError(str(response.get("details") or response.get("error")))
