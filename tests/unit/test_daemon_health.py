@@ -11,6 +11,18 @@ from src.daemon.health import DaemonHealthServer, probe_daemon_socket, request_d
 from src.daemon.metadata import DaemonMetadata
 
 
+def _assert_response_with_request_id(
+    response: dict[str, object],
+    *,
+    path: str,
+    payload: dict[str, object],
+) -> None:
+    assert response["path"] == path
+    assert response["payload"] == payload
+    assert isinstance(response.get("request_id"), str)
+    assert response["request_id"]
+
+
 @pytest.mark.asyncio
 async def test_health_server_responds_with_metadata(tmp_path: Path) -> None:
     socket_path = tmp_path / "daemon.sock"
@@ -65,7 +77,11 @@ async def test_health_server_dispatches_custom_request_handler(tmp_path: Path) -
     finally:
         await server.stop()
 
-    assert response == {"path": "/api/example", "payload": {"hello": "world"}}
+    _assert_response_with_request_id(
+        response,
+        path="/api/example",
+        payload={"hello": "world"},
+    )
 
 
 @pytest.mark.asyncio
@@ -94,7 +110,11 @@ async def test_request_daemon_socket_supports_slow_handler_with_custom_timeout(
     finally:
         await server.stop()
 
-    assert response == {"path": "/api/slow", "payload": {"hello": "world"}}
+    _assert_response_with_request_id(
+        response,
+        path="/api/slow",
+        payload={"hello": "world"},
+    )
 
 
 @pytest.mark.asyncio
@@ -121,7 +141,7 @@ async def test_request_daemon_socket_reports_timeout_as_unavailable(tmp_path: Pa
     finally:
         await server.stop()
 
-    assert response == {"status": "error", "error": "daemon_socket_unavailable"}
+    assert response == {"status": "error", "error": "daemon_request_timed_out"}
 
 
 @pytest.mark.asyncio
@@ -153,6 +173,7 @@ async def test_health_server_returns_error_payload_for_handler_exception(
     assert response["status"] == "error"
     assert response["error"] == "handler_exception"
     assert response["details"] == "boom"
+    assert isinstance(response.get("request_id"), str)
 
 
 @pytest.mark.asyncio
@@ -190,7 +211,12 @@ async def test_health_server_survives_handler_exception_for_later_requests(
         await server.stop()
 
     assert failed["error"] == "handler_exception"
-    assert succeeded == {"path": "/api/ok", "payload": {"hello": "world"}}
+    assert isinstance(failed.get("request_id"), str)
+    _assert_response_with_request_id(
+        succeeded,
+        path="/api/ok",
+        payload={"hello": "world"},
+    )
 
 
 @pytest.mark.asyncio
@@ -219,3 +245,4 @@ async def test_request_daemon_socket_reads_large_response(tmp_path: Path) -> Non
 
     assert response["path"] == "/api/large"
     assert response["content"] == large_text
+    assert isinstance(response.get("request_id"), str)
