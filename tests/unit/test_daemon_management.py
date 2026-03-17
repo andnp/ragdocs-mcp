@@ -248,3 +248,57 @@ def test_start_daemon_waits_for_responsive_existing_ready_daemon(
 
     assert result == metadata
     assert stop_calls == []
+
+
+def test_start_daemon_cleans_up_old_nonresponsive_metadata_before_spawn(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    stale_metadata = DaemonMetadata(
+        pid=616,
+        started_at=1.0,
+        status="initializing",
+    )
+    replacement_metadata = DaemonMetadata(
+        pid=717,
+        started_at=50.0,
+        status="starting",
+    )
+    cleaned: list[RuntimePaths] = []
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "src.daemon.management.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=stale_metadata,
+            running=True,
+            stale=False,
+            responsive=False,
+            ready=False,
+        ),
+    )
+    monkeypatch.setattr("src.daemon.management.time.time", lambda: 40.0)
+    monkeypatch.setattr(
+        "src.daemon.management._cleanup_stale_runtime_state",
+        lambda runtime_paths: cleaned.append(runtime_paths),
+    )
+    monkeypatch.setattr(
+        "src.daemon.management._spawn_daemon_process",
+        lambda project_override, runtime_paths: _FakeProcess(717, [None, None]),
+    )
+
+    def _fake_wait_for_ready_daemon(*, deadline, paths, spawned_process=None):
+        observed["spawned_pid"] = None if spawned_process is None else spawned_process.pid
+        return replacement_metadata
+
+    monkeypatch.setattr(
+        "src.daemon.management._wait_for_ready_daemon",
+        _fake_wait_for_ready_daemon,
+    )
+
+    result = start_daemon(timeout_seconds=0.5, paths=paths)
+
+    assert result == replacement_metadata
+    assert cleaned == [paths]
+    assert observed["spawned_pid"] == 717

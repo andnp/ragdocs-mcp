@@ -15,6 +15,7 @@ from src.daemon.paths import RuntimePaths
 
 
 _READY_STATUSES = {"ready", "ready_primary", "ready_replica"}
+_NONRESPONSIVE_METADATA_GRACE_SECONDS = 30.0
 
 
 class DaemonManagementError(RuntimeError):
@@ -86,7 +87,10 @@ def start_daemon(
     if current.running and current.ready and current.metadata is not None:
         return current.metadata
     if current.running and current.metadata is not None:
-        return _wait_for_ready_daemon(deadline=deadline, paths=runtime_paths)
+        if _metadata_has_exceeded_grace_period(current.metadata):
+            _cleanup_stale_runtime_state(runtime_paths)
+        else:
+            return _wait_for_ready_daemon(deadline=deadline, paths=runtime_paths)
     if current.stale:
         _cleanup_stale_runtime_state(runtime_paths)
 
@@ -194,6 +198,18 @@ def _terminate_process(pid: int, *, force: bool) -> None:
 def _cleanup_stale_runtime_state(paths: RuntimePaths) -> None:
     remove_daemon_metadata(paths.metadata_path)
     remove_daemon_socket(paths.socket_path)
+
+
+def _metadata_has_exceeded_grace_period(
+    metadata: DaemonMetadata,
+    *,
+    now: float | None = None,
+) -> bool:
+    current_time = time.time() if now is None else now
+    return (
+        current_time - metadata.started_at
+        >= _NONRESPONSIVE_METADATA_GRACE_SECONDS
+    )
 
 
 def _daemon_log_path(paths: RuntimePaths) -> Path:
