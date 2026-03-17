@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("zmq")
+
 from src.daemon.health import DaemonHealthServer, probe_daemon_socket, request_daemon_socket
 from src.daemon.metadata import DaemonMetadata
 

@@ -5,14 +5,16 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("zmq")
+
 from src.daemon.metadata import DaemonMetadata
-from src.daemon.transport import UnixSocketTransportClient, UnixSocketTransportServer
+from src.daemon.transport import ZMQTransportClient, ZMQTransportServer
 
 
 @pytest.mark.asyncio
-async def test_unix_socket_transport_round_trip(tmp_path: Path) -> None:
+async def test_zmq_transport_round_trip(tmp_path: Path) -> None:
     socket_path = tmp_path / "daemon.sock"
-    server = UnixSocketTransportServer(
+    server = ZMQTransportServer(
         socket_path=socket_path,
         metadata_provider=lambda: DaemonMetadata(pid=123, started_at=1.0, status="ready"),
         request_handler=lambda path, payload: asyncio.sleep(
@@ -23,7 +25,7 @@ async def test_unix_socket_transport_round_trip(tmp_path: Path) -> None:
 
     await server.start()
     try:
-        client = UnixSocketTransportClient()
+        client = ZMQTransportClient()
         response = await asyncio.to_thread(
             client.send_request,
             socket_path,
@@ -38,17 +40,17 @@ async def test_unix_socket_transport_round_trip(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_unix_socket_transport_health_round_trip(tmp_path: Path) -> None:
+async def test_zmq_transport_health_round_trip(tmp_path: Path) -> None:
     socket_path = tmp_path / "daemon.sock"
     metadata = DaemonMetadata(pid=321, started_at=1.0, status="ready")
-    server = UnixSocketTransportServer(
+    server = ZMQTransportServer(
         socket_path=socket_path,
         metadata_provider=lambda: metadata,
     )
 
     await server.start()
     try:
-        client = UnixSocketTransportClient()
+        client = ZMQTransportClient()
         response = await asyncio.to_thread(
             client.send_request,
             socket_path,

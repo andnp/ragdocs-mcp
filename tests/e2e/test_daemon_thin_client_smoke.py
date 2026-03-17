@@ -10,6 +10,8 @@ from contextlib import asynccontextmanager
 import pytest
 from click.testing import CliRunner
 
+pytest.importorskip("zmq")
+
 from src.cli import cli
 from src.daemon.health import probe_daemon_socket
 from src.daemon.management import stop_daemon

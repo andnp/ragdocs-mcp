@@ -23,6 +23,7 @@ dependencies = [
     "click>=8.1.0",
     "rich>=13.0.0",
     "mcp>=1.0.0",
+    "pyzmq>=26.2.0",
     "tomlkit>=0.13.0",
     "sentence-transformers>=3.0.0",
     "tenacity>=9.0.0",

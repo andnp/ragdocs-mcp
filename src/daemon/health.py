@@ -1,24 +1,23 @@
 from __future__ import annotations
 
-import asyncio
-from dataclasses import asdict
-import json
 from pathlib import Path
 
-
+from src.daemon.metadata import DaemonMetadata, parse_daemon_metadata
 from src.daemon.transport import (
-    UnixSocketTransportClient,
-    UnixSocketTransportServer,
-    remove_unix_socket,
+    ZMQTransportClient,
+    ZMQTransportServer,
+    remove_transport_socket,
 )
+
+
 DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_DAEMON_HEALTH_TIMEOUT_SECONDS = 0.2
 
-logger = logging.getLogger(__name__)
+
+class DaemonHealthServer(ZMQTransportServer):
+    """Backward-compatible daemon transport server using ZMQ over IPC."""
 
 
-class DaemonHealthServer(UnixSocketTransportServer):
-    """Backward-compatible daemon transport server using Unix sockets."""
 def probe_daemon_socket(
     socket_path: Path,
     *,
@@ -40,7 +39,7 @@ def request_daemon_socket(
     *,
     timeout_seconds: float = DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
 ) -> dict[str, object]:
-    client = UnixSocketTransportClient()
+    client = ZMQTransportClient()
     return client.send_request(
         socket_path,
         path,
@@ -50,4 +49,4 @@ def request_daemon_socket(
 
 
 def remove_daemon_socket(socket_path: Path) -> None:
-    remove_unix_socket(socket_path)
+    remove_transport_socket(socket_path)

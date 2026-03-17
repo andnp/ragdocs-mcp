@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
+import importlib
 import json
 import logging
 import os
 from pathlib import Path
-import socket
 from typing import Awaitable, Callable, Protocol
 
 from src.daemon.metadata import DaemonMetadata
@@ -31,7 +31,32 @@ class DaemonTransportClient(Protocol):
     ) -> dict[str, object]: ...
 
 
-class UnixSocketTransportServer:
+def _require_zmq() -> tuple[object, object]:
+    try:
+        zmq = importlib.import_module("zmq")
+        zmq_asyncio = importlib.import_module("zmq.asyncio")
+    except ImportError as exc:
+        raise RuntimeError(
+            "pyzmq is required for the Ragdocs daemon transport. Run 'uv sync' and retry."
+        ) from exc
+    return zmq, zmq_asyncio
+
+
+def transport_endpoint(socket_path: Path) -> str:
+    return f"ipc://{socket_path}"
+
+
+def remove_transport_socket(socket_path: Path) -> None:
+    try:
+        if socket_path.exists() or socket_path.is_socket():
+            socket_path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+
+
+class ZMQTransportServer:
     def __init__(
         self,
         *,
@@ -42,48 +67,69 @@ class UnixSocketTransportServer:
         self._socket_path = socket_path
         self._metadata_provider = metadata_provider
         self._request_handler = request_handler
-        self._server: asyncio.AbstractServer | None = None
+        self._context: object | None = None
+        self._socket: object | None = None
+        self._serve_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        remove_unix_socket(self._socket_path)
+        zmq, zmq_asyncio = _require_zmq()
+        remove_transport_socket(self._socket_path)
         self._socket_path.parent.mkdir(parents=True, exist_ok=True)
-        self._server = await asyncio.start_unix_server(
-            self._handle_client,
-            path=str(self._socket_path),
-        )
+        self._context = zmq_asyncio.Context()
+        self._socket = self._context.socket(zmq.ROUTER)
+        self._socket.linger = 0
+        self._socket.bind(transport_endpoint(self._socket_path))
+        self._serve_task = asyncio.create_task(self._serve())
+        await asyncio.sleep(0)
         try:
             os.chmod(self._socket_path, 0o600)
         except OSError:
             pass
 
     async def stop(self) -> None:
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
-        remove_unix_socket(self._socket_path)
+        if self._serve_task is not None:
+            self._serve_task.cancel()
+            try:
+                await self._serve_task
+            except asyncio.CancelledError:
+                pass
+            self._serve_task = None
+        if self._socket is not None:
+            self._socket.close(0)
+            self._socket = None
+        if self._context is not None:
+            self._context.term()
+            self._context = None
+        remove_transport_socket(self._socket_path)
 
-    async def _handle_client(
-        self,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
-    ) -> None:
-        try:
-            request_line = await reader.readline()
-            payload = await self._dispatch_request(request_line)
+    async def _serve(self) -> None:
+        assert self._socket is not None
+
+        while True:
             try:
-                writer.write(
-                    json.dumps(payload, sort_keys=True).encode("utf-8") + b"\n"
+                frames = await self._socket.recv_multipart()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error("Daemon transport receive failed", exc_info=True)
+                continue
+
+            if len(frames) < 2:
+                logger.debug(
+                    "Ignoring malformed ZMQ request with %d frame(s)", len(frames)
                 )
-                await writer.drain()
-            except (BrokenPipeError, ConnectionResetError):
-                logger.debug("Daemon client disconnected before response drain")
-        finally:
-            writer.close()
+                continue
+
+            identity = frames[0]
+            payload = await self._dispatch_request(frames[-1])
+            response = json.dumps(payload, sort_keys=True).encode("utf-8")
+
             try:
-                await writer.wait_closed()
-            except (BrokenPipeError, ConnectionResetError):
-                logger.debug("Daemon client connection already closed")
+                await self._socket.send_multipart([identity, response])
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error("Daemon transport send failed", exc_info=True)
 
     async def _dispatch_request(self, request_line: bytes) -> dict[str, object]:
         try:
@@ -127,7 +173,7 @@ class UnixSocketTransportServer:
             }
 
 
-class UnixSocketTransportClient:
+class ZMQTransportClient:
     def send_request(
         self,
         socket_path: Path,
@@ -136,46 +182,44 @@ class UnixSocketTransportClient:
         *,
         timeout_seconds: float,
     ) -> dict[str, object]:
+        zmq, _ = _require_zmq()
+        context = None
+        client = None
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(timeout_seconds)
-                client.connect(str(socket_path))
-                client.sendall(
-                    json.dumps({"path": path, "payload": payload}, sort_keys=True).encode(
-                        "utf-8"
-                    )
-                    + b"\n"
+            context = zmq.Context()
+            client = context.socket(zmq.DEALER)
+            client.linger = 0
+            client.connect(transport_endpoint(socket_path))
+            client.send(
+                json.dumps({"path": path, "payload": payload}, sort_keys=True).encode(
+                    "utf-8"
                 )
-                chunks = bytearray()
-                while True:
-                    chunk = client.recv(4096)
-                    if not chunk:
-                        break
-                    chunks.extend(chunk)
-                    if b"\n" in chunk:
-                        break
-                data = bytes(chunks)
-        except (FileNotFoundError, OSError, TimeoutError):
+            )
+
+            poller = zmq.Poller()
+            poller.register(client, zmq.POLLIN)
+            events = dict(poller.poll(int(timeout_seconds * 1000)))
+            if client not in events:
+                return {"status": "error", "error": "daemon_socket_unavailable"}
+
+            frames = client.recv_multipart()
+            data = frames[-1] if frames else b""
+        except Exception:
             return {"status": "error", "error": "daemon_socket_unavailable"}
+        finally:
+            if client is not None:
+                client.close(0)
+            if context is not None:
+                context.term()
 
         if not data:
             return {"status": "error", "error": "empty_response"}
 
         try:
-            response = json.loads(data.splitlines()[0].decode("utf-8"))
+            response = json.loads(data.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return {"status": "error", "error": "invalid_response"}
 
         if not isinstance(response, dict):
             return {"status": "error", "error": "invalid_response"}
         return response
-
-
-def remove_unix_socket(socket_path: Path) -> None:
-    try:
-        if socket_path.exists() or socket_path.is_socket():
-            socket_path.unlink()
-    except FileNotFoundError:
-        return
-    except OSError:
-        return
