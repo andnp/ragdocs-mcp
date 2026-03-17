@@ -12,8 +12,9 @@ This document defines the control-plane contract for Ragdocs V2: one global daem
 
 - **Implemented:** boot lock (`src/daemon/lock.py`), daemon metadata (`src/daemon/metadata.py`), runtime paths (`src/daemon/paths.py`), management helpers (`src/daemon/management.py`), and daemon lifecycle updates in `src/lifecycle.py`.
 - **Implemented:** thin-client forwarding paths for MCP tool listing/calls in `src/mcp/server.py` and CLI search/index-status requests in `src/cli.py`.
-- **Not implemented as specified:** the transport is not ZMQ `ROUTER`/`DEALER`. `src/daemon/health.py` currently uses an `asyncio.start_unix_server(...)` request server plus synchronous Unix-socket requests.
-- **Not implemented yet:** full path-based admin/search surface from this contract (`/api/admin/tasks` is absent, `/internal/health` is present, `/internal/shutdown` is not exposed as a formal public request path).
+- **Implemented:** the transport is now ZMQ `ROUTER`/`DEALER` over IPC in `src/daemon/transport.py`, with `src/daemon/health.py` kept as a compatibility wrapper for probe/request helpers.
+- **Implemented with follow-up hardening:** request envelopes now carry `request_id`, client metadata, and explicit timeout errors; boot-lock lifetime was fixed so the daemon does not hold the startup lock for its entire lifetime; CLI attach/start paths now wait on daemon readiness more robustly.
+- **Not implemented yet:** full path-based admin/search surface from this contract is only partially aligned with the names in this document (`/api/admin/tasks` vs `queue status`, `/api/admin/index` vs `index stats`), and `/internal/shutdown` is not exposed as a public request path.
 
 ## Mandatory Reference Implementation
 

@@ -10,13 +10,13 @@ This roadmap turns the approved architecture direction into an execution sequenc
 
 ## Verified Tranche Status (2026-03-17)
 
-- **Tranche 0 — Guardrails & Inventory:** partially complete. The planning package exists, but it was not updated with implementation status before this pass.
-- **Tranche 1 — Hard Delete Memory Product Surface:** partially complete. Runtime/code cleanup landed; docs cleanup is still outstanding.
-- **Tranche 2 — Daemon Metadata, Boot Lock, and Thin-Client Skeleton:** partially complete. Metadata, lock, status helpers, and client forwarding exist, but the transport implementation differs from the ZMQ target and the global-store contract is not complete.
-- **Tranche 3 — Huey Ownership Transfer:** partially complete. Production daemon wiring now exists for document tasks; git refresh migration and richer task/admin visibility are still in progress.
-- **Tranche 4 — CLI-First Operations Surface:** partially complete. Daemon lifecycle commands, `queue status`, and `index stats` exist; deeper task inspection remains missing.
+- **Tranche 0 — Guardrails & Inventory:** substantially complete. The planning package exists and now carries implementation-aware status notes, though some lower-priority historical docs still need archival cleanup.
+- **Tranche 1 — Hard Delete Memory Product Surface:** substantially complete. Runtime/code cleanup landed and the primary public docs now reflect the narrowed product scope; only historical memory-era specs/docs remain to archive or retire.
+- **Tranche 2 — Daemon Metadata, Boot Lock, and Thin-Client Skeleton:** substantially complete. Metadata, lock, strict client forwarding, and ZMQ-based transport now exist, and follow-up hardening landed boot-lock release, explicit transport timeout errors, request IDs, and startup/attach resilience. The remaining gap is contract cleanup and store semantics, not basic transport availability.
+- **Tranche 3 — Huey Ownership Transfer:** substantially complete. Production daemon wiring exists for document and git refresh tasks, and follow-up hardening fixed task persistence plus manifest synchronization. Richer task families/admin visibility remain in progress.
+- **Tranche 4 — CLI-First Operations Surface:** partially complete. Daemon lifecycle commands, `queue status`, and `index stats` exist and are dogfooded; deeper task inspection and endpoint naming cleanup remain missing.
 - **Tranche 5 — Soft Project Semantics:** not started.
-- **Tranche 6 — Cleanup & Hardening:** not started.
+- **Tranche 6 — Cleanup & Hardening:** partially complete. Transitional fallback paths are gone, daemon attach/freshness/boot-lock issues have been hardened, and focused daemon-backed smoke coverage now exists. Multiprocess/snapshot cleanup is still incomplete.
 
 ## Tranche 0 — Guardrails & Inventory
 

@@ -10,9 +10,9 @@ This plan replaces ragdocs' current coordination model with a global daemon and 
 
 ## Verified Implementation Status (2026-03-17)
 
-- **Phase 1 — daemon scaffolding:** partially complete. `src/daemon/metadata.py`, `src/daemon/paths.py`, `src/daemon/lock.py`, `src/daemon/management.py`, and daemon CLI commands are present.
-- **Thin-client behavior:** substantially complete. `src/mcp/server.py` and CLI query/admin commands forward work to the daemon over the local socket, and recent cleanup removed the in-process fallback path.
-- **Huey ownership:** partially complete. Production daemon startup now initializes the queue, registers indexing tasks, starts the worker, and constructs the daemon watcher with task mode enabled. Git/task coverage is still incomplete, but queue inspection is now implemented.
+- **Phase 1 — daemon scaffolding:** substantially complete. `src/daemon/metadata.py`, `src/daemon/paths.py`, `src/daemon/lock.py`, `src/daemon/management.py`, and daemon CLI commands are present, and the current transport now uses ZMQ `ROUTER`/`DEALER` IPC via `src/daemon/transport.py`.
+- **Thin-client behavior:** substantially complete. `src/mcp/server.py` and CLI query/admin commands forward work to the daemon over local IPC, the in-process fallback path is gone, and follow-up hardening landed explicit timeout errors, request IDs, attach/readiness fixes, and correct boot-lock release after startup.
+- **Huey ownership:** substantially complete. Production daemon startup initializes the queue, registers indexing tasks, starts the worker, and constructs the daemon watcher with task mode enabled. Git refresh tasks, queue inspection, and task-persistence hardening are implemented; richer task families and deeper admin visibility remain incomplete.
 - **Admin surface:** partially complete. `daemon start|stop|status|restart`, `queue status`, and `index stats` exist. Richer task inspection remains pending.
 - **Soft projects:** not started. Project-aware storage/ranking is still implemented through path selection in `src/config.py`; no metadata-only project model or bounded uplift exists yet.
 

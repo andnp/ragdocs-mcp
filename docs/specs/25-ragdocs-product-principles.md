@@ -1,6 +1,6 @@
 # Product Principles: Ragdocs Refactor
 
-**Status:** Proposed
+**Status:** Accepted — guiding implementation as of 2026-03-17
 **Date:** 2026-03-16
 **Supersedes Direction In:** `docs/memory.md`, `docs/specs/16-memory-management.md`, `docs/specs/21-multiprocess-architecture.md`, `docs/specs/23-concurrency-huey.md`, `docs/guides/multi-project-setup.md`
 

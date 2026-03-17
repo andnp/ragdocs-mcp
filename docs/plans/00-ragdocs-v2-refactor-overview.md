@@ -10,10 +10,10 @@ Ragdocs has grown three competing architectural stories: hybrid document search,
 
 ## Verified Implementation Status (2026-03-17)
 
-- **Workstream A — scope reset:** partially complete. Runtime memory code and public memory MCP surface are gone, but memory-era docs still remain in `docs/memory.md`, `docs/specs/16-memory-management.md`, `docs/specs/22-memory-system-independence.md`, and `docs/specs/24-autonomous-memory.md`, and `README.md` still advertises memory features.
-- **Workstream B — global daemon:** partially complete. Daemon metadata, boot lock, lifecycle helpers, and `daemon start|stop|status|restart` exist in `src/daemon/` and `src/cli.py`, but the transport is a Unix socket request server in `src/daemon/health.py`, not the ZMQ contract described here.
-- **Workstream C — persistent task layer:** partially complete. Production daemon startup now initializes `SqliteHuey`, registers indexing tasks, starts `HueyWorker`, and enables task-based document watching. Git refresh task support is landing in the same tranche, but queue/task inspection and broader task families are still incomplete.
-- **Workstream D — admin surface:** partially complete. Daemon lifecycle commands, `queue status`, and `index stats` are implemented; richer task/index inspection remains pending.
+- **Workstream A — scope reset:** substantially complete. Runtime memory code and public memory MCP surface are gone, and the primary public docs have been cleaned up to focus on document and git search. Remaining memory-era specs/docs are now historical cleanup rather than live product surface.
+- **Workstream B — global daemon:** substantially complete. Daemon metadata, boot lock, lifecycle helpers, strict thin-client MCP/CLI forwarding, and `daemon start|stop|status|restart` exist in `src/daemon/`, `src/mcp/server.py`, and `src/cli.py`. The transport now uses ZMQ `ROUTER`/`DEALER` IPC in `src/daemon/transport.py` behind the compatibility wrapper in `src/daemon/health.py`, and recent hardening landed boot-lock release, request IDs, explicit timeout errors, and attach/readiness fixes.
+- **Workstream C — persistent task layer:** partially complete. Production daemon startup initializes `SqliteHuey`, registers indexing tasks, starts `HueyWorker`, and enables task-based document and git refresh watching. Task durability/freshness holes were hardened with immediate persistence for Huey document tasks plus manifest synchronization, but broader task families and richer task inspection remain incomplete.
+- **Workstream D — admin surface:** partially complete. Daemon lifecycle commands, `queue status`, and `index stats` are implemented and dogfooded. Richer task/index inspection and contract cleanup around admin path naming remain pending.
 - **Workstream E — soft project semantics:** not started. `ApplicationContext` still resolves project-aware index paths, `src/storage/db.py` has no `project_id` columns, and ranking code has no $1.2\times$ project uplift.
 
 ## Goals
@@ -140,7 +140,7 @@ From existing ragdocs work:
 ### Milestone 2 — Daemon Skeleton
 
 - add global daemon identity, metadata, and thin-client startup path
-- keep direct in-process execution as a temporary fallback only if needed for staged migration
+- keep clients strict and daemon-backed; fallback execution paths have been removed
 
 ### Milestone 3 — Huey Control Plane
 
