@@ -13,7 +13,7 @@ Ragdocs should stop pretending to be two products. This plan removes the entire 
 - **Completed:** `src/memory/` runtime code is effectively removed; only `__pycache__/` remains.
 - **Completed:** public memory MCP tooling is gone; the active MCP surface in `src/mcp/` is document/git focused.
 - **Completed:** memory config/runtime state no longer appears in `src/config.py`, `src/context.py`, or `src/lifecycle.py`.
-- **Still pending:** documentation cleanup. `docs/memory.md`, `docs/specs/16-memory-management.md`, `docs/specs/22-memory-system-independence.md`, and `docs/specs/24-autonomous-memory.md` still exist, and `README.md` still references the removed memory product.
+- **Still pending:** historical cleanup. Remaining memory-era specs (`docs/specs/16-memory-management.md`, `docs/specs/22-memory-system-independence.md`, and `docs/specs/24-autonomous-memory.md`) still exist as legacy documentation, but the primary public docs no longer describe Ragdocs as a memory product.
 
 This plan should not be marked complete until the documentation and migration-story cleanup lands.
 

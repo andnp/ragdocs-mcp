@@ -1,16 +1,16 @@
 # mcp-markdown-ragdocs
 
-A Model Context Protocol server that provides semantic search over local Markdown documentation using hybrid retrieval.
+A local-first documentation and git-history search tool with a daemon-backed MCP/CLI control plane.
 
 ## What it is
 
-This is an MCP server that indexes local Markdown files and exposes a `query_documents` tool for hybrid semantic search. The server identifies relevant document sections using semantic search, keyword matching, and graph traversal, enabling efficient discovery without loading entire documentation collections into LLM context.
+This repository provides hybrid search over local Markdown and plain-text documentation plus semantic search over git history. The MCP server and CLI act as thin clients that attach to a shared local daemon for indexing, search, and operational status.
 
 ## Why it exists
 
-Technical documentation, personal notes, and project wikis are typically stored as Markdown files. Searching these collections manually or with grep is inefficient. This server provides a conversational interface to query documentation using natural language while automatically keeping the index synchronized with file changes.
+Technical documentation, personal notes, and project wikis are typically stored as Markdown files. Searching these collections manually or with grep is inefficient. Ragdocs provides daemon-backed search over that corpus while keeping indices synchronized with file changes and preserving a local-first deployment model.
 
-Existing RAG solutions require manual database setup, explicit indexing steps, and ongoing maintenance. This server eliminates that friction with automatic file watching, zero-configuration defaults, and built-in index versioning.
+Existing RAG solutions require manual database setup, explicit indexing steps, and ongoing maintenance. Ragdocs keeps the operational model local and simple: one daemon, daemon-backed thin clients, automatic file watching, durable task execution, and built-in index versioning.
 
 ## Features
 
@@ -21,12 +21,12 @@ Existing RAG solutions require manual database setup, explicit indexing steps, a
 - Cross-encoder re-ranking for improved precision (optional, ~50ms latency)
 - Query expansion via concept vocabulary for better recall
 - **Git history search:** Semantic search over commit history with metadata and delta context (parallel indexing for 2-4x speedup)
-- **Multi-project support:** Manage isolated indices for multiple projects on one machine with automatic project detection
-- Server-Sent Events (SSE) streaming for real-time response delivery
-- CLI query command with rich formatted output
+- **Project-aware operation:** project detection and overrides exist today; fully soft project metadata/ranking is still planned work
 - Daemon-backed thin clients for MCP and CLI operations
 - CLI daemon management and admin inspection (`daemon status`, `queue status`, `index stats`)
+- CLI query and git-history search commands with JSON output for scripting
 - Automatic file watching with debounced incremental indexing
+- Huey-backed durable indexing and git refresh tasks owned by the daemon
 - Zero-configuration operation with sensible defaults
 - Index versioning with automatic rebuild on configuration changes
 - **Pluggable parser architecture:** Markdown and plain text (.txt) support out-of-the-box
@@ -67,10 +67,7 @@ Start the HTTP server on default port 8000:
 uv run mcp-markdown-ragdocs run
 ```
 
-The server will:
-1. Index documents (same as mcp command)
-2. Expose HTTP API at `http://127.0.0.1:8000`
-3. Provide REST endpoints for queries
+The HTTP server currently runs its own in-process `ApplicationContext`. The daemon-backed thin-client model applies to MCP and CLI first; the HTTP path is still a separate interface.
 
 See [API Endpoints](#api-endpoints) below for HTTP usage.
 
@@ -123,7 +120,7 @@ If no configuration file exists, the server uses these defaults:
 uv run mcp-markdown-ragdocs mcp
 ```
 
-Starts stdio-based MCP server for VS Code and compatible MCP clients. Runs persistently until stopped.
+Starts the stdio-based MCP thin client for VS Code and compatible MCP clients. The MCP process forwards tool discovery and tool calls to the local daemon.
 
 #### Start HTTP Server
 

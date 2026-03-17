@@ -2,7 +2,7 @@
 
 **Status:** In Progress — verified against code on 2026-03-17
 **Date:** 2026-03-16
-**Related:** `docs/specs/25-ragdocs-product-principles.md`, `docs/specs/23-concurrency-huey.md`, `docs/plans/04-daemon-zmq-control-plane-contract.md`, `docs/specs/architecture-redesign.md`
+**Related:** `docs/specs/25-ragdocs-product-principles.md`, `docs/specs/23-concurrency-huey.md`, `docs/plans/02-global-daemon-huey-and-soft-projects.md`, `docs/plans/04-daemon-zmq-control-plane-contract.md`
 
 ## Executive Summary
 

@@ -1080,20 +1080,6 @@ Returns memories containing `[[src/auth.py]]` with anchor context showing the su
 - All timestamps are Unix timestamps (seconds since epoch) and normalized to UTC
 - Validation: `after_timestamp < before_timestamp`, `relative_days ≥ 0`
 
-### Configuration
-
-Enable memory management in config.toml:
-
-```toml
-[memory]
-enabled = true
-storage_strategy = "project"  # or "user" for shared memory
-recency_boost_days = 7
-recency_boost_factor = 1.2
-```
-
-See [Memory Management Guide](memory.md) for complete documentation.
-
 ## API Reference
 
 ### POST /query_documents

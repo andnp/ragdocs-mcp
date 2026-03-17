@@ -349,7 +349,7 @@ sys.settrace(...)  # Trace lock acquisitions
 
 ### Related Specs
 - [19-self-healing-indices.md](19-self-healing-indices.md): Corruption detection/recovery (adjacent concern)
-- [docs/specs/architecture-redesign.md](architecture-redesign.md): ApplicationContext lifecycle (shutdown coordination)
+- [docs/architecture.md](../architecture.md): current runtime authority and lifecycle overview
 
 ### External References
 - [Python threading.Lock documentation](https://docs.python.org/3/library/threading.html#lock-objects)

@@ -497,225 +497,215 @@ def reconcile_index(
 **Reconciliation Execution:**
 ```python
 async def run_reconciliation(index_manager: IndexManager):
-    stale_doc_ids, new_file_paths = reconcile_index(
-        manifest=index_manager.manifest,
-        documents_path=config.indexing.documents_path,
-        include=config.indexing.include,
-        exclude=config.indexing.exclude
-    )
+# Architecture
 
-    # Remove stale documents
-    for doc_id in stale_doc_ids:
-        logger.info(f"Reconciliation: Removing deleted document {doc_id}")
-        index_manager.remove_document(doc_id)
+This document describes the current repository architecture after the daemon-control-plane refactor work completed through 2026-03-17.
 
-    # Index new files
-    for file_path in new_file_paths:
-        logger.info(f"Reconciliation: Indexing new file {file_path}")
-        index_manager.index_document(file_path)
+## Current runtime model
 
-    # Persist updated index and manifest
-    if stale_doc_ids or new_file_paths:
-        index_manager.persist()
+Ragdocs now has one primary runtime authority:
+
+1. **Global daemon** — owns indexing, task execution, watcher lifecycle, and daemon metadata
+2. **Thin clients** — MCP stdio and CLI attach to the daemon over local ZMQ IPC
+3. **Optional HTTP server** — still exists as a separate in-process FastAPI interface
+
+The control-plane refactor is substantially complete, but two planned areas remain unfinished:
+
+- deeper admin/task inspection surfaces
+- soft-project semantics (project metadata + ranking uplift instead of project-scoped storage)
+
+## High-level component layout
+
+```text
+CLI / MCP thin clients ───────▶ ZMQ daemon transport ───────▶ Global daemon
+                                                                                                                                                                               ├─ LifecycleCoordinator
+                                                                                                                                                                               ├─ ApplicationContext
+                                                                                                                                                                               ├─ IndexManager
+                                                                                                                                                                               ├─ SearchOrchestrator
+                                                                                                                                                                               ├─ FileWatcher / GitWatcher
+                                                                                                                                                                               └─ Huey worker + durable tasks
+
+HTTP server (separate path) ─▶ in-process ApplicationContext
 ```
 
-**Trigger Conditions:**
-1. **Server Startup:** Runs once after index loaded if `reconciliation_interval_seconds > 0`
-2. **Periodic Background Task:** Runs every `reconciliation_interval_seconds` in async loop
-3. **Manual Trigger:** `IndexManager.reconcile()` method (future CLI command)
+## Primary components
 
-**Use Cases:**
-- **Deleted Files:** User deletes `notes/old-draft.md`, reconciliation removes from index
-- **Config Changes:** User adds `**/archive/**` to exclude patterns, reconciliation removes archived docs
-- **External Modifications:** File added by git pull or external script, reconciliation indexes it
-- **Index Corruption Recovery:** Manifest out of sync with index, reconciliation corrects discrepancies
+### Global daemon
 
-**Behavior:**
-- Disabled by default (`reconciliation_interval_seconds = 0`)
-- Recommended: 1 hour (3600) for active projects, 24 hours (86400) for stable documentation
-- Logs each removal/addition at INFO level for auditability
-- Persists index and manifest after changes
+Relevant modules:
 
-**Manifest Updates:**
-- `indexed_files` updated after each reconciliation cycle
-- Relative paths enable project relocation without reconciliation triggering
+- `src/cli.py`
+- `src/daemon/management.py`
+- `src/daemon/transport.py`
+- `src/daemon/health.py`
+- `src/lifecycle.py`
+- `src/context.py`
 
-### Storage Layer
+The daemon is the authoritative owner of:
 
-#### VectorIndex (src/indices/vector.py)
+- watcher lifecycle
+- durable indexing and git-refresh work
+- daemon metadata and boot-lock coordination
+- search/index admin endpoints used by CLI and MCP thin clients
 
-**Technology:** LlamaIndex with FAISS and HuggingFace embeddings
+The daemon transport is local IPC using ZMQ `ROUTER`/`DEALER` sockets. The compatibility helpers in `src/daemon/health.py` expose request/probe helpers used by management code and tests.
 
-**Configuration:**
-- Embedding model: BAAI/bge-small-en-v1.5 (384 dimensions)
-- Chunking: LlamaIndex MarkdownNodeParser (512 chars, 50 overlap)
-- Storage: FAISS IndexFlatL2 with doc_id to node_ids mapping
+### Thin clients
 
-**Operations:**
-- `add(doc_id, content)`: Chunk content, embed, add to FAISS index
-- `remove(doc_id)`: Remove doc_id mapping (FAISS vectors remain)
-- `search(query, top_k)`: Embed query, cosine similarity search
-- `persist(path)`: Save FAISS index and mappings to disk
-- `load(path)`: Load existing index from disk
+#### MCP stdio client
 
-**Known Limitation:** FAISS does not support efficient vector deletion. The `remove()` method only removes the mapping, not the actual vectors.
+Relevant module:
 
-#### KeywordIndex (src/indices/keyword.py)
+- `src/mcp/server.py`
 
-**Technology:** Whoosh with BM25F scoring
+The MCP server is now a thin client. It does not own background indexing. It:
 
-**Schema:**
-- `ID`: Stored, unique document identifier
-- `TEXT`: Document content and aliases (searchable)
-- `KEYWORD`: Tags (searchable)
+- ensures the daemon is started
+- fetches tool definitions from `/api/mcp/tools`
+- forwards tool calls to `/api/mcp/tool`
 
-**Operations:**
-- `add(doc_id, content, metadata)`: Add document to inverted index
-- `remove(doc_id)`: Delete document by ID
-- `search(query, top_k)`: BM25 search across TEXT and KEYWORD fields
-- `persist(path)`: Copy in-memory index to persistent directory
-- `load(path)`: Load existing index from disk
+#### CLI thin client
 
-**Parser Configuration:**
-- MultifieldParser searches across content, aliases, and tags
-- StandardAnalyzer tokenizes and normalizes terms
+Relevant module:
 
-**Tokenization Limitation:** StandardAnalyzer strips punctuation. Terms like "C++" normalize to "c". Custom analyzer required for preserving special characters.
+- `src/cli.py`
 
-#### CodeIndex (src/indices/code.py)
+Daemon-backed CLI commands include:
 
-**Technology:** Whoosh with custom code-aware analyzer
+- `query`
+- `search-commits`
+- `daemon start|status|stop|restart`
+- `queue status`
+- `index stats`
 
-**Purpose:** Index code blocks extracted from Markdown with programming-aware tokenization.
+These commands either attach to an existing daemon or start one if required.
 
-**Schema:**
-- `id`: Unique code block identifier
-- `doc_id`: Parent document ID
-- `chunk_id`: Associated chunk ID
-- `content`: Code block text (searchable with code analyzer)
-- `language`: Programming language (if specified in fenced block)
+### HTTP server
 
-**Custom Analyzer:**
-- **RegexTokenizer**: Extracts alphanumeric identifiers and numbers
-- **CamelCaseSplitter**: Splits `getUserById` → `["getUserById", "get", "User", "By", "Id"]`
-- **SnakeCaseSplitter**: Splits `parse_json` → `["parse_json", "parse", "json"]`
+Relevant module:
 
-**Operations:**
-- `add_code_block(code_block)`: Add code block to index
-- `remove_by_doc_id(doc_id)`: Remove all code blocks for a document
-- `search(query, top_k)`: BM25 search with code-aware tokenization
-- `persist(path)`: Save index to disk
-- `load(path)`: Load existing index from disk
+- `src/server.py`
 
-#### GraphStore (src/indices/graph.py)
+The FastAPI server still creates its own in-process `ApplicationContext`. It has not yet been migrated into the daemon-backed thin-client model used by MCP and CLI.
 
-**Technology:** NetworkX directed graph
+## Core indexing and search pipeline
 
-**Node Attributes:**
-- `title`: Document title (from file name or frontmatter)
-- `tags`: List of tags
-- `aliases`: List of aliases
+### ApplicationContext
 
-**Edge Types:**
-- `link`: Standard wikilink (`[[Target]]`)
-- `transclusion`: Embedded note (`![[Target]]`)
+Relevant module:
 
-**Operations:**
-- `add_document(doc_id, metadata, links)`: Add node and outgoing edges
-- `remove_document(doc_id)`: Remove node and all connected edges
-- `get_neighbors(doc_id, depth=1)`: Find connected documents
-- `persist(path)`: Serialize graph to JSON
-- `load(path)`: Deserialize graph from JSON
+- `src/context.py`
 
-**Design:** Uses NetworkX's built-in node_link_data format for JSON serialization.
+`ApplicationContext` coordinates:
 
-#### CommitIndex (src/git/commit_indexer.py)
+- config resolution
+- index manager creation
+- search orchestrator creation
+- watcher startup
+- initial load/rebuild behavior
+- readiness coordination with `LifecycleCoordinator`
 
-**Technology:** SQLite with embedding storage
+### IndexManager
 
-**Purpose:** Index git commit history for semantic search over commit metadata and diffs.
+Relevant module:
 
-**Schema:**
-- `hash` (TEXT, PRIMARY KEY): Full commit SHA
-- `timestamp` (INTEGER): Unix seconds
-- `author` (TEXT): Author name and email
-- `committer` (TEXT): Committer name and email
-- `title` (TEXT): First line of commit message
-- `message` (TEXT): Full commit message body
-- `files_changed` (TEXT): JSON array of file paths
-- `delta_truncated` (TEXT): First 200 lines of diff output
-- `embedding` (BLOB): 384-dim float32 embedding
-- `indexed_at` (INTEGER): Unix timestamp when indexed
-- `repo_path` (TEXT): Absolute path to .git directory
+- `src/indexing/manager.py`
 
-**Commit Document Format:**
+`IndexManager` coordinates writes across:
 
-Commits are formatted as searchable text before embedding:
+- `VectorIndex`
+- `KeywordIndex`
+- `GraphStore`
+- manifest updates
+- reconciliation-facing persistence
 
-```
-{title}
+It is responsible for indexing documents, removing documents, persisting indices, and keeping the manifest aligned with indexed and removed document IDs.
 
-{message}
+### SearchOrchestrator
 
-Author: {author}
-Committer: {committer}
+Relevant modules:
 
-Files changed:
-{file_1}
-{file_2}
-...
+- `src/search/orchestrator.py`
+- `src/search/fusion.py`
+- `src/search/pipeline.py`
 
-{delta_truncated}
-```
+Search combines:
 
-**Delta Truncation:**
+- semantic retrieval from `VectorIndex`
+- keyword retrieval from `KeywordIndex`
+- graph-aware scoring from `GraphStore`
+- fusion, deduplication, and compression pipeline stages
 
-Diffs are truncated to first 200 lines with indicator if truncated:
+### Durable task execution
 
-```diff
-diff --git a/src/auth.py b/src/auth.py
-index abc123..def456 100644
---- a/src/auth.py
-+++ b/src/auth.py
-@@ -10,5 +10,8 @@
- def authenticate(token):
-+    if not validate_token(token):
-+        raise AuthError("Invalid token")
-     ...
+Relevant modules:
 
-... (450 lines omitted)
-```
+- `src/coordination/queue.py`
+- `src/indexing/tasks.py`
+- `src/worker/consumer.py`
+- `src/git/*`
 
-**Repository Discovery:**
+The daemon owns the Huey consumer. Watchers enqueue work; the daemon-side worker processes it. Current production task families include document indexing/removal and git refresh.
 
-Recursively searches for `.git` directories starting from `documents_path`, respecting exclusion patterns from `IndexingConfig.exclude`:
+## Storage model today
 
-1. Use `os.walk()` with in-place directory filtering
-2. Apply glob pattern matching via `Path.match()`
-3. Skip hidden directories if `exclude_hidden_dirs=True`
-4. Stop descent when `.git` found (no nested repo indexing)
+Relevant modules:
 
-**Embedding Model:**
+- `src/storage/db.py`
+- `src/indexing/manifest.py`
+- `src/indices/*`
 
-Shares embedding model with VectorIndex (BAAI/bge-small-en-v1.5, 384 dimensions). Single model instance reduces memory overhead.
+The current repository state is transitional:
 
-**Search Algorithm:**
+- daemon identity is global per user environment
+- task queue and runtime metadata are global per user environment
+- project-aware index path selection still exists
+- soft project metadata and fixed ranking uplift are still planned, not implemented
 
-1. Generate query embedding using shared model
-2. Load all embeddings from SQLite (BLOB → numpy array)
-3. Compute cosine similarity (numpy vectorized)
-4. Sort by similarity descending
-5. Apply optional filters (file_pattern, author, timestamp range)
-6. Return top-N commits
+That means one daemon owns indexing authority, but the search corpus is not yet fully unified under the planned metadata-only project model.
 
-**Incremental Updates:**
+## Lifecycle and readiness
 
-On startup and when GitWatcher detects changes:
+Relevant module:
 
-1. Query last indexed timestamp for repository (normalized path)
-2. Execute `git log --all --after={last_indexed_timestamp}` for new commits
-3. Skip indexing if zero new commits found
-4. Parse commit metadata and delta for new commits (using parallel indexer)
+- `src/lifecycle.py`
+
+`LifecycleCoordinator` manages:
+
+- startup states
+- readiness transitions
+- signal handling
+- daemon metadata writes
+- shutdown sequencing
+
+Recent hardening completed:
+
+- boot-lock release after successful daemon startup
+- attach/readiness waiting for first client queries
+- explicit timeout errors for daemon requests
+- request-id propagation on daemon transport responses
+- delete persistence/tombstoning for removed documents
+
+## Current admin/control paths
+
+Implemented daemon request paths include:
+
+- `/internal/health`
+- `/api/mcp/tools`
+- `/api/mcp/tool`
+- `/api/search/query`
+- `/api/search/git-history`
+- `/api/admin/index`
+- `/api/admin/tasks`
+
+Still planned:
+
+- `/api/admin/overview`
+- `/internal/shutdown`
+
+## Historical note
+
+The older multiprocess snapshot architecture is no longer the active design. Historical references to `src/ipc/`, snapshot version publishing, and read-only snapshot loading describe a superseded design direction and should not be treated as the current control-plane model.
 5. Generate embeddings in batches and store in SQLite
 6. Update `indexed_at` timestamp
 
