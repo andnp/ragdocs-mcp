@@ -163,6 +163,7 @@ def mcp(project: str | None):
 
 async def _run_daemon_forever(project: str | None) -> None:
     lock = await asyncio.to_thread(acquire_boot_lock, timeout_seconds=5.0)
+    lock_released = False
     runtime_paths = RuntimePaths.resolve()
 
     async def _handle_daemon_request(
@@ -291,6 +292,8 @@ async def _run_daemon_forever(project: str | None) -> None:
                 db_manager=ctx.db_manager,
                 huey_worker=huey_worker,
             )
+            await asyncio.to_thread(lock.release)
+            lock_released = True
             while coordinator.state not in (
                 LifecycleState.SHUTTING_DOWN,
                 LifecycleState.TERMINATED,
@@ -300,7 +303,8 @@ async def _run_daemon_forever(project: str | None) -> None:
             await coordinator.shutdown()
             await health_server.stop()
     finally:
-        await asyncio.to_thread(lock.release)
+        if not lock_released:
+            await asyncio.to_thread(lock.release)
 
 
 @cli.group("daemon")

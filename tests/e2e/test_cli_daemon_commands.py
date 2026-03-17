@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from click.testing import CliRunner
+import pytest
 
 from src.cli import cli
+from src.lifecycle import LifecycleState
 from src.daemon import RuntimePaths
 from src.daemon.management import DaemonInspection
 from src.daemon.metadata import DaemonMetadata
@@ -123,6 +125,79 @@ def test_daemon_start_invokes_management_helper(monkeypatch):
     assert result.exit_code == 0
     assert observed == {"project_override": "docs", "timeout_seconds": 3.5}
     assert "Daemon running (pid=99, status=ready)" in result.output
+
+
+@pytest.mark.asyncio
+async def test_run_daemon_forever_releases_boot_lock_after_startup(
+    monkeypatch,
+    tmp_path,
+):
+    class _FakeLock:
+        def __init__(self):
+            self.release_calls = 0
+
+        def release(self):
+            self.release_calls += 1
+
+    class _FakeCoordinator:
+        def __init__(self):
+            self.state = LifecycleState.UNINITIALIZED
+
+        def install_signal_handlers(self, loop):
+            return None
+
+        async def start(self, ctx, *, background_index, db_manager, huey_worker):
+            self.state = LifecycleState.TERMINATED
+
+        async def shutdown(self):
+            return None
+
+    class _FakeHealthServer:
+        def __init__(self, **kwargs):
+            self.started = False
+            self.stopped = False
+
+        async def start(self):
+            self.started = True
+
+        async def stop(self):
+            self.stopped = True
+
+    class _FakeWorker:
+        is_running = False
+
+    fake_lock = _FakeLock()
+    fake_coordinator = _FakeCoordinator()
+    runtime_paths = RuntimePaths(
+        root=tmp_path,
+        index_db_path=tmp_path / "index.db",
+        queue_db_path=tmp_path / "queue.db",
+        metadata_path=tmp_path / "daemon.json",
+        lock_path=tmp_path / "daemon.lock",
+        socket_path=tmp_path / "daemon.sock",
+    )
+
+    class _FakeContext:
+        db_manager = None
+
+    monkeypatch.setattr("src.cli.acquire_boot_lock", lambda timeout_seconds=5.0: fake_lock)
+    monkeypatch.setattr(
+        RuntimePaths,
+        "resolve",
+        classmethod(lambda cls: runtime_paths),
+    )
+    monkeypatch.setattr("src.cli.DaemonHealthServer", _FakeHealthServer)
+    monkeypatch.setattr("src.cli.LifecycleCoordinator", lambda: fake_coordinator)
+    monkeypatch.setattr(
+        "src.cli._create_daemon_runtime",
+        lambda project, paths: (_FakeContext(), _FakeWorker()),
+    )
+
+    from src.cli import _run_daemon_forever
+
+    await _run_daemon_forever(None)
+
+    assert fake_lock.release_calls == 1
 
 
 def test_request_daemon_json_waits_for_ready_before_query(monkeypatch, tmp_path):
