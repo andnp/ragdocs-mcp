@@ -83,6 +83,33 @@ def _configure_shared_runtime_home(
     return RuntimePaths.resolve()
 
 
+async def _wait_for_query_result(
+    runner: CliRunner,
+    query_text: str,
+    expected_snippet: str,
+    *,
+    timeout_seconds: float = 30.0,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while asyncio.get_running_loop().time() < deadline:
+        result = await asyncio.to_thread(
+            runner.invoke,
+            cli,
+            ["query", query_text, "--json"],
+        )
+        if result.exit_code == 0:
+            payload = json.loads(result.output)
+            if any(
+                expected_snippet in item.get("content", "")
+                for item in payload.get("results", [])
+            ):
+                return
+        await asyncio.sleep(0.2)
+    raise AssertionError(
+        f"Timed out waiting for query '{query_text}' to return snippet '{expected_snippet}'"
+    )
+
+
 @pytest.mark.asyncio
 async def test_daemon_backed_cli_query_and_index_stats_smoke(
     runner: CliRunner,
@@ -240,3 +267,62 @@ async def test_mcp_run_stays_daemon_idle_on_startup(monkeypatch: pytest.MonkeyPa
     )
 
     await server.run()
+
+
+@pytest.mark.asyncio
+async def test_task_driven_document_update_survives_daemon_restart(
+    runner: CliRunner,
+    daemon_test_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_cwd = Path.cwd()
+    os.chdir(daemon_test_env)
+    runtime_paths = _configure_shared_runtime_home(daemon_test_env, monkeypatch)
+    guide_path = daemon_test_env / "docs" / "guide.md"
+    marker = "RestartPersistenceMarker-20260317"
+
+    try:
+        rebuild = await asyncio.to_thread(runner.invoke, cli, ["rebuild-index"])
+        assert rebuild.exit_code == 0, rebuild.output
+
+        start = await asyncio.to_thread(
+            runner.invoke,
+            cli,
+            ["daemon", "start", "--timeout", "20"],
+        )
+        assert start.exit_code == 0, start.output
+
+        try:
+            guide_path.write_text(
+                f"# Guide\n\n## Setup\n\nInstall dependencies first.\n\n## Persistence\n\n{marker}\n",
+                encoding="utf-8",
+            )
+
+            await _wait_for_query_result(runner, marker, marker)
+
+            stop = await asyncio.to_thread(runner.invoke, cli, ["daemon", "stop"])
+            assert stop.exit_code == 0, stop.output
+
+            restart = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["daemon", "start", "--timeout", "20"],
+            )
+            assert restart.exit_code == 0, restart.output
+
+            post_restart = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["query", marker, "--json"],
+            )
+            assert post_restart.exit_code == 0, post_restart.output
+            payload = json.loads(post_restart.output)
+            assert any(
+                marker in item.get("content", "")
+                for item in payload.get("results", [])
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(stop_daemon, paths=runtime_paths)
+    finally:
+        os.chdir(original_cwd)
