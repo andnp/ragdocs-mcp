@@ -13,6 +13,7 @@ from src.cli import cli
 from src.daemon.health import probe_daemon_socket
 from src.daemon.management import stop_daemon
 from src.daemon.paths import RuntimePaths
+from src.mcp.server import MCPServer
 
 
 def _write_test_config(tmp_path: Path, docs_path: Path) -> None:
@@ -119,6 +120,38 @@ async def test_daemon_backed_cli_query_and_index_stats_smoke(
             assert stats_result.exit_code == 0, stats_result.output
             stats_payload = json.loads(stats_result.output)
             assert stats_payload["indexed_documents"] >= 2
+        finally:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(stop_daemon, paths=runtime_paths)
+    finally:
+        os.chdir(original_cwd)
+
+
+@pytest.mark.asyncio
+async def test_daemon_backed_mcp_query_documents_smoke(
+    runner: CliRunner,
+    daemon_test_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_cwd = Path.cwd()
+    os.chdir(daemon_test_env)
+    runtime_paths = _configure_shared_runtime_home(daemon_test_env, monkeypatch)
+
+    try:
+        rebuild = await asyncio.to_thread(runner.invoke, cli, ["rebuild-index"])
+        assert rebuild.exit_code == 0, rebuild.output
+
+        try:
+            server = MCPServer()
+            contents = await server._maybe_call_remote_tool(
+                "query_documents",
+                {"query": "authentication", "top_n": 1},
+            )
+
+            assert contents is not None
+            assert len(contents) == 1
+            assert "Search Results" in contents[0].text
+            await _wait_for_daemon_socket(runtime_paths.socket_path)
         finally:
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(stop_daemon, paths=runtime_paths)

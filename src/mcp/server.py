@@ -17,7 +17,10 @@ from mcp.types import Tool, TextContent
 
 from src.context import ApplicationContext
 from src.daemon import DaemonLockTimeoutError, FilesystemLock, RuntimePaths
-from src.daemon.health import request_daemon_socket
+from src.daemon.health import (
+    DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
+    request_daemon_socket,
+)
 from src.daemon.management import start_daemon
 from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.mcp.handlers import HandlerContext, get_handler
@@ -72,6 +75,7 @@ class MCPServer:
                 Path(metadata.socket_path),
                 "/api/mcp/tools",
                 {},
+                timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
             )
             tools = response.get("tools")
             if not isinstance(tools, list):
@@ -106,6 +110,7 @@ class MCPServer:
                 Path(metadata.socket_path),
                 "/api/mcp/tool",
                 {"name": name, "arguments": arguments},
+                timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
             )
             contents = response.get("contents")
             if not isinstance(contents, list):

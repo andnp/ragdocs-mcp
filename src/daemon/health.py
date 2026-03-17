@@ -11,6 +11,10 @@ from typing import Awaitable, Callable
 from src.daemon.metadata import DaemonMetadata, parse_daemon_metadata
 
 
+DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS = 30.0
+DEFAULT_DAEMON_HEALTH_TIMEOUT_SECONDS = 0.2
+
+
 class DaemonHealthServer:
     def __init__(
         self,
@@ -95,7 +99,7 @@ class DaemonHealthServer:
 def probe_daemon_socket(
     socket_path: Path,
     *,
-    timeout_seconds: float = 0.2,
+    timeout_seconds: float = DEFAULT_DAEMON_HEALTH_TIMEOUT_SECONDS,
 ) -> DaemonMetadata | None:
     payload = request_daemon_socket(
         socket_path,
@@ -111,7 +115,7 @@ def request_daemon_socket(
     path: str,
     payload: dict[str, object],
     *,
-    timeout_seconds: float = 1.0,
+    timeout_seconds: float = DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
 ) -> dict[str, object]:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:

@@ -28,7 +28,11 @@ from rich.table import Table
 
 from src.config import load_config
 from src.daemon import RuntimePaths, read_daemon_metadata
-from src.daemon.health import DaemonHealthServer, request_daemon_socket
+from src.daemon.health import (
+    DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
+    DaemonHealthServer,
+    request_daemon_socket,
+)
 from src.daemon.management import (
     acquire_boot_lock,
     inspect_daemon,
@@ -530,7 +534,12 @@ def _request_daemon_json(
     if metadata is None or not metadata.socket_path:
         return None
 
-    response = request_daemon_socket(Path(metadata.socket_path), path, payload)
+    response = request_daemon_socket(
+        Path(metadata.socket_path),
+        path,
+        payload,
+        timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
+    )
     if response.get("status") == "error":
         return None
     return response

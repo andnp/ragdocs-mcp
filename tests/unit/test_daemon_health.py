@@ -64,3 +64,59 @@ async def test_health_server_dispatches_custom_request_handler(tmp_path: Path) -
         await server.stop()
 
     assert response == {"path": "/api/example", "payload": {"hello": "world"}}
+
+
+@pytest.mark.asyncio
+async def test_request_daemon_socket_supports_slow_handler_with_custom_timeout(
+    tmp_path: Path,
+) -> None:
+    socket_path = tmp_path / "daemon.sock"
+    server = DaemonHealthServer(
+        socket_path=socket_path,
+        metadata_provider=lambda: None,
+        request_handler=lambda path, payload: asyncio.sleep(
+            0.05,
+            result={"path": path, "payload": payload},
+        ),
+    )
+
+    await server.start()
+    try:
+        response = await asyncio.to_thread(
+            request_daemon_socket,
+            socket_path,
+            "/api/slow",
+            {"hello": "world"},
+            timeout_seconds=0.2,
+        )
+    finally:
+        await server.stop()
+
+    assert response == {"path": "/api/slow", "payload": {"hello": "world"}}
+
+
+@pytest.mark.asyncio
+async def test_request_daemon_socket_reports_timeout_as_unavailable(tmp_path: Path) -> None:
+    socket_path = tmp_path / "daemon.sock"
+    server = DaemonHealthServer(
+        socket_path=socket_path,
+        metadata_provider=lambda: None,
+        request_handler=lambda path, payload: asyncio.sleep(
+            0.05,
+            result={"path": path, "payload": payload},
+        ),
+    )
+
+    await server.start()
+    try:
+        response = await asyncio.to_thread(
+            request_daemon_socket,
+            socket_path,
+            "/api/slow",
+            {"hello": "world"},
+            timeout_seconds=0.001,
+        )
+    finally:
+        await server.stop()
+
+    assert response == {"status": "error", "error": "daemon_socket_unavailable"}

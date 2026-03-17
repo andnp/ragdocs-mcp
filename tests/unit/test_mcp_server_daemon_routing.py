@@ -21,7 +21,7 @@ async def test_mcp_server_prefers_daemon_tool_listing(monkeypatch):
     )
     monkeypatch.setattr(
         "src.mcp.server.request_daemon_socket",
-        lambda socket_path, path, payload: {
+        lambda socket_path, path, payload, timeout_seconds=30.0: {
             "tools": [
                 {
                     "name": "query_documents",
@@ -53,7 +53,7 @@ async def test_mcp_server_prefers_daemon_tool_calls(monkeypatch):
     )
     monkeypatch.setattr(
         "src.mcp.server.request_daemon_socket",
-        lambda socket_path, path, payload: {
+        lambda socket_path, path, payload, timeout_seconds=30.0: {
             "contents": [{"type": "text", "text": "remote response"}]
         },
     )
