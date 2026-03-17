@@ -28,6 +28,7 @@ from rich.table import Table
 
 from src.config import load_config
 from src.daemon import RuntimePaths
+from src.daemon.health import DaemonHealthServer
 from src.daemon.management import (
     acquire_boot_lock,
     inspect_daemon,
@@ -126,6 +127,11 @@ def mcp(project: str | None):
 
 async def _run_daemon_forever(project: str | None) -> None:
     lock = await asyncio.to_thread(acquire_boot_lock, timeout_seconds=1.0)
+    runtime_paths = RuntimePaths.resolve()
+    health_server = DaemonHealthServer(
+        socket_path=runtime_paths.socket_path,
+        metadata_provider=lambda: read_daemon_metadata(runtime_paths.metadata_path),
+    )
     coordinator = LifecycleCoordinator()
     loop = asyncio.get_running_loop()
     coordinator.install_signal_handlers(loop)
@@ -138,6 +144,7 @@ async def _run_daemon_forever(project: str | None) -> None:
     )
 
     try:
+        await health_server.start()
         try:
             await coordinator.start(ctx, background_index=False)
             while coordinator.state not in (
@@ -147,6 +154,7 @@ async def _run_daemon_forever(project: str | None) -> None:
                 await asyncio.sleep(0.2)
         finally:
             await coordinator.shutdown()
+            await health_server.stop()
     finally:
         await asyncio.to_thread(lock.release)
 

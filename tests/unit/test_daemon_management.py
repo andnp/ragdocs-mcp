@@ -50,6 +50,10 @@ def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> N
         "src.daemon.management._spawn_daemon_process",
         lambda project_override: _FakeProcess(101, [None, None, None]),
     )
+    monkeypatch.setattr(
+        "src.daemon.management.probe_daemon_socket",
+        lambda *args, **kwargs: metadata,
+    )
     monkeypatch.setattr("src.daemon.management.time.sleep", lambda _: None)
 
     result = start_daemon(timeout_seconds=0.5, paths=_paths(tmp_path))
@@ -76,8 +80,31 @@ def test_start_daemon_accepts_race_winner_metadata(monkeypatch, tmp_path: Path) 
         "src.daemon.management._spawn_daemon_process",
         lambda project_override: _FakeProcess(202, [1, 1, 1]),
     )
+    monkeypatch.setattr(
+        "src.daemon.management.probe_daemon_socket",
+        lambda *args, **kwargs: winner_metadata,
+    )
     monkeypatch.setattr("src.daemon.management.time.sleep", lambda _: None)
 
     result = start_daemon(timeout_seconds=0.5, paths=_paths(tmp_path))
 
     assert result == winner_metadata
+
+
+def test_inspect_daemon_requires_successful_probe(monkeypatch, tmp_path: Path) -> None:
+    metadata = DaemonMetadata(pid=404, started_at=1.0, status="ready")
+    metadata_path = _paths(tmp_path).metadata_path
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        '{"pid": 404, "started_at": 1.0, "status": "ready"}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("src.daemon.management.is_process_running", lambda pid: True)
+    monkeypatch.setattr("src.daemon.management.probe_daemon_socket", lambda *args, **kwargs: None)
+
+    inspection = __import__("src.daemon.management", fromlist=["inspect_daemon"]).inspect_daemon(_paths(tmp_path))
+
+    assert inspection.metadata == metadata
+    assert inspection.running is True
+    assert inspection.ready is False

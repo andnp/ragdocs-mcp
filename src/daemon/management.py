@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 
+from src.daemon.health import probe_daemon_socket, remove_daemon_socket
 from src.daemon.lock import FilesystemLock
 from src.daemon.metadata import DaemonMetadata, read_daemon_metadata, remove_daemon_metadata
 from src.daemon.paths import RuntimePaths
@@ -45,7 +46,15 @@ def inspect_daemon(paths: RuntimePaths | None = None) -> DaemonInspection:
         return DaemonInspection(metadata=None, running=False, stale=False, ready=False)
 
     running = is_process_running(metadata.pid)
-    ready = running and metadata.status in _READY_STATUSES
+    probed_metadata = (
+        probe_daemon_socket(runtime_paths.socket_path) if running else None
+    )
+    ready = (
+        running
+        and metadata.status in _READY_STATUSES
+        and probed_metadata is not None
+        and probed_metadata.pid == metadata.pid
+    )
     return DaemonInspection(
         metadata=metadata,
         running=running,
@@ -68,7 +77,10 @@ def start_daemon(
     if current.running and current.ready and current.metadata is not None:
         return current.metadata
     if current.running and current.metadata is not None:
-        return _wait_for_ready_daemon(deadline=deadline, paths=runtime_paths)
+        if current.metadata.status in _READY_STATUSES:
+            stop_daemon(timeout_seconds=min(timeout_seconds, 5.0), paths=runtime_paths)
+        else:
+            return _wait_for_ready_daemon(deadline=deadline, paths=runtime_paths)
     if current.stale:
         _cleanup_stale_runtime_state(runtime_paths)
 
@@ -154,10 +166,7 @@ def _terminate_process(pid: int, *, force: bool) -> None:
 
 def _cleanup_stale_runtime_state(paths: RuntimePaths) -> None:
     remove_daemon_metadata(paths.metadata_path)
-    try:
-        paths.socket_path.unlink()
-    except FileNotFoundError:
-        pass
+    remove_daemon_socket(paths.socket_path)
 
 
 def acquire_boot_lock(

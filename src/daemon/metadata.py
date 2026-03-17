@@ -43,10 +43,7 @@ def read_daemon_metadata(metadata_path: Path) -> DaemonMetadata | None:
     except (OSError, json.JSONDecodeError):
         return None
 
-    try:
-        return DaemonMetadata(**cast(Any, _normalize_payload(payload)))
-    except TypeError:
-        return None
+    return parse_daemon_metadata(payload)
 
 
 def remove_daemon_metadata(metadata_path: Path) -> None:
@@ -54,6 +51,13 @@ def remove_daemon_metadata(metadata_path: Path) -> None:
         metadata_path.unlink()
     except FileNotFoundError:
         return
+
+
+def parse_daemon_metadata(payload: dict[str, object]) -> DaemonMetadata | None:
+    try:
+        return DaemonMetadata(**cast(Any, _normalize_payload(payload)))
+    except TypeError:
+        return None
 
 
 def _normalize_payload(payload: dict[str, object]) -> dict[str, object]:
