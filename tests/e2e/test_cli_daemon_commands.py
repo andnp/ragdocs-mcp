@@ -42,6 +42,25 @@ def test_daemon_status_reports_running(monkeypatch):
     assert "Lifecycle: ready" in result.output
 
 
+def test_daemon_status_reports_starting_when_not_ready(monkeypatch):
+    runner = CliRunner()
+    metadata = DaemonMetadata(
+        pid=4321,
+        started_at=1_763_700_000.0,
+        status="starting",
+        socket_path="/tmp/ragdocs.sock",
+    )
+    monkeypatch.setattr(
+        "src.cli.inspect_daemon",
+        lambda: DaemonInspection(metadata=metadata, running=True, stale=False, ready=False),
+    )
+
+    result = runner.invoke(cli, ["daemon", "status"])
+
+    assert result.exit_code == 0
+    assert "Daemon status: starting" in result.output
+
+
 def test_daemon_status_json_includes_runtime_paths(monkeypatch, tmp_path):
     runner = CliRunner()
     metadata = DaemonMetadata(

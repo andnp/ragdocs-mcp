@@ -28,7 +28,13 @@ from rich.table import Table
 
 from src.config import load_config
 from src.daemon import RuntimePaths
-from src.daemon.management import inspect_daemon, restart_daemon, start_daemon, stop_daemon
+from src.daemon.management import (
+    acquire_boot_lock,
+    inspect_daemon,
+    restart_daemon,
+    start_daemon,
+    stop_daemon,
+)
 from src.git.repository import (
     discover_git_repositories,
     get_commits_after_timestamp,
@@ -119,6 +125,7 @@ def mcp(project: str | None):
 
 
 async def _run_daemon_forever(project: str | None) -> None:
+    lock = await asyncio.to_thread(acquire_boot_lock, timeout_seconds=1.0)
     coordinator = LifecycleCoordinator()
     loop = asyncio.get_running_loop()
     coordinator.install_signal_handlers(loop)
@@ -131,14 +138,17 @@ async def _run_daemon_forever(project: str | None) -> None:
     )
 
     try:
-        await coordinator.start(ctx, background_index=False)
-        while coordinator.state not in (
-            LifecycleState.SHUTTING_DOWN,
-            LifecycleState.TERMINATED,
-        ):
-            await asyncio.sleep(0.2)
+        try:
+            await coordinator.start(ctx, background_index=False)
+            while coordinator.state not in (
+                LifecycleState.SHUTTING_DOWN,
+                LifecycleState.TERMINATED,
+            ):
+                await asyncio.sleep(0.2)
+        finally:
+            await coordinator.shutdown()
     finally:
-        await coordinator.shutdown()
+        await asyncio.to_thread(lock.release)
 
 
 @cli.group("daemon")
@@ -223,7 +233,15 @@ def daemon_status(output_json: bool):
         click.echo(f"Lock path: {runtime_paths.lock_path}")
         return
 
-    state = "running" if inspection.running else "stale"
+    metadata_ready = (
+        inspection.metadata is not None
+        and inspection.metadata.status in {"ready", "ready_primary", "ready_replica"}
+    )
+    state = (
+        "running"
+        if inspection.ready or (inspection.running and metadata_ready)
+        else "starting" if inspection.running else "stale"
+    )
     started_at = time.strftime(
         "%Y-%m-%d %H:%M:%S", time.localtime(inspection.metadata.started_at)
     )
