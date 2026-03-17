@@ -27,6 +27,7 @@ from rich.progress import (
 from rich.table import Table
 
 from src.config import load_config
+from src.daemon import RuntimePaths
 from src.daemon.management import inspect_daemon, restart_daemon, start_daemon, stop_daemon
 from src.git.repository import (
     discover_git_repositories,
@@ -197,21 +198,64 @@ def daemon_start(project: str | None, timeout: float):
 
 
 @daemon_group.command("status")
-def daemon_status():
+@click.option("--json", "output_json", is_flag=True, help="Output daemon status as JSON")
+def daemon_status(output_json: bool):
     """Print current daemon status."""
     inspection = inspect_daemon()
+    runtime_paths = RuntimePaths.resolve()
     if inspection.metadata is None:
+        if output_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "status": "not_running",
+                        "metadata_path": str(runtime_paths.metadata_path),
+                        "lock_path": str(runtime_paths.lock_path),
+                        "socket_path": str(runtime_paths.socket_path),
+                    },
+                    indent=2,
+                )
+            )
+            return
+
         click.echo("Daemon status: not running")
+        click.echo(f"Metadata path: {runtime_paths.metadata_path}")
+        click.echo(f"Lock path: {runtime_paths.lock_path}")
         return
 
     state = "running" if inspection.running else "stale"
     started_at = time.strftime(
         "%Y-%m-%d %H:%M:%S", time.localtime(inspection.metadata.started_at)
     )
+
+    payload = {
+        "status": state,
+        "pid": inspection.metadata.pid,
+        "lifecycle": inspection.metadata.status,
+        "started_at": started_at,
+        "metadata_path": str(runtime_paths.metadata_path),
+        "lock_path": str(runtime_paths.lock_path),
+        "socket_path": inspection.metadata.socket_path
+        or str(runtime_paths.socket_path),
+        "index_db_path": inspection.metadata.index_db_path,
+        "queue_db_path": inspection.metadata.queue_db_path,
+        "endpoint": inspection.metadata.transport_endpoint,
+    }
+
+    if output_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+
     click.echo(f"Daemon status: {state}")
     click.echo(f"PID: {inspection.metadata.pid}")
     click.echo(f"Lifecycle: {inspection.metadata.status}")
     click.echo(f"Started: {started_at}")
+    click.echo(f"Metadata path: {runtime_paths.metadata_path}")
+    click.echo(f"Lock path: {runtime_paths.lock_path}")
+    if inspection.metadata.index_db_path:
+        click.echo(f"Index DB: {inspection.metadata.index_db_path}")
+    if inspection.metadata.queue_db_path:
+        click.echo(f"Queue DB: {inspection.metadata.queue_db_path}")
     if inspection.metadata.transport_endpoint:
         click.echo(f"Endpoint: {inspection.metadata.transport_endpoint}")
 
@@ -264,6 +308,76 @@ def daemon_restart(project: str | None, timeout: float):
         sys.exit(1)
 
     click.echo(f"Daemon restarted (pid={metadata.pid}, status={metadata.status})")
+
+
+@cli.group("index")
+def index_group():
+    """Inspect indexed corpus state."""
+
+
+@index_group.command("stats")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+@click.option("--json", "output_json", is_flag=True, help="Output index stats as JSON")
+def index_stats(project: str | None, output_json: bool):
+    """Print document and git index statistics for the active project context."""
+    try:
+        ctx = ApplicationContext.create(
+            project_override=project,
+            enable_watcher=False,
+            lazy_embeddings=True,
+        )
+
+        manifest_path = ctx.index_path / "index.manifest.json"
+        manifest_exists = manifest_path.exists()
+        if manifest_exists:
+            ctx.index_manager.load()
+
+        docs_root = Path(ctx.config.indexing.documents_path)
+        discovered_files = ctx.discover_files() if docs_root.exists() else []
+        repo_count = len(
+            discover_git_repositories(
+                docs_root,
+                ctx.config.indexing.exclude,
+                ctx.config.indexing.exclude_hidden_dirs,
+            )
+        )
+        git_commit_count = (
+            ctx.commit_indexer.get_total_commits() if ctx.commit_indexer is not None else 0
+        )
+
+        payload = {
+            "documents_path": str(docs_root),
+            "index_path": str(ctx.index_path),
+            "manifest_path": str(manifest_path),
+            "manifest_exists": manifest_exists,
+            "indexed_documents": ctx.index_manager.get_document_count()
+            if manifest_exists
+            else 0,
+            "indexed_chunks": len(ctx.index_manager.vector) if manifest_exists else 0,
+            "discovered_files": len(discovered_files),
+            "git_commits": git_commit_count,
+            "git_repositories": repo_count,
+        }
+
+        if output_json:
+            click.echo(json.dumps(payload, indent=2))
+            return
+
+        click.echo("Index stats")
+        click.echo(f"Documents path: {payload['documents_path']}")
+        click.echo(f"Index path: {payload['index_path']}")
+        click.echo(f"Manifest present: {payload['manifest_exists']}")
+        click.echo(f"Indexed documents: {payload['indexed_documents']}")
+        click.echo(f"Indexed chunks: {payload['indexed_chunks']}")
+        click.echo(f"Discovered files: {payload['discovered_files']}")
+        click.echo(f"Git repositories: {payload['git_repositories']}")
+        click.echo(f"Indexed git commits: {payload['git_commits']}")
+    except Exception as e:
+        logger.error(f"Failed to inspect index stats: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 @cli.command()

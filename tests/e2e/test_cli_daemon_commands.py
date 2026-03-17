@@ -3,6 +3,7 @@ from __future__ import annotations
 from click.testing import CliRunner
 
 from src.cli import cli
+from src.daemon import RuntimePaths
 from src.daemon.management import DaemonInspection
 from src.daemon.metadata import DaemonMetadata
 
@@ -39,6 +40,43 @@ def test_daemon_status_reports_running(monkeypatch):
     assert "Daemon status: running" in result.output
     assert "PID: 4321" in result.output
     assert "Lifecycle: ready" in result.output
+
+
+def test_daemon_status_json_includes_runtime_paths(monkeypatch, tmp_path):
+    runner = CliRunner()
+    metadata = DaemonMetadata(
+        pid=4321,
+        started_at=1_763_700_000.0,
+        status="ready",
+        socket_path="/tmp/ragdocs.sock",
+        index_db_path="/tmp/index.db",
+        queue_db_path="/tmp/queue.db",
+    )
+    monkeypatch.setattr(
+        "src.cli.inspect_daemon",
+        lambda: DaemonInspection(metadata=metadata, running=True, stale=False),
+    )
+    monkeypatch.setattr(
+        RuntimePaths,
+        "resolve",
+        classmethod(
+            lambda cls: RuntimePaths(
+                root=tmp_path,
+                index_db_path=tmp_path / "index.db",
+                queue_db_path=tmp_path / "queue.db",
+                metadata_path=tmp_path / "daemon.json",
+                lock_path=tmp_path / "daemon.lock",
+                socket_path=tmp_path / "daemon.sock",
+            )
+        ),
+    )
+
+    result = runner.invoke(cli, ["daemon", "status", "--json"])
+
+    assert result.exit_code == 0
+    assert '"status": "running"' in result.output
+    assert '"metadata_path":' in result.output
+    assert '"index_db_path": "/tmp/index.db"' in result.output
 
 
 def test_daemon_start_invokes_management_helper(monkeypatch):
@@ -99,3 +137,65 @@ def test_daemon_restart_invokes_management_helper(monkeypatch):
         "stop_timeout_seconds": 5.0,
     }
     assert "Daemon restarted (pid=123, status=ready)" in result.output
+
+
+def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
+    runner = CliRunner()
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    index_dir = tmp_path / "index"
+    index_dir.mkdir()
+    (index_dir / "index.manifest.json").write_text("{}", encoding="utf-8")
+
+    class _FakeVector:
+        def __len__(self):
+            return 23
+
+    class _FakeIndexManager:
+        def __init__(self):
+            self.vector = _FakeVector()
+            self.loaded = False
+
+        def load(self):
+            self.loaded = True
+
+        def get_document_count(self):
+            return 7
+
+    class _FakeCommitIndexer:
+        def get_total_commits(self):
+            return 11
+
+    class _FakeIndexingConfig:
+        documents_path = str(docs_dir)
+        index_path = str(index_dir)
+        exclude: list[str] = []
+        exclude_hidden_dirs = True
+
+    class _FakeConfig:
+        indexing = _FakeIndexingConfig()
+
+    class _FakeContext:
+        def __init__(self):
+            self.config = _FakeConfig()
+            self.index_path = index_dir
+            self.index_manager = _FakeIndexManager()
+            self.commit_indexer = _FakeCommitIndexer()
+
+        def discover_files(self):
+            return [str(docs_dir / "a.md"), str(docs_dir / "b.md")]
+
+    fake_ctx = _FakeContext()
+    monkeypatch.setattr(
+        "src.cli.ApplicationContext.create",
+        lambda **kwargs: fake_ctx,
+    )
+    monkeypatch.setattr("src.cli.discover_git_repositories", lambda *args, **kwargs: [docs_dir])
+
+    result = runner.invoke(cli, ["index", "stats", "--json"])
+
+    assert result.exit_code == 0
+    assert '"indexed_documents": 7' in result.output
+    assert '"indexed_chunks": 23' in result.output
+    assert '"git_commits": 11' in result.output
+    assert '"discovered_files": 2' in result.output
