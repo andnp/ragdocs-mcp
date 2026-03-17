@@ -30,20 +30,27 @@ class GraphStore:
     def _conn(self) -> sqlite3.Connection:
         return self._db.get_connection()
 
+    def _rollback_connection(self, conn: sqlite3.Connection) -> None:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            logger.debug("GraphStore rollback failed", exc_info=True)
+
     # ------------------------------------------------------------------
     # Node operations
     # ------------------------------------------------------------------
 
     def add_node(self, doc_id: str, metadata: dict) -> None:
         with self._lock:
+            conn = self._conn()
             try:
-                conn = self._conn()
                 conn.execute(
                     "INSERT OR REPLACE INTO graph_nodes (node_id, metadata) VALUES (?, ?)",
                     (doc_id, json.dumps(metadata)),
                 )
                 conn.commit()
             except Exception as e:
+                self._rollback_connection(conn)
                 if is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return
@@ -65,11 +72,12 @@ class GraphStore:
 
     def remove_node(self, doc_id: str) -> None:
         with self._lock:
+            conn = self._conn()
             try:
-                conn = self._conn()
                 conn.execute("DELETE FROM graph_nodes WHERE node_id = ?", (doc_id,))
                 conn.commit()
             except Exception as e:
+                self._rollback_connection(conn)
                 if is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return
@@ -81,8 +89,8 @@ class GraphStore:
         Thread-safe operation. Handles missing chunks gracefully.
         """
         with self._lock:
+            conn = self._conn()
             try:
-                conn = self._conn()
                 row = conn.execute(
                     "SELECT 1 FROM graph_nodes WHERE node_id = ?", (chunk_id,)
                 ).fetchone()
@@ -98,6 +106,7 @@ class GraphStore:
                         chunk_id,
                     )
             except Exception as e:
+                self._rollback_connection(conn)
                 if is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return
@@ -110,8 +119,8 @@ class GraphStore:
             True if rename successful, False if old node not found
         """
         with self._lock:
+            conn = self._conn()
             try:
-                conn = self._conn()
                 row = conn.execute(
                     "SELECT metadata FROM graph_nodes WHERE node_id = ?",
                     (old_id,),
@@ -163,6 +172,7 @@ class GraphStore:
                 logger.debug("Renamed node in graph: %s -> %s", old_id, new_id)
                 return True
             except Exception as e:
+                self._rollback_connection(conn)
                 if is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return False
@@ -202,8 +212,8 @@ class GraphStore:
         edge_context: str = "",
     ) -> None:
         with self._lock:
+            conn = self._conn()
             try:
-                conn = self._conn()
                 conn.execute(
                     "INSERT OR IGNORE INTO graph_nodes (node_id) VALUES (?)",
                     (source,),
@@ -213,13 +223,16 @@ class GraphStore:
                     (target,),
                 )
                 conn.execute(
-                    """INSERT OR REPLACE INTO graph_edges
+                    """INSERT INTO graph_edges
                        (source, target, edge_type, edge_context)
-                       VALUES (?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(source, target, edge_type)
+                       DO UPDATE SET edge_context = excluded.edge_context""",
                     (source, target, edge_type, edge_context),
                 )
                 conn.commit()
             except Exception as e:
+                self._rollback_connection(conn)
                 if is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return
@@ -679,13 +692,14 @@ class GraphStore:
 
     def clear(self) -> None:
         with self._lock:
+            conn = self._conn()
             try:
-                conn = self._conn()
                 conn.execute("DELETE FROM graph_edges")
                 conn.execute("DELETE FROM graph_nodes")
                 conn.commit()
                 self._communities = {}
             except Exception as e:
+                self._rollback_connection(conn)
                 if is_corruption_error(e):
                     self._reinitialize_after_corruption()
                     return
@@ -695,6 +709,7 @@ class GraphStore:
         """Clear all graph data so reconciliation rebuilds from source."""
         try:
             conn = self._conn()
+            self._rollback_connection(conn)
             conn.execute("DELETE FROM graph_edges")
             conn.execute("DELETE FROM graph_nodes")
             conn.commit()

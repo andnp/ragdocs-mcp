@@ -656,7 +656,7 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(
     Regression test for bug where json.load() returned plain dict instead of OrderedDict,
     causing AttributeError: 'dict' object has no attribute 'move_to_end'.
 
-    This simulates the create_memory flow: persist index → load index → add new chunk.
+    This simulates a persisted-index reload flow: persist index → load index → add new chunk.
     The bug manifested when add_chunk called register_document_terms which called
     _term_counts.move_to_end() on a plain dict.
     """
@@ -699,7 +699,7 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(
     persist_path = tmp_path / "vector_ordered_dict_test"
     vector_index.persist(persist_path)
 
-    # Create new index and load from disk (simulates memory system startup)
+    # Create new index and load from disk (simulates persisted runtime startup)
     vector_index2 = VectorIndex(embedding_model=shared_embedding_model)
     vector_index2.load(persist_path)
 
@@ -711,7 +711,7 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(
         "concept_vocabulary should be OrderedDict after load"
     )
 
-    # Simulate create_memory flow: add new chunk after loading (this would fail with plain dict)
+    # Simulate add-after-load flow: add new chunk after loading (this would fail with plain dict)
     chunk2 = Chunk(
         chunk_id="chunk_2",
         doc_id="doc_2",

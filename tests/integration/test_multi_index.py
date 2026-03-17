@@ -7,6 +7,7 @@ and graph indices. Uses real index implementations with temporary storage.
 
 from datetime import datetime
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -158,6 +159,60 @@ def test_persist_and_load_all_indices(manager, sample_document, tmp_path, config
     # Verify document count after load
     doc_count = manager_new.get_document_count()
     assert doc_count > 0
+
+
+def test_persist_recovers_after_transient_graph_lock(manager, tmp_path, config):
+    """
+    Persist succeeds after a transient graph-database lock is released.
+
+    Covers the startup regression where implicit-edge construction failed,
+    left the SQLite connection in a bad transactional state, and prevented
+    the next persist attempt from recovering cleanly.
+    """
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    first_doc = docs_dir / "alpha.md"
+    second_doc = docs_dir / "beta.md"
+    first_doc.write_text("# Alpha\n\nShared directory document.")
+    second_doc.write_text("# Beta\n\nAnother shared directory document.")
+
+    manager.index_document(str(first_doc))
+    manager.index_document(str(second_doc))
+
+    graph_db_path = manager.graph._db._db_path
+    lock_conn = sqlite3.connect(str(graph_db_path), timeout=0, check_same_thread=False)
+    lock_conn.execute("PRAGMA journal_mode=WAL;")
+    lock_conn.execute("PRAGMA foreign_keys=ON;")
+    lock_conn.execute("BEGIN IMMEDIATE")
+    lock_conn.execute(
+        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+        ("lock", "held"),
+    )
+
+    index_path = Path(config.indexing.index_path)
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        manager._persist_indices(index_path)
+
+    lock_conn.rollback()
+    lock_conn.close()
+
+    manager._persist_indices(index_path)
+
+    conn = manager.graph._db.get_connection()
+    initial_edge_count = conn.execute(
+        "SELECT COUNT(*) FROM graph_edges WHERE edge_type = ?",
+        ("directory_sibling",),
+    ).fetchone()[0]
+    assert initial_edge_count > 0
+
+    manager._persist_indices(index_path)
+
+    repeated_edge_count = conn.execute(
+        "SELECT COUNT(*) FROM graph_edges WHERE edge_type = ?",
+        ("directory_sibling",),
+    ).fetchone()[0]
+    assert repeated_edge_count == initial_edge_count
 
 
 def test_error_handling_malformed_file_continues_processing(manager, tmp_path):

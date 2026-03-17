@@ -1,6 +1,9 @@
+import sqlite3
+
 import pytest
 
 from src.indices.graph import GraphStore
+from src.storage.db import DatabaseManager
 
 
 @pytest.fixture
@@ -25,6 +28,44 @@ def test_graph_store_add_edge(graph_store):
     # Verify edge exists by checking neighbors
     neighbors = graph_store.get_neighbors("doc1", depth=1)
     assert "doc2" in neighbors
+
+
+def test_graph_store_add_edge_updates_existing_edge_context(graph_store):
+    graph_store.add_edge("doc1", "doc2", "link", "Original context")
+    graph_store.add_edge("doc1", "doc2", "link", "Updated context")
+
+    edges = graph_store.get_edges_from("doc1")
+
+    assert len(edges) == 1
+    assert edges[0]["target"] == "doc2"
+    assert edges[0]["edge_context"] == "Updated context"
+
+
+def test_graph_store_add_edge_recovers_after_transient_lock(tmp_path):
+    db_path = tmp_path / "test.db"
+    db = DatabaseManager(db_path)
+    graph_store = GraphStore(db)
+
+    lock_conn = sqlite3.connect(str(db_path), timeout=0, check_same_thread=False)
+    lock_conn.execute("PRAGMA journal_mode=WAL;")
+    lock_conn.execute("PRAGMA foreign_keys=ON;")
+    lock_conn.execute("BEGIN IMMEDIATE")
+    lock_conn.execute(
+        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+        ("lock", "held"),
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        graph_store.add_edge("doc1", "doc2", "link", "Will retry")
+
+    lock_conn.rollback()
+    lock_conn.close()
+
+    graph_store.add_edge("doc1", "doc2", "link", "After lock released")
+
+    edges = graph_store.get_edges_from("doc1")
+    assert len(edges) == 1
+    assert edges[0]["edge_context"] == "After lock released"
 
 
 def test_graph_store_add_edge_transclusion(graph_store):
