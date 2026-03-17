@@ -178,8 +178,8 @@ def test_search_commits_basic_execution(runner, tmp_path, indexed_repo):
 
         assert result.exit_code == 0
         assert "Query: authentication" in result.output
-        assert "Found" in result.output
-        assert "results" in result.output or "No results" in result.output
+        assert "Total commits indexed:" in result.output
+        assert "Found" in result.output or "No results found" in result.output
 
     finally:
         os.chdir(original_cwd)
@@ -480,7 +480,7 @@ embedding_model = "local"
 
         assert result.exit_code == 1
         assert "Error" in result.output
-        assert "Git indexing is not enabled" in result.output
+        assert "Git history search is not available" in result.output
 
     finally:
         os.chdir(original_cwd)

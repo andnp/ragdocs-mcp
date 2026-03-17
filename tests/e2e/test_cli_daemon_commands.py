@@ -430,7 +430,7 @@ def test_query_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
         "src.cli._request_daemon_json",
-        lambda path, payload, project_override, auto_start: {
+        lambda path, payload, project_override, auto_start, allow_error=False: {
             "query": payload["query"],
             "results": [{"doc_id": "doc-1", "score": 0.9, "content": "daemon result"}],
             "compression_stats": {},
@@ -449,7 +449,7 @@ def test_search_commits_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
         "src.cli._request_daemon_json",
-        lambda path, payload, project_override, auto_start: {
+        lambda path, payload, project_override, auto_start, allow_error=False: {
             "query": payload["query"],
             "total_commits_indexed": 5,
             "results": [

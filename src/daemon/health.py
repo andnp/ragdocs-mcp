@@ -145,7 +145,15 @@ def request_daemon_socket(
                 )
                 + b"\n"
             )
-            data = client.recv(4096)
+            chunks = bytearray()
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                chunks.extend(chunk)
+                if b"\n" in chunk:
+                    break
+            data = bytes(chunks)
     except (FileNotFoundError, OSError, TimeoutError):
         return {"status": "error", "error": "daemon_socket_unavailable"}
 
@@ -153,7 +161,7 @@ def request_daemon_socket(
         return {"status": "error", "error": "empty_response"}
 
     try:
-        response = json.loads(data.decode("utf-8"))
+        response = json.loads(data.splitlines()[0].decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return {"status": "error", "error": "invalid_response"}
 

@@ -255,13 +255,13 @@ def test_query_command_top_n_option(runner, test_env):
         os.chdir(original_cwd)
 
 
-def test_query_command_error_no_indices(runner, tmp_path):
+def test_query_command_autostarts_daemon_without_prebuilt_index(runner, tmp_path):
     """
-    Test CLI query error handling when indices don't exist.
+    Test CLI query succeeds without a prebuilt local index.
 
     Verifies:
-    - Command fails gracefully (non-zero exit code)
-    - Error message is clear about missing indices
+    - Command can delegate to the daemon without local fallback
+    - JSON output remains well-formed
     """
     import os
 
@@ -279,14 +279,12 @@ index_path = "{tmp_path / ".index_data"}"
     os.chdir(tmp_path)
 
     try:
-        # Try to query without index
-        result = runner.invoke(cli, ["query", "test"])
+        result = runner.invoke(cli, ["query", "test", "--json"])
 
-        # Should fail
-        assert result.exit_code != 0, "Should fail when index doesn't exist"
-
-        # Error message should mention index
-        assert "index" in result.output.lower() or "indices" in result.output.lower()
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["query"] == "test"
+        assert isinstance(data["results"], list)
 
     finally:
         os.chdir(original_cwd)

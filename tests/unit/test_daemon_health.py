@@ -189,3 +189,31 @@ async def test_health_server_survives_handler_exception_for_later_requests(
 
     assert failed["error"] == "handler_exception"
     assert succeeded == {"path": "/api/ok", "payload": {"hello": "world"}}
+
+
+@pytest.mark.asyncio
+async def test_request_daemon_socket_reads_large_response(tmp_path: Path) -> None:
+    socket_path = tmp_path / "daemon.sock"
+    large_text = "x" * 5000
+    server = DaemonHealthServer(
+        socket_path=socket_path,
+        metadata_provider=lambda: None,
+        request_handler=lambda path, payload: asyncio.sleep(
+            0,
+            result={"path": path, "payload": payload, "content": large_text},
+        ),
+    )
+
+    await server.start()
+    try:
+        response = await asyncio.to_thread(
+            request_daemon_socket,
+            socket_path,
+            "/api/large",
+            {"hello": "world"},
+        )
+    finally:
+        await server.stop()
+
+    assert response["path"] == "/api/large"
+    assert response["content"] == large_text

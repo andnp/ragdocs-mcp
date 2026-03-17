@@ -629,6 +629,7 @@ def _request_daemon_json(
     *,
     project_override: str | None,
     auto_start: bool,
+    allow_error: bool = False,
 ) -> dict[str, object] | None:
     inspection = inspect_daemon()
     metadata = inspection.metadata if inspection.responsive else None
@@ -644,8 +645,30 @@ def _request_daemon_json(
         timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
     )
     if response.get("status") == "error":
+        if allow_error:
+            return response
         return None
     return response
+
+
+def _raise_daemon_request_error(response: dict[str, object] | None) -> None:
+    if response is None:
+        raise RuntimeError(
+            "Daemon unavailable. Start it with 'ragdocs daemon start' and retry."
+        )
+
+    error = str(response.get("error", "unknown_error"))
+    details = response.get("details")
+
+    if error == "git_indexing_unavailable":
+        raise RuntimeError(
+            "Git history search is not available (git binary not found or disabled in config)"
+        )
+
+    if isinstance(details, str) and details:
+        raise RuntimeError(details)
+
+    raise RuntimeError(f"Daemon request failed: {error}")
 
 
 @cli.command()
@@ -937,92 +960,64 @@ def query(
             {"query": query_text, "top_n": top_n},
             project_override=project,
             auto_start=True,
+            allow_error=True,
         )
-        if daemon_payload is not None:
-            if output_json:
-                click.echo(json.dumps(daemon_payload, indent=2))
-                return
+        if daemon_payload is None or daemon_payload.get("status") == "error":
+            _raise_daemon_request_error(daemon_payload)
 
-            console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
-            if debug:
-                from src.models import CompressionStats, SearchStrategyStats
-
-                strategy_stats = SearchStrategyStats(
-                    **daemon_payload.get("strategy_stats", {})
-                )
-                compression_stats = CompressionStats(
-                    **daemon_payload.get(
-                        "compression_stats",
-                        {
-                            "original_count": 0,
-                            "after_threshold": 0,
-                            "after_content_dedup": 0,
-                            "after_ngram_dedup": 0,
-                            "after_dedup": 0,
-                            "after_doc_limit": 0,
-                            "clusters_merged": 0,
-                        },
-                    )
-                )
-                print_debug_stats(
-                    console,
-                    strategy_stats,
-                    compression_stats,
-                    0.02,
-                )
-
-            results = daemon_payload.get("results", [])
-            if results:
-                console.print(f"[bold]Found {len(results)} results:[/bold]\n")
-                for idx, result in enumerate(results, 1):
-                    panel_content = [
-                        f"[yellow]Document:[/yellow] {result.get('doc_id', '')}",
-                        f"[magenta]Section:[/magenta] {result.get('header_path') or '(no section)'}",
-                        f"[blue]File:[/blue] {result.get('file_path') or '(unknown)'}",
-                        "",
-                        result.get("content", ""),
-                    ]
-                    print_result_panel(
-                        console,
-                        idx,
-                        float(result.get("score", 0.0)),
-                        panel_content,
-                        is_last=(idx == len(results)),
-                    )
-            else:
-                console.print("[yellow]No results found.[/yellow]")
+        if output_json:
+            click.echo(json.dumps(daemon_payload, indent=2))
             return
 
-        ctx = _create_query_context(project)
+        console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
+        if debug:
+            from src.models import CompressionStats, SearchStrategyStats
 
-        # Check if manifest exists (indicates a valid index)
-        manifest_path = ctx.index_path / "index.manifest.json"
-        if not manifest_path.exists():
-            click.echo("Error: No index found. Run 'rebuild-index' first.", err=True)
-            sys.exit(1)
-
-        ctx.index_manager.load()
-        with console.status("[bold green]Searching documents..."):
-            top_k = max(20, top_n * 4)
-
-            async def _run_query_with_healing(
-                query: str, top_k_value: int, top_n_value: int
-            ):
-                (
-                    results,
-                    compression_stats,
-                    strategy_stats,
-                ) = await ctx.orchestrator.query(
-                    query,
-                    top_k=top_k_value,
-                    top_n=top_n_value,
-                )
-                await ctx.orchestrator.drain_reindex()
-                return results, compression_stats, strategy_stats
-
-            results, compression_stats, strategy_stats = asyncio.run(
-                _run_query_with_healing(query_text, top_k, top_n)
+            strategy_stats = SearchStrategyStats(
+                **daemon_payload.get("strategy_stats", {})
             )
+            compression_stats = CompressionStats(
+                **daemon_payload.get(
+                    "compression_stats",
+                    {
+                        "original_count": 0,
+                        "after_threshold": 0,
+                        "after_content_dedup": 0,
+                        "after_ngram_dedup": 0,
+                        "after_dedup": 0,
+                        "after_doc_limit": 0,
+                        "clusters_merged": 0,
+                    },
+                )
+            )
+            print_debug_stats(
+                console,
+                strategy_stats,
+                compression_stats,
+                0.02,
+            )
+
+        results = daemon_payload.get("results", [])
+        if results:
+            console.print(f"[bold]Found {len(results)} results:[/bold]\n")
+            for idx, result in enumerate(results, 1):
+                panel_content = [
+                    f"[yellow]Document:[/yellow] {result.get('doc_id', '')}",
+                    f"[magenta]Section:[/magenta] {result.get('header_path') or '(no section)'}",
+                    f"[blue]File:[/blue] {result.get('file_path') or '(unknown)'}",
+                    "",
+                    result.get("content", ""),
+                ]
+                print_result_panel(
+                    console,
+                    idx,
+                    float(result.get("score", 0.0)),
+                    panel_content,
+                    is_last=(idx == len(results)),
+                )
+        else:
+            console.print("[yellow]No results found.[/yellow]")
+        return
 
         if output_json:
             output = {
@@ -1127,78 +1122,51 @@ def search_commits(
             },
             project_override=project,
             auto_start=True,
+            allow_error=True,
         )
-        if daemon_payload is not None:
-            if output_json:
-                click.echo(json.dumps(daemon_payload, indent=2))
-                return
+        if daemon_payload is None or daemon_payload.get("status") == "error":
+            _raise_daemon_request_error(daemon_payload)
 
-            console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
-            console.print(
-                f"[dim]Total commits indexed: {daemon_payload.get('total_commits_indexed', 0)}[/dim]\n"
-            )
-            results = daemon_payload.get("results", [])
-            if results:
-                console.print(f"[bold]Found {len(results)} results:[/bold]\n")
-                from datetime import datetime, timezone
-
-                for idx, commit in enumerate(results, 1):
-                    commit_date = datetime.fromtimestamp(commit["timestamp"], timezone.utc)
-                    date_str = commit_date.strftime("%Y-%m-%d %H:%M:%S UTC")
-                    panel_content = [
-                        f"[yellow]Commit:[/yellow] {commit['hash'][:8]}",
-                        f"[cyan]Author:[/cyan] {commit['author']}",
-                        f"[blue]Date:[/blue] {date_str}",
-                        "",
-                        commit["title"],
-                    ]
-                    if len(commit.get("files_changed", [])) > 0:
-                        panel_content.append("")
-                        panel_content.append(
-                            f"[magenta]Files Changed ({len(commit['files_changed'])}):[/magenta]"
-                        )
-                        for file_path in commit["files_changed"][:5]:
-                            panel_content.append(f"  • {file_path}")
-                    print_result_panel(
-                        console,
-                        idx,
-                        float(commit.get("score", 0.0)),
-                        panel_content,
-                        is_last=(idx == len(results)),
-                    )
-            else:
-                console.print("[yellow]No results found.[/yellow]")
+        if output_json:
+            click.echo(json.dumps(daemon_payload, indent=2))
             return
 
-        ctx = _create_query_context(project)
+        console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
+        console.print(
+            f"[dim]Total commits indexed: {daemon_payload.get('total_commits_indexed', 0)}[/dim]\n"
+        )
+        results = daemon_payload.get("results", [])
+        if results:
+            console.print(f"[bold]Found {len(results)} results:[/bold]\n")
+            from datetime import datetime, timezone
 
-        # Check git indexing enabled
-        if not ctx.config.git_indexing.enabled:
-            click.echo(
-                "Error: Git indexing is not enabled. Enable it in config.toml", err=True
-            )
-            sys.exit(1)
-
-        # Check commit indexer exists
-        if ctx.commit_indexer is None:
-            click.echo(
-                "Error: Git indexing unavailable. Run 'rebuild-index' to enable git search.",
-                err=True,
-            )
-            sys.exit(1)
-        assert ctx.commit_indexer is not None  # Narrowing for type checker
-
-        with console.status("[bold green]Searching git commits..."):
-            from src.git.commit_search import search_git_history
-
-            response = search_git_history(
-                commit_indexer=ctx.commit_indexer,
-                query=query_text,
-                top_n=top_n,
-                files_glob=files_glob,
-                after_timestamp=after_timestamp,
-                before_timestamp=before_timestamp,
-            )
+            for idx, commit in enumerate(results, 1):
+                commit_date = datetime.fromtimestamp(commit["timestamp"], timezone.utc)
+                date_str = commit_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+                panel_content = [
+                    f"[yellow]Commit:[/yellow] {commit['hash'][:8]}",
+                    f"[cyan]Author:[/cyan] {commit['author']}",
+                    f"[blue]Date:[/blue] {date_str}",
+                    "",
+                    commit["title"],
+                ]
+                if len(commit.get("files_changed", [])) > 0:
+                    panel_content.append("")
+                    panel_content.append(
+                        f"[magenta]Files Changed ({len(commit['files_changed'])}):[/magenta]"
+                    )
+                    for file_path in commit["files_changed"][:5]:
+                        panel_content.append(f"  • {file_path}")
+                print_result_panel(
+                    console,
+                    idx,
+                    float(commit.get("score", 0.0)),
+                    panel_content,
+                    is_last=(idx == len(results)),
+                )
+        else:
+            console.print("[yellow]No results found.[/yellow]")
+        return
 
         if output_json:
             output = {
