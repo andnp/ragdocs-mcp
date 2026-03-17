@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.daemon.management import DaemonInspection, start_daemon
+import pytest
+
+from src.daemon.management import DaemonInspection, DaemonManagementError, start_daemon
 from src.daemon.metadata import DaemonMetadata
 from src.daemon.paths import RuntimePaths
 
@@ -48,7 +50,7 @@ def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr("src.daemon.management.inspect_daemon", lambda paths=None: next(inspections))
     monkeypatch.setattr(
         "src.daemon.management._spawn_daemon_process",
-        lambda project_override: _FakeProcess(101, [None, None, None]),
+        lambda project_override, runtime_paths: _FakeProcess(101, [None, None, None]),
     )
     monkeypatch.setattr(
         "src.daemon.management.probe_daemon_socket",
@@ -78,7 +80,7 @@ def test_start_daemon_accepts_race_winner_metadata(monkeypatch, tmp_path: Path) 
     monkeypatch.setattr("src.daemon.management.inspect_daemon", lambda paths=None: next(inspections))
     monkeypatch.setattr(
         "src.daemon.management._spawn_daemon_process",
-        lambda project_override: _FakeProcess(202, [1, 1, 1]),
+        lambda project_override, runtime_paths: _FakeProcess(202, [1, 1, 1]),
     )
     monkeypatch.setattr(
         "src.daemon.management.probe_daemon_socket",
@@ -108,3 +110,39 @@ def test_inspect_daemon_requires_successful_probe(monkeypatch, tmp_path: Path) -
     assert inspection.metadata == metadata
     assert inspection.running is True
     assert inspection.ready is False
+
+
+def test_start_daemon_surfaces_log_excerpt_on_spawn_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    log_path = paths.root / "daemon.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("traceback line\nroot cause line", encoding="utf-8")
+
+    inspections = iter(
+        [
+            DaemonInspection(metadata=None, running=False, stale=False, ready=False),
+            DaemonInspection(metadata=None, running=False, stale=False, ready=False),
+        ]
+    )
+    fallback = DaemonInspection(metadata=None, running=False, stale=False, ready=False)
+
+    monkeypatch.setattr(
+        "src.daemon.management.inspect_daemon",
+        lambda paths=None: next(inspections, fallback),
+    )
+    monkeypatch.setattr(
+        "src.daemon.management._spawn_daemon_process",
+        lambda project_override, runtime_paths: _FakeProcess(909, [7, 7, 7]),
+    )
+    monkeypatch.setattr("src.daemon.management.time.sleep", lambda _: None)
+
+    with pytest.raises(DaemonManagementError) as exc_info:
+        start_daemon(timeout_seconds=0.2, paths=paths)
+
+    message = str(exc_info.value)
+    assert "exit code 7" in message
+    assert "Daemon log:" in message
+    assert "root cause line" in message

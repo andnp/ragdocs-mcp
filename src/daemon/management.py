@@ -84,7 +84,7 @@ def start_daemon(
     if current.stale:
         _cleanup_stale_runtime_state(runtime_paths)
 
-    process = _spawn_daemon_process(project_override)
+    process = _spawn_daemon_process(project_override, runtime_paths)
     return _wait_for_ready_daemon(
         deadline=deadline,
         paths=runtime_paths,
@@ -142,7 +142,10 @@ def restart_daemon(
     )
 
 
-def _spawn_daemon_process(project_override: str | None) -> subprocess.Popen[bytes]:
+def _spawn_daemon_process(
+    project_override: str | None,
+    runtime_paths: RuntimePaths,
+) -> subprocess.Popen[bytes]:
     command = [sys.executable, "-m", "src.cli", "daemon-internal-run"]
     if project_override:
         command.extend(["--project", project_override])
@@ -156,15 +159,23 @@ def _spawn_daemon_process(project_override: str | None) -> subprocess.Popen[byte
         else str(repo_root)
     )
 
-    return subprocess.Popen(
-        command,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        cwd=str(Path.cwd()),
-        env=env,
-        start_new_session=True,
-    )
+    log_path = _daemon_log_path(runtime_paths)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    stderr_handle = log_path.open("wb")
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_handle,
+            cwd=str(Path.cwd()),
+            env=env,
+            start_new_session=True,
+        )
+    finally:
+        stderr_handle.close()
+
+    return process
 
 
 def _terminate_process(pid: int, *, force: bool) -> None:
@@ -177,6 +188,24 @@ def _terminate_process(pid: int, *, force: bool) -> None:
 def _cleanup_stale_runtime_state(paths: RuntimePaths) -> None:
     remove_daemon_metadata(paths.metadata_path)
     remove_daemon_socket(paths.socket_path)
+
+
+def _daemon_log_path(paths: RuntimePaths) -> Path:
+    return paths.root / "daemon.log"
+
+
+def _read_daemon_log_excerpt(paths: RuntimePaths, max_bytes: int = 4000) -> str | None:
+    log_path = _daemon_log_path(paths)
+    if not log_path.exists():
+        return None
+    try:
+        data = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if not data:
+        return None
+    excerpt = data[-max_bytes:].strip()
+    return excerpt or None
 
 
 def acquire_boot_lock(
@@ -216,9 +245,15 @@ def _wait_for_ready_daemon(
             exit_code = spawned_process.poll()
         if exit_code is None:
             _terminate_process(spawned_process.pid, force=True)
-            raise DaemonManagementError("Timed out waiting for daemon readiness")
-        raise DaemonManagementError(
-            f"Daemon exited before becoming ready (exit code {exit_code})"
-        )
+            message = "Timed out waiting for daemon readiness"
+            log_excerpt = _read_daemon_log_excerpt(paths)
+            if log_excerpt is not None:
+                message += f"\n\nDaemon log:\n{log_excerpt}"
+            raise DaemonManagementError(message)
+        message = f"Daemon exited before becoming ready (exit code {exit_code})"
+        log_excerpt = _read_daemon_log_excerpt(paths)
+        if log_excerpt is not None:
+            message += f"\n\nDaemon log:\n{log_excerpt}"
+        raise DaemonManagementError(message)
 
     raise DaemonManagementError("Timed out waiting for existing daemon readiness")
