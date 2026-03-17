@@ -35,6 +35,7 @@ from src.daemon.health import (
     request_daemon_socket,
 )
 from src.daemon.management import (
+    DaemonInspection,
     acquire_boot_lock,
     inspect_daemon,
     restart_daemon,

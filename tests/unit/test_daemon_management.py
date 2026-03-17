@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -363,3 +364,56 @@ def test_stop_daemon_prefers_internal_shutdown_for_responsive_daemon(
     assert observed["path"] == "/internal/shutdown"
     assert terminations == []
     assert cleaned == [paths]
+
+
+def test_resolve_daemon_python_prefers_virtual_env(monkeypatch, tmp_path: Path) -> None:
+    env_root = tmp_path / "venv"
+    python_path = env_root / "bin" / "python"
+    python_path.parent.mkdir(parents=True)
+    python_path.write_text("", encoding="utf-8")
+    python_path.chmod(0o755)
+
+    monkeypatch.setenv("VIRTUAL_ENV", str(env_root))
+
+    from src.daemon.management import _resolve_daemon_python
+
+    assert _resolve_daemon_python() == python_path
+
+
+def test_resolve_daemon_python_prefers_repo_venv_when_available(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    daemon_file = repo_root / "src" / "daemon" / "management.py"
+    daemon_file.parent.mkdir(parents=True)
+    daemon_file.write_text("", encoding="utf-8")
+
+    repo_python = repo_root / ".venv" / "bin" / "python"
+    repo_python.parent.mkdir(parents=True)
+    repo_python.write_text("", encoding="utf-8")
+    repo_python.chmod(0o755)
+
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setattr("src.daemon.management.__file__", str(daemon_file))
+
+    from src.daemon.management import _resolve_daemon_python
+
+    assert _resolve_daemon_python() == repo_python
+
+
+def test_resolve_daemon_python_falls_back_to_current_interpreter(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    daemon_file = repo_root / "src" / "daemon" / "management.py"
+    daemon_file.parent.mkdir(parents=True)
+    daemon_file.write_text("", encoding="utf-8")
+
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setattr("src.daemon.management.__file__", str(daemon_file))
+
+    from src.daemon.management import _resolve_daemon_python
+
+    assert _resolve_daemon_python() == Path(sys.executable)

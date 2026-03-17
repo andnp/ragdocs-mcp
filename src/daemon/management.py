@@ -201,7 +201,12 @@ def _spawn_daemon_process(
     project_override: str | None,
     runtime_paths: RuntimePaths,
 ) -> subprocess.Popen[bytes]:
-    command = [sys.executable, "-m", "src.cli", "daemon-internal-run"]
+    command = [
+        str(_resolve_daemon_python()),
+        "-m",
+        "src.cli",
+        "daemon-internal-run",
+    ]
     if project_override:
         command.extend(["--project", project_override])
 
@@ -231,6 +236,31 @@ def _spawn_daemon_process(
         stderr_handle.close()
 
     return process
+
+
+def _resolve_daemon_python() -> Path:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    candidates: list[Path] = []
+
+    virtual_env = os.environ.get("VIRTUAL_ENV")
+    if virtual_env:
+        candidates.append(_python_from_env_root(Path(virtual_env)))
+
+    candidates.append(_python_from_env_root(repo_root / ".venv"))
+    candidates.append(Path(sys.executable))
+
+    for candidate in candidates:
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return candidate
+
+    return Path(sys.executable)
+
+
+def _python_from_env_root(env_root: Path) -> Path:
+    if os.name == "nt":
+        return env_root / "Scripts" / "python.exe"
+    return env_root / "bin" / "python"
 
 
 def _terminate_process(pid: int, *, force: bool) -> None:
