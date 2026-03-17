@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.daemon.health import DaemonHealthServer, probe_daemon_socket
+from src.daemon.health import DaemonHealthServer, probe_daemon_socket, request_daemon_socket
 from src.daemon.metadata import DaemonMetadata
 
 
@@ -41,3 +41,26 @@ async def test_health_server_removes_socket_on_stop(tmp_path: Path) -> None:
     await server.stop()
 
     assert not socket_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_health_server_dispatches_custom_request_handler(tmp_path: Path) -> None:
+    socket_path = tmp_path / "daemon.sock"
+    server = DaemonHealthServer(
+        socket_path=socket_path,
+        metadata_provider=lambda: None,
+        request_handler=lambda path, payload: asyncio.sleep(0, result={"path": path, "payload": payload}),
+    )
+
+    await server.start()
+    try:
+        response = await asyncio.to_thread(
+            request_daemon_socket,
+            socket_path,
+            "/api/example",
+            {"hello": "world"},
+        )
+    finally:
+        await server.stop()
+
+    assert response == {"path": "/api/example", "payload": {"hello": "world"}}

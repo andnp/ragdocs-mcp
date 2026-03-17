@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 import socket
-from typing import Callable
+from typing import Awaitable, Callable
 
 from src.daemon.metadata import DaemonMetadata, parse_daemon_metadata
 
@@ -17,9 +17,11 @@ class DaemonHealthServer:
         *,
         socket_path: Path,
         metadata_provider: Callable[[], DaemonMetadata | None],
+        request_handler: Callable[[str, dict[str, object]], Awaitable[dict[str, object]]] | None = None,
     ) -> None:
         self._socket_path = socket_path
         self._metadata_provider = metadata_provider
+        self._request_handler = request_handler
         self._server: asyncio.AbstractServer | None = None
 
     async def start(self) -> None:
@@ -47,15 +49,8 @@ class DaemonHealthServer:
         writer: asyncio.StreamWriter,
     ) -> None:
         try:
-            await reader.readline()
-            metadata = self._metadata_provider()
-            if metadata is None:
-                payload: dict[str, object] = {
-                    "status": "error",
-                    "error": "daemon_metadata_unavailable",
-                }
-            else:
-                payload = asdict(metadata)
+            request_line = await reader.readline()
+            payload = await self._dispatch_request(request_line)
 
             writer.write(json.dumps(payload, sort_keys=True).encode("utf-8") + b"\n")
             await writer.drain()
@@ -63,32 +58,86 @@ class DaemonHealthServer:
             writer.close()
             await writer.wait_closed()
 
+    async def _dispatch_request(self, request_line: bytes) -> dict[str, object]:
+        if not request_line:
+            return {"status": "error", "error": "empty_request"}
+
+        try:
+            request = json.loads(request_line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            request = {"path": "/internal/health", "payload": {}}
+
+        if not isinstance(request, dict):
+            return {"status": "error", "error": "invalid_request"}
+
+        path = request.get("path", "/internal/health")
+        payload = request.get("payload", {})
+        if not isinstance(path, str) or not path:
+            return {"status": "error", "error": "request_path_required"}
+        if not isinstance(payload, dict):
+            return {"status": "error", "error": "request_payload_must_be_object"}
+
+        if path == "/internal/health":
+            metadata = self._metadata_provider()
+            if metadata is None:
+                return {
+                    "status": "error",
+                    "error": "daemon_metadata_unavailable",
+                }
+            return asdict(metadata)
+
+        if self._request_handler is None:
+            return {"status": "error", "error": "unknown_request_path"}
+
+        return await self._request_handler(path, payload)
+
 
 def probe_daemon_socket(
     socket_path: Path,
     *,
     timeout_seconds: float = 0.2,
 ) -> DaemonMetadata | None:
+    payload = request_daemon_socket(
+        socket_path,
+        "/internal/health",
+        {},
+        timeout_seconds=timeout_seconds,
+    )
+    return parse_daemon_metadata(payload)
+
+
+def request_daemon_socket(
+    socket_path: Path,
+    path: str,
+    payload: dict[str, object],
+    *,
+    timeout_seconds: float = 1.0,
+) -> dict[str, object]:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(timeout_seconds)
             client.connect(str(socket_path))
-            client.sendall(b"health\n")
+            client.sendall(
+                json.dumps({"path": path, "payload": payload}, sort_keys=True).encode(
+                    "utf-8"
+                )
+                + b"\n"
+            )
             data = client.recv(4096)
     except (FileNotFoundError, OSError, TimeoutError):
-        return None
+        return {"status": "error", "error": "daemon_socket_unavailable"}
 
     if not data:
-        return None
+        return {"status": "error", "error": "empty_response"}
 
     try:
-        payload = json.loads(data.decode("utf-8"))
+        response = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
+        return {"status": "error", "error": "invalid_response"}
 
-    if not isinstance(payload, dict):
-        return None
-    return parse_daemon_metadata(payload)
+    if not isinstance(response, dict):
+        return {"status": "error", "error": "invalid_response"}
+    return response
 
 
 def remove_daemon_socket(socket_path: Path) -> None:

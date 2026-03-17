@@ -218,3 +218,77 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
     assert '"indexed_chunks": 23' in result.output
     assert '"git_commits": 11' in result.output
     assert '"discovered_files": 2' in result.output
+
+
+def test_index_stats_prefers_daemon_transport(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "src.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start: {
+            "documents_path": "/docs",
+            "index_path": "/index",
+            "manifest_path": "/index/index.manifest.json",
+            "manifest_exists": True,
+            "indexed_documents": 9,
+            "indexed_chunks": 21,
+            "discovered_files": 4,
+            "git_commits": 12,
+            "git_repositories": 2,
+        },
+    )
+
+    result = runner.invoke(cli, ["index", "stats", "--json"])
+
+    assert result.exit_code == 0
+    assert '"indexed_documents": 9' in result.output
+    assert '"git_commits": 12' in result.output
+
+
+def test_query_prefers_daemon_transport(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "src.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start: {
+            "query": payload["query"],
+            "results": [{"doc_id": "doc-1", "score": 0.9, "content": "daemon result"}],
+            "compression_stats": {},
+            "strategy_stats": {},
+        },
+    )
+
+    result = runner.invoke(cli, ["query", "daemon", "--json"])
+
+    assert result.exit_code == 0
+    assert '"query": "daemon"' in result.output
+    assert '"daemon result"' in result.output
+
+
+def test_search_commits_prefers_daemon_transport(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "src.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start: {
+            "query": payload["query"],
+            "total_commits_indexed": 5,
+            "results": [
+                {
+                    "hash": "abcdef12",
+                    "title": "daemon commit",
+                    "author": "Andy",
+                    "committer": "Andy",
+                    "timestamp": 1,
+                    "message": "msg",
+                    "files_changed": ["src/cli.py"],
+                    "delta_truncated": "diff",
+                    "score": 0.8,
+                    "repo_path": "/repo",
+                }
+            ],
+        },
+    )
+
+    result = runner.invoke(cli, ["search-commits", "daemon", "--json"])
+
+    assert result.exit_code == 0
+    assert '"query": "daemon"' in result.output
+    assert '"daemon commit"' in result.output

@@ -27,8 +27,8 @@ from rich.progress import (
 from rich.table import Table
 
 from src.config import load_config
-from src.daemon import RuntimePaths
-from src.daemon.health import DaemonHealthServer
+from src.daemon import RuntimePaths, read_daemon_metadata
+from src.daemon.health import DaemonHealthServer, request_daemon_socket
 from src.daemon.management import (
     acquire_boot_lock,
     inspect_daemon,
@@ -128,9 +128,70 @@ def mcp(project: str | None):
 async def _run_daemon_forever(project: str | None) -> None:
     lock = await asyncio.to_thread(acquire_boot_lock, timeout_seconds=1.0)
     runtime_paths = RuntimePaths.resolve()
+
+    async def _handle_daemon_request(
+        path: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        if path == "/api/admin/index-stats":
+            return _build_index_stats_payload(ctx)
+        if path == "/api/search/query":
+            await coordinator.wait_ready(timeout=60.0)
+            query_text = str(payload.get("query", ""))
+            top_n = int(payload.get("top_n", 5))
+            top_k = max(20, top_n * 4)
+            results, compression_stats, strategy_stats = await ctx.orchestrator.query(
+                query_text,
+                top_k=top_k,
+                top_n=top_n,
+            )
+            await ctx.orchestrator.drain_reindex()
+            return {
+                "query": query_text,
+                "results": [result.to_dict() for result in results],
+                "compression_stats": compression_stats.model_dump(),
+                "strategy_stats": strategy_stats.model_dump(),
+            }
+        if path == "/api/search/git-history":
+            await coordinator.wait_ready(timeout=60.0)
+            if ctx.commit_indexer is None:
+                return {"status": "error", "error": "git_indexing_unavailable"}
+
+            from src.git.commit_search import search_git_history
+
+            response = search_git_history(
+                commit_indexer=ctx.commit_indexer,
+                query=str(payload.get("query", "")),
+                top_n=int(payload.get("top_n", 5)),
+                files_glob=str(payload["files_glob"]) if payload.get("files_glob") else None,
+                after_timestamp=int(payload["after_timestamp"]) if payload.get("after_timestamp") is not None else None,
+                before_timestamp=int(payload["before_timestamp"]) if payload.get("before_timestamp") is not None else None,
+            )
+            return {
+                "query": response.query,
+                "total_commits_indexed": response.total_commits_indexed,
+                "results": [
+                    {
+                        "hash": r.hash,
+                        "title": r.title,
+                        "author": r.author,
+                        "committer": r.committer,
+                        "timestamp": r.timestamp,
+                        "message": r.message,
+                        "files_changed": r.files_changed,
+                        "delta_truncated": r.delta_truncated,
+                        "score": r.score,
+                        "repo_path": r.repo_path,
+                    }
+                    for r in response.results
+                ],
+            }
+        return {"status": "error", "error": "unknown_request_path", "path": path}
+
     health_server = DaemonHealthServer(
         socket_path=runtime_paths.socket_path,
         metadata_provider=lambda: read_daemon_metadata(runtime_paths.metadata_path),
+        request_handler=_handle_daemon_request,
     )
     coordinator = LifecycleCoordinator()
     loop = asyncio.get_running_loop()
@@ -349,51 +410,28 @@ def index_group():
 def index_stats(project: str | None, output_json: bool):
     """Print document and git index statistics for the active project context."""
     try:
-        ctx = ApplicationContext.create(
+        payload = _request_daemon_json(
+            "/api/admin/index-stats",
+            {},
             project_override=project,
-            enable_watcher=False,
-            lazy_embeddings=True,
+            auto_start=False,
         )
 
-        manifest_path = ctx.index_path / "index.manifest.json"
-        manifest_exists = manifest_path.exists()
-        if manifest_exists:
-            ctx.index_manager.load()
-
-        docs_root = Path(ctx.config.indexing.documents_path)
-        discovered_files = ctx.discover_files() if docs_root.exists() else []
-        repo_count = len(
-            discover_git_repositories(
-                docs_root,
-                ctx.config.indexing.exclude,
-                ctx.config.indexing.exclude_hidden_dirs,
+        if payload is None:
+            ctx = ApplicationContext.create(
+                project_override=project,
+                enable_watcher=False,
+                lazy_embeddings=True,
             )
-        )
-        git_commit_count = (
-            ctx.commit_indexer.get_total_commits() if ctx.commit_indexer is not None else 0
-        )
-
-        payload = {
-            "documents_path": str(docs_root),
-            "index_path": str(ctx.index_path),
-            "manifest_path": str(manifest_path),
-            "manifest_exists": manifest_exists,
-            "indexed_documents": ctx.index_manager.get_document_count()
-            if manifest_exists
-            else 0,
-            "indexed_chunks": len(ctx.index_manager.vector) if manifest_exists else 0,
-            "discovered_files": len(discovered_files),
-            "git_commits": git_commit_count,
-            "git_repositories": repo_count,
-        }
+            payload = _build_index_stats_payload(ctx)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
             return
 
         click.echo("Index stats")
-        click.echo(f"Documents path: {payload['documents_path']}")
-        click.echo(f"Index path: {payload['index_path']}")
+                "compression_stats": compression_stats.to_dict(),
+                "strategy_stats": strategy_stats.to_dict(),
         click.echo(f"Manifest present: {payload['manifest_exists']}")
         click.echo(f"Indexed documents: {payload['indexed_documents']}")
         click.echo(f"Indexed chunks: {payload['indexed_chunks']}")
@@ -404,6 +442,60 @@ def index_stats(project: str | None, output_json: bool):
         logger.error(f"Failed to inspect index stats: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
+
+def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
+    manifest_path = ctx.index_path / "index.manifest.json"
+    manifest_exists = manifest_path.exists()
+    if manifest_exists:
+        ctx.index_manager.load()
+
+    docs_root = Path(ctx.config.indexing.documents_path)
+    discovered_files = ctx.discover_files() if docs_root.exists() else []
+    repo_count = len(
+        discover_git_repositories(
+            docs_root,
+            ctx.config.indexing.exclude,
+            ctx.config.indexing.exclude_hidden_dirs,
+        )
+    )
+    git_commit_count = (
+        ctx.commit_indexer.get_total_commits() if ctx.commit_indexer is not None else 0
+    )
+
+    return {
+        "documents_path": str(docs_root),
+        "index_path": str(ctx.index_path),
+        "manifest_path": str(manifest_path),
+        "manifest_exists": manifest_exists,
+        "indexed_documents": ctx.index_manager.get_document_count()
+        if manifest_exists
+        else 0,
+        "indexed_chunks": len(ctx.index_manager.vector) if manifest_exists else 0,
+        "discovered_files": len(discovered_files),
+        "git_commits": git_commit_count,
+        "git_repositories": repo_count,
+    }
+
+
+def _request_daemon_json(
+    path: str,
+    payload: dict[str, object],
+    *,
+    project_override: str | None,
+    auto_start: bool,
+) -> dict[str, object] | None:
+    inspection = inspect_daemon()
+    metadata = inspection.metadata if inspection.ready else None
+    if metadata is None and auto_start:
+        metadata = start_daemon(project_override=project_override)
+    if metadata is None or not metadata.socket_path:
+        return None
+
+    response = request_daemon_socket(Path(metadata.socket_path), path, payload)
+    if response.get("status") == "error":
+        return None
+    return response
 
 
 @cli.command()
@@ -688,6 +780,69 @@ def query(
 ):
     try:
         console = Console()
+        validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
+
+        daemon_payload = _request_daemon_json(
+            "/api/search/query",
+            {"query": query_text, "top_n": top_n},
+            project_override=project,
+            auto_start=True,
+        )
+        if daemon_payload is not None:
+            if output_json:
+                click.echo(json.dumps(daemon_payload, indent=2))
+                return
+
+            console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
+            if debug:
+                from src.models import CompressionStats, SearchStrategyStats
+
+                strategy_stats = SearchStrategyStats(
+                    **daemon_payload.get("strategy_stats", {})
+                )
+                compression_stats = CompressionStats(
+                    **daemon_payload.get(
+                        "compression_stats",
+                        {
+                            "original_count": 0,
+                            "after_threshold": 0,
+                            "after_content_dedup": 0,
+                            "after_ngram_dedup": 0,
+                            "after_dedup": 0,
+                            "after_doc_limit": 0,
+                            "clusters_merged": 0,
+                        },
+                    )
+                )
+                print_debug_stats(
+                    console,
+                    strategy_stats,
+                    compression_stats,
+                    0.02,
+                )
+
+            results = daemon_payload.get("results", [])
+            if results:
+                console.print(f"[bold]Found {len(results)} results:[/bold]\n")
+                for idx, result in enumerate(results, 1):
+                    panel_content = [
+                        f"[yellow]Document:[/yellow] {result.get('doc_id', '')}",
+                        f"[magenta]Section:[/magenta] {result.get('header_path') or '(no section)'}",
+                        f"[blue]File:[/blue] {result.get('file_path') or '(unknown)'}",
+                        "",
+                        result.get("content", ""),
+                    ]
+                    print_result_panel(
+                        console,
+                        idx,
+                        float(result.get("score", 0.0)),
+                        panel_content,
+                        is_last=(idx == len(results)),
+                    )
+            else:
+                console.print("[yellow]No results found.[/yellow]")
+            return
+
         ctx = _create_query_context(project)
 
         # Check if manifest exists (indicates a valid index)
@@ -697,8 +852,6 @@ def query(
             sys.exit(1)
 
         ctx.index_manager.load()
-        validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
-
         with console.status("[bold green]Searching documents..."):
             top_k = max(20, top_n * 4)
 
@@ -810,6 +963,63 @@ def search_commits(
     """Search git commit history using natural language queries."""
     try:
         console = Console()
+        validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
+        validate_timestamp_range(after_timestamp, before_timestamp)
+
+        daemon_payload = _request_daemon_json(
+            "/api/search/git-history",
+            {
+                "query": query_text,
+                "top_n": top_n,
+                "files_glob": files_glob,
+                "after_timestamp": after_timestamp,
+                "before_timestamp": before_timestamp,
+            },
+            project_override=project,
+            auto_start=True,
+        )
+        if daemon_payload is not None:
+            if output_json:
+                click.echo(json.dumps(daemon_payload, indent=2))
+                return
+
+            console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
+            console.print(
+                f"[dim]Total commits indexed: {daemon_payload.get('total_commits_indexed', 0)}[/dim]\n"
+            )
+            results = daemon_payload.get("results", [])
+            if results:
+                console.print(f"[bold]Found {len(results)} results:[/bold]\n")
+                from datetime import datetime, timezone
+
+                for idx, commit in enumerate(results, 1):
+                    commit_date = datetime.fromtimestamp(commit["timestamp"], timezone.utc)
+                    date_str = commit_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+                    panel_content = [
+                        f"[yellow]Commit:[/yellow] {commit['hash'][:8]}",
+                        f"[cyan]Author:[/cyan] {commit['author']}",
+                        f"[blue]Date:[/blue] {date_str}",
+                        "",
+                        commit["title"],
+                    ]
+                    if len(commit.get("files_changed", [])) > 0:
+                        panel_content.append("")
+                        panel_content.append(
+                            f"[magenta]Files Changed ({len(commit['files_changed'])}):[/magenta]"
+                        )
+                        for file_path in commit["files_changed"][:5]:
+                            panel_content.append(f"  • {file_path}")
+                    print_result_panel(
+                        console,
+                        idx,
+                        float(commit.get("score", 0.0)),
+                        panel_content,
+                        is_last=(idx == len(results)),
+                    )
+            else:
+                console.print("[yellow]No results found.[/yellow]")
+            return
+
         ctx = _create_query_context(project)
 
         # Check git indexing enabled
@@ -827,9 +1037,6 @@ def search_commits(
             )
             sys.exit(1)
         assert ctx.commit_indexer is not None  # Narrowing for type checker
-
-        validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
-        validate_timestamp_range(after_timestamp, before_timestamp)
 
         with console.status("[bold green]Searching git commits..."):
             from src.git.commit_search import search_git_history
