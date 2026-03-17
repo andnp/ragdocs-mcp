@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
+import uuid
 
 from src.daemon.metadata import DaemonMetadata
 
@@ -54,6 +55,15 @@ def remove_transport_socket(socket_path: Path) -> None:
         return
     except OSError:
         return
+
+
+def _attach_request_id(
+    response: dict[str, object],
+    request_id: str | None,
+) -> dict[str, object]:
+    if request_id is None or "request_id" in response:
+        return response
+    return {"request_id": request_id, **response}
 
 
 class ZMQTransportServer:
@@ -132,6 +142,7 @@ class ZMQTransportServer:
                 logger.error("Daemon transport send failed", exc_info=True)
 
     async def _dispatch_request(self, request_line: bytes) -> dict[str, object]:
+        request_id: str | None = None
         try:
             if not request_line:
                 return {"status": "error", "error": "empty_request"}
@@ -146,31 +157,53 @@ class ZMQTransportServer:
 
             path = request.get("path", "/internal/health")
             payload = request.get("payload", {})
+            raw_request_id = request.get("request_id")
+            if isinstance(raw_request_id, str) and raw_request_id:
+                request_id = raw_request_id
             if not isinstance(path, str) or not path:
-                return {"status": "error", "error": "request_path_required"}
+                return _attach_request_id(
+                    {"status": "error", "error": "request_path_required"},
+                    request_id,
+                )
             if not isinstance(payload, dict):
-                return {"status": "error", "error": "request_payload_must_be_object"}
+                return _attach_request_id(
+                    {
+                        "status": "error",
+                        "error": "request_payload_must_be_object",
+                    },
+                    request_id,
+                )
 
             if path == "/internal/health":
                 metadata = self._metadata_provider()
                 if metadata is None:
-                    return {
-                        "status": "error",
-                        "error": "daemon_metadata_unavailable",
-                    }
-                return asdict(metadata)
+                    return _attach_request_id(
+                        {
+                            "status": "error",
+                            "error": "daemon_metadata_unavailable",
+                        },
+                        request_id,
+                    )
+                return _attach_request_id(asdict(metadata), request_id)
 
             if self._request_handler is None:
-                return {"status": "error", "error": "unknown_request_path"}
+                return _attach_request_id(
+                    {"status": "error", "error": "unknown_request_path"},
+                    request_id,
+                )
 
-            return await self._request_handler(path, payload)
+            response = await self._request_handler(path, payload)
+            return _attach_request_id(response, request_id)
         except Exception as exc:
             logger.error("Daemon request handler failed", exc_info=True)
-            return {
-                "status": "error",
-                "error": "handler_exception",
-                "details": str(exc),
-            }
+            return _attach_request_id(
+                {
+                    "status": "error",
+                    "error": "handler_exception",
+                    "details": str(exc),
+                },
+                request_id,
+            )
 
 
 class ZMQTransportClient:
@@ -190,17 +223,27 @@ class ZMQTransportClient:
             client = context.socket(zmq.DEALER)
             client.linger = 0
             client.connect(transport_endpoint(socket_path))
+            request_id = str(uuid.uuid4())
             client.send(
-                json.dumps({"path": path, "payload": payload}, sort_keys=True).encode(
-                    "utf-8"
-                )
+                json.dumps(
+                    {
+                        "request_id": request_id,
+                        "path": path,
+                        "payload": payload,
+                        "client": {
+                            "kind": "unknown",
+                            "pid": os.getpid(),
+                        },
+                    },
+                    sort_keys=True,
+                ).encode("utf-8")
             )
 
             poller = zmq.Poller()
             poller.register(client, zmq.POLLIN)
             events = dict(poller.poll(int(timeout_seconds * 1000)))
             if client not in events:
-                return {"status": "error", "error": "daemon_socket_unavailable"}
+                return {"status": "error", "error": "daemon_request_timed_out"}
 
             frames = client.recv_multipart()
             data = frames[-1] if frames else b""

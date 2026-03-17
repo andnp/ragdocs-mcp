@@ -427,6 +427,19 @@ def test_queue_status_requires_daemon_when_unavailable(monkeypatch):
     assert "Daemon unavailable" in result.output
 
 
+def test_queue_status_reports_explicit_daemon_timeout(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "src.cli._request_daemon_json",
+        lambda *args, **kwargs: {"status": "error", "error": "daemon_request_timed_out"},
+    )
+
+    result = runner.invoke(cli, ["queue", "status", "--json"])
+
+    assert result.exit_code == 1
+    assert "Daemon request timed out" in result.output
+
+
 def test_request_daemon_json_uses_running_daemon(monkeypatch):
     metadata = DaemonMetadata(
         pid=4321,

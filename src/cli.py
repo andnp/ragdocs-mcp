@@ -671,6 +671,11 @@ def _raise_daemon_request_error(response: dict[str, object] | None) -> None:
             "Git history search is not available (git binary not found or disabled in config)"
         )
 
+    if error == "daemon_request_timed_out":
+        raise RuntimeError(
+            "Daemon request timed out while waiting for a response. The daemon may still be initializing or performing a long-running operation."
+        )
+
     if isinstance(details, str) and details:
         raise RuntimeError(details)
 
