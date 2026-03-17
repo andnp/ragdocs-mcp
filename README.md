@@ -367,46 +367,6 @@ The server returns ranked document chunks with file paths, header hierarchies, a
 
 The server returns ranked commits with hash, title, author, timestamp, message, files changed, and truncated diff.
 
-### Memory Management
-
-The server supports an AI memory bank for persistent cross-session knowledge storage.
-
-**Enable in configuration:**
-
-```toml
-[memory]
-enabled = true
-storage_strategy = "project"  # "project" or "user"
-score_threshold = 0.2          # Minimum score after calibration (0.0-1.0)
-
-# Per-type exponential decay (defaults shown)
-[memory.decay_journal]
-decay_rate = 0.90  # 7-day half-life
-floor_multiplier = 0.1
-```
-
-**Available tools:**
-- `create_memory`, `read_memory`, `update_memory`, `append_memory`, `delete_memory`: CRUD operations (system auto-generates frontmatter for `create_memory`)
-- `search_memories`: Hybrid search with recency boost, tag/type filtering, and time range filtering (absolute timestamps or relative days)
-- `search_linked_memories`: Find memories linking to a specific document via ghost nodes
-- `get_memory_stats`: Memory bank statistics
-- `merge_memories`: Consolidate multiple memories into one
-
-**Time range filtering examples:**
-
-```json
-// Last 7 days
-{"query": "bug fixes", "relative_days": 7}
-
-// Absolute range (Jan 1-31, 2024)
-{"query": "features", "after_timestamp": 1704067200, "before_timestamp": 1706745600}
-
-// Combined with tag filtering
-{"query": "auth improvements", "relative_days": 30, "filter_tags": ["security"]}
-```
-
-See [Memory Management](docs/memory.md) for complete documentation.
-
 ### API Endpoints
 
 Health check:

@@ -79,7 +79,7 @@ The `MemorySearchOrchestrator` will be updated to respect lineage:
 
 ### Phase 2: Search Logic
 - [ ] Modify `MemorySearchOrchestrator` to filter superseded items by default.
-- [ ] Add `include_obsolete` flag to `search_memories` tool.
+- [ ] If this concept is ever reintroduced in another product, add an explicit include-obsolete query option there rather than in Ragdocs.
 
 ### Phase 3: Detection Tooling
 - [ ] Implement `detect_contradictions` tool using vector similarity + lightweight LLM check (if available) or pure heuristic (high similarity + different timestamps).

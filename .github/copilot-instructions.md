@@ -78,14 +78,13 @@ class QueryRequest(BaseModel):
 
 # Config validation (manual in __post_init__)
 @dataclass
-class MemoryRecencyConfig:
-    boost_window_days: int = 14
-    max_boost_amount: float = 0.2
-    boost_decay_rate: float = 0.95
+class SearchConfig:
+    semantic_weight: float = 1.0
+    keyword_weight: float = 1.0
 
     def __post_init__(self):
-        if self.boost_window_days < 0:
-            raise ValueError("boost_window_days must be non-negative")
+        if self.semantic_weight < 0:
+            raise ValueError("semantic_weight must be non-negative")
 ```
 
 **Validation strategy**:
@@ -151,34 +150,5 @@ uv run ruff check --fix . && ruff format .       # Lint and format
 uv run pyright                                    # Type check (pyright)
 uv tool run ty check .                           # Type check (ty alternative)
 ```
-
----
-
-## Memory Search Features
-
-**Time Range Filtering** (`search_memories` tool):
-- **Absolute timestamps**: `after_timestamp`, `before_timestamp` (Unix timestamps)
-- **Relative filtering**: `relative_days` (last N days, overrides absolute)
-- **Validation**: `after < before`, `relative_days ≥ 0`
-- **Time source**: `created_at` frontmatter field with fallback to file `mtime`
-- **Timezone handling**: UTC normalization
-
-**Usage examples**:
-```python
-# Last 7 days
-await search_memories(ctx, query="bug fixes", relative_days=7)
-
-# Absolute range (Jan 2024)
-await search_memories(ctx, query="features",
-                     after_timestamp=1704067200,
-                     before_timestamp=1706745600)
-
-# Combined with tag filtering
-await search_memories(ctx, query="auth",
-                     relative_days=30,
-                     filter_tags=["security"])
-```
-
----
 
 **Additional Context**: See `AGENTS.md` for AI behavioral guidelines, `docs/architecture.md` for system design, `docs/specs/` for ADRs.

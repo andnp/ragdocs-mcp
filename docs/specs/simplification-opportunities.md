@@ -91,7 +91,6 @@ class LLMConfig:
 
 **Problem**: Paths are resolved at different stages:
 - `resolve_index_path()` called in `ApplicationContext.create()`
-- `resolve_memory_path()` called in multiple places
 - `resolve_documents_path()` called in context creation
 
 **Recommendation**: Create a `ResolvedPaths` dataclass populated once:
@@ -102,7 +101,6 @@ class LLMConfig:
 class ResolvedPaths:
     index: Path
     documents: Path
-    memory: Path | None
     snapshots: Path
     
     @classmethod
@@ -111,7 +109,6 @@ class ResolvedPaths:
         return cls(
             index=resolve_index_path(config, detected_project),
             documents=Path(resolve_documents_path(config, detected_project)),
-            memory=resolve_memory_path(config, detected_project) if config.memory.enabled else None,
             snapshots=resolve_index_path(config, detected_project) / "snapshots",
         )
 ```

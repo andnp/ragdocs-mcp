@@ -27,7 +27,7 @@ We will integrate `huey` using its `SqliteHuey` storage backend. This keeps the 
 #### A. Main Process (The MCP Server)
 -   **Responsibility**: Responds to MCP JSON-RPC queries instantly.
 -   **Operation**: 
-    -   Reads the core `index.db` (SQLite) to serve `query_documents` and `search_memories`.
+    -   Reads the core `index.db` (SQLite) to serve `query_documents` and `search_git_history`.
     -   Detects file changes (via its own lightweight watcher) or user commands, and enqueues tasks to `SqliteHuey`.
     -   **Leader Election**: Upon startup, it attempts to acquire an exclusive file lock (e.g., `worker.lock`). 
         -   If it acquires the lock, it spawns the background Huey Consumer (Worker Process).

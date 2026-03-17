@@ -175,12 +175,6 @@ def _publish_snapshot(state: WorkerState) -> int:
         # Worker's IndexManager persists all indices
         state.index_manager.persist_to(snapshot_dir)
 
-        # Also persist memory indices if enabled
-        if state.memory_manager:
-            memory_dir = snapshot_dir / "memory"
-            memory_dir.mkdir()
-            state.memory_manager.persist_to(memory_dir)
-
     # IndexSyncPublisher handles versioning + atomicity
     version = state.sync_publisher.publish(persist_callback)
     state.last_index_time = time.time()

@@ -824,20 +824,7 @@ memory:project-notes  ──[mentions]──▶  ghost:src/auth.py
          └──[plans]──▶  ghost:docs/roadmap.md
 ```
 
-**Query:** `search_linked_memories(query, target_document)` performs graph traversal from `ghost:{target}`, filtering edges by context relevance.
-
-#### MemoryIndexManager (src/memory/manager.py)
-
-**Responsibilities:**
-- Parse memory files (YAML frontmatter + Markdown body)
-- Extract wikilinks and create ghost nodes
-- Chunk memories using HeaderChunker
-- Coordinate updates across vector, keyword, and graph indices
-- Track memory metadata (type, status, tags, created_at)
-
-**Memory Document Format:**
-
-```yaml
+The memory-specific graph/linking subsystem described in earlier versions has been removed from Ragdocs.
 ---
 type: "plan"       # plan | journal | fact | observation | reflection
 status: "active"   # active | archived
