@@ -18,6 +18,7 @@ class IndexManagerLike(Protocol):
 
     def index_document(self, file_path: str, force: bool = False) -> None: ...
     def remove_document(self, doc_id: str) -> None: ...
+    def persist(self) -> None: ...
 
 
 # Module-level references set during initialization
@@ -55,6 +56,7 @@ def register_tasks(
             return False
         try:
             _index_manager.index_document(file_path, force=force)
+            _index_manager.persist()
             logger.info("Task completed: indexed %s", file_path)
             return True
         except Exception:
@@ -69,6 +71,7 @@ def register_tasks(
             return False
         try:
             _index_manager.remove_document(doc_id)
+            _index_manager.persist()
             logger.info("Task completed: removed %s", doc_id)
             return True
         except Exception:

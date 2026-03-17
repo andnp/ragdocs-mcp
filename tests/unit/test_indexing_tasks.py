@@ -27,12 +27,16 @@ class FakeIndexManager:
     def __init__(self) -> None:
         self.indexed: list[tuple[str, bool]] = []
         self.removed: list[str] = []
+        self.persist_calls = 0
 
     def index_document(self, file_path: str, force: bool = False) -> None:
         self.indexed.append((file_path, force))
 
     def remove_document(self, doc_id: str) -> None:
         self.removed.append(doc_id)
+
+    def persist(self) -> None:
+        self.persist_calls += 1
 
 
 class FakeCommitIndexer:
@@ -133,6 +137,7 @@ class TestTaskExecution:
         assert huey_instance.pending_count() == 0
         assert len(fake_manager.indexed) == 1
         assert fake_manager.indexed[0] == ("/docs/test.md", True)
+        assert fake_manager.persist_calls == 1
 
     def test_remove_task_calls_manager(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -148,6 +153,7 @@ class TestTaskExecution:
 
         assert huey_instance.pending_count() == 0
         assert fake_manager.removed == ["docs/readme"]
+        assert fake_manager.persist_calls == 1
 
     def test_end_to_end_with_worker(
         self, tmp_path: Path, fake_manager: FakeIndexManager
@@ -178,6 +184,7 @@ class TestTaskExecution:
         assert huey.pending_count() == 0
         assert len(fake_manager.indexed) == 1
         assert fake_manager.indexed[0] == ("/docs/guide.md", False)
+        assert fake_manager.persist_calls == 1
 
     def test_task_failure_does_not_crash_worker(self, tmp_path: Path) -> None:
         """A failing task doesn't crash the worker."""
@@ -189,6 +196,9 @@ class TestTaskExecution:
 
             def remove_document(self, doc_id: str) -> None:
                 raise RuntimeError("Simulated failure")
+
+            def persist(self) -> None:
+                raise AssertionError("persist should not be called after failed task")
 
         huey = SqliteHuey(
             name="test-fail", filename=str(tmp_path / "fail.db"), immediate=False
