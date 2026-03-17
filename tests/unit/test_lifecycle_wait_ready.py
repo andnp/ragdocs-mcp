@@ -265,3 +265,24 @@ class TestWaitReadyTimeoutBehavior:
             await transition_task
         except asyncio.CancelledError:
             pass
+
+
+class TestBackgroundPromotion:
+    @pytest.mark.asyncio
+    async def test_background_initialization_promotes_to_ready(self):
+        coordinator = LifecycleCoordinator()
+        mock_ctx = MockApplicationContext()
+        _set_ctx(coordinator, mock_ctx)
+        coordinator._state = LifecycleState.INITIALIZING
+
+        async def complete_context() -> None:
+            await asyncio.sleep(0.05)
+            mock_ctx._ready_event.set()
+
+        completion_task = asyncio.create_task(complete_context())
+        promotion_task = asyncio.create_task(coordinator._promote_when_ready())
+
+        await asyncio.wait_for(promotion_task, timeout=1.0)
+        await completion_task
+
+        assert coordinator.state == LifecycleState.READY

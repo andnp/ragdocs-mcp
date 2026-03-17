@@ -12,7 +12,7 @@ def test_daemon_status_reports_not_running(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
         "src.cli.inspect_daemon",
-        lambda: DaemonInspection(metadata=None, running=False, stale=False),
+        lambda paths=None: DaemonInspection(metadata=None, running=False, stale=False),
     )
 
     result = runner.invoke(cli, ["daemon", "status"])
@@ -31,7 +31,7 @@ def test_daemon_status_reports_running(monkeypatch):
     )
     monkeypatch.setattr(
         "src.cli.inspect_daemon",
-        lambda: DaemonInspection(metadata=metadata, running=True, stale=False),
+        lambda paths=None: DaemonInspection(metadata=metadata, running=True, stale=False),
     )
 
     result = runner.invoke(cli, ["daemon", "status"])
@@ -52,7 +52,7 @@ def test_daemon_status_reports_starting_when_not_ready(monkeypatch):
     )
     monkeypatch.setattr(
         "src.cli.inspect_daemon",
-        lambda: DaemonInspection(
+        lambda paths=None: DaemonInspection(
             metadata=metadata,
             running=True,
             stale=False,
@@ -123,6 +123,80 @@ def test_daemon_start_invokes_management_helper(monkeypatch):
     assert result.exit_code == 0
     assert observed == {"project_override": "docs", "timeout_seconds": 3.5}
     assert "Daemon running (pid=99, status=ready)" in result.output
+
+
+def test_request_daemon_json_waits_for_ready_before_query(monkeypatch, tmp_path):
+    runtime_paths = RuntimePaths(
+        root=tmp_path,
+        index_db_path=tmp_path / "index.db",
+        queue_db_path=tmp_path / "queue.db",
+        metadata_path=tmp_path / "daemon.json",
+        lock_path=tmp_path / "daemon.lock",
+        socket_path=tmp_path / "daemon.sock",
+    )
+    initializing = DaemonMetadata(
+        pid=321,
+        started_at=1.0,
+        status="initializing",
+        socket_path=str(runtime_paths.socket_path),
+    )
+    ready = DaemonMetadata(
+        pid=321,
+        started_at=1.0,
+        status="ready_primary",
+        socket_path=str(runtime_paths.socket_path),
+    )
+
+    monkeypatch.setattr(
+        RuntimePaths,
+        "resolve",
+        classmethod(lambda cls: runtime_paths),
+    )
+    monkeypatch.setattr(
+        "src.cli.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=initializing,
+            running=True,
+            stale=False,
+            responsive=True,
+            ready=False,
+        ),
+    )
+
+    waited: dict[str, object] = {}
+
+    def _fake_wait_for_daemon_ready(*, timeout_seconds, paths=None):
+        waited["timeout_seconds"] = timeout_seconds
+        waited["paths"] = paths
+        return ready
+
+    monkeypatch.setattr("src.cli.wait_for_daemon_ready", _fake_wait_for_daemon_ready)
+
+    observed: dict[str, object] = {}
+
+    def _fake_request_daemon_socket(socket_path, path, payload, timeout_seconds):
+        observed["socket_path"] = socket_path
+        observed["path"] = path
+        observed["payload"] = payload
+        observed["timeout_seconds"] = timeout_seconds
+        return {"status": "ok", "value": 1}
+
+    monkeypatch.setattr("src.cli.request_daemon_socket", _fake_request_daemon_socket)
+
+    from src.cli import _request_daemon_json
+
+    response = _request_daemon_json(
+        "/api/example",
+        {"value": 1},
+        project_override=None,
+        auto_start=True,
+    )
+
+    assert response == {"status": "ok", "value": 1}
+    assert waited["timeout_seconds"] == 120.0
+    assert waited["paths"] == runtime_paths
+    assert observed["socket_path"] == runtime_paths.socket_path
+    assert observed["path"] == "/api/example"
 
 
 def test_daemon_stop_reports_stopped(monkeypatch):
@@ -362,7 +436,7 @@ def test_request_daemon_json_uses_running_daemon(monkeypatch):
     )
     monkeypatch.setattr(
         "src.cli.inspect_daemon",
-        lambda: DaemonInspection(
+        lambda paths=None: DaemonInspection(
             metadata=metadata,
             running=True,
             stale=False,

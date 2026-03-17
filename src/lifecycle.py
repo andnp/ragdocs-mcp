@@ -151,6 +151,7 @@ class LifecycleCoordinator:
         default_factory=RuntimePaths.resolve, repr=False
     )
     _started_at: float | None = field(default=None, repr=False)
+    _readiness_task: asyncio.Task[None] | None = field(default=None, repr=False)
 
     @property
     def state(self) -> LifecycleState:
@@ -224,6 +225,9 @@ class LifecycleCoordinator:
             if background_index:
                 self._state = LifecycleState.INITIALIZING
                 self._write_daemon_metadata()
+                self._readiness_task = asyncio.create_task(
+                    self._promote_when_ready()
+                )
                 logger.info("Lifecycle: INITIALIZING (indices loading in background)")
             elif db_manager is not None:
                 if self._leader_election is not None and self._leader_election.is_leader:
@@ -398,8 +402,40 @@ class LifecycleCoordinator:
             return
         remove_daemon_metadata(self._runtime_paths.metadata_path)
 
+    async def _promote_when_ready(self) -> None:
+        if self._ctx is None:
+            return
+
+        try:
+            await self._ctx.ensure_ready()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.record_init_error(e)
+            return
+
+        if self._state != LifecycleState.INITIALIZING:
+            return
+
+        if self._leader_election is not None:
+            self._state = (
+                LifecycleState.READY_PRIMARY
+                if self._leader_election.is_leader
+                else LifecycleState.READY_REPLICA
+            )
+        else:
+            self._state = LifecycleState.READY
+
+        self._write_daemon_metadata()
+        logger.info("Lifecycle: %s (background initialization complete)", self._state)
+
     async def _cleanup_resources(self) -> None:
         self._cancel_emergency_timer()
+
+        if self._readiness_task is not None:
+            self._readiness_task.cancel()
+            await asyncio.gather(self._readiness_task, return_exceptions=True)
+            self._readiness_task = None
 
         if self._huey_worker is not None:
             try:

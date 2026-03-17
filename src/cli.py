@@ -40,6 +40,7 @@ from src.daemon.management import (
     restart_daemon,
     start_daemon,
     stop_daemon,
+    wait_for_daemon_ready,
 )
 from src.git.repository import (
     discover_git_repositories,
@@ -69,6 +70,7 @@ logger = logging.getLogger(__name__)
 
 MIN_TOP_N = 1
 MAX_TOP_N = 100
+_DAEMON_QUERY_READY_WAIT_SECONDS = 120.0
 
 
 def _create_query_context(project: str | None) -> ApplicationContext:
@@ -622,10 +624,23 @@ def _request_daemon_json(
     auto_start: bool,
     allow_error: bool = False,
 ) -> dict[str, object] | None:
-    inspection = inspect_daemon()
+    runtime_paths = RuntimePaths.resolve()
+    inspection = inspect_daemon(runtime_paths)
     metadata = inspection.metadata if inspection.responsive else None
     if metadata is None and auto_start:
-        metadata = start_daemon(project_override=project_override)
+        metadata = start_daemon(
+            project_override=project_override,
+            paths=runtime_paths,
+        )
+    if (
+        auto_start
+        and metadata is not None
+        and metadata.status not in {"ready", "ready_primary", "ready_replica"}
+    ):
+        metadata = wait_for_daemon_ready(
+            timeout_seconds=_DAEMON_QUERY_READY_WAIT_SECONDS,
+            paths=runtime_paths,
+        )
     if metadata is None or not metadata.socket_path:
         return None
 

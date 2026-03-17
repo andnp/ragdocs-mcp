@@ -152,6 +152,31 @@ def restart_daemon(
     )
 
 
+def wait_for_daemon_ready(
+    *,
+    timeout_seconds: float = 60.0,
+    paths: RuntimePaths | None = None,
+) -> DaemonMetadata:
+    runtime_paths = paths or RuntimePaths.resolve()
+    runtime_paths.ensure_directories()
+    deadline = time.monotonic() + timeout_seconds
+
+    while time.monotonic() < deadline:
+        inspection = inspect_daemon(runtime_paths)
+        if inspection.stale:
+            _cleanup_stale_runtime_state(runtime_paths)
+        elif (
+            inspection.metadata is not None
+            and inspection.running
+            and inspection.metadata.status in _READY_STATUSES
+        ):
+            return inspection.metadata
+
+        time.sleep(0.1)
+
+    raise DaemonManagementError("Timed out waiting for existing daemon readiness")
+
+
 def _spawn_daemon_process(
     project_override: str | None,
     runtime_paths: RuntimePaths,
@@ -247,6 +272,7 @@ def _wait_for_ready_daemon(
     deadline: float,
     paths: RuntimePaths,
     spawned_process: subprocess.Popen[bytes] | None = None,
+    require_ready: bool = False,
 ) -> DaemonMetadata:
     exit_code: int | None = None
 
@@ -254,8 +280,15 @@ def _wait_for_ready_daemon(
         inspection = inspect_daemon(paths)
         if inspection.stale:
             _cleanup_stale_runtime_state(paths)
-        elif inspection.running and inspection.responsive and inspection.metadata is not None:
-            return inspection.metadata
+        elif inspection.metadata is not None:
+            if require_ready and inspection.ready:
+                return inspection.metadata
+            if not require_ready and inspection.running and inspection.responsive:
+                return inspection.metadata
+
+        if require_ready and inspection.running and inspection.metadata is not None:
+            time.sleep(0.1)
+            continue
 
         if spawned_process is not None and exit_code is None:
             exit_code = spawned_process.poll()
