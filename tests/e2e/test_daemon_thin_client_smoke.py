@@ -144,7 +144,7 @@ async def test_daemon_backed_mcp_query_documents_smoke(
 
         try:
             server = MCPServer()
-            contents = await server._maybe_call_remote_tool(
+            contents = await server._call_remote_tool(
                 "query_documents",
                 {"query": "authentication", "top_n": 1},
             )
@@ -192,7 +192,7 @@ async def test_daemon_survives_sequential_cli_and_mcp_requests(
             await _wait_for_daemon_socket(runtime_paths.socket_path)
 
             server = MCPServer()
-            contents = await server._maybe_call_remote_tool(
+            contents = await server._call_remote_tool(
                 "query_documents",
                 {"query": "authentication", "top_n": 1},
             )
@@ -215,7 +215,7 @@ async def test_daemon_survives_sequential_cli_and_mcp_requests(
 
 
 @pytest.mark.asyncio
-async def test_mcp_run_stays_lock_free_on_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_mcp_run_stays_daemon_idle_on_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     server = MCPServer()
 
     @asynccontextmanager
@@ -235,14 +235,8 @@ async def test_mcp_run_stays_lock_free_on_startup(monkeypatch: pytest.MonkeyPatc
         _fake_server_run,
     )
     monkeypatch.setattr(
-        server._coordinator,
-        "install_signal_handlers",
-        lambda loop: None,
-    )
-    monkeypatch.setattr(
-        server,
-        "_ensure_local_runtime_started",
-        lambda: (_ for _ in ()).throw(AssertionError("local runtime should not be started during thin-client run startup")),
+        "src.mcp.server.start_daemon",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("daemon should not be contacted during stdio startup")),
     )
 
     await server.run()

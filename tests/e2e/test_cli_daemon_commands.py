@@ -228,7 +228,6 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
 
 
 def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
-    runner = CliRunner()
     docs_dir = tmp_path / "docs"
     docs_dir.mkdir()
     index_dir = tmp_path / "index"
@@ -274,27 +273,24 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
             return [str(docs_dir / "a.md"), str(docs_dir / "b.md")]
 
     fake_ctx = _FakeContext()
-    monkeypatch.setattr(
-        "src.cli.ApplicationContext.create",
-        lambda **kwargs: fake_ctx,
-    )
     monkeypatch.setattr("src.cli.discover_git_repositories", lambda *args, **kwargs: [docs_dir])
 
-    result = runner.invoke(cli, ["index", "stats", "--json"])
+    from src.cli import _build_index_stats_payload
 
-    assert result.exit_code == 0
-    assert '"indexed_documents": 7' in result.output
-    assert '"indexed_chunks": 23' in result.output
-    assert '"git_commits": 11' in result.output
-    assert '"discovered_files": 2' in result.output
-    assert f'"index_db_path": "{index_dir / "index.db"}"' in result.output
+    payload = _build_index_stats_payload(fake_ctx)
+
+    assert payload["indexed_documents"] == 7
+    assert payload["indexed_chunks"] == 23
+    assert payload["git_commits"] == 11
+    assert payload["discovered_files"] == 2
+    assert payload["index_db_path"] == str(index_dir / "index.db")
 
 
 def test_index_stats_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
         "src.cli._request_daemon_json",
-        lambda path, payload, project_override, auto_start: {
+        lambda path, payload, project_override, auto_start, allow_error=False: {
             "documents_path": "/docs",
             "index_path": "/index",
             "index_db_path": "/index/index.db",
@@ -319,7 +315,7 @@ def test_queue_status_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
         "src.cli._request_daemon_json",
-        lambda path, payload, project_override, auto_start: {
+        lambda path, payload, project_override, auto_start, allow_error=False: {
             "queue_db_path": "/queue.db",
             "pending_count": 2,
             "scheduled_count": 1,
@@ -347,49 +343,14 @@ def test_queue_status_prefers_daemon_transport(monkeypatch):
     assert '"_refresh_git_repository"' in result.output
 
 
-def test_queue_status_falls_back_to_local_queue(monkeypatch, tmp_path):
+def test_queue_status_requires_daemon_when_unavailable(monkeypatch):
     runner = CliRunner()
-    observed: dict[str, object] = {}
-    runtime_paths = RuntimePaths(
-        root=tmp_path,
-        index_db_path=tmp_path / "index.db",
-        queue_db_path=tmp_path / "queue.db",
-        metadata_path=tmp_path / "daemon.json",
-        lock_path=tmp_path / "daemon.lock",
-        socket_path=tmp_path / "daemon.sock",
-    )
-
     monkeypatch.setattr("src.cli._request_daemon_json", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        RuntimePaths,
-        "resolve",
-        classmethod(lambda cls: runtime_paths),
-    )
-    monkeypatch.setattr("src.cli.get_huey", lambda path: observed.setdefault("path", path) or object())
-    monkeypatch.setattr(
-        "src.cli.get_queue_stats",
-        lambda huey, worker_running=False: type(
-            "_Stats",
-            (),
-            {
-                "to_dict": lambda self: {
-                    "pending_count": 0,
-                    "scheduled_count": 0,
-                    "running_count": 0,
-                    "failed_count": 0,
-                    "worker_running": worker_running,
-                    "task_counts": {},
-                    "recent_failures": [],
-                }
-            },
-        )(),
-    )
 
     result = runner.invoke(cli, ["queue", "status", "--json"])
 
-    assert result.exit_code == 0
-    assert observed["path"] == runtime_paths.queue_db_path
-    assert '"queue_db_path":' in result.output
+    assert result.exit_code == 1
+    assert "Daemon unavailable" in result.output
 
 
 def test_request_daemon_json_uses_running_daemon(monkeypatch):

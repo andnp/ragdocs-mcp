@@ -501,15 +501,10 @@ def index_stats(project: str | None, output_json: bool):
             {},
             project_override=project,
             auto_start=False,
+            allow_error=True,
         )
-
-        if payload is None:
-            ctx = ApplicationContext.create(
-                project_override=project,
-                enable_watcher=False,
-                lazy_embeddings=True,
-            )
-            payload = _build_index_stats_payload(ctx)
+        if payload is None or payload.get("status") == "error":
+            _raise_daemon_request_error(payload)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
@@ -578,14 +573,10 @@ def queue_status(project: str | None, output_json: bool):
             {},
             project_override=project,
             auto_start=False,
+            allow_error=True,
         )
-
-        if payload is None:
-            runtime_paths = RuntimePaths.resolve()
-            payload = _build_queue_status_payload(
-                queue_path=runtime_paths.queue_db_path,
-                worker_running=False,
-            )
+        if payload is None or payload.get("status") == "error":
+            _raise_daemon_request_error(payload)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
