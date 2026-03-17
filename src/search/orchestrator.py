@@ -17,6 +17,8 @@ from src.search.tag_expansion import expand_query_with_tags
 
 logger = logging.getLogger(__name__)
 
+_ACTIVE_PROJECT_UPLIFT = 1.2
+
 
 class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
     def __init__(
@@ -170,6 +172,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         fused = self._apply_score_pipeline(strategy_results, weights)
 
         fused = self._apply_community_boost(fused, all_doc_ids, chunk_id_to_doc_id)
+        fused = self._apply_project_uplift(fused)
 
         if pipeline_config is not None:
             pipeline = SearchPipeline(pipeline_config)
@@ -365,6 +368,28 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         return sorted(boosted, key=lambda x: x[1], reverse=True)
 
+    def _apply_project_uplift(
+        self,
+        fused: list[tuple[str, float]],
+    ) -> list[tuple[str, float]]:
+        active_project = self._config.detected_project
+        if not active_project:
+            return fused
+
+        boosted: list[tuple[str, float]] = []
+        for chunk_id, score in fused:
+            chunk_data = self._vector.get_chunk_by_id(chunk_id)
+            metadata = chunk_data.get("metadata", {}) if chunk_data else {}
+            project_id = (
+                metadata.get("project_id") if isinstance(metadata, dict) else None
+            )
+            if project_id == active_project:
+                boosted.append((chunk_id, score * _ACTIVE_PROJECT_UPLIFT))
+            else:
+                boosted.append((chunk_id, score))
+
+        return sorted(boosted, key=lambda x: x[1], reverse=True)
+
     def _queue_reindex_for_chunks(self, chunk_ids: list[str], reason: str):
         doc_ids = {
             extract_doc_id_from_chunk_id(chunk_id) for chunk_id in chunk_ids if chunk_id
@@ -485,6 +510,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         weights: dict[str, float] = {"semantic": 1.0}
 
         fused = self._apply_score_pipeline(strategy_results, weights)
+        fused = self._apply_project_uplift(fused)
 
         pipeline = self._get_pipeline()
 
