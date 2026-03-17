@@ -120,3 +120,72 @@ async def test_request_daemon_socket_reports_timeout_as_unavailable(tmp_path: Pa
         await server.stop()
 
     assert response == {"status": "error", "error": "daemon_socket_unavailable"}
+
+
+@pytest.mark.asyncio
+async def test_health_server_returns_error_payload_for_handler_exception(
+    tmp_path: Path,
+) -> None:
+    socket_path = tmp_path / "daemon.sock"
+
+    async def _raise(path: str, payload: dict[str, object]) -> dict[str, object]:
+        raise ValueError("boom")
+
+    server = DaemonHealthServer(
+        socket_path=socket_path,
+        metadata_provider=lambda: None,
+        request_handler=_raise,
+    )
+
+    await server.start()
+    try:
+        response = await asyncio.to_thread(
+            request_daemon_socket,
+            socket_path,
+            "/api/example",
+            {"hello": "world"},
+        )
+    finally:
+        await server.stop()
+
+    assert response["status"] == "error"
+    assert response["error"] == "handler_exception"
+    assert response["details"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_health_server_survives_handler_exception_for_later_requests(
+    tmp_path: Path,
+) -> None:
+    socket_path = tmp_path / "daemon.sock"
+
+    async def _handler(path: str, payload: dict[str, object]) -> dict[str, object]:
+        if path == "/api/fail":
+            raise ValueError("boom")
+        return {"path": path, "payload": payload}
+
+    server = DaemonHealthServer(
+        socket_path=socket_path,
+        metadata_provider=lambda: None,
+        request_handler=_handler,
+    )
+
+    await server.start()
+    try:
+        failed = await asyncio.to_thread(
+            request_daemon_socket,
+            socket_path,
+            "/api/fail",
+            {},
+        )
+        succeeded = await asyncio.to_thread(
+            request_daemon_socket,
+            socket_path,
+            "/api/ok",
+            {"hello": "world"},
+        )
+    finally:
+        await server.stop()
+
+    assert failed["error"] == "handler_exception"
+    assert succeeded == {"path": "/api/ok", "payload": {"hello": "world"}}

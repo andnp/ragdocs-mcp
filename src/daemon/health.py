@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 import json
+import logging
 import os
 from pathlib import Path
 import socket
@@ -13,6 +14,8 @@ from src.daemon.metadata import DaemonMetadata, parse_daemon_metadata
 
 DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_DAEMON_HEALTH_TIMEOUT_SECONDS = 0.2
+
+logger = logging.getLogger(__name__)
 
 
 class DaemonHealthServer:
@@ -55,45 +58,60 @@ class DaemonHealthServer:
         try:
             request_line = await reader.readline()
             payload = await self._dispatch_request(request_line)
-
-            writer.write(json.dumps(payload, sort_keys=True).encode("utf-8") + b"\n")
-            await writer.drain()
+            try:
+                writer.write(
+                    json.dumps(payload, sort_keys=True).encode("utf-8") + b"\n"
+                )
+                await writer.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                logger.debug("Daemon client disconnected before response drain")
         finally:
             writer.close()
-            await writer.wait_closed()
+            try:
+                await writer.wait_closed()
+            except (BrokenPipeError, ConnectionResetError):
+                logger.debug("Daemon client connection already closed")
 
     async def _dispatch_request(self, request_line: bytes) -> dict[str, object]:
-        if not request_line:
-            return {"status": "error", "error": "empty_request"}
-
         try:
-            request = json.loads(request_line.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            request = {"path": "/internal/health", "payload": {}}
+            if not request_line:
+                return {"status": "error", "error": "empty_request"}
 
-        if not isinstance(request, dict):
-            return {"status": "error", "error": "invalid_request"}
+            try:
+                request = json.loads(request_line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                request = {"path": "/internal/health", "payload": {}}
 
-        path = request.get("path", "/internal/health")
-        payload = request.get("payload", {})
-        if not isinstance(path, str) or not path:
-            return {"status": "error", "error": "request_path_required"}
-        if not isinstance(payload, dict):
-            return {"status": "error", "error": "request_payload_must_be_object"}
+            if not isinstance(request, dict):
+                return {"status": "error", "error": "invalid_request"}
 
-        if path == "/internal/health":
-            metadata = self._metadata_provider()
-            if metadata is None:
-                return {
-                    "status": "error",
-                    "error": "daemon_metadata_unavailable",
-                }
-            return asdict(metadata)
+            path = request.get("path", "/internal/health")
+            payload = request.get("payload", {})
+            if not isinstance(path, str) or not path:
+                return {"status": "error", "error": "request_path_required"}
+            if not isinstance(payload, dict):
+                return {"status": "error", "error": "request_payload_must_be_object"}
 
-        if self._request_handler is None:
-            return {"status": "error", "error": "unknown_request_path"}
+            if path == "/internal/health":
+                metadata = self._metadata_provider()
+                if metadata is None:
+                    return {
+                        "status": "error",
+                        "error": "daemon_metadata_unavailable",
+                    }
+                return asdict(metadata)
 
-        return await self._request_handler(path, payload)
+            if self._request_handler is None:
+                return {"status": "error", "error": "unknown_request_path"}
+
+            return await self._request_handler(path, payload)
+        except Exception as exc:
+            logger.error("Daemon request handler failed", exc_info=True)
+            return {
+                "status": "error",
+                "error": "handler_exception",
+                "details": str(exc),
+            }
 
 
 def probe_daemon_socket(

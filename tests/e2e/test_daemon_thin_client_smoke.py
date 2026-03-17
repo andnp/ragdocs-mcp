@@ -157,3 +157,57 @@ async def test_daemon_backed_mcp_query_documents_smoke(
                 await asyncio.to_thread(stop_daemon, paths=runtime_paths)
     finally:
         os.chdir(original_cwd)
+
+
+@pytest.mark.asyncio
+async def test_daemon_survives_sequential_cli_and_mcp_requests(
+    runner: CliRunner,
+    daemon_test_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_cwd = Path.cwd()
+    os.chdir(daemon_test_env)
+    runtime_paths = _configure_shared_runtime_home(daemon_test_env, monkeypatch)
+
+    try:
+        rebuild = await asyncio.to_thread(runner.invoke, cli, ["rebuild-index"])
+        assert rebuild.exit_code == 0, rebuild.output
+
+        try:
+            first_query = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["query", "authentication", "--json"],
+            )
+            assert first_query.exit_code == 0, first_query.output
+            await _wait_for_daemon_socket(runtime_paths.socket_path)
+
+            second_query = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["query", "setup", "--json"],
+            )
+            assert second_query.exit_code == 0, second_query.output
+            await _wait_for_daemon_socket(runtime_paths.socket_path)
+
+            server = MCPServer()
+            contents = await server._maybe_call_remote_tool(
+                "query_documents",
+                {"query": "authentication", "top_n": 1},
+            )
+            assert contents is not None
+            assert len(contents) == 1
+            await _wait_for_daemon_socket(runtime_paths.socket_path)
+
+            stats = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["index", "stats", "--json"],
+            )
+            assert stats.exit_code == 0, stats.output
+            await _wait_for_daemon_socket(runtime_paths.socket_path)
+        finally:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(stop_daemon, paths=runtime_paths)
+    finally:
+        os.chdir(original_cwd)
