@@ -1141,7 +1141,7 @@ MAIN PROCESS (MCP Server)              WORKER PROCESS (Indexer)
 
 **Configuration:** See `[tool.ragdocs.worker]` in `pyproject.toml`. Disable with `enabled = false` to use single-process mode.
 
-**Implementation:** See [Spec 21: Multiprocess Architecture](specs/21-multiprocess-architecture.md) for detailed design.
+**Historical note:** The older multiprocess snapshot design has been superseded by the daemon-backed control-plane work tracked in [Contract: Global Daemon & ZMQ Control Plane](plans/04-daemon-zmq-control-plane-contract.md).
 
 ### Self-Healing Index Infrastructure
 

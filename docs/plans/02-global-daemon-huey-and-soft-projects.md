@@ -2,7 +2,7 @@
 
 **Status:** Partially complete — verified against code on 2026-03-17
 **Date:** 2026-03-16
-**Related:** `docs/specs/25-ragdocs-product-principles.md`, `docs/specs/23-concurrency-huey.md`, `docs/specs/21-multiprocess-architecture.md`, `docs/guides/multi-project-setup.md`
+**Related:** `docs/specs/25-ragdocs-product-principles.md`, `docs/specs/23-concurrency-huey.md`, `docs/plans/04-daemon-zmq-control-plane-contract.md`, `docs/guides/multi-project-setup.md`
 
 ## Executive Summary
 

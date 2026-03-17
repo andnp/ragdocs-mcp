@@ -1,7 +1,7 @@
 # Feature Spec 23: Concurrency Model & Task Queue (Huey)
 
 **Status:** Draft
-**Related:** [sqlite-refactor.md](../plans/sqlite-refactor.md), [21-multiprocess-architecture.md](21-multiprocess-architecture.md)
+**Related:** [sqlite-refactor.md](../plans/sqlite-refactor.md), [../plans/04-daemon-zmq-control-plane-contract.md](../plans/04-daemon-zmq-control-plane-contract.md)
 
 ## 1. Overview
 The current multiprocess architecture relies on Python's `multiprocessing.Queue` and a complex file-based snapshot system. When multiple MCP clients (e.g., VS Code extension and Claude Desktop) open the same project simultaneously, they spawn competing MCP server instances. If each spawns its own background worker, they contend for system resources (CPU/GPU for embeddings), file locks, and watch the same directories redundantly.
