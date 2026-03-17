@@ -268,7 +268,7 @@ def _request_daemon_overview(
     runtime_paths: RuntimePaths,
 ) -> dict[str, object] | None:
     metadata = inspection.metadata
-    if metadata is None or not inspection.responsive or not metadata.socket_path:
+    if metadata is None or not inspection.running or not metadata.socket_path:
         return None
 
     response = request_daemon_socket(

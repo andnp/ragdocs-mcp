@@ -165,6 +165,60 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
     assert '"worker_health": "healthy"' in result.output
 
 
+def test_daemon_status_json_fetches_overview_even_if_probe_not_responsive(
+    monkeypatch,
+    tmp_path,
+):
+    runner = CliRunner()
+    metadata = DaemonMetadata(
+        pid=4321,
+        started_at=1_763_700_000.0,
+        status="ready_primary",
+        socket_path="/tmp/ragdocs.sock",
+        index_db_path="/tmp/index.db",
+        queue_db_path="/tmp/queue.db",
+    )
+    monkeypatch.setattr(
+        "src.cli.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=metadata,
+            running=True,
+            stale=False,
+            responsive=False,
+            ready=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "src.cli.request_daemon_socket",
+        lambda socket_path, path, payload, timeout_seconds: {
+            "status": "ok",
+            "worker_health": "healthy",
+            "worker_pid": 9999,
+            "worker_running": True,
+        },
+    )
+    monkeypatch.setattr(
+        RuntimePaths,
+        "resolve",
+        classmethod(
+            lambda cls: RuntimePaths(
+                root=tmp_path,
+                index_db_path=tmp_path / "index.db",
+                queue_db_path=tmp_path / "queue.db",
+                metadata_path=tmp_path / "daemon.json",
+                lock_path=tmp_path / "daemon.lock",
+                socket_path=tmp_path / "daemon.sock",
+            )
+        ),
+    )
+
+    result = runner.invoke(cli, ["daemon", "status", "--json"])
+
+    assert result.exit_code == 0
+    assert '"worker_health": "healthy"' in result.output
+    assert '"worker_pid": 9999' in result.output
+
+
 def test_daemon_start_invokes_management_helper(monkeypatch):
     runner = CliRunner()
     observed: dict[str, object] = {}
