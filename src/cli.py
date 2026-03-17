@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 # Prevent tokenizers parallelism warning when forking worker process.
@@ -26,6 +27,7 @@ from rich.progress import (
 from rich.table import Table
 
 from src.config import load_config
+from src.daemon.management import inspect_daemon, restart_daemon, start_daemon, stop_daemon
 from src.git.repository import (
     discover_git_repositories,
     get_commits_after_timestamp,
@@ -38,11 +40,11 @@ from src.git.parallel_indexer import (
 from src.context import ApplicationContext
 from src.indexing.manifest import IndexManifest, save_manifest
 from src.indexing.reconciler import build_indexed_files_map
+from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.utils import should_include_file
 from src.cli_utils.validators import (
     validate_range,
     validate_timestamp_range,
-    validate_non_negative,
 )
 from src.cli_utils.formatters import print_result_panel, print_debug_stats
 
@@ -113,6 +115,155 @@ def mcp(project: str | None):
     except Exception as e:
         logger.error(f"Failed to start MCP server: {e}")
         sys.exit(1)
+
+
+async def _run_daemon_forever(project: str | None) -> None:
+    coordinator = LifecycleCoordinator()
+    loop = asyncio.get_running_loop()
+    coordinator.install_signal_handlers(loop)
+
+    ctx = await asyncio.to_thread(
+        ApplicationContext.create,
+        project_override=project,
+        enable_watcher=True,
+        lazy_embeddings=True,
+    )
+
+    try:
+        await coordinator.start(ctx, background_index=False)
+        while coordinator.state not in (
+            LifecycleState.SHUTTING_DOWN,
+            LifecycleState.TERMINATED,
+        ):
+            await asyncio.sleep(0.2)
+    finally:
+        await coordinator.shutdown()
+
+
+@cli.group("daemon")
+def daemon_group():
+    """Manage the long-lived Ragdocs daemon."""
+
+
+@daemon_group.command("run")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+def daemon_run(project: str | None):
+    """Run the daemon in the foreground."""
+    try:
+        asyncio.run(_run_daemon_forever(project))
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        logger.error(f"Failed to run daemon: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("daemon-internal-run", hidden=True)
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+def daemon_internal_run(project: str | None):
+    """Run the daemon in the foreground for internal start/restart flows."""
+    daemon_run.callback(project)
+
+
+@daemon_group.command("start")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+@click.option(
+    "--timeout",
+    default=10.0,
+    show_default=True,
+    type=float,
+    help="Seconds to wait for daemon metadata",
+)
+def daemon_start(project: str | None, timeout: float):
+    """Start the daemon in the background."""
+    try:
+        metadata = start_daemon(
+            project_override=project,
+            timeout_seconds=timeout,
+        )
+    except Exception as e:
+        logger.error(f"Failed to start daemon: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Daemon running (pid={metadata.pid}, status={metadata.status})")
+
+
+@daemon_group.command("status")
+def daemon_status():
+    """Print current daemon status."""
+    inspection = inspect_daemon()
+    if inspection.metadata is None:
+        click.echo("Daemon status: not running")
+        return
+
+    state = "running" if inspection.running else "stale"
+    started_at = time.strftime(
+        "%Y-%m-%d %H:%M:%S", time.localtime(inspection.metadata.started_at)
+    )
+    click.echo(f"Daemon status: {state}")
+    click.echo(f"PID: {inspection.metadata.pid}")
+    click.echo(f"Lifecycle: {inspection.metadata.status}")
+    click.echo(f"Started: {started_at}")
+    if inspection.metadata.transport_endpoint:
+        click.echo(f"Endpoint: {inspection.metadata.transport_endpoint}")
+
+
+@daemon_group.command("stop")
+@click.option(
+    "--timeout",
+    default=5.0,
+    show_default=True,
+    type=float,
+    help="Seconds to wait before forcing stop",
+)
+def daemon_stop(timeout: float):
+    """Stop the daemon if it is running."""
+    try:
+        metadata = stop_daemon(timeout_seconds=timeout)
+    except Exception as e:
+        logger.error(f"Failed to stop daemon: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    if metadata is None:
+        click.echo("Daemon status: not running")
+        return
+
+    click.echo(f"Daemon stopped (pid={metadata.pid})")
+
+
+@daemon_group.command("restart")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+@click.option(
+    "--timeout",
+    default=10.0,
+    show_default=True,
+    type=float,
+    help="Seconds to wait for daemon metadata after restart",
+)
+def daemon_restart(project: str | None, timeout: float):
+    """Restart the daemon."""
+    try:
+        metadata = restart_daemon(
+            project_override=project,
+            start_timeout_seconds=timeout,
+        )
+    except Exception as e:
+        logger.error(f"Failed to restart daemon: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Daemon restarted (pid={metadata.pid}, status={metadata.status})")
 
 
 @cli.command()
@@ -621,209 +772,6 @@ def search_commits(
 
     except Exception as e:
         logger.error(f"Git commit search failed: {e}")
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-
-
-@cli.command("search-memory")
-@click.argument("query_text")
-@click.option("--json", "output_json", is_flag=True, help="Output results as JSON")
-@click.option(
-    "--limit", default=5, type=int, help="Maximum number of results (default: 5)"
-)
-@click.option("--debug", is_flag=True, help="Display intermediate search statistics")
-@click.option(
-    "--type",
-    "memory_type",
-    default=None,
-    help="Memory type filter (plan|journal|fact|observation|reflection)",
-)
-@click.option(
-    "--tags",
-    type=str,
-    default=None,
-    help="Filter by tags (comma-separated, e.g., 'backend,database')",
-)
-@click.option(
-    "--after",
-    "after_timestamp",
-    default=None,
-    type=int,
-    help="Unix timestamp (lower bound)",
-)
-@click.option(
-    "--before",
-    "before_timestamp",
-    default=None,
-    type=int,
-    help="Unix timestamp (upper bound)",
-)
-@click.option(
-    "--relative-days",
-    default=None,
-    type=int,
-    help="Last N days (overrides absolute timestamps)",
-)
-@click.option(
-    "--full", "load_full_memory", is_flag=True, help="Load full memory content"
-)
-@click.option(
-    "--project", default=None, help="Override project detection (name or path)"
-)
-def search_memory(
-    query_text: str,
-    output_json: bool,
-    limit: int,
-    debug: bool,
-    memory_type: str | None,
-    tags: str | None,
-    after_timestamp: int | None,
-    before_timestamp: int | None,
-    relative_days: int | None,
-    load_full_memory: bool,
-    project: str | None,
-):
-    """Search AI memory bank using natural language queries."""
-    try:
-        console = Console()
-        ctx = _create_query_context(project)
-
-        # Check memory system enabled
-        if not ctx.config.memory.enabled:
-            click.echo(
-                "Error: Memory system is not enabled. Enable it in config.toml",
-                err=True,
-            )
-            sys.exit(1)
-
-        # Check memory components exist
-        if ctx.memory_manager is None or ctx.memory_search is None:
-            click.echo(
-                "Error: Memory system unavailable. Check configuration.", err=True
-            )
-            sys.exit(1)
-        assert ctx.memory_manager is not None  # Narrowing for type checker
-        assert ctx.memory_search is not None
-
-        validate_range(limit, MIN_TOP_N, MAX_TOP_N, "--limit")
-
-        if memory_type is not None:
-            valid_types = ["plan", "journal", "fact", "observation", "reflection"]
-            if memory_type not in valid_types:
-                click.echo(
-                    f"Error: --type must be one of: {', '.join(valid_types)}", err=True
-                )
-                sys.exit(1)
-
-        validate_timestamp_range(after_timestamp, before_timestamp)
-        validate_non_negative(relative_days, "--relative-days")
-
-        # Parse tags
-        filter_tags = None
-        if tags:
-            filter_tags = [t.strip() for t in tags.split(",") if t.strip()]
-
-        # Load memory index
-        ctx.memory_manager.load()
-
-        # Capture for closure type narrowing
-        memory_search = ctx.memory_search
-
-        with console.status("[bold green]Searching memories..."):
-
-            async def _run_memory_search_with_healing():
-                results_data = await memory_search.search_memories(
-                    query=query_text,
-                    limit=limit,
-                    filter_type=memory_type,
-                    filter_tags=filter_tags,
-                    load_full_memory=load_full_memory,
-                    after_timestamp=after_timestamp,
-                    before_timestamp=before_timestamp,
-                    relative_days=relative_days,
-                    include_stats=True,
-                )
-                await memory_search.drain_reindex()
-                return results_data
-
-            results_data = asyncio.run(_run_memory_search_with_healing())
-
-        # Type narrowing: unpack the union type
-        if isinstance(results_data, tuple):
-            results, stats = results_data
-        else:
-            results = results_data
-            _ = None
-
-        if output_json:
-            output = {
-                "query": query_text,
-                "results": [
-                    {
-                        "memory_id": r.memory_id,
-                        "score": r.score,
-                        "content": r.content,
-                        "type": r.frontmatter.type,
-                        "status": r.frontmatter.status,
-                        "tags": r.frontmatter.tags,
-                        "created_at": r.frontmatter.created_at.isoformat()
-                        if r.frontmatter.created_at
-                        else None,
-                        "file_path": r.file_path,
-                        "header_path": r.header_path,
-                    }
-                    for r in results
-                ],
-            }
-            click.echo(json.dumps(output, indent=2))
-            return
-
-        console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
-
-        if results:
-            console.print(f"[bold]Found {len(results)} results:[/bold]\n")
-
-            for idx, memory in enumerate(results, 1):
-                tags_str = (
-                    ", ".join(memory.frontmatter.tags)
-                    if memory.frontmatter.tags
-                    else "(none)"
-                )
-                created_str = ""
-                if memory.frontmatter.created_at:
-                    created_str = memory.frontmatter.created_at.strftime(
-                        "%Y-%m-%d %H:%M UTC"
-                    )
-
-                panel_content = [
-                    f"[yellow]Memory:[/yellow] {memory.memory_id}",
-                    f"[cyan]Type:[/cyan] {memory.frontmatter.type} | [magenta]Tags:[/magenta] {tags_str}",
-                ]
-
-                if created_str:
-                    panel_content.append(f"[blue]Created:[/blue] {created_str}")
-
-                panel_content.append("")
-
-                # Truncate content for display unless --full
-                content_display = memory.content
-                if not load_full_memory and len(content_display) > 500:
-                    content_display = content_display[:500] + "..."
-
-                panel_content.append(content_display)
-
-                print_result_panel(
-                    console,
-                    idx,
-                    memory.score,
-                    panel_content,
-                    is_last=(idx == len(results)),
-                )
-        else:
-            console.print("[yellow]No results found.[/yellow]")
-
-    except Exception as e:
-        logger.error(f"Memory search failed: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
