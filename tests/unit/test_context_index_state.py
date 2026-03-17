@@ -11,6 +11,7 @@ Tests cover:
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
+import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -65,6 +66,9 @@ class MockConfig:
     llm: MagicMock = field(default_factory=MagicMock)
     chunking: MagicMock = field(default_factory=MagicMock)
 
+    def __post_init__(self):
+        self.indexing.reconciliation_interval_seconds = 0
+
 
 @dataclass
 class MockIndexManager:
@@ -85,6 +89,20 @@ class MockIndexManager:
 
     def is_ready(self) -> bool:
         return self._ready
+
+
+class SlowLoadIndexManager:
+    def __init__(self, delay_seconds: float = 0.2):
+        self.delay_seconds = delay_seconds
+        self.loaded = False
+        self.vector = type("VectorStub", (), {"_concept_vocabulary": {"warm": 1}})()
+
+    def load(self):
+        time.sleep(self.delay_seconds)
+        self.loaded = True
+
+    def is_ready(self) -> bool:
+        return self.loaded
 
 
 class TestBackgroundIndexRetry:
@@ -268,6 +286,51 @@ class TestBackgroundIndexRetry:
         assert ("indexing", 0) in observed_states
         assert ("indexing", 1) in observed_states
         assert mock_context._index_state.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_background_start_with_existing_index_does_not_block_event_loop(
+    tmp_path: Path,
+):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "index_manager", SlowLoadIndexManager(delay_seconds=0.2))
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "reconciliation_task", None)
+    _setattr(ctx, "_background_index_task", None)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=False))
+
+    reconciliation_calls: list[str] = []
+
+    async def fake_startup_reconciliation() -> None:
+        reconciliation_calls.append("called")
+
+    _setattr(ctx, "_startup_reconciliation", fake_startup_reconciliation)
+
+    async def fake_build_initial_vocabulary() -> None:
+        return None
+
+    _setattr(ctx, "_build_initial_vocabulary", fake_build_initial_vocabulary)
+
+    await asyncio.wait_for(ctx.start(background_index=True), timeout=0.05)
+
+    assert ctx._index_state.status == "indexing"
+    assert not ctx._ready_event.is_set()
+
+    await ctx.ensure_ready(timeout=1.0)
+
+    assert ctx._index_state.status == "ready"
+    assert ctx.index_manager.loaded is True
+    assert reconciliation_calls == ["called"]
 
 
 class TestIsReadyMethods:

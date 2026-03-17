@@ -193,7 +193,7 @@ class ApplicationContext:
         return should_rebuild(self.current_manifest, saved_manifest)
 
     async def start(self, background_index: bool = False) -> None:
-        needs_rebuild = self._check_and_rebuild_if_needed()
+        needs_rebuild = await asyncio.to_thread(self._check_and_rebuild_if_needed)
 
         if needs_rebuild:
             logger.info("Index rebuild required - indexing all documents")
@@ -208,12 +208,19 @@ class ApplicationContext:
                 asyncio.create_task(self._build_initial_vocabulary())
         else:
             logger.info("Loading existing indices")
-            self.index_manager.load()
-            self._ready_event.set()
-            await self._startup_reconciliation()
-            # Build vocabulary if empty (migration from old index)
-            if not self.index_manager.vector._concept_vocabulary:
-                asyncio.create_task(self._build_initial_vocabulary())
+            if background_index:
+                self._index_state = IndexState(status="indexing")
+                self._background_index_task = asyncio.create_task(
+                    self._load_existing_indices_background()
+                )
+            else:
+                await asyncio.to_thread(self.index_manager.load)
+                self._index_state = IndexState(status="ready")
+                self._ready_event.set()
+                await self._startup_reconciliation()
+                # Build vocabulary if empty (migration from old index)
+                if not self.index_manager.vector._concept_vocabulary:
+                    asyncio.create_task(self._build_initial_vocabulary())
 
         if self.watcher:
             self.watcher.start()
@@ -329,10 +336,28 @@ class ApplicationContext:
                     self._init_error = e
                     self._ready_event.set()  # Unblock waiters so they can see the error
 
+    async def _load_existing_indices_background(self) -> None:
+        try:
+            await asyncio.to_thread(self.index_manager.load)
+            await self._startup_reconciliation()
+
+            if not self.index_manager.vector._concept_vocabulary:
+                asyncio.create_task(self._build_initial_vocabulary())
+
+            self._index_state = IndexState(status="ready")
+            self._ready_event.set()
+        except Exception as e:
+            self._index_state = IndexState(
+                status="failed",
+                last_error=str(e),
+            )
+            self._init_error = e
+            self._ready_event.set()
+
     async def _startup_reconciliation(self) -> None:
         logger.info("Running startup reconciliation")
         docs_path = Path(self.config.indexing.documents_path)
-        discovered_files = self.discover_files()
+        discovered_files = await asyncio.to_thread(self.discover_files)
 
         result = await asyncio.to_thread(
             self.index_manager.reconcile_indices,
@@ -366,7 +391,7 @@ class ApplicationContext:
                 logger.info("Starting periodic reconciliation")
 
                 docs_path = Path(self.config.indexing.documents_path)
-                discovered_files = self.discover_files()
+                discovered_files = await asyncio.to_thread(self.discover_files)
 
                 result = await asyncio.to_thread(
                     self.index_manager.reconcile_indices,

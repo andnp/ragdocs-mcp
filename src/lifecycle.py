@@ -201,7 +201,8 @@ class LifecycleCoordinator:
                     from src.git.repository import discover_git_repositories
                     from src.git.watcher import GitWatcher
 
-                    repos = discover_git_repositories(
+                    repos = await asyncio.to_thread(
+                        discover_git_repositories,
                         Path(ctx.config.indexing.documents_path),
                         ctx.config.indexing.exclude,
                         ctx.config.indexing.exclude_hidden_dirs,
