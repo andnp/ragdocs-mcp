@@ -14,6 +14,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.context import ApplicationContext
+from src.daemon import (
+    DaemonMetadata,
+    RuntimePaths,
+    remove_daemon_metadata,
+    write_daemon_metadata,
+)
 from src.git.watcher import GitWatcher
 
 if TYPE_CHECKING:
@@ -140,6 +146,10 @@ class LifecycleCoordinator:
     _init_error: BaseException | None = field(default=None, repr=False)
     _leader_election: LeaderElection | None = field(default=None, repr=False)
     _huey_worker: HueyWorker | None = field(default=None, repr=False)
+    _runtime_paths: RuntimePaths = field(
+        default_factory=RuntimePaths.resolve, repr=False
+    )
+    _started_at: float | None = field(default=None, repr=False)
 
     @property
     def state(self) -> LifecycleState:
@@ -163,6 +173,9 @@ class LifecycleCoordinator:
 
         self._state = LifecycleState.STARTING
         self._ctx = ctx
+        if self._started_at is None:
+            self._started_at = time.time()
+        self._write_daemon_metadata()
 
         try:
             await ctx.start(background_index=background_index)
@@ -195,27 +208,32 @@ class LifecycleCoordinator:
 
             if background_index:
                 self._state = LifecycleState.INITIALIZING
+                self._write_daemon_metadata()
                 logger.info("Lifecycle: INITIALIZING (indices loading in background)")
             elif db_manager is not None:
                 self._leader_election = LeaderElection(db_manager)
                 if self._leader_election.try_acquire():
                     self._state = LifecycleState.READY_PRIMARY
+                    self._write_daemon_metadata()
                     logger.info("Lifecycle: READY_PRIMARY (leader elected)")
                     if huey_worker is not None:
                         self._huey_worker = huey_worker
                         self._huey_worker.start()
                 else:
                     self._state = LifecycleState.READY_REPLICA
+                    self._write_daemon_metadata()
                     logger.info(
                         "Lifecycle: READY_REPLICA (another instance is primary)"
                     )
             else:
                 self._state = LifecycleState.READY
+                self._write_daemon_metadata()
                 logger.info("Lifecycle: READY")
         except Exception:
             logger.error("Startup failed, cleaning up resources", exc_info=True)
             await self._cleanup_resources()
             self._state = LifecycleState.TERMINATED
+            self._remove_daemon_metadata()
             raise
 
     async def wait_ready(self, timeout: float = 60.0) -> None:
@@ -267,6 +285,7 @@ class LifecycleCoordinator:
                 raise RuntimeError(f"Wait for ready timed out after {timeout}s")
             await self._ctx.ensure_ready(timeout=remaining)
             self._state = LifecycleState.READY
+            self._write_daemon_metadata()
             logger.info("Lifecycle: READY (initialization complete)")
             return
 
@@ -291,6 +310,7 @@ class LifecycleCoordinator:
             LifecycleState.STARTING,
         ):
             self._state = LifecycleState.SHUTTING_DOWN
+            self._write_daemon_metadata()
             logger.info("Lifecycle: SHUTTING_DOWN")
             self._start_emergency_timer()
             self._close_stdin()
@@ -330,12 +350,31 @@ class LifecycleCoordinator:
             return
 
         self._state = LifecycleState.SHUTTING_DOWN
+        self._write_daemon_metadata()
 
         await self._cleanup_resources()
 
         self._state = LifecycleState.TERMINATED
+        self._remove_daemon_metadata()
         self._cancel_emergency_timer()
         logger.info("Lifecycle: TERMINATED")
+
+    def _write_daemon_metadata(self) -> None:
+        if self._started_at is None:
+            self._started_at = time.time()
+
+        metadata = DaemonMetadata(
+            pid=os.getpid(),
+            started_at=self._started_at,
+            status=self._state.value,
+            socket_path=str(self._runtime_paths.socket_path),
+            index_db_path=str(self._runtime_paths.index_db_path),
+            queue_db_path=str(self._runtime_paths.queue_db_path),
+        )
+        write_daemon_metadata(self._runtime_paths.metadata_path, metadata)
+
+    def _remove_daemon_metadata(self) -> None:
+        remove_daemon_metadata(self._runtime_paths.metadata_path)
 
     async def _cleanup_resources(self) -> None:
         self._cancel_emergency_timer()

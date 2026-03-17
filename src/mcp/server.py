@@ -15,14 +15,11 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from src.context import ApplicationContext
-from src.lifecycle import LifecycleCoordinator
+from src.daemon import DaemonLockTimeoutError, FilesystemLock, RuntimePaths
+from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.mcp.handlers import HandlerContext, get_handler
 from src.mcp.tools.document_tools import get_document_tools
-from src.mcp.tools.memory_tools import get_memory_tools
-from src.mcp.tools.metadata_tools import get_metadata_tools
 import src.mcp.tools.document_tools  # noqa: F401 - registers handlers
-import src.mcp.tools.memory_tools  # noqa: F401 - registers handlers
-import src.mcp.tools.metadata_tools  # noqa: F401 - registers handlers
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +32,14 @@ class MCPServer:
         self.project_override = project_override
         self.server = Server("mcp-markdown-ragdocs")
         self._coordinator = LifecycleCoordinator()
+        self._boot_lock: FilesystemLock | None = None
 
         self._setup_handlers()
 
     def _setup_handlers(self) -> None:
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:
-            return [
-                *get_document_tools(),
-                *get_memory_tools(),
-                *get_metadata_tools(),
-            ]
+            return [*get_document_tools()]
 
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
@@ -87,6 +81,31 @@ class MCPServer:
             self._coordinator.record_init_error(e)
             raise
 
+    def _acquire_boot_lock(self, timeout_seconds: float = 10.0) -> None:
+        if self._boot_lock is not None:
+            return
+
+        paths = RuntimePaths.resolve()
+        paths.ensure_directories()
+
+        lock = FilesystemLock(paths.lock_path)
+        try:
+            lock.acquire(timeout_seconds=timeout_seconds)
+        except DaemonLockTimeoutError as exc:
+            raise RuntimeError(
+                "Another Ragdocs daemon is already starting or running"
+            ) from exc
+
+        self._boot_lock = lock
+
+    def _release_boot_lock(self) -> None:
+        lock = self._boot_lock
+        self._boot_lock = None
+        if lock is None:
+            return
+
+        lock.release()
+
     async def startup(self) -> None:
         """Initialize context and start index loading.
 
@@ -94,29 +113,32 @@ class MCPServer:
         for callers that explicitly await startup before accepting requests).
         """
         logger.info("Starting MCP server initialization")
-        await self._init_and_start()
-        logger.info("MCP server initialization complete")
+        self._acquire_boot_lock()
+        try:
+            await self._init_and_start()
+            logger.info("MCP server initialization complete")
+        except Exception:
+            self._release_boot_lock()
+            raise
 
     async def shutdown(self) -> None:
-        if not self.ctx:
-            return
-        logger.info("Shutting down MCP server")
-        # Keep self.ctx set during cleanup so in-flight handlers still see
-        # a valid context via the getter.  They'll get an error from
-        # wait_ready() (coordinator rejects SHUTTING_DOWN state) rather
-        # than a confusing "Server not initialized" from require_ctx().
-        ctx = self.ctx
         try:
-            await ctx.stop()
-        finally:
+            if self.ctx is None and self._boot_lock is None:
+                return
+            logger.info("Shutting down MCP server")
+            if self._coordinator.state != LifecycleState.UNINITIALIZED:
+                await self._coordinator.shutdown()
             self.ctx = None
-        logger.info("Shutdown complete")
+            logger.info("Shutdown complete")
+        finally:
+            self._release_boot_lock()
 
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
         self._coordinator.install_signal_handlers(loop)
 
         try:
+            self._acquire_boot_lock()
             async with stdio_server() as (read_stream, write_stream):
                 # Open stdio FIRST so the MCP handshake can succeed immediately.
                 # Initialization runs in the background; tool handlers wait
@@ -139,7 +161,7 @@ class MCPServer:
         except asyncio.CancelledError:
             logger.info("Server run cancelled")
         finally:
-            await self._coordinator.shutdown()
+            await self.shutdown()
 
 
 async def main(argv: list[str] | None = None):
