@@ -540,13 +540,13 @@ def test_request_daemon_json_uses_running_daemon(monkeypatch):
     from src.cli import _request_daemon_json
 
     payload = _request_daemon_json(
-        "/api/admin/queue-status",
+        "/api/admin/tasks",
         {},
         project_override=None,
         auto_start=False,
     )
 
-    assert payload == {"status": "ok", "path": "/api/admin/queue-status"}
+    assert payload == {"status": "ok", "path": "/api/admin/tasks"}
 
 
 def test_query_prefers_daemon_transport(monkeypatch):

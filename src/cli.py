@@ -208,9 +208,9 @@ async def _run_daemon_forever(project: str | None) -> None:
                     if isinstance(content, TextContent)
                 ]
             }
-        if path == "/api/admin/index-stats":
+        if path in {"/api/admin/index", "/api/admin/index-stats"}:
             return _build_index_stats_payload(ctx)
-        if path == "/api/admin/queue-status":
+        if path in {"/api/admin/tasks", "/api/admin/queue-status"}:
             return _build_queue_status_payload(
                 queue_path=runtime_paths.queue_db_path,
                 worker_running=huey_worker.is_running,
@@ -503,7 +503,7 @@ def index_stats(project: str | None, output_json: bool):
     """Print document and git index statistics for the active project context."""
     try:
         payload = _request_daemon_json(
-            "/api/admin/index-stats",
+            "/api/admin/index",
             {},
             project_override=project,
             auto_start=False,
@@ -575,7 +575,7 @@ def queue_status(project: str | None, output_json: bool):
     """Print queue depth and recent task failures."""
     try:
         payload = _request_daemon_json(
-            "/api/admin/queue-status",
+            "/api/admin/tasks",
             {},
             project_override=project,
             auto_start=False,
