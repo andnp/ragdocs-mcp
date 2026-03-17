@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 import pytest
 from click.testing import CliRunner
@@ -211,3 +212,37 @@ async def test_daemon_survives_sequential_cli_and_mcp_requests(
                 await asyncio.to_thread(stop_daemon, paths=runtime_paths)
     finally:
         os.chdir(original_cwd)
+
+
+@pytest.mark.asyncio
+async def test_mcp_run_stays_lock_free_on_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = MCPServer()
+
+    @asynccontextmanager
+    async def _fake_stdio_server():
+        yield object(), object()
+
+    async def _fake_server_run(read_stream, write_stream, init_options):
+        return None
+
+    monkeypatch.setattr(
+        "src.mcp.server.stdio_server",
+        _fake_stdio_server,
+    )
+    monkeypatch.setattr(
+        server.server,
+        "run",
+        _fake_server_run,
+    )
+    monkeypatch.setattr(
+        server._coordinator,
+        "install_signal_handlers",
+        lambda loop: None,
+    )
+    monkeypatch.setattr(
+        server,
+        "_ensure_local_runtime_started",
+        lambda: (_ for _ in ()).throw(AssertionError("local runtime should not be started during thin-client run startup")),
+    )
+
+    await server.run()

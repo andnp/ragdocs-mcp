@@ -26,11 +26,13 @@ class GitWatcher:
         commit_indexer: CommitIndexer,
         config: Config,
         poll_interval: float = 30.0,
+        use_tasks: bool = False,
     ):
         self._git_repos = git_repos
         self._commit_indexer = commit_indexer
         self._config = config
         self._poll_interval = poll_interval
+        self._use_tasks = use_tasks
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
@@ -77,6 +79,19 @@ class GitWatcher:
 
     async def _batch_process(self, git_dirs: set[Path]) -> None:
         """Incrementally index any commits added since the last poll."""
+        if self._use_tasks:
+            from src.indexing.tasks import enqueue_refresh_git
+
+            for git_dir in git_dirs:
+                if enqueue_refresh_git(str(git_dir)):
+                    logger.info("Enqueued git refresh task for %s", git_dir.parent)
+                else:
+                    logger.warning(
+                        "Git watcher task mode enabled but no task was registered for %s",
+                        git_dir.parent,
+                    )
+            return
+
         from src.git.parallel_indexer import (
             ParallelIndexingConfig,
             index_commits_parallel,

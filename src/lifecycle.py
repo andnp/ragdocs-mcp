@@ -136,6 +136,7 @@ class LeaderElection:
 @dataclass
 class LifecycleCoordinator:
     _state: LifecycleState = field(default=LifecycleState.UNINITIALIZED)
+    _manage_daemon_metadata: bool = field(default=True, repr=False)
     _ctx: ApplicationContext | None = field(default=None)
     _git_watcher: GitWatcher | None = field(default=None, repr=False)
     _emergency_timer: threading.Timer | None = field(default=None, repr=False)
@@ -180,6 +181,18 @@ class LifecycleCoordinator:
         try:
             await ctx.start(background_index=background_index)
 
+            if db_manager is not None:
+                self._leader_election = LeaderElection(db_manager)
+                if self._leader_election.try_acquire():
+                    logger.info("Lifecycle: leader elected")
+                    if huey_worker is not None:
+                        self._huey_worker = huey_worker
+                        self._huey_worker.start()
+                else:
+                    logger.info(
+                        "Lifecycle: replica mode (another instance is primary)"
+                    )
+
             if (
                 ctx.config.git_indexing.enabled
                 and ctx.config.git_indexing.watch_enabled
@@ -200,6 +213,7 @@ class LifecycleCoordinator:
                             commit_indexer=ctx.commit_indexer,
                             config=ctx.config,
                             poll_interval=ctx.config.git_indexing.poll_interval_seconds,
+                            use_tasks=huey_worker is not None,
                         )
                         self._git_watcher.start()
                         logger.info(
@@ -211,14 +225,10 @@ class LifecycleCoordinator:
                 self._write_daemon_metadata()
                 logger.info("Lifecycle: INITIALIZING (indices loading in background)")
             elif db_manager is not None:
-                self._leader_election = LeaderElection(db_manager)
-                if self._leader_election.try_acquire():
+                if self._leader_election is not None and self._leader_election.is_leader:
                     self._state = LifecycleState.READY_PRIMARY
                     self._write_daemon_metadata()
                     logger.info("Lifecycle: READY_PRIMARY (leader elected)")
-                    if huey_worker is not None:
-                        self._huey_worker = huey_worker
-                        self._huey_worker.start()
                 else:
                     self._state = LifecycleState.READY_REPLICA
                     self._write_daemon_metadata()
@@ -284,9 +294,16 @@ class LifecycleCoordinator:
             if remaining <= 0:
                 raise RuntimeError(f"Wait for ready timed out after {timeout}s")
             await self._ctx.ensure_ready(timeout=remaining)
-            self._state = LifecycleState.READY
+            if self._leader_election is not None:
+                self._state = (
+                    LifecycleState.READY_PRIMARY
+                    if self._leader_election.is_leader
+                    else LifecycleState.READY_REPLICA
+                )
+            else:
+                self._state = LifecycleState.READY
             self._write_daemon_metadata()
-            logger.info("Lifecycle: READY (initialization complete)")
+            logger.info("Lifecycle: %s (initialization complete)", self._state)
             return
 
         raise RuntimeError(f"Wait for ready timed out after {timeout}s")
@@ -360,6 +377,8 @@ class LifecycleCoordinator:
         logger.info("Lifecycle: TERMINATED")
 
     def _write_daemon_metadata(self) -> None:
+        if not self._manage_daemon_metadata:
+            return
         if self._started_at is None:
             self._started_at = time.time()
 
@@ -374,6 +393,8 @@ class LifecycleCoordinator:
         write_daemon_metadata(self._runtime_paths.metadata_path, metadata)
 
     def _remove_daemon_metadata(self) -> None:
+        if not self._manage_daemon_metadata:
+            return
         remove_daemon_metadata(self._runtime_paths.metadata_path)
 
     async def _cleanup_resources(self) -> None:

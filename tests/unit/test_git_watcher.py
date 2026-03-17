@@ -91,6 +91,7 @@ def test_git_watcher_default_poll_interval(test_config, commit_indexer, tmp_path
     )
 
     assert watcher._poll_interval == 30.0
+    assert watcher._use_tasks is False
 
 
 def test_git_watcher_config_access(test_config, commit_indexer, tmp_path):
@@ -166,3 +167,28 @@ async def test_git_watcher_idempotent_stop(test_config, commit_indexer, tmp_path
     await watcher.stop()
     await watcher.stop()  # second stop must not raise
     assert not watcher._running
+
+
+@pytest.mark.asyncio
+async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
+    test_config, commit_indexer, tmp_path, monkeypatch
+):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    observed: list[str] = []
+
+    watcher = GitWatcher(
+        git_repos=[git_dir],
+        commit_indexer=commit_indexer,
+        config=test_config,
+        use_tasks=True,
+    )
+
+    monkeypatch.setattr(
+        "src.indexing.tasks.enqueue_refresh_git",
+        lambda git_dir_str: observed.append(git_dir_str) or True,
+    )
+
+    await watcher._batch_process({git_dir})
+
+    assert observed == [str(git_dir)]

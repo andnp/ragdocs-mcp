@@ -45,6 +45,33 @@ def test_create_with_watcher_enabled(test_config, monkeypatch):
         project_override=None, enable_watcher=True, lazy_embeddings=True
     )
     assert ctx.watcher is not None
+    assert ctx.watcher._use_tasks is False
+
+
+def test_create_with_task_watcher_enabled(test_config, monkeypatch):
+    monkeypatch.setattr("src.context.load_config", lambda: test_config)
+    ctx = ApplicationContext.create(
+        project_override=None,
+        enable_watcher=True,
+        lazy_embeddings=True,
+        use_tasks=True,
+    )
+    assert ctx.watcher is not None
+    assert ctx.watcher._use_tasks is True
+
+
+def test_create_with_index_path_override(test_config, monkeypatch, tmp_path):
+    monkeypatch.setattr("src.context.load_config", lambda: test_config)
+    override_path = tmp_path / "daemon-store"
+    ctx = ApplicationContext.create(
+        project_override=None,
+        enable_watcher=False,
+        lazy_embeddings=True,
+        index_path_override=override_path,
+    )
+
+    assert ctx.index_path == override_path
+    assert ctx.config.indexing.index_path == str(override_path)
 
 
 def test_discover_files_returns_markdown_files(context_with_config):

@@ -27,6 +27,7 @@ from rich.progress import (
 from rich.table import Table
 
 from src.config import load_config
+from src.daemon.queue_status import get_queue_stats
 from src.daemon import RuntimePaths, read_daemon_metadata
 from src.daemon.health import (
     DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
@@ -50,10 +51,13 @@ from src.git.parallel_indexer import (
     index_commits_parallel_sync,
 )
 from src.context import ApplicationContext
+from src.coordination.queue import get_huey
 from src.indexing.manifest import IndexManifest, save_manifest
+from src.indexing.tasks import register_tasks
 from src.indexing.reconciler import build_indexed_files_map
 from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.utils import should_include_file
+from src.worker.consumer import HueyWorker
 from src.cli_utils.validators import (
     validate_range,
     validate_timestamp_range,
@@ -85,6 +89,32 @@ def _should_include_file(
     return should_include_file(
         file_path, include_patterns, exclude_patterns, exclude_hidden_dirs
     )
+
+
+def _create_daemon_runtime(project: str | None, runtime_paths: RuntimePaths):
+    ctx = ApplicationContext.create(
+        project_override=project,
+        enable_watcher=True,
+        lazy_embeddings=True,
+        use_tasks=True,
+        index_path_override=runtime_paths.root,
+    )
+    huey = get_huey(runtime_paths.queue_db_path)
+    register_tasks(huey, ctx.index_manager, commit_indexer=ctx.commit_indexer)
+    worker = HueyWorker(huey)
+    return ctx, worker
+
+
+def _build_queue_status_payload(
+    *,
+    queue_path: Path,
+    worker_running: bool,
+) -> dict[str, object]:
+    huey = get_huey(queue_path)
+    stats = get_queue_stats(huey, worker_running=worker_running)
+    payload = stats.to_dict()
+    payload["queue_db_path"] = str(queue_path)
+    return payload
 
 
 @click.group()
@@ -177,6 +207,11 @@ async def _run_daemon_forever(project: str | None) -> None:
             }
         if path == "/api/admin/index-stats":
             return _build_index_stats_payload(ctx)
+        if path == "/api/admin/queue-status":
+            return _build_queue_status_payload(
+                queue_path=runtime_paths.queue_db_path,
+                worker_running=huey_worker.is_running,
+            )
         if path == "/api/search/query":
             await coordinator.wait_ready(timeout=60.0)
             query_text = str(payload.get("query", ""))
@@ -239,17 +274,21 @@ async def _run_daemon_forever(project: str | None) -> None:
     loop = asyncio.get_running_loop()
     coordinator.install_signal_handlers(loop)
 
-    ctx = await asyncio.to_thread(
-        ApplicationContext.create,
-        project_override=project,
-        enable_watcher=True,
-        lazy_embeddings=True,
+    ctx, huey_worker = await asyncio.to_thread(
+        _create_daemon_runtime,
+        project,
+        runtime_paths,
     )
 
     try:
         await health_server.start()
         try:
-            await coordinator.start(ctx, background_index=False)
+            await coordinator.start(
+                ctx,
+                background_index=True,
+                db_manager=ctx.db_manager,
+                huey_worker=huey_worker,
+            )
             while coordinator.state not in (
                 LifecycleState.SHUTTING_DOWN,
                 LifecycleState.TERMINATED,
@@ -265,6 +304,11 @@ async def _run_daemon_forever(project: str | None) -> None:
 @cli.group("daemon")
 def daemon_group():
     """Manage the long-lived Ragdocs daemon."""
+
+
+@cli.group("queue")
+def queue_group():
+    """Inspect task queue state."""
 
 
 @daemon_group.command("run")
@@ -508,6 +552,7 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
     return {
         "documents_path": str(docs_root),
         "index_path": str(ctx.index_path),
+        "index_db_path": str(ctx.index_path / "index.db"),
         "manifest_path": str(manifest_path),
         "manifest_exists": manifest_exists,
         "indexed_documents": ctx.index_manager.get_document_count()
@@ -520,6 +565,64 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
     }
 
 
+@queue_group.command("status")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+@click.option("--json", "output_json", is_flag=True, help="Output queue stats as JSON")
+def queue_status(project: str | None, output_json: bool):
+    """Print queue depth and recent task failures."""
+    try:
+        payload = _request_daemon_json(
+            "/api/admin/queue-status",
+            {},
+            project_override=project,
+            auto_start=False,
+        )
+
+        if payload is None:
+            runtime_paths = RuntimePaths.resolve()
+            payload = _build_queue_status_payload(
+                queue_path=runtime_paths.queue_db_path,
+                worker_running=False,
+            )
+
+        if output_json:
+            click.echo(json.dumps(payload, indent=2))
+            return
+
+        click.echo("Queue status")
+        click.echo(f"Queue DB: {payload['queue_db_path']}")
+        click.echo(f"Pending tasks: {payload['pending_count']}")
+        click.echo(f"Scheduled tasks: {payload['scheduled_count']}")
+        click.echo(f"Running tasks: {payload['running_count']}")
+        click.echo(f"Failed tasks: {payload['failed_count']}")
+        click.echo(f"Worker running: {'yes' if payload['worker_running'] else 'no'}")
+
+        task_counts = payload.get("task_counts", {})
+        if isinstance(task_counts, dict) and task_counts:
+            click.echo("Task counts:")
+            for task_name, count in task_counts.items():
+                click.echo(f"  {task_name}: {count}")
+
+        failures = payload.get("recent_failures", [])
+        if isinstance(failures, list) and failures:
+            click.echo("Recent failures:")
+            for failure in failures:
+                if not isinstance(failure, dict):
+                    continue
+                task_name = failure.get("task_name") or "unknown"
+                click.echo(
+                    f"  {task_name} ({failure.get('task_id', 'unknown')}): {failure.get('error', 'unknown error')}"
+                )
+        else:
+            click.echo("Recent failures: none")
+    except Exception as e:
+        logger.error(f"Failed to inspect queue status: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 def _request_daemon_json(
     path: str,
     payload: dict[str, object],
@@ -528,7 +631,7 @@ def _request_daemon_json(
     auto_start: bool,
 ) -> dict[str, object] | None:
     inspection = inspect_daemon()
-    metadata = inspection.metadata if inspection.ready else None
+    metadata = inspection.metadata if inspection.responsive else None
     if metadata is None and auto_start:
         metadata = start_daemon(project_override=project_override)
     if metadata is None or not metadata.socket_path:

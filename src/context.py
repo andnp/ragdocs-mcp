@@ -71,6 +71,8 @@ class ApplicationContext:
         project_override: str | None = None,
         enable_watcher: bool = True,
         lazy_embeddings: bool = True,
+        use_tasks: bool = False,
+        index_path_override: Path | None = None,
     ) -> ApplicationContext:
         config = load_config()
 
@@ -82,7 +84,7 @@ class ApplicationContext:
         if detected_project and project_override:
             config = load_config()
 
-        index_path = resolve_index_path(config, detected_project)
+        index_path = index_path_override or resolve_index_path(config, detected_project)
         documents_path = resolve_documents_path(
             config, detected_project, config.projects
         )
@@ -132,6 +134,7 @@ class ApplicationContext:
                 exclude_patterns=config.indexing.exclude,
                 exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
                 parser_suffixes=get_parser_suffixes(),
+                use_tasks=use_tasks,
             )
 
         # Initialize commit indexer if enabled and git available

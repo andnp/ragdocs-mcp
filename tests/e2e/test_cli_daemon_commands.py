@@ -52,7 +52,13 @@ def test_daemon_status_reports_starting_when_not_ready(monkeypatch):
     )
     monkeypatch.setattr(
         "src.cli.inspect_daemon",
-        lambda: DaemonInspection(metadata=metadata, running=True, stale=False, ready=False),
+        lambda: DaemonInspection(
+            metadata=metadata,
+            running=True,
+            stale=False,
+            responsive=True,
+            ready=False,
+        ),
     )
 
     result = runner.invoke(cli, ["daemon", "status"])
@@ -158,6 +164,69 @@ def test_daemon_restart_invokes_management_helper(monkeypatch):
     assert "Daemon restarted (pid=123, status=ready)" in result.output
 
 
+def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
+    observed: dict[str, object] = {}
+
+    class _FakeIndexManager:
+        pass
+
+    class _FakeContext:
+        def __init__(self):
+            self.index_manager = _FakeIndexManager()
+            self.commit_indexer = object()
+
+    class _FakeWorker:
+        def __init__(self, huey):
+            observed["worker_huey"] = huey
+
+    fake_ctx = _FakeContext()
+    fake_huey = object()
+    runtime_paths = RuntimePaths(
+        root=tmp_path,
+        index_db_path=tmp_path / "index.db",
+        queue_db_path=tmp_path / "queue.db",
+        metadata_path=tmp_path / "daemon.json",
+        lock_path=tmp_path / "daemon.lock",
+        socket_path=tmp_path / "daemon.sock",
+    )
+
+    def _fake_create(**kwargs):
+        observed["create_kwargs"] = kwargs
+        return fake_ctx
+
+    def _fake_get_huey(path):
+        observed["queue_path"] = path
+        return fake_huey
+
+    def _fake_register_tasks(huey, index_manager, commit_indexer=None):
+        observed["register"] = (huey, index_manager, commit_indexer)
+
+    monkeypatch.setattr("src.cli.ApplicationContext.create", _fake_create)
+    monkeypatch.setattr("src.cli.get_huey", _fake_get_huey)
+    monkeypatch.setattr("src.cli.register_tasks", _fake_register_tasks)
+    monkeypatch.setattr("src.cli.HueyWorker", _FakeWorker)
+
+    from src.cli import _create_daemon_runtime
+
+    ctx, worker = _create_daemon_runtime("docs", runtime_paths)
+
+    assert ctx is fake_ctx
+    assert observed["create_kwargs"] == {
+        "project_override": "docs",
+        "enable_watcher": True,
+        "lazy_embeddings": True,
+        "use_tasks": True,
+        "index_path_override": runtime_paths.root,
+    }
+    assert observed["queue_path"] == runtime_paths.queue_db_path
+    assert observed["register"] == (
+        fake_huey,
+        fake_ctx.index_manager,
+        fake_ctx.commit_indexer,
+    )
+    assert worker is not None
+
+
 def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
     runner = CliRunner()
     docs_dir = tmp_path / "docs"
@@ -218,6 +287,7 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
     assert '"indexed_chunks": 23' in result.output
     assert '"git_commits": 11' in result.output
     assert '"discovered_files": 2' in result.output
+    assert f'"index_db_path": "{index_dir / "index.db"}"' in result.output
 
 
 def test_index_stats_prefers_daemon_transport(monkeypatch):
@@ -227,6 +297,7 @@ def test_index_stats_prefers_daemon_transport(monkeypatch):
         lambda path, payload, project_override, auto_start: {
             "documents_path": "/docs",
             "index_path": "/index",
+            "index_db_path": "/index/index.db",
             "manifest_path": "/index/index.manifest.json",
             "manifest_exists": True,
             "indexed_documents": 9,
@@ -242,6 +313,117 @@ def test_index_stats_prefers_daemon_transport(monkeypatch):
     assert result.exit_code == 0
     assert '"indexed_documents": 9' in result.output
     assert '"git_commits": 12' in result.output
+
+
+def test_queue_status_prefers_daemon_transport(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "src.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start: {
+            "queue_db_path": "/queue.db",
+            "pending_count": 2,
+            "scheduled_count": 1,
+            "running_count": 0,
+            "failed_count": 1,
+            "worker_running": True,
+            "task_counts": {"_index_document": 2},
+            "recent_failures": [
+                {
+                    "task_id": "abc",
+                    "task_name": "_refresh_git_repository",
+                    "error": "RuntimeError('boom')",
+                    "retries": 0,
+                    "traceback": "trace",
+                }
+            ],
+        },
+    )
+
+    result = runner.invoke(cli, ["queue", "status", "--json"])
+
+    assert result.exit_code == 0
+    assert '"pending_count": 2' in result.output
+    assert '"failed_count": 1' in result.output
+    assert '"_refresh_git_repository"' in result.output
+
+
+def test_queue_status_falls_back_to_local_queue(monkeypatch, tmp_path):
+    runner = CliRunner()
+    observed: dict[str, object] = {}
+    runtime_paths = RuntimePaths(
+        root=tmp_path,
+        index_db_path=tmp_path / "index.db",
+        queue_db_path=tmp_path / "queue.db",
+        metadata_path=tmp_path / "daemon.json",
+        lock_path=tmp_path / "daemon.lock",
+        socket_path=tmp_path / "daemon.sock",
+    )
+
+    monkeypatch.setattr("src.cli._request_daemon_json", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        RuntimePaths,
+        "resolve",
+        classmethod(lambda cls: runtime_paths),
+    )
+    monkeypatch.setattr("src.cli.get_huey", lambda path: observed.setdefault("path", path) or object())
+    monkeypatch.setattr(
+        "src.cli.get_queue_stats",
+        lambda huey, worker_running=False: type(
+            "_Stats",
+            (),
+            {
+                "to_dict": lambda self: {
+                    "pending_count": 0,
+                    "scheduled_count": 0,
+                    "running_count": 0,
+                    "failed_count": 0,
+                    "worker_running": worker_running,
+                    "task_counts": {},
+                    "recent_failures": [],
+                }
+            },
+        )(),
+    )
+
+    result = runner.invoke(cli, ["queue", "status", "--json"])
+
+    assert result.exit_code == 0
+    assert observed["path"] == runtime_paths.queue_db_path
+    assert '"queue_db_path":' in result.output
+
+
+def test_request_daemon_json_uses_running_daemon(monkeypatch):
+    metadata = DaemonMetadata(
+        pid=4321,
+        started_at=1.0,
+        status="starting",
+        socket_path="/tmp/ragdocs.sock",
+    )
+    monkeypatch.setattr(
+        "src.cli.inspect_daemon",
+        lambda: DaemonInspection(
+            metadata=metadata,
+            running=True,
+            stale=False,
+            responsive=True,
+            ready=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "src.cli.request_daemon_socket",
+        lambda socket_path, path, payload, timeout_seconds: {"status": "ok", "path": path},
+    )
+
+    from src.cli import _request_daemon_json
+
+    payload = _request_daemon_json(
+        "/api/admin/queue-status",
+        {},
+        project_override=None,
+        auto_start=False,
+    )
+
+    assert payload == {"status": "ok", "path": "/api/admin/queue-status"}
 
 
 def test_query_prefers_daemon_transport(monkeypatch):

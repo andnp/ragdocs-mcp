@@ -36,18 +36,41 @@ def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> N
     metadata = DaemonMetadata(pid=101, started_at=1.0, status="ready")
     inspections = iter(
         [
-            DaemonInspection(metadata=None, running=False, stale=False, ready=False),
+            DaemonInspection(
+                metadata=None,
+                running=False,
+                stale=False,
+                responsive=False,
+                ready=False,
+            ),
             DaemonInspection(
                 metadata=DaemonMetadata(pid=101, started_at=1.0, status="starting"),
                 running=True,
                 stale=False,
+                responsive=False,
                 ready=False,
             ),
-            DaemonInspection(metadata=metadata, running=True, stale=False, ready=True),
+            DaemonInspection(
+                metadata=metadata,
+                running=True,
+                stale=False,
+                responsive=True,
+                ready=True,
+            ),
         ]
     )
+    fallback = DaemonInspection(
+        metadata=metadata,
+        running=True,
+        stale=False,
+        responsive=True,
+        ready=True,
+    )
 
-    monkeypatch.setattr("src.daemon.management.inspect_daemon", lambda paths=None: next(inspections))
+    monkeypatch.setattr(
+        "src.daemon.management.inspect_daemon",
+        lambda paths=None: next(inspections, fallback),
+    )
     monkeypatch.setattr(
         "src.daemon.management._spawn_daemon_process",
         lambda project_override, runtime_paths: _FakeProcess(101, [None, None, None]),
@@ -67,17 +90,34 @@ def test_start_daemon_accepts_race_winner_metadata(monkeypatch, tmp_path: Path) 
     winner_metadata = DaemonMetadata(pid=303, started_at=2.0, status="ready")
     inspections = iter(
         [
-            DaemonInspection(metadata=None, running=False, stale=False, ready=False),
+            DaemonInspection(
+                metadata=None,
+                running=False,
+                stale=False,
+                responsive=False,
+                ready=False,
+            ),
             DaemonInspection(
                 metadata=winner_metadata,
                 running=True,
                 stale=False,
+                responsive=True,
                 ready=True,
             ),
         ]
     )
+    fallback = DaemonInspection(
+        metadata=winner_metadata,
+        running=True,
+        stale=False,
+        responsive=True,
+        ready=True,
+    )
 
-    monkeypatch.setattr("src.daemon.management.inspect_daemon", lambda paths=None: next(inspections))
+    monkeypatch.setattr(
+        "src.daemon.management.inspect_daemon",
+        lambda paths=None: next(inspections, fallback),
+    )
     monkeypatch.setattr(
         "src.daemon.management._spawn_daemon_process",
         lambda project_override, runtime_paths: _FakeProcess(202, [1, 1, 1]),
@@ -110,6 +150,7 @@ def test_inspect_daemon_requires_successful_probe(monkeypatch, tmp_path: Path) -
     assert inspection.metadata == metadata
     assert inspection.running is True
     assert inspection.ready is False
+    assert inspection.responsive is False
 
 
 def test_start_daemon_surfaces_log_excerpt_on_spawn_failure(
@@ -123,11 +164,29 @@ def test_start_daemon_surfaces_log_excerpt_on_spawn_failure(
 
     inspections = iter(
         [
-            DaemonInspection(metadata=None, running=False, stale=False, ready=False),
-            DaemonInspection(metadata=None, running=False, stale=False, ready=False),
+            DaemonInspection(
+                metadata=None,
+                running=False,
+                stale=False,
+                responsive=False,
+                ready=False,
+            ),
+            DaemonInspection(
+                metadata=None,
+                running=False,
+                stale=False,
+                responsive=False,
+                ready=False,
+            ),
         ]
     )
-    fallback = DaemonInspection(metadata=None, running=False, stale=False, ready=False)
+    fallback = DaemonInspection(
+        metadata=None,
+        running=False,
+        stale=False,
+        responsive=False,
+        ready=False,
+    )
 
     monkeypatch.setattr(
         "src.daemon.management.inspect_daemon",
@@ -146,3 +205,46 @@ def test_start_daemon_surfaces_log_excerpt_on_spawn_failure(
     assert "exit code 7" in message
     assert "Daemon log:" in message
     assert "root cause line" in message
+
+
+def test_start_daemon_waits_for_responsive_existing_ready_daemon(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    metadata = DaemonMetadata(pid=515, started_at=1.0, status="ready_primary")
+    inspections = iter(
+        [
+            DaemonInspection(
+                metadata=metadata,
+                running=True,
+                stale=False,
+                responsive=False,
+                ready=False,
+            ),
+            DaemonInspection(
+                metadata=metadata,
+                running=True,
+                stale=False,
+                responsive=True,
+                ready=True,
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "src.daemon.management.inspect_daemon",
+        lambda paths=None: next(inspections),
+    )
+    monkeypatch.setattr("src.daemon.management.time.sleep", lambda _: None)
+
+    stop_calls: list[float] = []
+    monkeypatch.setattr(
+        "src.daemon.management.stop_daemon",
+        lambda *, timeout_seconds, paths=None: stop_calls.append(timeout_seconds),
+    )
+
+    result = start_daemon(timeout_seconds=0.5, paths=paths)
+
+    assert result == metadata
+    assert stop_calls == []

@@ -507,6 +507,46 @@ class TestFileWatcherParserSuffixes:
         assert watcher._parser_suffixes == {".md", ".txt", ".rst"}
 
 
+class TestFileWatcherTaskMode:
+    @pytest.mark.asyncio
+    async def test_batch_process_enqueues_index_when_task_mode_enabled(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            use_tasks=True,
+        )
+
+        with patch("src.indexing.tasks.enqueue_index", return_value=True) as enqueue:
+            await watcher._batch_process({str(docs_path / "note.md"): "created"})
+
+        enqueue.assert_called_once_with(str(docs_path / "note.md"))
+        mock_index_manager.index_document.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_batch_process_enqueues_remove_when_task_mode_enabled(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            use_tasks=True,
+        )
+        deleted_file = docs_path / "nested" / "note.md"
+        deleted_file.parent.mkdir()
+
+        with patch("src.indexing.tasks.enqueue_remove", return_value=True) as enqueue:
+            await watcher._batch_process({str(deleted_file): "deleted"})
+
+        enqueue.assert_called_once_with("nested/note")
+        mock_index_manager.remove_document.assert_not_called()
+
+
 class TestIsExcludedDir:
     """Tests for is_excluded_dir helper."""
 

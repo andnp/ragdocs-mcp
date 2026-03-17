@@ -26,6 +26,7 @@ class DaemonInspection:
     metadata: DaemonMetadata | None
     running: bool
     stale: bool
+    responsive: bool = False
     ready: bool = False
 
 
@@ -43,22 +44,30 @@ def inspect_daemon(paths: RuntimePaths | None = None) -> DaemonInspection:
     runtime_paths = paths or RuntimePaths.resolve()
     metadata = read_daemon_metadata(runtime_paths.metadata_path)
     if metadata is None:
-        return DaemonInspection(metadata=None, running=False, stale=False, ready=False)
+        return DaemonInspection(
+            metadata=None,
+            running=False,
+            stale=False,
+            responsive=False,
+            ready=False,
+        )
 
     running = is_process_running(metadata.pid)
     probed_metadata = (
         probe_daemon_socket(runtime_paths.socket_path) if running else None
     )
+    responsive = (
+        running and probed_metadata is not None and probed_metadata.pid == metadata.pid
+    )
     ready = (
-        running
+        responsive
         and metadata.status in _READY_STATUSES
-        and probed_metadata is not None
-        and probed_metadata.pid == metadata.pid
     )
     return DaemonInspection(
         metadata=metadata,
         running=running,
         stale=not running,
+        responsive=responsive,
         ready=ready,
     )
 
@@ -77,10 +86,7 @@ def start_daemon(
     if current.running and current.ready and current.metadata is not None:
         return current.metadata
     if current.running and current.metadata is not None:
-        if current.metadata.status in _READY_STATUSES:
-            stop_daemon(timeout_seconds=min(timeout_seconds, 5.0), paths=runtime_paths)
-        else:
-            return _wait_for_ready_daemon(deadline=deadline, paths=runtime_paths)
+        return _wait_for_ready_daemon(deadline=deadline, paths=runtime_paths)
     if current.stale:
         _cleanup_stale_runtime_state(runtime_paths)
 
@@ -232,7 +238,7 @@ def _wait_for_ready_daemon(
         inspection = inspect_daemon(paths)
         if inspection.stale:
             _cleanup_stale_runtime_state(paths)
-        elif inspection.running and inspection.ready and inspection.metadata is not None:
+        elif inspection.running and inspection.responsive and inspection.metadata is not None:
             return inspection.metadata
 
         if spawned_process is not None and exit_code is None:

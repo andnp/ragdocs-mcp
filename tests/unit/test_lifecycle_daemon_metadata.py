@@ -79,3 +79,20 @@ async def test_lifecycle_updates_metadata_when_ready(
 
     await coordinator.shutdown()
     assert ctx.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_can_skip_daemon_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("src.daemon.paths._state_home", lambda: tmp_path)
+
+    coordinator = LifecycleCoordinator(_manage_daemon_metadata=False)
+    ctx = _FakeContext()
+
+    await coordinator.start(ctx, background_index=True)
+
+    metadata_path = tmp_path / "mcp-markdown-ragdocs" / "daemon" / "daemon.json"
+    assert not metadata_path.exists()
+
+    await coordinator.shutdown()
