@@ -1,7 +1,7 @@
 """
 E2E tests for CLI debug mode feature.
 
-Tests the --debug flag on query, search-commits, and search-memory commands.
+Tests the --debug flag on query and search-commits commands.
 """
 
 import pytest

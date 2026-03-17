@@ -131,117 +131,9 @@ class GitIndexingConfig:
 
 
 @dataclass
-class MemoryRecencyConfig:
-    """Exponential additive recency boost configuration."""
-
-    boost_window_days: int
-    max_boost_amount: float
-    boost_decay_rate: float
-
-    def __post_init__(self):
-        if self.boost_window_days < 0:
-            raise ValueError(
-                f"boost_window_days must be non-negative, got {self.boost_window_days}"
-            )
-        if not (0.0 <= self.max_boost_amount <= 0.5):
-            raise ValueError(
-                f"max_boost_amount must be in [0.0, 0.5], got {self.max_boost_amount}"
-            )
-        if not (0.0 < self.boost_decay_rate < 1.0):
-            raise ValueError(
-                f"boost_decay_rate must be in (0.0, 1.0), got {self.boost_decay_rate}"
-            )
-
-
-@dataclass
-class MemoryConfig:
-    enabled: bool = True
-    storage_strategy: str = "user"
-    score_threshold: float = 0.1
-    checkpoint_interval_ops: int = 10  # Persist every N operations
-    checkpoint_interval_secs: int = 300  # Or every M seconds (5 min default)
-
-    # Exponential additive recency boost per memory type
-    recency_journal: MemoryRecencyConfig = field(
-        default_factory=lambda: MemoryRecencyConfig(
-            boost_window_days=14,
-            max_boost_amount=0.2,
-            boost_decay_rate=0.95,
-        )
-    )
-    recency_plan: MemoryRecencyConfig = field(
-        default_factory=lambda: MemoryRecencyConfig(
-            boost_window_days=7,
-            max_boost_amount=0.5,
-            boost_decay_rate=0.9,
-        )
-    )
-    recency_fact: MemoryRecencyConfig = field(
-        default_factory=lambda: MemoryRecencyConfig(
-            boost_window_days=60,  # Facts are timeless
-            max_boost_amount=0.2,
-            boost_decay_rate=0.99,
-        )
-    )
-    recency_observation: MemoryRecencyConfig = field(
-        default_factory=lambda: MemoryRecencyConfig(
-            boost_window_days=14,
-            max_boost_amount=0.2,
-            boost_decay_rate=0.95,
-        )
-    )
-    recency_reflection: MemoryRecencyConfig = field(
-        default_factory=lambda: MemoryRecencyConfig(
-            boost_window_days=30,  # Reflections age well
-            max_boost_amount=0.15,
-            boost_decay_rate=0.98,
-        )
-    )
-
-    def __post_init__(self):
-        if self.storage_strategy not in ("project", "user"):
-            raise ValueError(
-                f"Invalid storage_strategy '{self.storage_strategy}': "
-                "must be 'project' or 'user'"
-            )
-
-        if not (0.0 <= self.score_threshold <= 1.0):
-            raise ValueError(
-                f"score_threshold must be in [0.0, 1.0], got {self.score_threshold}"
-            )
-
-        if self.checkpoint_interval_ops < 1:
-            raise ValueError(
-                f"checkpoint_interval_ops must be >= 1, got {self.checkpoint_interval_ops}"
-            )
-
-        if self.checkpoint_interval_secs < 0:
-            raise ValueError(
-                f"checkpoint_interval_secs must be >= 0, got {self.checkpoint_interval_secs}"
-            )
-
-    def get_recency_config(self, memory_type: str) -> MemoryRecencyConfig:
-        """Get recency boost config for memory type."""
-        recency_configs = {
-            "journal": self.recency_journal,
-            "plan": self.recency_plan,
-            "fact": self.recency_fact,
-            "observation": self.recency_observation,
-            "reflection": self.recency_reflection,
-        }
-        if memory_type in recency_configs:
-            return recency_configs[memory_type]
-        logger.debug(
-            f"No recency config for type '{memory_type}', using recency_journal"
-        )
-        return self.recency_journal
-
-
-@dataclass
 class Config:
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
-    memory: MemoryConfig = field(default_factory=MemoryConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
@@ -281,35 +173,6 @@ def _load_dataclass_from_dict[T](
         kwargs[f.name] = value
 
     return cls(**kwargs)
-
-
-def _load_memory_config(data: dict[str, Any]):
-    kwargs: dict[str, Any] = {}
-
-    simple_fields = {
-        "enabled",
-        "storage_strategy",
-        "score_threshold",
-        "checkpoint_interval_ops",
-        "checkpoint_interval_secs",
-    }
-    recency_fields = {
-        "recency_journal",
-        "recency_plan",
-        "recency_fact",
-        "recency_observation",
-        "recency_reflection",
-    }
-
-    for key in simple_fields:
-        if key in data:
-            kwargs[key] = data[key]
-
-    for key in recency_fields:
-        if key in data and isinstance(data[key], dict):
-            kwargs[key] = _load_dataclass_from_dict(MemoryRecencyConfig, data[key])
-
-    return MemoryConfig(**kwargs)
 
 
 def _find_project_config():
@@ -359,7 +222,6 @@ def load_config():
     git_indexing = _load_dataclass_from_dict(
         GitIndexingConfig, config_data.get("git_indexing", {})
     )
-    memory = _load_memory_config(config_data.get("memory", {}))
 
     chunking_data = config_data.get(
         "chunking", config_data.get("chunking_documents", {})
@@ -384,7 +246,6 @@ def load_config():
     return Config(
         indexing=indexing,
         git_indexing=git_indexing,
-        memory=memory,
         search=search,
         llm=llm,
         chunking=chunking,
@@ -690,48 +551,3 @@ def resolve_documents_path(
     return str(resolved_path)
 
 
-def resolve_memory_path(
-    config: Config,
-    detected_project: str | None = None,
-    projects: list[ProjectConfig] | None = None,
-) -> Path:
-    strategy = config.memory.storage_strategy
-
-    if strategy == "project":
-        if detected_project and projects:
-            for project in projects:
-                if project.name == detected_project:
-                    memory_path = Path(project.path) / ".memories"
-                    logger.info(
-                        f"Using project memory path for '{detected_project}': {memory_path}"
-                    )
-                    return memory_path
-
-        cwd = Path.cwd()
-        memory_path = cwd / ".memories"
-        logger.info(f"Using CWD memory path: {memory_path}")
-        return memory_path
-
-    data_home = os.getenv("XDG_DATA_HOME")
-    if data_home:
-        base_dir = Path(data_home)
-    else:
-        base_dir = Path.home() / ".local" / "share"
-
-    if detected_project:
-        safe_project_name = detected_project.replace("/", "_").replace("\\", "_")
-        memory_path = base_dir / "mcp-markdown-ragdocs" / safe_project_name / "memories"
-        logger.info(
-            f"Using user memory path for project '{detected_project}': {memory_path}"
-        )
-        return memory_path
-
-    cwd = Path.cwd()
-    sanitized_name = re.sub(r"[^a-zA-Z0-9_-]", "-", cwd.name)
-    sanitized_name = re.sub(r"-+", "-", sanitized_name).strip("-") or "default"
-
-    memory_path = (
-        base_dir / "mcp-markdown-ragdocs" / f"local-{sanitized_name}" / "memories"
-    )
-    logger.info(f"Using fallback user memory path: {memory_path}")
-    return memory_path

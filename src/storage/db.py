@@ -101,15 +101,6 @@ class DatabaseManager:
 
             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 
-            CREATE TABLE IF NOT EXISTS system1_journal (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT NOT NULL,
-                timestamp REAL NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending'
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_system1_journal_status ON system1_journal(status);
-
             CREATE TABLE IF NOT EXISTS system_state (
                 key TEXT PRIMARY KEY,
                 value TEXT

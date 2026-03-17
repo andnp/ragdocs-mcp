@@ -156,33 +156,6 @@ def get_document_tools() -> list[Tool]:
                 "required": ["query"],
             },
         ),
-        Tool(
-            name="search_linked_memories",
-            description=(
-                "Find memories that link to a specific document. "
-                + "Uses graph traversal to find memories containing [[target_document]] links. "
-                + "Returns the anchor context explaining why each memory links to the target."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Optional query to filter/rank linked memories",
-                    },
-                    "target_document": {
-                        "type": "string",
-                        "description": "Document path to find links to (e.g., 'src/server.py')",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default: 5)",
-                        "default": 5,
-                    },
-                },
-                "required": ["query", "target_document"],
-            },
-        ),
     ]
 
 
@@ -448,40 +421,3 @@ async def handle_search_git_history(
     return [TextContent(type="text", text="\n".join(output_lines))]
 
 
-@tool_handler("search_linked_memories")
-async def handle_search_linked_memories(
-    hctx: HandlerContext, arguments: dict
-) -> list[TextContent]:
-    from src.memory import tools as memory_tools
-
-    await hctx.wait_for_ready()
-    ctx = hctx.require_ctx()
-
-    query = arguments.get("query", "")
-    target_document = arguments.get("target_document", "")
-    limit = arguments.get("limit", 5)
-
-    results = await memory_tools.search_linked_memories(
-        ctx, query, target_document, limit
-    )
-
-    if results and "error" in results[0]:
-        return [TextContent(type="text", text=str(results[0]))]
-
-    output_lines = [f"# Memories Linked to `{target_document}`", ""]
-
-    for i, r in enumerate(results, 1):
-        output_lines.extend(
-            [
-                f"## {i}. {r.get('memory_id', 'unknown')} (score: {r.get('score', 0):.3f})",
-                f"**Edge Type:** {r.get('edge_type', 'unknown')}",
-                f"**Anchor Context:** {r.get('anchor_context', '')}",
-                "",
-                r.get("content", "")[:500],
-                "",
-                "---",
-                "",
-            ]
-        )
-
-    return [TextContent(type="text", text="\n".join(output_lines))]

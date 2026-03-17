@@ -12,7 +12,6 @@ from src.config import (
     detect_project,
     resolve_index_path,
     resolve_documents_path,
-    resolve_memory_path,
 )
 from src.git.commit_indexer import CommitIndexer
 from src.indexing.discovery import (
@@ -31,8 +30,6 @@ from src.indexing.watcher import FileWatcher
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
-from src.memory.manager import MemoryIndexManager
-from src.memory.search import MemorySearchOrchestrator
 from src.search.orchestrator import SearchOrchestrator
 from src.storage.db import DatabaseManager
 
@@ -56,8 +53,6 @@ class ApplicationContext:
     orchestrator: SearchOrchestrator
     watcher: FileWatcher | None = None
     commit_indexer: CommitIndexer | None = None
-    memory_manager: MemoryIndexManager | None = None
-    memory_search: MemorySearchOrchestrator | None = None
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
     db_manager: DatabaseManager | None = None
     current_manifest: IndexManifest | None = None
@@ -156,30 +151,12 @@ class ApplicationContext:
             else:
                 logger.warning("Git binary not found - git history search disabled")
 
-        memory_manager = None
-        memory_search = None
-        if config.memory.enabled:
-            from src.memory.init import create_memory_system
-
-            memory_path = resolve_memory_path(config, detected_project, config.projects)
-
-            # Memory system uses memory_path/indices/ for storage
-            memory_manager, memory_search = create_memory_system(
-                config=config,
-                memory_path=memory_path,
-                embedding_model_name=embedding_model_name,
-            )
-
-            logger.info(f"Memory system initialized: {memory_path}")
-
         return cls(
             config=config,
             index_manager=manager,
             orchestrator=orchestrator,
             watcher=watcher,
             commit_indexer=commit_indexer,
-            memory_manager=memory_manager,
-            memory_search=memory_search,
             index_path=index_path,
             db_manager=db_manager,
             current_manifest=None,
@@ -254,14 +231,6 @@ class ApplicationContext:
                 f"Periodic reconciliation enabled (interval: "
                 f"{self.config.indexing.reconciliation_interval_seconds}s)"
             )
-
-        if self.memory_manager is not None:
-            from src.memory.init import load_or_rebuild_memory_indices
-
-            try:
-                load_or_rebuild_memory_indices(self.memory_manager)
-            except Exception as e:
-                logger.warning(f"Memory system initialization failed: {e}")
 
     def _full_index(self) -> None:
         files_to_index = self.discover_files()
@@ -558,12 +527,6 @@ class ApplicationContext:
                 await asyncio.to_thread(self.commit_indexer.close)
             except Exception as e:
                 logger.error(f"Failed to close commit indexer: {e}")
-
-        if self.memory_manager:
-            try:
-                await asyncio.to_thread(self.memory_manager.persist)
-            except Exception as e:
-                logger.error(f"Failed to persist memory indices: {e}")
 
         logger.info("ApplicationContext stopped")
 
