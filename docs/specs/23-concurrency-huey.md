@@ -10,10 +10,10 @@ Current implementation status:
 
 - daemon startup initializes `SqliteHuey`
 - the daemon supervises a dedicated worker subprocess for the Huey consumer
-- file watching enqueues indexing/removal work in task mode
-- git refresh work is also routed through task infrastructure
+- file and git watcher execution now run in that worker process and enqueue task work in task mode
 - queue status is exposed from the CLI
 - daemon requests reload persisted indices lazily when worker writes advance the store state
+- daemon supervision restarts a dead worker subprocess instead of waiting for manual intervention
 
 Still planned:
 
@@ -51,9 +51,17 @@ Ragdocs uses `SqliteHuey` to keep the deployment entirely local-first with no Re
 - **Responsibility**: own lifecycle, task supervision, search-serving, and management payloads
 - **Operation**:
     - starts and stops the Huey worker subprocess
-    - runs file and git watchers
-    - enqueues document/git maintenance work
+    - supervises worker health and restarts dead workers
+    - serves search/admin requests and reloads persisted indices when worker writes land
     - writes index/task/runtime state to the shared local store
+
+#### C. Worker Subprocess
+
+- **Responsibility**: execute Huey tasks and own watcher-side change detection
+- **Operation**:
+    - runs the Huey consumer
+    - runs file and git watchers
+    - enqueues and executes document/git maintenance work
 
 ## 4. Implementation Plan
 

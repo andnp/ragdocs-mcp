@@ -139,6 +139,7 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
             "running_count": 0,
             "failed_count": 1,
             "worker_running": True,
+            "worker_health": "healthy",
         },
     )
     monkeypatch.setattr(
@@ -161,6 +162,7 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
     assert result.exit_code == 0
     assert '"indexed_documents": 9' in result.output
     assert '"pending_count": 3' in result.output
+    assert '"worker_health": "healthy"' in result.output
 
 
 def test_daemon_start_invokes_management_helper(monkeypatch):
@@ -420,7 +422,7 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
     assert ctx is fake_ctx
     assert observed["create_kwargs"] == {
         "project_override": "docs",
-        "enable_watcher": True,
+        "enable_watcher": False,
         "lazy_embeddings": True,
         "use_tasks": True,
         "index_path_override": runtime_paths.root,

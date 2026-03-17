@@ -152,6 +152,10 @@ class LifecycleCoordinator:
     )
     _started_at: float | None = field(default=None, repr=False)
     _readiness_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    _worker_supervision_task: asyncio.Task[None] | None = field(
+        default=None,
+        repr=False,
+    )
 
     @property
     def state(self) -> LifecycleState:
@@ -189,6 +193,9 @@ class LifecycleCoordinator:
                     if huey_worker is not None:
                         self._huey_worker = huey_worker
                         self._huey_worker.start()
+                        self._worker_supervision_task = asyncio.create_task(
+                            self._supervise_worker_health()
+                        )
                 else:
                     logger.info(
                         "Lifecycle: replica mode (another instance is primary)"
@@ -197,6 +204,7 @@ class LifecycleCoordinator:
             if (
                 ctx.config.git_indexing.enabled
                 and ctx.config.git_indexing.watch_enabled
+                and huey_worker is None
             ):
                 if ctx.commit_indexer is not None:
                     from src.git.repository import discover_git_repositories
@@ -432,6 +440,11 @@ class LifecycleCoordinator:
     async def _cleanup_resources(self) -> None:
         self._cancel_emergency_timer()
 
+        if self._worker_supervision_task is not None:
+            self._worker_supervision_task.cancel()
+            await asyncio.gather(self._worker_supervision_task, return_exceptions=True)
+            self._worker_supervision_task = None
+
         if self._readiness_task is not None:
             self._readiness_task.cancel()
             await asyncio.gather(self._readiness_task, return_exceptions=True)
@@ -457,6 +470,29 @@ class LifecycleCoordinator:
             except Exception as e:
                 logger.error(f"Error stopping git watcher: {e}", exc_info=True)
             self._git_watcher = None
+
+    async def _supervise_worker_health(self) -> None:
+        while True:
+            await asyncio.sleep(5.0)
+
+            worker = self._huey_worker
+            if worker is None:
+                return
+            if self._state in (
+                LifecycleState.SHUTTING_DOWN,
+                LifecycleState.TERMINATED,
+            ):
+                return
+            if self._leader_election is None or not self._leader_election.is_leader:
+                return
+            if worker.is_healthy():
+                continue
+
+            logger.warning("Huey worker subprocess is unhealthy; restarting")
+            try:
+                await asyncio.to_thread(worker.restart)
+            except Exception:
+                logger.error("Failed to restart Huey worker subprocess", exc_info=True)
 
         if self._ctx:
             try:

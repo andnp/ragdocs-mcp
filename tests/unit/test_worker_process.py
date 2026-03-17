@@ -9,6 +9,7 @@ from src.worker.process import HueyWorkerProcess
 
 class _FakeProcess:
     def __init__(self):
+        self.pid = 1234
         self._returncode = None
         self.signals: list[int] = []
         self.kill_calls = 0
@@ -94,3 +95,28 @@ def test_worker_process_stop_sends_sigterm(monkeypatch, tmp_path: Path):
 
     assert fake_process.signals == [subprocess.signal.SIGTERM]
     assert worker.is_running is False
+
+
+def test_worker_process_restart_replaces_process(monkeypatch, tmp_path: Path):
+    first = _FakeProcess()
+    second = _FakeProcess()
+    created = iter([first, second])
+
+    monkeypatch.setattr(
+        "src.worker.process._resolve_daemon_python",
+        lambda: Path("/repo/.venv/bin/python"),
+    )
+    monkeypatch.setattr(
+        "src.worker.process.subprocess.Popen",
+        lambda *args, **kwargs: next(created),
+    )
+    monkeypatch.setattr("src.worker.process.time.sleep", lambda _: None)
+
+    worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
+    worker.start()
+    assert worker.pid == first.pid
+
+    worker.restart(timeout=2.0)
+
+    assert first.signals == [subprocess.signal.SIGTERM]
+    assert worker.pid == second.pid

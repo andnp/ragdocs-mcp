@@ -6,6 +6,7 @@ Commit 2.1: Verifies LifecycleCoordinator is the source of truth for process sta
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, cast
 from unittest.mock import patch
@@ -188,3 +189,41 @@ class TestDoubleSignal:
 
         # Clean up
         coord._cancel_emergency_timer()
+
+
+class TestWorkerSupervision:
+    @pytest.mark.asyncio
+    async def test_supervision_restarts_unhealthy_worker(self) -> None:
+        coord = _make_coordinator()
+        coord._state = LifecycleState.READY_PRIMARY
+
+        class _FakeLeader:
+            is_leader = True
+
+        class _FakeWorker:
+            def __init__(self) -> None:
+                self.restart_calls = 0
+
+            def is_healthy(self) -> bool:
+                return self.restart_calls > 0
+
+            def restart(self, timeout: float = 5.0) -> None:
+                self.restart_calls += 1
+
+        worker = _FakeWorker()
+        coord._leader_election = _FakeLeader()
+        coord._huey_worker = worker
+
+        sleep_calls = 0
+
+        async def _fake_sleep(_seconds: float) -> None:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls > 1:
+                raise asyncio.CancelledError
+
+        with patch("src.lifecycle.asyncio.sleep", _fake_sleep):
+            with pytest.raises(asyncio.CancelledError):
+                await coord._supervise_worker_health()
+
+        assert worker.restart_calls == 1

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -61,7 +62,7 @@ from src.indexing.reconciler import build_indexed_files_map
 from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.utils import should_include_file
 from src.worker.consumer import HueyWorker
-from src.worker.process import HueyWorkerProcess
+from src.worker.process import HueyWorkerProcess, _worker_status_path
 from src.cli_utils.validators import (
     validate_range,
     validate_timestamp_range,
@@ -100,7 +101,7 @@ def _should_include_file(
 def _create_daemon_runtime(project: str | None, runtime_paths: RuntimePaths):
     ctx = ApplicationContext.create(
         project_override=project,
-        enable_watcher=True,
+        enable_watcher=False,
         lazy_embeddings=True,
         use_tasks=True,
         index_path_override=runtime_paths.root,
@@ -124,7 +125,7 @@ def _parent_process_alive(parent_pid: int) -> bool:
     return True
 
 
-def _run_worker_forever(
+async def _run_worker_forever_async(
     project: str | None,
     queue_db: Path,
     index_root: Path,
@@ -132,9 +133,9 @@ def _run_worker_forever(
 ) -> None:
     ctx = ApplicationContext.create(
         project_override=project,
-        enable_watcher=False,
+        enable_watcher=True,
         lazy_embeddings=True,
-        use_tasks=False,
+        use_tasks=True,
         index_path_override=index_root,
     )
     try:
@@ -156,15 +157,62 @@ def _run_worker_forever(
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
+    git_watcher = None
+    if ctx.watcher is not None:
+        ctx.watcher.start()
+
+    if ctx.commit_indexer is not None and ctx.config.git_indexing.watch_enabled:
+        from src.git.repository import discover_git_repositories
+        from src.git.watcher import GitWatcher
+
+        repos = await asyncio.to_thread(
+            discover_git_repositories,
+            Path(ctx.config.indexing.documents_path),
+            ctx.config.indexing.exclude,
+            ctx.config.indexing.exclude_hidden_dirs,
+        )
+        if repos:
+            git_watcher = GitWatcher(
+                git_repos=repos,
+                commit_indexer=ctx.commit_indexer,
+                config=ctx.config,
+                poll_interval=ctx.config.git_indexing.poll_interval_seconds,
+                use_tasks=True,
+            )
+            git_watcher.start()
+
+    worker_status_path = _worker_status_path(RuntimePaths.resolve())
+
+    def _write_worker_status(status: str) -> None:
+        worker_status_path.parent.mkdir(parents=True, exist_ok=True)
+        worker_status_path.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "status": status,
+                    "heartbeat": time.time(),
+                }
+            ),
+            encoding="utf-8",
+        )
+
     worker.start()
+    _write_worker_status("ready")
     try:
         while worker.is_running and not stop_requested:
             if not _parent_process_alive(parent_pid):
                 worker.stop()
                 break
-            time.sleep(0.2)
+            _write_worker_status("ready")
+            await asyncio.sleep(0.2)
     finally:
         worker.stop()
+        with contextlib.suppress(OSError):
+            worker_status_path.unlink()
+        if git_watcher is not None:
+            await git_watcher.stop()
+        if ctx.watcher is not None:
+            await ctx.watcher.stop()
 
 
 def _build_queue_status_payload(
@@ -184,6 +232,7 @@ def _build_admin_overview_payload(
     *,
     runtime_paths: RuntimePaths,
     worker_running: bool,
+    worker_pid: int | None,
     lifecycle: str,
 ) -> dict[str, object]:
     index_payload = _build_index_stats_payload(ctx)
@@ -195,6 +244,8 @@ def _build_admin_overview_payload(
         "status": "ok",
         "pid": os.getpid(),
         "lifecycle": lifecycle,
+        "worker_health": "healthy" if worker_running else "dead",
+        "worker_pid": worker_pid,
         "socket_path": str(runtime_paths.socket_path),
         "endpoint": f"ipc://{runtime_paths.socket_path}",
         "index_db_path": str(runtime_paths.index_db_path),
@@ -251,7 +302,9 @@ def worker_run(
 ):
     """Run the Huey task worker in a dedicated subprocess."""
     try:
-        _run_worker_forever(project, queue_db, index_root, parent_pid)
+        asyncio.run(
+            _run_worker_forever_async(project, queue_db, index_root, parent_pid)
+        )
     except KeyboardInterrupt:
         pass
     except Exception as e:
@@ -350,6 +403,7 @@ async def _run_daemon_forever(project: str | None) -> None:
                 ctx,
                 runtime_paths=runtime_paths,
                 worker_running=huey_worker.is_running,
+                worker_pid=huey_worker.pid,
                 lifecycle=coordinator.state.value,
             )
         if path in {"/api/admin/index", "/api/admin/index-stats"}:
@@ -580,6 +634,8 @@ def daemon_status(output_json: bool):
                     "indexed_chunks",
                     "git_commits",
                     "git_repositories",
+                    "worker_health",
+                    "worker_pid",
                     "pending_count",
                     "scheduled_count",
                     "running_count",
