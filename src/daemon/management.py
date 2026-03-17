@@ -147,12 +147,22 @@ def _spawn_daemon_process(project_override: str | None) -> subprocess.Popen[byte
     if project_override:
         command.extend(["--project", project_override])
 
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        f"{repo_root}{os.pathsep}{existing_pythonpath}"
+        if existing_pythonpath
+        else str(repo_root)
+    )
+
     return subprocess.Popen(
         command,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         cwd=str(Path.cwd()),
+        env=env,
         start_new_session=True,
     )
 
