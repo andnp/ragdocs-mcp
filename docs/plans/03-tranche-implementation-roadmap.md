@@ -1,12 +1,22 @@
 # Plan: Tranche-by-Tranche Implementation Roadmap
 
-**Status:** Draft
+**Status:** In Progress — verified against code on 2026-03-17
 **Date:** 2026-03-16
 **Related:** `docs/specs/25-ragdocs-product-principles.md`, `docs/plans/00-ragdocs-v2-refactor-overview.md`, `docs/plans/01-memory-removal-and-surface-simplification.md`, `docs/plans/02-global-daemon-huey-and-soft-projects.md`
 
 ## Executive Summary
 
 This roadmap turns the approved architecture direction into an execution sequence with small, reviewable tranches. The ordering is deliberate: first reduce scope, then establish the new control plane, then move work ownership behind durable tasks, then add operator visibility, then land soft-project ranking. The rule is simple: delete complexity before building new complexity on top of it.
+
+## Verified Tranche Status (2026-03-17)
+
+- **Tranche 0 — Guardrails & Inventory:** partially complete. The planning package exists, but it was not updated with implementation status before this pass.
+- **Tranche 1 — Hard Delete Memory Product Surface:** partially complete. Runtime/code cleanup landed; docs cleanup is still outstanding.
+- **Tranche 2 — Daemon Metadata, Boot Lock, and Thin-Client Skeleton:** partially complete. Metadata, lock, status helpers, and client forwarding exist, but the transport implementation differs from the ZMQ target and the global-store contract is not complete.
+- **Tranche 3 — Huey Ownership Transfer:** partially complete. Production daemon wiring now exists for document tasks; git refresh migration and richer task/admin visibility are still in progress.
+- **Tranche 4 — CLI-First Operations Surface:** partially complete. Daemon lifecycle commands, `queue status`, and `index stats` exist; deeper task inspection remains missing.
+- **Tranche 5 — Soft Project Semantics:** not started.
+- **Tranche 6 — Cleanup & Hardening:** not started.
 
 ## Tranche 0 — Guardrails & Inventory
 

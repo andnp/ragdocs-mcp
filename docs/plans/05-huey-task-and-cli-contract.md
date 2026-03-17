@@ -1,12 +1,20 @@
 # Contract: Huey Task Ownership & CLI Operations Surface
 
-**Status:** Draft
+**Status:** Partially complete — verified against code on 2026-03-17
 **Date:** 2026-03-16
 **Related:** `docs/plans/02-global-daemon-huey-and-soft-projects.md`, `docs/plans/03-tranche-implementation-roadmap.md`, `docs/plans/04-daemon-zmq-control-plane-contract.md`
 
 ## Executive Summary
 
 This document defines two contracts that must land together: durable task ownership via Huey, and the CLI-first operator surface for inspecting and controlling the daemon. The first release keeps operations intentionally simple: start, stop, status, queue status, and index stats. No dashboard ships in v1.
+
+## Verified Implementation Status (2026-03-17)
+
+- **Implemented:** `SqliteHuey` wrapper in `src/coordination/queue.py`, document indexing/removal tasks in `src/indexing/tasks.py`, git refresh task scaffolding, and worker lifecycle in `src/worker/consumer.py`.
+- **Implemented:** daemon lifecycle commands in `src/cli.py`, plus `queue status` and `index stats` support.
+- **Implemented production wiring:** daemon startup now initializes `get_huey()`, registers tasks, creates `HueyWorker`, and enables task-based document watching.
+- **Missing task families:** no `rebuild_git_index`, `reconcile_corpus`, `rebuild_search_artifacts`, or integrity-task implementations yet.
+- **Still limited in CLI/admin surface:** queue inspection exists, but richer task detail and broader admin inspection remain absent.
 
 ## Mandatory Reference Implementation
 

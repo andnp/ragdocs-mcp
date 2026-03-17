@@ -1,12 +1,21 @@
 # Plan: Memory Removal & Surface Simplification
 
-**Status:** Draft
+**Status:** Partially complete — verified against code on 2026-03-17
 **Date:** 2026-03-16
 **Related:** `docs/specs/25-ragdocs-product-principles.md`, `docs/specs/16-memory-management.md`, `docs/specs/24-autonomous-memory.md`
 
 ## Executive Summary
 
 Ragdocs should stop pretending to be two products. This plan removes the entire memory subsystem so the repository returns to a focused scope: document indexing/search and git history search. The work includes deleting memory modules, removing memory MCP tools, simplifying config and lifecycle wiring, pruning obsolete docs/tests, and cleaning any shared runtime assumptions that were introduced to support memory-specific behavior.
+
+## Verified Implementation Status (2026-03-17)
+
+- **Completed:** `src/memory/` runtime code is effectively removed; only `__pycache__/` remains.
+- **Completed:** public memory MCP tooling is gone; the active MCP surface in `src/mcp/` is document/git focused.
+- **Completed:** memory config/runtime state no longer appears in `src/config.py`, `src/context.py`, or `src/lifecycle.py`.
+- **Still pending:** documentation cleanup. `docs/memory.md`, `docs/specs/16-memory-management.md`, `docs/specs/22-memory-system-independence.md`, and `docs/specs/24-autonomous-memory.md` still exist, and `README.md` still references the removed memory product.
+
+This plan should not be marked complete until the documentation and migration-story cleanup lands.
 
 ## Goals
 

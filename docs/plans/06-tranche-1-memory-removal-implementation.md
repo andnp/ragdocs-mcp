@@ -1,12 +1,23 @@
 # Implementation Plan: Tranche 1 Memory Removal
 
-**Status:** Draft
+**Status:** Partially complete — verified against code on 2026-03-17
 **Date:** 2026-03-16
 **Related:** `docs/plans/01-memory-removal-and-surface-simplification.md`, `docs/plans/03-tranche-implementation-roadmap.md`
 
 ## Executive Summary
 
 This document turns Tranche 1 into a file-by-file implementation checklist. The goal is not just to delete `src/memory/`, but to remove every runtime, config, docs, and test dependency that assumes Ragdocs is a memory product.
+
+## Verified Checklist Status (2026-03-17)
+
+- **A. Delete Runtime Modules:** mostly complete. `src/memory/` runtime files are gone.
+- **B. Delete MCP Memory Surface:** complete.
+- **C. Remove Context/Lifecycle State:** complete.
+- **D. Remove Config Surface:** complete.
+- **E. Remove Schema Surface:** effectively complete for memory-only tables; current schema no longer exposes memory-specific tables.
+- **F. Remove Worker/Queue Coupling To Memory:** complete for memory-specific logic, but this area still needs broader V2 task ownership work.
+- **G. Remove Docs:** not complete.
+- **H. Remove Tests:** complete for active runtime coverage, but docs/spec references still preserve the historical memory story.
 
 ## Mandatory Reference Rule
 

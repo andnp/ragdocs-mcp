@@ -1,12 +1,19 @@
 # Contract: Global Daemon & ZMQ Control Plane
 
-**Status:** Draft
+**Status:** Partially complete — verified against code on 2026-03-17
 **Date:** 2026-03-16
 **Related:** `docs/specs/25-ragdocs-product-principles.md`, `docs/plans/02-global-daemon-huey-and-soft-projects.md`, `docs/plans/03-tranche-implementation-roadmap.md`
 
 ## Executive Summary
 
 This document defines the control-plane contract for Ragdocs V2: one global daemon, thin clients, boot locking, daemon metadata, and local ZMQ transport. The contract is intentionally modeled after the working `mcp-memory` patterns, but adapted to Ragdocs' reduced scope and Huey-based task ownership.
+
+## Verified Implementation Status (2026-03-17)
+
+- **Implemented:** boot lock (`src/daemon/lock.py`), daemon metadata (`src/daemon/metadata.py`), runtime paths (`src/daemon/paths.py`), management helpers (`src/daemon/management.py`), and daemon lifecycle updates in `src/lifecycle.py`.
+- **Implemented:** thin-client forwarding paths for MCP tool listing/calls in `src/mcp/server.py` and CLI search/index-status requests in `src/cli.py`.
+- **Not implemented as specified:** the transport is not ZMQ `ROUTER`/`DEALER`. `src/daemon/health.py` currently uses an `asyncio.start_unix_server(...)` request server plus synchronous Unix-socket requests.
+- **Not implemented yet:** full path-based admin/search surface from this contract (`/api/admin/tasks` is absent, `/internal/health` is present, `/internal/shutdown` is not exposed as a formal public request path).
 
 ## Mandatory Reference Implementation
 

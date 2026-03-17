@@ -1,12 +1,20 @@
 # Plan: Ragdocs V2 Refactor Overview
 
-**Status:** Draft
+**Status:** In Progress — verified against code on 2026-03-17
 **Date:** 2026-03-16
 **Related:** `docs/specs/25-ragdocs-product-principles.md`, `docs/specs/23-concurrency-huey.md`, `docs/specs/21-multiprocess-architecture.md`, `docs/specs/architecture-redesign.md`
 
 ## Executive Summary
 
 Ragdocs has grown three competing architectural stories: hybrid document search, a memory subsystem, and a multiprocess coordination model. The user direction is now explicit: narrow the product to document indexing/search plus git history search, remove the memory subsystem entirely, replace the current coordination model with a global daemon and thin clients, use Huey for persistent work, and treat projects as ranking metadata rather than storage partitions. This plan defines the architecture delta, workstreams, milestones, and migration risks before implementation starts.
+
+## Verified Implementation Status (2026-03-17)
+
+- **Workstream A — scope reset:** partially complete. Runtime memory code and public memory MCP surface are gone, but memory-era docs still remain in `docs/memory.md`, `docs/specs/16-memory-management.md`, `docs/specs/22-memory-system-independence.md`, and `docs/specs/24-autonomous-memory.md`, and `README.md` still advertises memory features.
+- **Workstream B — global daemon:** partially complete. Daemon metadata, boot lock, lifecycle helpers, and `daemon start|stop|status|restart` exist in `src/daemon/` and `src/cli.py`, but the transport is a Unix socket request server in `src/daemon/health.py`, not the ZMQ contract described here.
+- **Workstream C — persistent task layer:** partially complete. Production daemon startup now initializes `SqliteHuey`, registers indexing tasks, starts `HueyWorker`, and enables task-based document watching. Git refresh task support is landing in the same tranche, but queue/task inspection and broader task families are still incomplete.
+- **Workstream D — admin surface:** partially complete. Daemon lifecycle commands, `queue status`, and `index stats` are implemented; richer task/index inspection remains pending.
+- **Workstream E — soft project semantics:** not started. `ApplicationContext` still resolves project-aware index paths, `src/storage/db.py` has no `project_id` columns, and ranking code has no $1.2\times$ project uplift.
 
 ## Goals
 

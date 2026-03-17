@@ -1,12 +1,20 @@
 # Contract: Global Store, Paths, and Schema Layout
 
-**Status:** Draft
+**Status:** Not started — verified against code on 2026-03-17
 **Date:** 2026-03-16
 **Related:** `docs/plans/04-daemon-zmq-control-plane-contract.md`, `docs/plans/05-huey-task-and-cli-contract.md`
 
 ## Executive Summary
 
 This document defines the persistent storage contract for Ragdocs V2: which files exist, where they live, what they contain, and which runtime concepts are global versus metadata-only. It is the storage companion to the daemon and Huey contracts.
+
+## Verified Implementation Status (2026-03-17)
+
+- `src/daemon/paths.py` defines global runtime artifact paths, but the authoritative application data path still comes from `src/config.py::resolve_index_path(...)` and remains project-aware.
+- `src/storage/db.py` does **not** yet add `project_id`, `source_kind`, or `last_index_reason` to `documents`, and does **not** add `project_id` or `source_file` to `chunks`.
+- No storage migration currently unifies existing per-project stores into one global corpus.
+
+Treat this contract as pending implementation, not merely polish.
 
 ## Mandatory Reference Rule
 
