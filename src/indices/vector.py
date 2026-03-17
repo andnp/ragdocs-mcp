@@ -649,6 +649,7 @@ class VectorIndex:
                         "score": node.score if hasattr(node, "score") else 1.0,
                         "header_path": node.metadata.get("header_path", ""),
                         "file_path": node.metadata.get("file_path", ""),
+                        "project_id": node.metadata.get("project_id"),
                         "content": node_text,
                         "metadata": node.metadata,
                     }
@@ -662,6 +663,7 @@ class VectorIndex:
                             "score": node.score if hasattr(node, "score") else 1.0,
                             "header_path": "",
                             "file_path": node.metadata.get("file_path", ""),
+                            "project_id": node.metadata.get("project_id"),
                             "content": node_text,
                             "metadata": node.metadata,
                         }
@@ -703,6 +705,7 @@ class VectorIndex:
                     "score": 1.0,
                     "header_path": node.metadata.get("header_path", ""),
                     "file_path": node.metadata.get("file_path", ""),
+                    "project_id": node.metadata.get("project_id"),
                     "content": node_text,
                     "metadata": node.metadata,
                 }

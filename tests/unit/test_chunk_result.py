@@ -89,6 +89,21 @@ def test_chunk_result_to_dict_types():
     assert isinstance(result_dict["content"], str)
 
 
+def test_chunk_result_to_dict_includes_project_id_when_present():
+    result = ChunkResult(
+        chunk_id="test_chunk_1",
+        doc_id="test_doc",
+        score=1.0,
+        header_path="Section A > Subsection B",
+        file_path="path/to/file.md",
+        project_id="project-a",
+    )
+
+    result_dict = result.to_dict()
+
+    assert result_dict["project_id"] == "project-a"
+
+
 def test_chunk_result_score_range_valid():
     """
     Verify valid score values are accepted.

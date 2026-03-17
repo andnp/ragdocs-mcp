@@ -1,6 +1,7 @@
 import pytest
+from pathlib import Path
 
-from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, ProjectConfig, SearchConfig
 from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
@@ -366,3 +367,31 @@ Additional details.
 
     # Complex documents should have nested headers
     # (This may not always be true depending on chunking strategy)
+
+
+@pytest.mark.asyncio
+async def test_chunk_result_contains_project_id(config, manager, orchestrator, tmp_path):
+    docs_dir = Path(config.indexing.documents_path)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    config.projects = [ProjectConfig(name="docs-project", path=str(docs_dir))]
+
+    doc = create_test_document(
+        docs_dir,
+        "projected_doc",
+        "# Projected Doc\n\nProject scoped metadata should survive query results.",
+    )
+
+    manager.index_document(doc)
+
+    results, _, _ = await orchestrator.query(
+        "project scoped metadata",
+        top_k=5,
+        top_n=3,
+    )
+
+    assert results
+    assert any(result.project_id == "docs-project" for result in results)
+    assert any(
+        result.to_dict().get("project_id") == "docs-project" for result in results
+    )

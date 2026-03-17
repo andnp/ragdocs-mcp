@@ -14,7 +14,7 @@ This plan replaces ragdocs' current coordination model with a global daemon and 
 - **Thin-client behavior:** substantially complete. `src/mcp/server.py` and CLI query/admin commands forward work to the daemon over local IPC, the in-process fallback path is gone, and follow-up hardening landed explicit timeout errors, request IDs, attach/readiness fixes, and correct boot-lock release after startup.
 - **Huey ownership:** substantially complete. Production daemon startup initializes the queue, registers indexing tasks, supervises a dedicated worker subprocess for Huey task execution, and now places file/git watcher execution behind that worker boundary. Task-persistence hardening, worker restart supervision, and daemon-side freshness reloads are implemented; richer task families and deeper admin visibility remain incomplete.
 - **Admin surface:** partially complete. `daemon start|stop|status|restart`, `queue status`, `index stats`, `/api/admin/overview`, and `/internal/shutdown` now exist. Richer task inspection remains pending.
-- **Soft projects:** not started. Project-aware storage/ranking is still implemented through path selection in `src/config.py`; no metadata-only project model or bounded uplift exists yet.
+- **Soft projects:** in progress. The first metadata slice has landed: indexed content and query results now carry `project_id` metadata. Project-aware storage/path selection still exists in `src/config.py`, and the bounded `1.2x` active-project uplift has not landed yet.
 
 ## Goals
 
@@ -197,7 +197,7 @@ For the first implementation pass, the uplift is intentionally conservative and 
 ### Phase 5 — Soft Projects
 
 1. unify storage assumptions
-2. stamp project metadata at ingest time
+2. stamp project metadata at ingest time ✅
 3. add project uplift in ranking
 4. rewrite multi-project docs around soft semantics
 

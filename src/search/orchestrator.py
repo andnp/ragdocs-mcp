@@ -209,6 +209,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                         score=score,
                         header_path=str(chunk_data.get("header_path", "")),
                         file_path=str(chunk_data.get("file_path", "")),
+                        project_id=(
+                            str(metadata.get("project_id"))
+                            if isinstance(metadata, dict)
+                            and metadata.get("project_id") is not None
+                            else None
+                        ),
                         content=str(chunk_data.get("content", "")),
                         parent_chunk_id=parent_chunk_id,
                         parent_content=parent_content,
@@ -517,6 +523,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                         score=score,
                         header_path=str(chunk_data.get("header_path", "")),
                         file_path=str(chunk_data.get("file_path", "")),
+                        project_id=(
+                            str(metadata.get("project_id"))
+                            if isinstance(metadata, dict)
+                            and metadata.get("project_id") is not None
+                            else None
+                        ),
                         content=str(chunk_data.get("content", "")),
                         parent_chunk_id=parent_chunk_id,
                         parent_content=parent_content,

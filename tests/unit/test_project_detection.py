@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from src.config import ProjectConfig, detect_project
+from src.config import Config, ProjectConfig, detect_project, resolve_project_id_for_path
 
 
 @pytest.fixture
@@ -158,3 +158,28 @@ def test_detect_project_override_subdirectory_deepest_match(sample_projects):
         project_override="/home/user/shallow/deep/src",
     )
     assert result == "deep"
+
+
+def test_resolve_project_id_for_path_prefers_deepest_match(sample_projects):
+    config = Config(projects=sample_projects)
+
+    result = resolve_project_id_for_path(
+        Path("/home/user/shallow/deep/src/guide.md"),
+        config,
+    )
+
+    assert result == "deep"
+
+
+def test_resolve_project_id_for_path_falls_back_to_detected_project(tmp_path):
+    docs_path = tmp_path / "docs"
+    docs_path.mkdir()
+    target = docs_path / "readme.md"
+    target.write_text("# test", encoding="utf-8")
+
+    config = Config(detected_project="fallback-project")
+    config.indexing.documents_path = str(docs_path)
+
+    result = resolve_project_id_for_path(target, config)
+
+    assert result == "fallback-project"

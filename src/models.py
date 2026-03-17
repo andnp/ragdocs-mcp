@@ -16,6 +16,7 @@ class Chunk:
     file_path: str
     modified_time: datetime
     parent_chunk_id: str | None = None
+    project_id: str | None = None
     content_hash: str = field(default="", init=False)
 
     def __post_init__(self):
@@ -35,6 +36,7 @@ class ChunkResult:
     score: float
     header_path: str
     file_path: str
+    project_id: str | None = None
     content: str = ""
     parent_chunk_id: str | None = None
     parent_content: str | None = None
@@ -48,6 +50,8 @@ class ChunkResult:
             "file_path": self.file_path,
             "content": self.content,
         }
+        if self.project_id is not None:
+            result["project_id"] = self.project_id
         if self.parent_chunk_id is not None:
             result["parent_chunk_id"] = self.parent_chunk_id
         if self.parent_content is not None:
@@ -107,6 +111,7 @@ class Document:
     file_path: str
     modified_time: datetime
     chunks: list[Chunk] | None = None
+    project_id: str | None = None
 
 
 @dataclass

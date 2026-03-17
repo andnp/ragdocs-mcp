@@ -551,3 +551,30 @@ def resolve_documents_path(
     return str(resolved_path)
 
 
+def resolve_project_id_for_path(file_path: Path, config: Config) -> str | None:
+    resolved_file_path = file_path.expanduser().resolve()
+
+    projects_sorted = sorted(
+        config.projects,
+        key=lambda project: len(Path(project.path).parts),
+        reverse=True,
+    )
+    for project in projects_sorted:
+        project_path = Path(project.path).resolve()
+        try:
+            resolved_file_path.relative_to(project_path)
+            return project.name
+        except ValueError:
+            continue
+
+    if config.detected_project:
+        documents_path = Path(config.indexing.documents_path).expanduser().resolve()
+        try:
+            resolved_file_path.relative_to(documents_path)
+            return config.detected_project
+        except ValueError:
+            pass
+
+    return None
+
+

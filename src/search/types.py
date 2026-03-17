@@ -8,4 +8,5 @@ class SearchResultDict(TypedDict):
     score: NotRequired[float]
     file_path: NotRequired[str]
     header_path: NotRequired[str]
+    project_id: NotRequired[str | None]
     metadata: NotRequired[dict]

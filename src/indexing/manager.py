@@ -6,7 +6,7 @@ from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.chunking.factory import get_chunker
-from src.config import Config
+from src.config import Config, resolve_project_id_for_path
 from src.coordination import IndexLock
 from src.indexing.discovery import get_parser_suffixes
 from src.indices.graph import GraphStore
@@ -403,8 +403,22 @@ class IndexManager:
 
             docs_path = Path(self._config.indexing.documents_path)
             document.id = compute_doc_id(Path(file_path).resolve(), docs_path.resolve())
+            project_id = resolve_project_id_for_path(Path(file_path), self._config)
+            document.project_id = project_id
+            if project_id is not None:
+                document.metadata = {
+                    **document.metadata,
+                    "project_id": project_id,
+                }
 
             chunks = self._chunker.chunk_document(document)
+            for chunk in chunks:
+                chunk.project_id = project_id
+                if project_id is not None:
+                    chunk.metadata = {
+                        **chunk.metadata,
+                        "project_id": project_id,
+                    }
             document.chunks = chunks
 
             # Delta indexing logic
