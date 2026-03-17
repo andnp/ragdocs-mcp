@@ -1,21 +1,23 @@
 # Architecture
 
-This document describes the system architecture of mcp-markdown-ragdocs, including component responsibilities, data flow, and key design decisions.
+This document describes the current repository architecture of mcp-markdown-ragdocs.
 
 ## High-Level Architecture
 
-The system consists of three primary subsystems with two transport modes:
+The current runtime model has four main roles:
 
-1. **Indexing Service**: Monitors file changes and updates three distinct indices
-2. **Query Orchestrator**: Executes parallel searches and fuses results
-3. **Server Layer**: Exposes interfaces via stdio (MCP) or HTTP (REST API)
+1. **Global daemon**: owns lifecycle, transport, search-serving, and supervision
+2. **Worker subprocess**: runs the Huey consumer and executes durable indexing/git-refresh tasks
+3. **Thin clients**: MCP stdio and CLI attach to the daemon over local IPC
+4. **HTTP server**: still exists as a separate in-process FastAPI interface
 
-**Transport Modes:**
+Current transport modes:
 
-- **Stdio Transport (`mcp` command)**: Used by VS Code, Claude Desktop, and MCP clients. Server communicates via stdin/stdout using MCP protocol.
-- **HTTP Transport (`run` command)**: REST API for development, testing, and custom integrations.
+- **Stdio Transport (`mcp` command)**: daemon-backed thin client for MCP users
+- **CLI commands**: daemon-backed thin clients for query and admin operations
+- **HTTP Transport (`run` command)**: separate in-process REST API path
 
-Both transport modes use the same indexing and query orchestration subsystems.
+The control-plane refactor is substantially complete, but deeper task inspection and soft-project semantics remain unfinished.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐

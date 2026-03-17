@@ -24,7 +24,7 @@ from src.git.watcher import GitWatcher
 
 if TYPE_CHECKING:
     from src.storage.db import DatabaseManager
-    from src.worker.consumer import HueyWorker
+    from src.worker.process import HueyWorkerProcess
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ class LifecycleCoordinator:
     _emergency_timeout: float = field(default=3.5, repr=False)
     _init_error: BaseException | None = field(default=None, repr=False)
     _leader_election: LeaderElection | None = field(default=None, repr=False)
-    _huey_worker: HueyWorker | None = field(default=None, repr=False)
+    _huey_worker: HueyWorkerProcess | None = field(default=None, repr=False)
     _runtime_paths: RuntimePaths = field(
         default_factory=RuntimePaths.resolve, repr=False
     )
@@ -168,7 +168,7 @@ class LifecycleCoordinator:
         *,
         background_index: bool = False,
         db_manager: DatabaseManager | None = None,
-        huey_worker: HueyWorker | None = None,
+        huey_worker: HueyWorkerProcess | None = None,
     ) -> None:
         if self._state != LifecycleState.UNINITIALIZED:
             raise RuntimeError(f"Cannot start from state {self._state}")

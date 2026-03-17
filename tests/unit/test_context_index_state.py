@@ -254,6 +254,33 @@ class TestBackgroundIndexRetry:
         assert mock_context._index_state.indexed_count == 1
         assert mock_context._init_error is None
 
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_indices_reloads_when_store_version_advances(tmp_path: Path):
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "index_path", tmp_path)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    ctx._ready_event.set()
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_freshness_lock", asyncio.Lock())
+    _setattr(ctx, "_loaded_index_state_version", 1.0)
+
+    class _Manager:
+        def __init__(self):
+            self.load_calls = 0
+
+        def load(self):
+            self.load_calls += 1
+
+    manager = _Manager()
+    _setattr(ctx, "index_manager", manager)
+    _setattr(ctx, "_compute_index_state_version", lambda: 2.0)
+
+    await ctx.ensure_fresh_indices()
+
+    assert manager.load_calls == 1
+    assert ctx._loaded_index_state_version == 2.0
+
     @pytest.mark.asyncio
     async def test_state_transitions_during_indexing(
         self, mock_context: Any, tmp_path: Path

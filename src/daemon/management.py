@@ -291,6 +291,10 @@ def _daemon_log_path(paths: RuntimePaths) -> Path:
     return paths.root / "daemon.log"
 
 
+def _worker_log_path(paths: RuntimePaths) -> Path:
+    return paths.root / "worker.log"
+
+
 def _read_daemon_log_excerpt(paths: RuntimePaths, max_bytes: int = 4000) -> str | None:
     log_path = _daemon_log_path(paths)
     if not log_path.exists():

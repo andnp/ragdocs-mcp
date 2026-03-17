@@ -4,15 +4,16 @@
 **Related:** [sqlite-refactor.md](../plans/sqlite-refactor.md), [../plans/04-daemon-zmq-control-plane-contract.md](../plans/04-daemon-zmq-control-plane-contract.md)
 
 ## 1. Overview
-Ragdocs now uses Huey as the durable task layer behind the daemon-backed control plane. The multiprocess queue/snapshot design that originally motivated this spec is no longer the active architecture. What remains relevant is the task contract: the daemon owns the Huey consumer, thin clients enqueue work, and task payloads must remain durable and idempotent.
+Ragdocs now uses Huey as the durable task layer behind the daemon-backed control plane. The multiprocess queue/snapshot design that originally motivated this spec is no longer the active architecture. What remains relevant is the task contract: the daemon owns Huey supervision, thin clients enqueue work, and task payloads must remain durable and idempotent.
 
 Current implementation status:
 
 - daemon startup initializes `SqliteHuey`
-- the daemon owns the Huey worker lifecycle
+- the daemon supervises a dedicated worker subprocess for the Huey consumer
 - file watching enqueues indexing/removal work in task mode
 - git refresh work is also routed through task infrastructure
 - queue status is exposed from the CLI
+- daemon requests reload persisted indices lazily when worker writes advance the store state
 
 Still planned:
 
@@ -47,11 +48,11 @@ Ragdocs uses `SqliteHuey` to keep the deployment entirely local-first with no Re
 
 #### B. Global Daemon
 
-- **Responsibility**: own lifecycle, task consumption, indexing, and management payloads
+- **Responsibility**: own lifecycle, task supervision, search-serving, and management payloads
 - **Operation**:
-    - starts the Huey worker
+    - starts and stops the Huey worker subprocess
     - runs file and git watchers
-    - enqueues and executes document/git maintenance work
+    - enqueues document/git maintenance work
     - writes index/task/runtime state to the shared local store
 
 ## 4. Implementation Plan

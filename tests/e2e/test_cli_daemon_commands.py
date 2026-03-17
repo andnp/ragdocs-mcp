@@ -382,8 +382,9 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
             self.commit_indexer = object()
 
     class _FakeWorker:
-        def __init__(self, huey):
-            observed["worker_huey"] = huey
+        def __init__(self, *, runtime_paths, project_override):
+            observed["worker_runtime_paths"] = runtime_paths
+            observed["worker_project_override"] = project_override
 
     fake_ctx = _FakeContext()
     fake_huey = object()
@@ -410,7 +411,7 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
     monkeypatch.setattr("src.cli.ApplicationContext.create", _fake_create)
     monkeypatch.setattr("src.cli.get_huey", _fake_get_huey)
     monkeypatch.setattr("src.cli.register_tasks", _fake_register_tasks)
-    monkeypatch.setattr("src.cli.HueyWorker", _FakeWorker)
+    monkeypatch.setattr("src.cli.HueyWorkerProcess", _FakeWorker)
 
     from src.cli import _create_daemon_runtime
 
@@ -430,6 +431,8 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
         fake_ctx.index_manager,
         fake_ctx.commit_indexer,
     )
+    assert observed["worker_runtime_paths"] == runtime_paths
+    assert observed["worker_project_override"] == "docs"
     assert worker is not None
 
 

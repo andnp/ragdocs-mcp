@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+import os
 
 from src.config import (
     Config,
@@ -64,6 +65,8 @@ class ApplicationContext:
         default_factory=lambda: IndexState(status="uninitialized"),
         repr=False,
     )
+    _freshness_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _loaded_index_state_version: float = field(default=0.0, repr=False)
 
     @classmethod
     def create(
@@ -192,6 +195,27 @@ class ApplicationContext:
         saved_manifest = load_manifest(self.index_path)
         return should_rebuild(self.current_manifest, saved_manifest)
 
+    def _compute_index_state_version(self) -> float:
+        candidates = [
+            self.index_path / "index.manifest.json",
+            self.index_path / "index.db",
+            self.index_path / "index.db-wal",
+            self.index_path / "vector" / "docstore.json",
+            self.index_path / "vector" / "faiss_index.bin",
+            self.index_path / "graph" / "graph.json",
+        ]
+        version = 0.0
+        for candidate in candidates:
+            try:
+                if candidate.exists():
+                    version = max(version, candidate.stat().st_mtime)
+            except OSError:
+                continue
+        return version
+
+    def _mark_index_state_loaded(self) -> None:
+        self._loaded_index_state_version = self._compute_index_state_version()
+
     async def start(self, background_index: bool = False) -> None:
         needs_rebuild = await asyncio.to_thread(self._check_and_rebuild_if_needed)
 
@@ -203,6 +227,7 @@ class ApplicationContext:
                 )
             else:
                 self._full_index()
+                self._mark_index_state_loaded()
                 self._ready_event.set()
                 # Build vocabulary after full index (in background)
                 asyncio.create_task(self._build_initial_vocabulary())
@@ -215,6 +240,7 @@ class ApplicationContext:
                 )
             else:
                 await asyncio.to_thread(self.index_manager.load)
+                self._mark_index_state_loaded()
                 self._index_state = IndexState(status="ready")
                 self._ready_event.set()
                 await self._startup_reconciliation()
@@ -289,6 +315,7 @@ class ApplicationContext:
                     self._index_state.indexed_count = indexed_count
 
                 await asyncio.to_thread(self.index_manager.persist)
+                self._mark_index_state_loaded()
 
                 if self.current_manifest:
                     self.current_manifest.indexed_files = build_indexed_files_map(
@@ -339,6 +366,7 @@ class ApplicationContext:
     async def _load_existing_indices_background(self) -> None:
         try:
             await asyncio.to_thread(self.index_manager.load)
+            self._mark_index_state_loaded()
             await self._startup_reconciliation()
 
             if not self.index_manager.vector._concept_vocabulary:
@@ -367,6 +395,7 @@ class ApplicationContext:
 
         if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
             self.index_manager.persist()
+            self._mark_index_state_loaded()
             if self.current_manifest:
                 self.current_manifest.indexed_files = build_indexed_files_map(
                     discovered_files, docs_path
@@ -405,6 +434,7 @@ class ApplicationContext:
                     or result.moved_count > 0
                 ):
                     self.index_manager.persist()
+                    self._mark_index_state_loaded()
                     if self.current_manifest:
                         self.current_manifest.indexed_files = build_indexed_files_map(
                             discovered_files, docs_path
@@ -460,6 +490,7 @@ class ApplicationContext:
             logger.info(f"Vocabulary update: embedded {total_embedded} new terms")
             # Persist after vocabulary update
             await asyncio.to_thread(self.index_manager.persist)
+            self._mark_index_state_loaded()
 
     async def _build_initial_vocabulary(self) -> None:
         """Build concept vocabulary from scratch in background."""
@@ -471,6 +502,7 @@ class ApplicationContext:
                 min_frequency=3,
             )
             await asyncio.to_thread(self.index_manager.persist)
+            self._mark_index_state_loaded()
             logger.info("Concept vocabulary built and persisted")
         except asyncio.CancelledError:
             logger.info("Vocabulary building cancelled")
@@ -522,6 +554,22 @@ class ApplicationContext:
                 f"Index initialization failed: {self._init_error}"
             ) from self._init_error
 
+    async def ensure_fresh_indices(self) -> None:
+        if not self._ready_event.is_set() or self._init_error is not None:
+            return
+
+        current_version = await asyncio.to_thread(self._compute_index_state_version)
+        if current_version <= self._loaded_index_state_version:
+            return
+
+        async with self._freshness_lock:
+            current_version = await asyncio.to_thread(self._compute_index_state_version)
+            if current_version <= self._loaded_index_state_version:
+                return
+
+            await asyncio.to_thread(self.index_manager.load)
+            self._loaded_index_state_version = current_version
+
     async def stop(self) -> None:
         logger.info("Stopping ApplicationContext")
 
@@ -547,6 +595,7 @@ class ApplicationContext:
 
         try:
             await asyncio.to_thread(self.index_manager.persist)
+            self._mark_index_state_loaded()
         except Exception as e:
             logger.error(f"Failed to persist indices during stop: {e}")
 

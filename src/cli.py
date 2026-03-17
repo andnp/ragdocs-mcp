@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sys
+import signal
 import time
 from pathlib import Path
 
@@ -60,6 +61,7 @@ from src.indexing.reconciler import build_indexed_files_map
 from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.utils import should_include_file
 from src.worker.consumer import HueyWorker
+from src.worker.process import HueyWorkerProcess
 from src.cli_utils.validators import (
     validate_range,
     validate_timestamp_range,
@@ -105,8 +107,64 @@ def _create_daemon_runtime(project: str | None, runtime_paths: RuntimePaths):
     )
     huey = get_huey(runtime_paths.queue_db_path)
     register_tasks(huey, ctx.index_manager, commit_indexer=ctx.commit_indexer)
-    worker = HueyWorker(huey)
+    worker = HueyWorkerProcess(
+        runtime_paths=runtime_paths,
+        project_override=project,
+    )
     return ctx, worker
+
+
+def _parent_process_alive(parent_pid: int) -> bool:
+    try:
+        os.kill(parent_pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _run_worker_forever(
+    project: str | None,
+    queue_db: Path,
+    index_root: Path,
+    parent_pid: int,
+) -> None:
+    ctx = ApplicationContext.create(
+        project_override=project,
+        enable_watcher=False,
+        lazy_embeddings=True,
+        use_tasks=False,
+        index_path_override=index_root,
+    )
+    try:
+        ctx.index_manager.load()
+    except Exception:
+        logger.info("Worker runtime starting with fresh indices", exc_info=True)
+
+    huey = get_huey(queue_db)
+    register_tasks(huey, ctx.index_manager, commit_indexer=ctx.commit_indexer)
+    worker = HueyWorker(huey)
+
+    stop_requested = False
+
+    def _handle_signal(signum, frame):
+        nonlocal stop_requested
+        stop_requested = True
+        worker.stop()
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    worker.start()
+    try:
+        while worker.is_running and not stop_requested:
+            if not _parent_process_alive(parent_pid):
+                worker.stop()
+                break
+            time.sleep(0.2)
+    finally:
+        worker.stop()
 
 
 def _build_queue_status_payload(
@@ -176,6 +234,30 @@ def _request_daemon_overview(
 @click.group()
 def cli():
     pass
+
+
+@cli.command("worker-run", hidden=True)
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+@click.option("--queue-db", type=click.Path(path_type=Path), required=True)
+@click.option("--index-root", type=click.Path(path_type=Path), required=True)
+@click.option("--parent-pid", type=int, required=True)
+def worker_run(
+    project: str | None,
+    queue_db: Path,
+    index_root: Path,
+    parent_pid: int,
+):
+    """Run the Huey task worker in a dedicated subprocess."""
+    try:
+        _run_worker_forever(project, queue_db, index_root, parent_pid)
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        logger.error(f"Failed to run worker: {e}", exc_info=True)
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 def _apply_project_detection(config, project_override: str | None = None):
@@ -263,6 +345,7 @@ async def _run_daemon_forever(project: str | None) -> None:
                 ]
             }
         if path == "/api/admin/overview":
+            await ctx.ensure_fresh_indices()
             return _build_admin_overview_payload(
                 ctx,
                 runtime_paths=runtime_paths,
@@ -270,6 +353,7 @@ async def _run_daemon_forever(project: str | None) -> None:
                 lifecycle=coordinator.state.value,
             )
         if path in {"/api/admin/index", "/api/admin/index-stats"}:
+            await ctx.ensure_fresh_indices()
             return _build_index_stats_payload(ctx)
         if path in {"/api/admin/tasks", "/api/admin/queue-status"}:
             return _build_queue_status_payload(
@@ -281,6 +365,7 @@ async def _run_daemon_forever(project: str | None) -> None:
             return {"status": "ok", "lifecycle": coordinator.state.value}
         if path == "/api/search/query":
             await coordinator.wait_ready(timeout=60.0)
+            await ctx.ensure_fresh_indices()
             query_text = str(payload.get("query", ""))
             top_n = int(payload.get("top_n", 5))
             top_k = max(20, top_n * 4)
