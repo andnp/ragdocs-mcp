@@ -14,7 +14,7 @@ from src.indices.hash_store import ChunkHashStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.indexing.implicit_graph import ImplicitGraphBuilder
-from src.indexing.manifest import load_manifest, save_manifest
+from src.indexing.manifest import IndexManifest, load_manifest, save_manifest
 from src.models import Chunk
 from src.parsers.dispatcher import dispatch_parser
 from src.search.edge_types import infer_edge_type
@@ -49,6 +49,8 @@ class IndexManager:
         index_path = Path(config.indexing.index_path)
         hash_store_path = index_path / "chunk_hashes.json"
         self._hash_store = ChunkHashStore(hash_store_path)
+        self._manifest_indexed_files: dict[str, str] = {}
+        self._manifest_removed_doc_ids: set[str] = set()
 
         logger.info(
             f"IndexManager initialized with embedding_workers={config.indexing.embedding_workers} "
@@ -57,6 +59,44 @@ class IndexManager:
 
     def _get_parser_suffixes(self) -> list[str]:
         return sorted(get_parser_suffixes())
+
+    def _record_manifest_index(self, file_path: str, doc_id: str) -> None:
+        docs_path = Path(self._config.indexing.documents_path).resolve()
+        rel_path = str(Path(file_path).resolve().relative_to(docs_path))
+        self._manifest_indexed_files[doc_id] = rel_path
+        self._manifest_removed_doc_ids.discard(doc_id)
+
+    def _record_manifest_removal(self, doc_id: str) -> None:
+        self._manifest_removed_doc_ids.add(doc_id)
+        self._manifest_indexed_files.pop(doc_id, None)
+
+    def _persist_manifest_updates(self, index_path: Path) -> None:
+        if not self._manifest_indexed_files and not self._manifest_removed_doc_ids:
+            return
+
+        manifest = load_manifest(index_path)
+        if manifest is None:
+            manifest = IndexManifest(
+                spec_version="1.0.0",
+                embedding_model=self._config.llm.embedding_model,
+                chunking_config={
+                    "strategy": self._config.chunking.strategy,
+                    "min_chunk_chars": self._config.chunking.min_chunk_chars,
+                    "max_chunk_chars": self._config.chunking.max_chunk_chars,
+                    "overlap_chars": self._config.chunking.overlap_chars,
+                },
+                indexed_files={},
+            )
+
+        indexed_files = dict(manifest.indexed_files or {})
+        indexed_files.update(self._manifest_indexed_files)
+        for doc_id in self._manifest_removed_doc_ids:
+            indexed_files.pop(doc_id, None)
+
+        manifest.indexed_files = indexed_files
+        save_manifest(index_path, manifest)
+        self._manifest_indexed_files.clear()
+        self._manifest_removed_doc_ids.clear()
 
     def reindex_document(self, doc_id: str, reason: str | None = None):
         docs_path = Path(self._config.indexing.documents_path)
@@ -426,6 +466,7 @@ class IndexManager:
                     self.graph.add_edge(document.id, link, edge_type="links_to")
 
             self._failed_files = [f for f in self._failed_files if f.path != file_path]
+            self._record_manifest_index(file_path, document.id)
 
         except UnicodeDecodeError as e:
             # Try alternative encodings for files with encoding issues
@@ -493,6 +534,7 @@ class IndexManager:
 
         # Remove from hash store
         self._hash_store.remove_document(doc_id)
+        self._record_manifest_removal(doc_id)
 
     def persist(self):
         """Persist all indices with retry logic for transient failures.
@@ -535,6 +577,7 @@ class IndexManager:
 
             # Persist hash store for delta indexing
             self._hash_store.persist()
+            self._persist_manifest_updates(index_path)
         except Exception as e:
             logger.error(f"Failed to persist indices: {e}", exc_info=True)
             raise

@@ -181,6 +181,45 @@ def test_startup_matching_manifest_skips_rebuild(
     assert doc_count == 1  # Only the pre-indexed document
 
 
+def test_persist_updates_manifest_after_incremental_index(
+    config, manager, tmp_path
+):
+    docs_path = Path(config.indexing.documents_path)
+    index_path = Path(config.indexing.index_path)
+    doc_path = docs_path / "incremental.md"
+    doc_path.write_text("# Incremental\n\nFresh manifest content.")
+
+    manager.index_document(str(doc_path))
+    manager.persist()
+
+    manifest = load_manifest(index_path)
+    assert manifest is not None
+    assert manifest.indexed_files == {"incremental": "incremental.md"}
+
+
+def test_persist_removes_manifest_entry_after_document_removal(
+    config, manager, tmp_path
+):
+    docs_path = Path(config.indexing.documents_path)
+    index_path = Path(config.indexing.index_path)
+    doc_path = docs_path / "remove_me.md"
+    doc_path.write_text("# Remove me\n\nManifest sync check.")
+
+    manager.index_document(str(doc_path))
+    manager.persist()
+
+    manifest = load_manifest(index_path)
+    assert manifest is not None
+    assert manifest.indexed_files == {"remove_me": "remove_me.md"}
+
+    manager.remove_document("remove_me")
+    manager.persist()
+
+    updated_manifest = load_manifest(index_path)
+    assert updated_manifest is not None
+    assert updated_manifest.indexed_files == {}
+
+
 def test_startup_version_mismatch_triggers_rebuild(
     config, manager, current_manifest, tmp_path, shared_embedding_model
 ):
