@@ -14,7 +14,8 @@ This document defines the control-plane contract for Ragdocs V2: one global daem
 - **Implemented:** thin-client forwarding paths for MCP tool listing/calls in `src/mcp/server.py` and CLI search/index-status requests in `src/cli.py`.
 - **Implemented:** the transport is now ZMQ `ROUTER`/`DEALER` over IPC in `src/daemon/transport.py`, with `src/daemon/health.py` kept as a compatibility wrapper for probe/request helpers.
 - **Implemented with follow-up hardening:** request envelopes now carry `request_id`, client metadata, and explicit timeout errors; boot-lock lifetime was fixed so the daemon does not hold the startup lock for its entire lifetime; CLI attach/start paths now wait on daemon readiness more robustly.
-- **Not implemented yet:** `/api/admin/index` and `/api/admin/tasks` are now wired, but `/api/admin/overview` and `/internal/shutdown` are still missing as public request paths.
+- **Implemented:** `/api/admin/index`, `/api/admin/tasks`, `/api/admin/overview`, and `/internal/shutdown` are now wired in the daemon request handler and used by the CLI/management surface.
+- **Not implemented yet:** richer admin payload depth and broader control-plane convergence for the optional HTTP path are still pending.
 
 ## Mandatory Reference Implementation
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.daemon.management import DaemonInspection, DaemonManagementError, start_daemon
+from src.daemon.management import DaemonInspection, DaemonManagementError, start_daemon, stop_daemon
 from src.daemon.metadata import DaemonMetadata
 from src.daemon.paths import RuntimePaths
 
@@ -302,3 +302,64 @@ def test_start_daemon_cleans_up_old_nonresponsive_metadata_before_spawn(
     assert result == replacement_metadata
     assert cleaned == [paths]
     assert observed["spawned_pid"] == 717
+
+
+def test_stop_daemon_prefers_internal_shutdown_for_responsive_daemon(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    metadata = DaemonMetadata(
+        pid=818,
+        started_at=1.0,
+        status="ready_primary",
+        socket_path=str(paths.socket_path),
+    )
+
+    monkeypatch.setattr(
+        "src.daemon.management.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=metadata,
+            running=True,
+            stale=False,
+            responsive=True,
+            ready=True,
+        ),
+    )
+
+    observed: dict[str, object] = {}
+
+    def _fake_request(socket_path, path, payload, timeout_seconds):
+        observed["socket_path"] = socket_path
+        observed["path"] = path
+        observed["payload"] = payload
+        observed["timeout_seconds"] = timeout_seconds
+        return {"status": "ok"}
+
+    monkeypatch.setattr("src.daemon.management.request_daemon_socket", _fake_request)
+
+    running = iter([True, False])
+    monkeypatch.setattr(
+        "src.daemon.management.is_process_running",
+        lambda pid: next(running),
+    )
+    monkeypatch.setattr("src.daemon.management.time.sleep", lambda _: None)
+
+    terminations: list[tuple[int, bool]] = []
+    monkeypatch.setattr(
+        "src.daemon.management._terminate_process",
+        lambda pid, *, force: terminations.append((pid, force)),
+    )
+
+    cleaned: list[RuntimePaths] = []
+    monkeypatch.setattr(
+        "src.daemon.management._cleanup_stale_runtime_state",
+        lambda runtime_paths: cleaned.append(runtime_paths),
+    )
+
+    result = stop_daemon(timeout_seconds=0.5, paths=paths)
+
+    assert result == metadata
+    assert observed["path"] == "/internal/shutdown"
+    assert terminations == []
+    assert cleaned == [paths]

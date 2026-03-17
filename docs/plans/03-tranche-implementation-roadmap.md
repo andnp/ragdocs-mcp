@@ -14,7 +14,7 @@ This roadmap turns the approved architecture direction into an execution sequenc
 - **Tranche 1 — Hard Delete Memory Product Surface:** substantially complete. Runtime/code cleanup landed and the primary public docs now reflect the narrowed product scope; only historical memory-era specs/docs remain to archive or retire.
 - **Tranche 2 — Daemon Metadata, Boot Lock, and Thin-Client Skeleton:** substantially complete. Metadata, lock, strict client forwarding, and ZMQ-based transport now exist, and follow-up hardening landed boot-lock release, explicit transport timeout errors, request IDs, and startup/attach resilience. The remaining gap is contract cleanup and store semantics, not basic transport availability.
 - **Tranche 3 — Huey Ownership Transfer:** substantially complete. Production daemon wiring exists for document and git refresh tasks, and follow-up hardening fixed task persistence plus manifest synchronization. Richer task families/admin visibility remain in progress.
-- **Tranche 4 — CLI-First Operations Surface:** partially complete. Daemon lifecycle commands, `queue status`, and `index stats` exist and are dogfooded; deeper task inspection and endpoint naming cleanup remain missing.
+- **Tranche 4 — CLI-First Operations Surface:** partially complete. Daemon lifecycle commands, `queue status`, `index stats`, `/api/admin/overview`, and `/internal/shutdown` now exist and are dogfooded; deeper task inspection remains missing.
 - **Tranche 5 — Soft Project Semantics:** not started.
 - **Tranche 6 — Cleanup & Hardening:** partially complete. Transitional fallback paths are gone, daemon attach/freshness/boot-lock issues have been hardened, and focused daemon-backed smoke coverage now exists. Multiprocess/snapshot cleanup is still incomplete.
 

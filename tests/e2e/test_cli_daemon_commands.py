@@ -106,6 +106,63 @@ def test_daemon_status_json_includes_runtime_paths(monkeypatch, tmp_path):
     assert '"index_db_path": "/tmp/index.db"' in result.output
 
 
+def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_path):
+    runner = CliRunner()
+    metadata = DaemonMetadata(
+        pid=4321,
+        started_at=1_763_700_000.0,
+        status="ready_primary",
+        socket_path="/tmp/ragdocs.sock",
+        index_db_path="/tmp/index.db",
+        queue_db_path="/tmp/queue.db",
+    )
+    monkeypatch.setattr(
+        "src.cli.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=metadata,
+            running=True,
+            stale=False,
+            responsive=True,
+            ready=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "src.cli.request_daemon_socket",
+        lambda socket_path, path, payload, timeout_seconds: {
+            "status": "ok",
+            "indexed_documents": 9,
+            "indexed_chunks": 21,
+            "git_commits": 12,
+            "git_repositories": 2,
+            "pending_count": 3,
+            "scheduled_count": 1,
+            "running_count": 0,
+            "failed_count": 1,
+            "worker_running": True,
+        },
+    )
+    monkeypatch.setattr(
+        RuntimePaths,
+        "resolve",
+        classmethod(
+            lambda cls: RuntimePaths(
+                root=tmp_path,
+                index_db_path=tmp_path / "index.db",
+                queue_db_path=tmp_path / "queue.db",
+                metadata_path=tmp_path / "daemon.json",
+                lock_path=tmp_path / "daemon.lock",
+                socket_path=tmp_path / "daemon.sock",
+            )
+        ),
+    )
+
+    result = runner.invoke(cli, ["daemon", "status", "--json"])
+
+    assert result.exit_code == 0
+    assert '"indexed_documents": 9' in result.output
+    assert '"pending_count": 3' in result.output
+
+
 def test_daemon_start_invokes_management_helper(monkeypatch):
     runner = CliRunner()
     observed: dict[str, object] = {}

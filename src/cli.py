@@ -71,6 +71,7 @@ logger = logging.getLogger(__name__)
 MIN_TOP_N = 1
 MAX_TOP_N = 100
 _DAEMON_QUERY_READY_WAIT_SECONDS = 120.0
+_DAEMON_OVERVIEW_TIMEOUT_SECONDS = 1.0
 
 
 def _create_query_context(project: str | None) -> ApplicationContext:
@@ -117,6 +118,58 @@ def _build_queue_status_payload(
     payload = stats.to_dict()
     payload["queue_db_path"] = str(queue_path)
     return payload
+
+
+def _build_admin_overview_payload(
+    ctx: ApplicationContext,
+    *,
+    runtime_paths: RuntimePaths,
+    worker_running: bool,
+    lifecycle: str,
+) -> dict[str, object]:
+    index_payload = _build_index_stats_payload(ctx)
+    task_payload = _build_queue_status_payload(
+        queue_path=runtime_paths.queue_db_path,
+        worker_running=worker_running,
+    )
+    return {
+        "status": "ok",
+        "pid": os.getpid(),
+        "lifecycle": lifecycle,
+        "socket_path": str(runtime_paths.socket_path),
+        "endpoint": f"ipc://{runtime_paths.socket_path}",
+        "index_db_path": str(runtime_paths.index_db_path),
+        "queue_db_path": str(runtime_paths.queue_db_path),
+        "indexed_documents": index_payload["indexed_documents"],
+        "indexed_chunks": index_payload["indexed_chunks"],
+        "git_commits": index_payload["git_commits"],
+        "git_repositories": index_payload["git_repositories"],
+        "pending_count": task_payload["pending_count"],
+        "scheduled_count": task_payload["scheduled_count"],
+        "running_count": task_payload["running_count"],
+        "failed_count": task_payload["failed_count"],
+        "worker_running": task_payload["worker_running"],
+    }
+
+
+def _request_daemon_overview(
+    inspection: DaemonInspection,
+    *,
+    runtime_paths: RuntimePaths,
+) -> dict[str, object] | None:
+    metadata = inspection.metadata
+    if metadata is None or not inspection.responsive or not metadata.socket_path:
+        return None
+
+    response = request_daemon_socket(
+        Path(metadata.socket_path),
+        "/api/admin/overview",
+        {},
+        timeout_seconds=_DAEMON_OVERVIEW_TIMEOUT_SECONDS,
+    )
+    if response.get("status") == "error":
+        return None
+    return response
 
 
 @click.group()
@@ -208,6 +261,13 @@ async def _run_daemon_forever(project: str | None) -> None:
                     if isinstance(content, TextContent)
                 ]
             }
+        if path == "/api/admin/overview":
+            return _build_admin_overview_payload(
+                ctx,
+                runtime_paths=runtime_paths,
+                worker_running=huey_worker.is_running,
+                lifecycle=coordinator.state.value,
+            )
         if path in {"/api/admin/index", "/api/admin/index-stats"}:
             return _build_index_stats_payload(ctx)
         if path in {"/api/admin/tasks", "/api/admin/queue-status"}:
@@ -215,6 +275,9 @@ async def _run_daemon_forever(project: str | None) -> None:
                 queue_path=runtime_paths.queue_db_path,
                 worker_running=huey_worker.is_running,
             )
+        if path == "/internal/shutdown":
+            coordinator.request_shutdown()
+            return {"status": "ok", "lifecycle": coordinator.state.value}
         if path == "/api/search/query":
             await coordinator.wait_ready(timeout=60.0)
             query_text = str(payload.get("query", ""))
@@ -421,6 +484,26 @@ def daemon_status(output_json: bool):
         "endpoint": inspection.metadata.transport_endpoint,
     }
 
+    overview = _request_daemon_overview(inspection, runtime_paths=runtime_paths)
+    if overview is not None:
+        payload.update(
+            {
+                key: overview[key]
+                for key in (
+                    "indexed_documents",
+                    "indexed_chunks",
+                    "git_commits",
+                    "git_repositories",
+                    "pending_count",
+                    "scheduled_count",
+                    "running_count",
+                    "failed_count",
+                    "worker_running",
+                )
+                if key in overview
+            }
+        )
+
     if output_json:
         click.echo(json.dumps(payload, indent=2))
         return
@@ -437,6 +520,13 @@ def daemon_status(output_json: bool):
         click.echo(f"Queue DB: {inspection.metadata.queue_db_path}")
     if inspection.metadata.transport_endpoint:
         click.echo(f"Endpoint: {inspection.metadata.transport_endpoint}")
+    if "indexed_documents" in payload:
+        click.echo(f"Indexed documents: {payload['indexed_documents']}")
+        click.echo(f"Indexed chunks: {payload['indexed_chunks']}")
+        click.echo(f"Indexed git commits: {payload['git_commits']}")
+    if "pending_count" in payload:
+        click.echo(f"Pending tasks: {payload['pending_count']}")
+        click.echo(f"Failed tasks: {payload['failed_count']}")
 
 
 @daemon_group.command("stop")

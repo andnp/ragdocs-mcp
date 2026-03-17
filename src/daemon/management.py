@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 
-from src.daemon.health import probe_daemon_socket, remove_daemon_socket
+from src.daemon.health import probe_daemon_socket, remove_daemon_socket, request_daemon_socket
 from src.daemon.lock import FilesystemLock
 from src.daemon.metadata import DaemonMetadata, read_daemon_metadata, remove_daemon_metadata
 from src.daemon.paths import RuntimePaths
@@ -16,6 +16,7 @@ from src.daemon.paths import RuntimePaths
 
 _READY_STATUSES = {"ready", "ready_primary", "ready_replica"}
 _NONRESPONSIVE_METADATA_GRACE_SECONDS = 30.0
+_INTERNAL_SHUTDOWN_TIMEOUT_SECONDS = 1.0
 
 
 class DaemonManagementError(RuntimeError):
@@ -117,7 +118,9 @@ def stop_daemon(
         _cleanup_stale_runtime_state(runtime_paths)
         return metadata
 
-    _terminate_process(metadata.pid, force=False)
+    shutdown_requested = _request_internal_shutdown(metadata)
+    if not shutdown_requested:
+        _terminate_process(metadata.pid, force=False)
     deadline = time.monotonic() + timeout_seconds
 
     while time.monotonic() < deadline:
@@ -135,6 +138,23 @@ def stop_daemon(
 
     _cleanup_stale_runtime_state(runtime_paths)
     return metadata
+
+
+def _request_internal_shutdown(metadata: DaemonMetadata) -> bool:
+    if not metadata.socket_path:
+        return False
+
+    try:
+        response = request_daemon_socket(
+            Path(metadata.socket_path),
+            "/internal/shutdown",
+            {},
+            timeout_seconds=_INTERNAL_SHUTDOWN_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        return False
+
+    return response.get("status") == "ok"
 
 
 def restart_daemon(
