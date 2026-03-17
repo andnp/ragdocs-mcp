@@ -404,6 +404,7 @@ class VectorIndex:
             if document_id not in self._doc_id_to_node_ids:
                 return
             del self._doc_id_to_node_ids[document_id]
+            self._tombstoned_docs.add(document_id)
 
     def remove_chunk(self, chunk_id: str) -> None:
         """Remove a specific chunk from the vector index.

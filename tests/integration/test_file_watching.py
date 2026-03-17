@@ -164,9 +164,12 @@ async def test_detect_file_deletion_and_remove_from_index(
         # Wait for initial indexing
         await asyncio.sleep(1.0)
 
+        doc_id = "to_delete"
+
         # Verify document exists (count > 0)
         count_before = manager.get_document_count()
         assert count_before > 0
+        assert doc_id in manager.vector._doc_id_to_node_ids
 
         # Delete the file
         test_file.unlink()
@@ -174,8 +177,25 @@ async def test_detect_file_deletion_and_remove_from_index(
         # Wait for debounce + processing
         await asyncio.sleep(1.0)
 
-        # Verify operation completed (removal processed)
-        # Test passes if no exception occurred during removal
+        # Verify removal is persisted and survives reload.
+        assert doc_id not in manager.vector._doc_id_to_node_ids
+        assert doc_id in manager.vector._tombstoned_docs
+
+        manager.persist()
+        reloaded_manager = manager.__class__(
+            config,
+            manager.vector.__class__(
+                embedding_model_name=manager.vector._embedding_model_name,
+                embedding_model=manager.vector._embedding_model,
+                embedding_workers=config.indexing.embedding_workers,
+            ),
+            manager.keyword.__class__(),
+            manager.graph.__class__(),
+        )
+        reloaded_manager.load()
+
+        assert doc_id not in reloaded_manager.vector._doc_id_to_node_ids
+        assert doc_id in reloaded_manager.vector._tombstoned_docs
     finally:
         await watcher.stop()
 

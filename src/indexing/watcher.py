@@ -281,6 +281,7 @@ class FileWatcher:
                             continue
                     # Fallback to direct execution
                     await asyncio.to_thread(self._index_manager.remove_document, doc_id)
+                    await asyncio.to_thread(self._index_manager.persist)
                     logger.info(f"Removed: {file_path}")
             except Exception as e:
                 logger.error(f"Failed to process {file_path}: {e}")
