@@ -11,7 +11,7 @@ This plan replaces ragdocs' current coordination model with a global daemon and 
 ## Verified Implementation Status (2026-03-17)
 
 - **Phase 1 — daemon scaffolding:** partially complete. `src/daemon/metadata.py`, `src/daemon/paths.py`, `src/daemon/lock.py`, `src/daemon/management.py`, and daemon CLI commands are present.
-- **Thin-client behavior:** partially complete. `src/mcp/server.py` and CLI query commands can forward to the daemon over the local socket when available, with in-process fallback.
+- **Thin-client behavior:** substantially complete. `src/mcp/server.py` and CLI query/admin commands forward work to the daemon over the local socket, and recent cleanup removed the in-process fallback path.
 - **Huey ownership:** partially complete. Production daemon startup now initializes the queue, registers indexing tasks, starts the worker, and constructs the daemon watcher with task mode enabled. Git/task coverage is still incomplete, but queue inspection is now implemented.
 - **Admin surface:** partially complete. `daemon start|stop|status|restart`, `queue status`, and `index stats` exist. Richer task inspection remains pending.
 - **Soft projects:** not started. Project-aware storage/ranking is still implemented through path selection in `src/config.py`; no metadata-only project model or bounded uplift exists yet.
@@ -185,7 +185,7 @@ For the first implementation pass, the uplift is intentionally conservative and 
 ### Phase 3 — Thin MCP Client
 
 1. convert MCP server path into request-forwarding thin client
-2. preserve direct local fallback only as a temporary migration switch if needed
+2. keep clients strict and daemon-backed rather than preserving a local execution fallback
 3. prove multiple clients can safely share one daemon
 
 ### Phase 4 — Admin Surface

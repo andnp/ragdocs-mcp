@@ -24,6 +24,8 @@ Existing RAG solutions require manual database setup, explicit indexing steps, a
 - **Multi-project support:** Manage isolated indices for multiple projects on one machine with automatic project detection
 - Server-Sent Events (SSE) streaming for real-time response delivery
 - CLI query command with rich formatted output
+- Daemon-backed thin clients for MCP and CLI operations
+- CLI daemon management and admin inspection (`daemon status`, `queue status`, `index stats`)
 - Automatic file watching with debounced incremental indexing
 - Zero-configuration operation with sensible defaults
 - Index versioning with automatic rebuild on configuration changes
@@ -31,7 +33,6 @@ Existing RAG solutions require manual database setup, explicit indexing steps, a
 - Rich Markdown parsing: frontmatter, wikilinks, tags, transclusions
 - Reciprocal Rank Fusion for multi-strategy result merging
 - Recency bias for recently modified documents
-- **Memory Management System:** Persistent AI memory bank with cross-corpus linking, **calibrated scoring** (sigmoid expansion for interpretable 0-1 range), exponential decay, and ghost node graph traversal
 - Local-first architecture with no external dependencies
 
 ## Installation
@@ -54,11 +55,7 @@ Start the stdio-based MCP server for use with VS Code or other MCP clients:
 uv run mcp-markdown-ragdocs mcp
 ```
 
-The server will:
-1. Scan for `*.md` and `*.txt` files in the current directory
-2. Build vector, keyword, and graph indices
-3. Start file watching for automatic updates
-4. Expose query_documents tool via stdio transport
+The MCP process is now a **thin client**. It forwards tool discovery and tool calls to the local Ragdocs daemon over the daemon transport. On first use, the thin client will attach to an existing daemon or start one if needed.
 
 See [MCP Integration](#mcp-integration) below for VS Code configuration.
 
@@ -163,6 +160,26 @@ uv run mcp-markdown-ragdocs query "authentication" --project my-project
 # Enable debug mode to see search internals
 uv run mcp-markdown-ragdocs query "authentication" --debug
 ```
+
+`query` and `search-commits` are daemon-backed thin-client commands. They will attach to the local daemon and may start it automatically if needed.
+
+#### Daemon & Admin Commands
+
+```zsh
+# Start the shared local daemon explicitly
+uv run mcp-markdown-ragdocs daemon start
+
+# Inspect daemon state
+uv run mcp-markdown-ragdocs daemon status
+
+# Inspect the Huey queue
+uv run mcp-markdown-ragdocs queue status --json
+
+# Inspect index/database state
+uv run mcp-markdown-ragdocs index stats --json
+```
+
+`queue status` and `index stats` are strict daemon-backed admin commands. If the daemon is not running, start it first with `ragdocs daemon start`.
 
 **Debug Mode (`--debug`):**
 
@@ -306,7 +323,7 @@ Configure the MCP server in VS Code user settings or workspace settings.
 
 #### Available Tools
 
-The server exposes two MCP tools:
+The server exposes three MCP tools:
 
 **`query_documents`**: Search indexed documents using hybrid search and return ranked document chunks.
 
@@ -478,7 +495,6 @@ See [docs/configuration.md](docs/configuration.md) for exhaustive configuration 
 - [Configuration](docs/configuration.md) - Complete configuration reference
 - [Hybrid Search](docs/hybrid-search.md) - Search strategies and RRF fusion algorithm
 - [Integration](docs/integration.md) - VS Code MCP setup and client integration
-- [Memory Management](docs/memory.md) - AI memory bank, CRUD tools, ghost nodes
 - [Troubleshooting](docs/troubleshooting.md) - Debug mode usage, tuning guide, common issues
 - [Development](docs/development.md) - Development setup, testing, contributing
 

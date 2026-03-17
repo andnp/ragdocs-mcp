@@ -9,7 +9,6 @@ The system consists of three primary subsystems with two transport modes:
 1. **Indexing Service**: Monitors file changes and updates three distinct indices
 2. **Query Orchestrator**: Executes parallel searches and fuses results
 3. **Server Layer**: Exposes interfaces via stdio (MCP) or HTTP (REST API)
-4. **Memory Management** (optional): Parallel "Memory Lane" with separate indices for AI memory persistence
 
 **Transport Modes:**
 
@@ -23,7 +22,7 @@ Both transport modes use the same indexing and query orchestration subsystems.
 │                    Server Layer                              │
 │  ┌──────────────────────┐  ┌──────────────────────────────┐ │
 │  │ MCP Server (stdio)   │  │ HTTP Server (FastAPI)        │ │
-│  │ src/mcp_server.py    │  │ src/server.py                │ │
+│  │ src/mcp/server.py    │  │ src/server.py                │ │
 │  │                      │  │                              │ │
 │  │ query_documents tool │  │ /health  /status  /query     │ │
 │  └──────────┬───────────┘  └──────────┬───────────────────┘ │
@@ -77,15 +76,15 @@ Both transport modes use the same indexing and query orchestration subsystems.
 
 ### Server Layer
 
-#### MCP Server (src/mcp_server.py)
+#### MCP Server (`src/mcp/server.py`)
 
 **Transport:** Stdio (stdin/stdout)
 
 **Responsibilities:**
 - Implement MCP protocol for tool invocation
-- Manage server lifecycle (startup/shutdown)
-- Coordinate with indexing service and orchestrator
-- Expose `query_documents` tool
+- Operate as a daemon-backed thin client over the local daemon transport
+- Forward tool discovery and tool calls to the daemon
+- Expose document/git search tools through MCP
 
 **Lifecycle (Single-Process Mode):**
 1. Load configuration and detect project
@@ -794,79 +793,6 @@ Last indexed timestamp stored per repository in `git_commits` table. The `repo_p
 - Query: 5ms average for 10k commits (cosine similarity in-memory)
 - Storage: ~2KB per commit (metadata + embedding)
 
-### Memory Management Subsystem
-
-#### Dual-Lane Architecture
-
-The Memory Management System implements a "Dual-Lane" pattern: a parallel corpus with its own indices that mirrors the main document pipeline.
-
-| Component | Main Corpus | Memory Corpus |
-|:--|:--|:--|
-| **Source** | `docs/**/*.md` | `.memories/` or `~/.local/share/.../memories/` |
-| **IndexStorage** | `indices/` | `memories/indices/` |
-| **Orchestrator** | `SearchOrchestrator` | `MemorySearchOrchestrator` |
-| **Graph** | Document nodes | Memory nodes + Ghost nodes |
-
-#### Ghost Nodes and Typed Edges
-
-To support cross-corpus linking ("What memories reference document X?"):
-
-1. **Memory Graph**: Contains nodes for memory files
-2. **Ghost Nodes**: When a memory contains `[[src/server.py]]`, a node `ghost:src/server.py` is created in the Memory Graph
-3. **Typed Edges**: Edges carry `type` (e.g., `mentions`, `refactors`, `plans`) derived from context
-4. **Anchor Context**: Edges store ~100 characters surrounding the link for relevance scoring
-
-**Graph Structure:**
-
-```
-memory:project-notes  ──[mentions]──▶  ghost:src/auth.py
-         │
-         └──[plans]──▶  ghost:docs/roadmap.md
-```
-
-The memory-specific graph/linking subsystem described in earlier versions has been removed from Ragdocs.
----
-type: "plan"       # plan | journal | fact | observation | reflection
-status: "active"   # active | archived
-tags: ["refactor", "auth"]
-created_at: "2025-01-10T10:00:00Z"
----
-
-Memory content with [[wikilinks]] to documents.
-```
-
-#### MemorySearchOrchestrator (src/memory/search.py)
-
-**Responsibilities:**
-- Execute parallel vector + keyword search on memory corpus
-- Apply memory-specific recency boost (configurable days/factor)
-- Filter results by tags and type
-- Perform linked memory search via ghost node traversal
-
-**Recency Boost Algorithm:**
-
-```python
-if (now - created_at).days <= recency_boost_days:
-    score *= recency_boost_factor  # Default: 1.2x within 7 days
-```
-
-#### Storage Layout
-
-```
-{memory_path}/
-├── *.md                    # Memory files
-├── .trash/                 # Soft-deleted memories
-└── indices/
-    ├── vector/
-    ├── keyword/
-    └── graph/
-        └── graph.json      # Includes ghost nodes
-```
-
-**Storage Strategy:**
-- `"project"`: `{project_root}/.memories/`
-- `"user"`: `~/.local/share/mcp-markdown-ragdocs/memories/`
-
 ### Git History Module
 
 #### GitWatcher (src/git/watcher.py)
@@ -1007,7 +933,7 @@ Hypothesis-driven search for vague queries:
 
 **Tool:** `search_with_hypothesis(hypothesis: str, top_n: int)`
 
-**Use Case:** For queries like "How do I add a tool?", the AI generates a hypothesis: *"To add a tool, modify src/mcp_server.py and register in list_tools method..."* This finds relevant documentation even when the original query lacks specific terms.
+**Use Case:** For queries like "How do I add a tool?", the AI generates a hypothesis: *"To add a tool, modify src/mcp/server.py and register it in the MCP tool list..."* This finds relevant documentation even when the original query lacks specific terms.
 
 **Configuration:**
 - `hyde_enabled`: Toggle HyDE search (default: true)

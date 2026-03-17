@@ -31,27 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New config options in `[git_indexing]`:
     - `parallel_workers` (default: 4): Number of parallel workers for git operations
     - `embed_batch_size` (default: 32): Batch size for embedding generation
-- **Memory Search Time Range Filtering:**
-  - `search_memories` now supports time-based filtering with three new parameters:
-    - `after_timestamp` (int): Unix timestamp for lower bound (inclusive)
-    - `before_timestamp` (int): Unix timestamp for upper bound (exclusive)
-    - `relative_days` (int): Returns memories from last N days (overrides absolute timestamps)
-  - Validation: `after_timestamp < before_timestamp`, `relative_days ≥ 0`
-  - Time source: Uses `created_at` from frontmatter with fallback to file `mtime`
-  - All timestamps normalized to UTC
-  - Enables temporal scoping for memory searches (e.g., "recent work", "last sprint", "Q4 2024")
 - **Search Infrastructure Overhaul (Spec 17):**
   - **Community Detection:** Louvain algorithm clusters documents by wikilink connectivity; co-community results receive configurable score boost (default 1.1×)
   - **Score-Aware Fusion:** Dynamic weight adjustment based on per-query score variance; low-variance strategies automatically down-weighted
   - **HyDE Search:** `search_with_hypothesis` MCP tool for hypothesis-driven document embeddings; improves retrieval for vague queries
   - **Edge Types:** Graph edges now carry semantic types (`links_to`, `implements`, `tests`, `related`)
   - New config section: `[search.advanced]` with `community_detection_enabled`, `community_boost_factor`, `dynamic_weights_enabled`, `variance_threshold`, `hyde_enabled`, `default_edge_type`
-- **Memory Management System:** Persistent AI memory bank with CRUD operations, hybrid search, and cross-corpus linking
-  - 9 MCP tools: `create_memory`, `read_memory`, `update_memory`, `append_memory`, `delete_memory`, `search_memories`, `search_linked_memories`, `get_memory_stats`, `merge_memories`
-  - Ghost node pattern for cross-corpus graph traversal (`[[doc.md]]` creates `ghost:doc.md` node)
-  - Memory-specific recency boost (configurable days/factor)
-  - Dual storage strategies: `"project"` (`.memories/`) or `"user"` (`~/.local/share/`)
-  - New config section: `[memory]` with `enabled`, `storage_strategy`, `recency_boost_days`, `recency_boost_factor`
 - Query expansion via embeddings: `build_concept_vocabulary()` extracts terms during indexing, `expand_query()` finds top-3 nearest terms to query embedding for improved recall
 - Cross-encoder re-ranking with lazy model loading (loaded on first `rerank()` call)
   - Default model: `cross-encoder/ms-marco-MiniLM-L-6-v2` (22MB, ~50ms/10 docs)
@@ -68,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `dedup_enabled` / `dedup_similarity_threshold`: semantic deduplication via cosine similarity clustering
 
 ### Changed
+- CLI and MCP clients now operate as strict daemon-backed thin clients with no in-process fallback path
 - `QueryOrchestrator.query()` returns `tuple[list[ChunkResult], CompressionStats]`
 - Processing pipeline order: normalize → threshold → doc limit → dedup → re-rank → top_n
 - Graph index enhanced with `related` frontmatter field edges
@@ -81,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Migration
 - **Reindexing required** to build concept vocabulary. Run: `uv run mcp-markdown-ragdocs rebuild-index`
+- **Removed:** Memory Management System and related memory tooling/configuration. Ragdocs is now focused on document and git search.
 
 ### Migration
 - **Reindexing required** for schema changes. Run: `uv run mcp-markdown-ragdocs rebuild-index`
