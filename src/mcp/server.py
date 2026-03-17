@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 # Prevent tokenizers parallelism warning.
 # Must be set before any HuggingFace/sentence-transformers imports.
@@ -16,6 +17,8 @@ from mcp.types import Tool, TextContent
 
 from src.context import ApplicationContext
 from src.daemon import DaemonLockTimeoutError, FilesystemLock, RuntimePaths
+from src.daemon.health import request_daemon_socket
+from src.daemon.management import start_daemon
 from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.mcp.handlers import HandlerContext, get_handler
 from src.mcp.tools.document_tools import get_document_tools
@@ -39,15 +42,85 @@ class MCPServer:
     def _setup_handlers(self) -> None:
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:
+            remote_tools = await self._maybe_get_remote_tools()
+            if remote_tools is not None:
+                return remote_tools
             return [*get_document_tools()]
 
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+            remote_result = await self._maybe_call_remote_tool(name, arguments)
+            if remote_result is not None:
+                return remote_result
+
             handler = get_handler(name)
             if handler is None:
                 raise ValueError(f"Unknown tool: {name}")
             hctx = HandlerContext(lambda: self.ctx, self._coordinator)
             return await handler(hctx, arguments)
+
+    async def _maybe_get_remote_tools(self) -> list[Tool] | None:
+        try:
+            metadata = await asyncio.to_thread(
+                start_daemon,
+                project_override=self.project_override,
+            )
+            if not metadata.socket_path:
+                return None
+            response = await asyncio.to_thread(
+                request_daemon_socket,
+                Path(metadata.socket_path),
+                "/api/mcp/tools",
+                {},
+            )
+            tools = response.get("tools")
+            if not isinstance(tools, list):
+                return None
+            return [
+                Tool(
+                    name=str(tool.get("name", "")),
+                    description=str(tool.get("description", "")),
+                    inputSchema=tool.get("inputSchema", {}),
+                )
+                for tool in tools
+                if isinstance(tool, dict)
+            ]
+        except Exception:
+            logger.debug("Falling back to in-process tool list", exc_info=True)
+            return None
+
+    async def _maybe_call_remote_tool(
+        self,
+        name: str,
+        arguments: dict,
+    ) -> list[TextContent] | None:
+        try:
+            metadata = await asyncio.to_thread(
+                start_daemon,
+                project_override=self.project_override,
+            )
+            if not metadata.socket_path:
+                return None
+            response = await asyncio.to_thread(
+                request_daemon_socket,
+                Path(metadata.socket_path),
+                "/api/mcp/tool",
+                {"name": name, "arguments": arguments},
+            )
+            contents = response.get("contents")
+            if not isinstance(contents, list):
+                return None
+            return [
+                TextContent(
+                    type=str(content.get("type", "text")),
+                    text=str(content.get("text", "")),
+                )
+                for content in contents
+                if isinstance(content, dict)
+            ]
+        except Exception:
+            logger.debug("Falling back to in-process tool handling", exc_info=True)
+            return None
 
     async def _ensure_context(self) -> None:
         if self.ctx is not None:

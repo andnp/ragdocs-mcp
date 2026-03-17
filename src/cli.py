@@ -133,6 +133,44 @@ async def _run_daemon_forever(project: str | None) -> None:
         path: str,
         payload: dict[str, object],
     ) -> dict[str, object]:
+        if path == "/api/mcp/tools":
+            from src.mcp.tools.document_tools import get_document_tools
+
+            return {
+                "tools": [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "inputSchema": tool.inputSchema,
+                    }
+                    for tool in get_document_tools()
+                ]
+            }
+        if path == "/api/mcp/tool":
+            import src.mcp.tools.document_tools  # noqa: F401
+
+            from mcp.types import TextContent
+
+            from src.mcp.handlers import HandlerContext, get_handler
+
+            tool_name = str(payload.get("name", ""))
+            arguments = payload.get("arguments", {})
+            if not isinstance(arguments, dict):
+                return {"status": "error", "error": "tool_arguments_must_be_object"}
+
+            handler = get_handler(tool_name)
+            if handler is None:
+                return {"status": "error", "error": f"unknown_tool:{tool_name}"}
+
+            hctx = HandlerContext(lambda: ctx, coordinator)
+            contents = await handler(hctx, arguments)
+            return {
+                "contents": [
+                    {"type": content.type, "text": content.text}
+                    for content in contents
+                    if isinstance(content, TextContent)
+                ]
+            }
         if path == "/api/admin/index-stats":
             return _build_index_stats_payload(ctx)
         if path == "/api/search/query":
