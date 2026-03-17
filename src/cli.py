@@ -126,7 +126,7 @@ def mcp(project: str | None):
 
 
 async def _run_daemon_forever(project: str | None) -> None:
-    lock = await asyncio.to_thread(acquire_boot_lock, timeout_seconds=1.0)
+    lock = await asyncio.to_thread(acquire_boot_lock, timeout_seconds=5.0)
     runtime_paths = RuntimePaths.resolve()
 
     async def _handle_daemon_request(
@@ -187,8 +187,8 @@ async def _run_daemon_forever(project: str | None) -> None:
             return {
                 "query": query_text,
                 "results": [result.to_dict() for result in results],
-                "compression_stats": compression_stats.model_dump(),
-                "strategy_stats": strategy_stats.model_dump(),
+                "compression_stats": compression_stats.to_dict(),
+                "strategy_stats": strategy_stats.to_dict(),
             }
         if path == "/api/search/git-history":
             await coordinator.wait_ready(timeout=60.0)
@@ -468,8 +468,8 @@ def index_stats(project: str | None, output_json: bool):
             return
 
         click.echo("Index stats")
-                "compression_stats": compression_stats.to_dict(),
-                "strategy_stats": strategy_stats.to_dict(),
+        click.echo(f"Documents path: {payload['documents_path']}")
+        click.echo(f"Index path: {payload['index_path']}")
         click.echo(f"Manifest present: {payload['manifest_exists']}")
         click.echo(f"Indexed documents: {payload['indexed_documents']}")
         click.echo(f"Indexed chunks: {payload['indexed_chunks']}")
@@ -1163,3 +1163,7 @@ def search_commits(
 
 def main():
     cli()
+
+
+if __name__ == "__main__":
+    main()
