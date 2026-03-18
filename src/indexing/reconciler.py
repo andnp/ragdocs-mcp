@@ -23,6 +23,7 @@ def find_excluded_indexed_files(
     include_patterns: list[str],
     exclude_patterns: list[str],
     exclude_hidden_dirs: bool = True,
+    docs_roots: list[Path] | None = None,
 ) -> list[str]:
     """Find indexed files that should now be excluded based on current patterns.
 
@@ -45,6 +46,7 @@ def find_excluded_indexed_files(
             include_patterns,
             exclude_patterns,
             exclude_hidden_dirs,
+            documents_roots=docs_roots or [docs_path],
         ):
             excluded_doc_ids.append(doc_id)
             logger.info(f"Indexed file now excluded by pattern: {rel_path}")
@@ -93,6 +95,7 @@ def reconcile_indices(
                 include_patterns,
                 exclude_patterns,
                 exclude_hidden_dirs,
+                docs_roots=roots,
             )
         )
 

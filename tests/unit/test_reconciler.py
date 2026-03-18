@@ -336,6 +336,33 @@ def test_find_excluded_indexed_files_hidden_dirs(docs_path):
     assert "normal" not in excluded
 
 
+def test_find_excluded_indexed_files_allows_hidden_root_ancestor(tmp_path):
+    docs_path = tmp_path / ".hidden-root" / "docs"
+    docs_path.mkdir(parents=True)
+
+    manifest = IndexManifest(
+        spec_version="1.0.0",
+        embedding_model="local",
+        chunking_config={},
+        indexed_files={
+            "guide": "guide.md",
+            ".hidden/secret": ".hidden/secret.md",
+        },
+    )
+
+    excluded = find_excluded_indexed_files(
+        manifest,
+        docs_path,
+        include_patterns=["**/*"],
+        exclude_patterns=[],
+        exclude_hidden_dirs=True,
+        docs_roots=[docs_path],
+    )
+
+    assert "guide" not in excluded
+    assert ".hidden/secret" in excluded
+
+
 def test_find_excluded_indexed_files_multiple_patterns(docs_path):
     """Test with multiple exclude patterns."""
     manifest = IndexManifest(

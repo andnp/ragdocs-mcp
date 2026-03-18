@@ -192,7 +192,7 @@ class LifecycleCoordinator:
                     logger.info("Lifecycle: leader elected")
                     if huey_worker is not None:
                         self._huey_worker = huey_worker
-                        self._huey_worker.start()
+                        await asyncio.to_thread(self._huey_worker.start)
                         self._worker_supervision_task = asyncio.create_task(
                             self._supervise_worker_health()
                         )

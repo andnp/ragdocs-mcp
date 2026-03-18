@@ -66,9 +66,8 @@ async def test_mcp_server_prefers_daemon_tool_calls(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcp_server_waits_for_ready_daemon_before_tool_call(monkeypatch):
+async def test_mcp_server_does_not_wait_for_ready_daemon_before_tool_call(monkeypatch):
     server = MCPServer(project_override="docs")
-    observed: dict[str, object] = {}
 
     monkeypatch.setattr(
         "src.mcp.server.start_daemon",
@@ -80,16 +79,12 @@ async def test_mcp_server_waits_for_ready_daemon_before_tool_call(monkeypatch):
         ),
     )
 
-    def _fake_wait_for_daemon_ready(*, timeout_seconds=120.0, paths=None):
-        observed["wait_timeout"] = timeout_seconds
-        return DaemonMetadata(
-            pid=1,
-            started_at=1.0,
-            status="ready_primary",
-            socket_path="/tmp/ragdocs.sock",
-        )
-
-    monkeypatch.setattr("src.mcp.server.wait_for_daemon_ready", _fake_wait_for_daemon_ready)
+    monkeypatch.setattr(
+        "src.mcp.server.wait_for_daemon_ready",
+        lambda *, timeout_seconds=120.0, paths=None: (_ for _ in ()).throw(
+            AssertionError("wait_for_daemon_ready should not be called")
+        ),
+    )
     monkeypatch.setattr(
         "src.mcp.server.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds=60.0: {
@@ -99,7 +94,6 @@ async def test_mcp_server_waits_for_ready_daemon_before_tool_call(monkeypatch):
 
     contents = await server._call_remote_tool("query_documents", {"query": "test"})
 
-    assert observed["wait_timeout"] == 120.0
     assert len(contents) == 1
 
 

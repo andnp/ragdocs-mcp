@@ -92,6 +92,48 @@ class TestLifecycleStateMachine:
         assert coord.state == LifecycleState.INITIALIZING
 
     @pytest.mark.asyncio
+    async def test_start_runs_huey_worker_in_thread(self, monkeypatch) -> None:
+        """Huey worker startup is offloaded so daemon startup stays responsive."""
+        coord = _make_coordinator()
+
+        class _FakeLeaderElection:
+            def __init__(self, _db: object) -> None:
+                self.is_leader = False
+
+            def try_acquire(self) -> bool:
+                self.is_leader = True
+                return True
+
+        class _FakeWorker:
+            def __init__(self) -> None:
+                self.start_calls = 0
+
+            def start(self) -> None:
+                self.start_calls += 1
+
+            def is_healthy(self) -> bool:
+                return True
+
+            def stop(self, timeout: float = 5.0) -> None:
+                return None
+
+        to_thread_calls: list[str] = []
+
+        async def _fake_to_thread(func, *args, **kwargs):
+            to_thread_calls.append(getattr(func, "__name__", repr(func)))
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr("src.lifecycle.LeaderElection", _FakeLeaderElection)
+        monkeypatch.setattr("src.lifecycle.asyncio.to_thread", _fake_to_thread)
+
+        worker = _FakeWorker()
+        await coord.start(_fake_ctx(), db_manager=object(), huey_worker=worker)
+
+        assert worker.start_calls == 1
+        assert "start" in to_thread_calls
+        assert coord.state == LifecycleState.READY_PRIMARY
+
+    @pytest.mark.asyncio
     async def test_cannot_start_twice(self) -> None:
         """start() raises RuntimeError if already started."""
         coord = _make_coordinator()

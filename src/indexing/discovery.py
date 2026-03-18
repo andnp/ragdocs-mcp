@@ -135,7 +135,13 @@ def discover_files(
     return [
         f
         for f in sorted(all_files)
-        if should_include_file(f, include, exclude, exclude_hidden_dirs)
+        if should_include_file(
+            f,
+            include,
+            exclude,
+            exclude_hidden_dirs,
+            documents_roots=[docs_path],
+        )
     ]
 
 

@@ -118,3 +118,16 @@ class TestDiscoverFiles:
         files = discover_files(str(docs_structure))
 
         assert len(files) >= 2
+
+    def test_hidden_ancestor_of_documents_root_is_allowed(self, tmp_path):
+        docs = tmp_path / ".hidden-root" / "docs"
+        docs.mkdir(parents=True)
+        (docs / "guide.md").write_text("# Guide")
+        hidden_child = docs / ".hidden"
+        hidden_child.mkdir()
+        (hidden_child / "secret.md").write_text("# Secret")
+
+        files = discover_files(docs)
+
+        assert str(docs / "guide.md") in files
+        assert str(hidden_child / "secret.md") not in files

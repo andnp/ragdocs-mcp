@@ -122,6 +122,7 @@ class TestBackgroundIndexRetry:
         _setattr(ctx, "_ready_event", asyncio.Event())
         _setattr(ctx, "_init_error", None)
         _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+        _setattr(ctx, "_is_virgin_startup", False)
         return ctx
 
     @pytest.mark.asyncio
@@ -264,6 +265,7 @@ async def test_ensure_fresh_indices_reloads_when_store_version_advances(tmp_path
     _setattr(ctx, "_init_error", None)
     _setattr(ctx, "_freshness_lock", asyncio.Lock())
     _setattr(ctx, "_loaded_index_state_version", 1.0)
+    _setattr(ctx, "_is_virgin_startup", False)
 
     class _Manager:
         def __init__(self):
@@ -334,6 +336,7 @@ async def test_background_start_with_existing_index_does_not_block_event_loop(
     _setattr(ctx, "_ready_event", asyncio.Event())
     _setattr(ctx, "_init_error", None)
     _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_is_virgin_startup", False)
     _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=False))
 
     reconciliation_calls: list[str] = []
@@ -371,13 +374,17 @@ class TestIsReadyMethods:
         _setattr(ctx, "_ready_event", asyncio.Event())
         _setattr(ctx, "_init_error", None)
         _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+        _setattr(ctx, "_is_virgin_startup", False)
         return ctx
 
-    def test_is_ready_returns_false_when_event_not_set(self, mock_context: Any):
-        """Verify is_ready() returns False when _ready_event not set."""
+    def test_is_ready_returns_true_when_index_is_queryable_before_ready_event(
+        self,
+        mock_context: Any,
+    ):
+        """Verify non-virgin startups can serve queries before ready_event flips."""
         mock_context._index_state = IndexState(status="ready")
 
-        assert mock_context.is_ready() is False
+        assert mock_context.is_ready() is True
 
     def test_is_ready_returns_false_when_init_error(self, mock_context: Any):
         """Verify is_ready() returns False when there's an init error."""
@@ -402,6 +409,26 @@ class TestIsReadyMethods:
         )
 
         assert mock_context.is_ready() is True
+
+    def test_is_ready_returns_true_while_rebuilding_existing_index(
+        self,
+        mock_context: Any,
+    ):
+        """Verify background rebuilds can serve queries after prior startup."""
+        mock_context._index_state = IndexState(status="indexing", indexed_count=1)
+        mock_context._is_virgin_startup = False
+
+        assert mock_context.is_ready() is True
+
+    def test_is_ready_returns_false_during_virgin_startup_indexing(
+        self,
+        mock_context: Any,
+    ):
+        """Verify first launch stays strict while indexing is still in progress."""
+        mock_context._index_state = IndexState(status="indexing", indexed_count=1)
+        mock_context._is_virgin_startup = True
+
+        assert mock_context.is_ready() is False
 
     def test_is_fully_ready_returns_true_only_for_ready(self, mock_context: Any):
         """Verify is_fully_ready() returns True only for 'ready' status."""

@@ -48,20 +48,13 @@ class MCPServer:
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return await self._call_remote_tool(name, arguments)
 
-    def _get_ready_daemon_metadata(self) -> tuple[Path, str]:
+    def _get_daemon_metadata(self) -> tuple[Path, str]:
         metadata = start_daemon(
             project_override=self.project_override,
             timeout_seconds=_MCP_DAEMON_START_TIMEOUT_SECONDS,
         )
         if not metadata.socket_path:
             raise RuntimeError("Daemon did not provide a socket path")
-
-        if metadata.status not in {"ready", "ready_primary", "ready_replica"}:
-            metadata = wait_for_daemon_ready(
-                timeout_seconds=_MCP_DAEMON_READY_WAIT_SECONDS,
-            )
-            if not metadata.socket_path:
-                raise RuntimeError("Daemon did not provide a socket path")
 
         return Path(metadata.socket_path), metadata.status
 
@@ -94,7 +87,7 @@ class MCPServer:
 
     async def _get_remote_tools(self) -> list[Tool]:
         try:
-            socket_path, _status = await asyncio.to_thread(self._get_ready_daemon_metadata)
+            socket_path, _status = await asyncio.to_thread(self._get_daemon_metadata)
             response = await asyncio.to_thread(
                 self._request_daemon_with_retry,
                 socket_path,
@@ -125,7 +118,7 @@ class MCPServer:
         arguments: dict,
     ) -> list[TextContent]:
         try:
-            socket_path, _status = await asyncio.to_thread(self._get_ready_daemon_metadata)
+            socket_path, _status = await asyncio.to_thread(self._get_daemon_metadata)
             response = await asyncio.to_thread(
                 self._request_daemon_with_retry,
                 socket_path,

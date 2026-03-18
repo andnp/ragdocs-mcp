@@ -510,6 +510,30 @@ class TestFileWatcherParserSuffixes:
 
 class TestFileWatcherTaskMode:
     @pytest.mark.asyncio
+    async def test_batch_process_accepts_hidden_root_but_rejects_hidden_child(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / ".hidden-root" / "docs"
+        docs_path.mkdir(parents=True)
+        visible_file = docs_path / "note.md"
+        hidden_file = docs_path / ".hidden" / "secret.md"
+        hidden_file.parent.mkdir()
+
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+        )
+
+        await watcher._batch_process(
+            {
+                str(visible_file): "created",
+                str(hidden_file): "created",
+            }
+        )
+
+        mock_index_manager.index_document.assert_called_once_with(str(visible_file))
+
+    @pytest.mark.asyncio
     async def test_batch_process_enqueues_index_when_task_mode_enabled(
         self, tmp_path, mock_index_manager
     ):

@@ -327,6 +327,7 @@ class FileWatcher:
                 self._include_patterns,
                 self._exclude_patterns,
                 self._exclude_hidden_dirs,
+                documents_roots=self._documents_paths,
             ):
                 logger.debug(f"Skipping excluded file: {file_path}")
                 continue

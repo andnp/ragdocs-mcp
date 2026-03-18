@@ -2,7 +2,10 @@
 Tests for file filtering logic using include/exclude patterns.
 """
 
+from pathlib import Path
+
 from src.cli import _should_include_file
+from src.utils import should_include_file
 
 
 def test_include_all_pattern():
@@ -347,3 +350,40 @@ def test_hidden_dir_edge_cases():
         exclude_hidden_dirs=True,
     )
     assert result is False
+
+
+def test_hidden_ancestor_of_project_root_does_not_exclude_file(tmp_path: Path):
+    docs_root = tmp_path / ".hidden-root" / "project"
+    docs_root.mkdir(parents=True)
+    file_path = docs_root / "guide.md"
+    file_path.write_text("# Guide")
+
+    assert (
+        should_include_file(
+            str(file_path),
+            include_patterns=["**/*"],
+            exclude_patterns=[],
+            exclude_hidden_dirs=True,
+            documents_roots=[docs_root],
+        )
+        is True
+    )
+
+
+def test_hidden_directory_inside_project_root_is_still_excluded(tmp_path: Path):
+    docs_root = tmp_path / ".hidden-root" / "project"
+    hidden_dir = docs_root / ".secret"
+    hidden_dir.mkdir(parents=True)
+    file_path = hidden_dir / "guide.md"
+    file_path.write_text("# Guide")
+
+    assert (
+        should_include_file(
+            str(file_path),
+            include_patterns=["**/*"],
+            exclude_patterns=[],
+            exclude_hidden_dirs=True,
+            documents_roots=[docs_root],
+        )
+        is False
+    )
