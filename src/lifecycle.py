@@ -207,15 +207,7 @@ class LifecycleCoordinator:
                 and huey_worker is None
             ):
                 if ctx.commit_indexer is not None:
-                    from src.git.repository import discover_git_repositories
-                    from src.git.watcher import GitWatcher
-
-                    repos = await asyncio.to_thread(
-                        discover_git_repositories,
-                        Path(ctx.config.indexing.documents_path),
-                        ctx.config.indexing.exclude,
-                        ctx.config.indexing.exclude_hidden_dirs,
-                    )
+                    repos = await asyncio.to_thread(ctx.discover_git_repositories)
 
                     if repos:
                         self._git_watcher = GitWatcher(

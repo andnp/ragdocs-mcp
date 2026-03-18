@@ -423,22 +423,27 @@ class IndexManager:
             )
             return False
 
+    def _compute_doc_id_for_path(
+        self,
+        file_path: str | Path,
+        docs_path: Path | None = None,
+    ) -> str:
+        resolved_path = Path(file_path).resolve()
+        if len(self._documents_roots) > 1:
+            return compute_doc_id_multi_root(resolved_path, self._documents_roots)
+
+        root = docs_path.resolve() if docs_path is not None else Path(
+            self._config.indexing.documents_path
+        ).resolve()
+        return compute_doc_id(resolved_path, root)
+
     def index_document(self, file_path: str, force: bool = False):
         try:
             parser = dispatch_parser(file_path)
             document = parser.parse(file_path)
 
             docs_path = Path(self._config.indexing.documents_path)
-            if len(self._documents_roots) > 1:
-                document.id = compute_doc_id_multi_root(
-                    Path(file_path).resolve(),
-                    self._documents_roots,
-                )
-            else:
-                document.id = compute_doc_id(
-                    Path(file_path).resolve(),
-                    docs_path.resolve(),
-                )
+            document.id = self._compute_doc_id_for_path(file_path, docs_path)
             project_id = resolve_project_id_for_path(Path(file_path), self._config)
             document.project_id = project_id
             if project_id is not None:
@@ -713,15 +718,7 @@ class IndexManager:
                 try:
                     parser = dispatch_parser(file_path)
                     document = parser.parse(file_path)
-                    if len(self._documents_roots) > 1:
-                        doc_id = compute_doc_id_multi_root(
-                            Path(file_path).resolve(),
-                            self._documents_roots,
-                        )
-                    else:
-                        doc_id = compute_doc_id(
-                            Path(file_path).resolve(), docs_path.resolve()
-                        )
+                    doc_id = self._compute_doc_id_for_path(file_path, docs_path)
                     document.id = doc_id
                     chunks = self._chunker.chunk_document(document)
                     added_docs[doc_id] = chunks
@@ -762,12 +759,7 @@ class IndexManager:
 
                     # Find and remove the file path from files_to_add
                     for file_path in list(files_to_add):
-                        if (
-                            compute_doc_id(
-                                Path(file_path).resolve(), docs_path.resolve()
-                            )
-                            == new_doc_id
-                        ):
+                        if self._compute_doc_id_for_path(file_path, docs_path) == new_doc_id:
                             files_to_add.remove(file_path)
                             break
 

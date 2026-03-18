@@ -17,7 +17,7 @@ from src.indices.graph import GraphStore
 from src.search.orchestrator import SearchOrchestrator
 
 
-def _save_manifest_for_files(manager, config, files: list[Path]):
+def _save_manifest_for_files(manager, config, files: list[Path], docs_roots: list[Path] | None = None):
     """Helper to save manifest with indexed files."""
     docs_path = Path(config.indexing.documents_path)
     index_path = Path(config.indexing.index_path)
@@ -25,7 +25,11 @@ def _save_manifest_for_files(manager, config, files: list[Path]):
         spec_version="1.0.0",
         embedding_model="local",
         chunking_config={},
-        indexed_files=build_indexed_files_map([str(f) for f in files], docs_path),
+        indexed_files=build_indexed_files_map(
+            [str(f) for f in files],
+            docs_path,
+            docs_roots=docs_roots,
+        ),
     )
     save_manifest(index_path, manifest)
 
@@ -107,6 +111,65 @@ async def test_reconciliation_detects_moves(config, manager, orchestrator):
     # Verify index has been updated (persist + query would require full end-to-end test)
     # For now, just verify the move was tracked
     assert manager.get_document_count() >= 1
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_detects_moves_with_multi_root_runtime(
+    shared_embedding_model,
+    tmp_path,
+):
+    project_a = tmp_path / "project_a"
+    project_b = tmp_path / "project_b"
+    docs_a = project_a / "docs"
+    docs_b = project_b / "docs"
+    docs_a.mkdir(parents=True)
+    docs_b.mkdir(parents=True)
+
+    config = Config(
+        indexing=IndexingConfig(
+            documents_path=str(tmp_path),
+            index_path=str(tmp_path / "index"),
+            move_detection_threshold=0.8,
+        ),
+        chunking=ChunkingConfig(
+            min_chunk_chars=100,
+            max_chunk_chars=500,
+        ),
+    )
+    manager = IndexManager(
+        config,
+        VectorIndex(embedding_model=shared_embedding_model),
+        KeywordIndex(),
+        GraphStore(),
+        documents_roots=[project_a, project_b],
+    )
+
+    original = docs_a / "original.md"
+    content = "# Multi Root Move\n\nContent for reconciliation across roots."
+    original.write_text(content)
+
+    manager.index_document(str(original))
+    manager.persist()
+    _save_manifest_for_files(
+        manager,
+        config,
+        [original],
+        docs_roots=[project_a, project_b],
+    )
+
+    moved = docs_a / "renamed.md"
+    moved.write_text(content)
+    original.unlink()
+
+    result = manager.reconcile_indices(
+        [str(moved)],
+        Path(config.indexing.documents_path),
+        docs_roots=[project_a, project_b],
+    )
+
+    assert result.moved_count == 1
+    assert result.removed_count == 0
+    assert result.added_count == 0
 
 
 @pytest.mark.asyncio

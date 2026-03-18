@@ -25,6 +25,7 @@ from src.lifecycle import LifecycleCoordinator, LifecycleState
 class FakeGitConfig:
     enabled: bool = False
     watch_enabled: bool = False
+    poll_interval_seconds: float = 30.0
 
 
 @dataclass
@@ -55,6 +56,9 @@ class FakeContext:
 
     async def ensure_ready(self, timeout: float = 60.0) -> None:
         pass
+
+    def discover_git_repositories(self) -> list[str]:
+        return []
 
 
 def _make_coordinator(**overrides: Any) -> LifecycleCoordinator:
@@ -132,6 +136,63 @@ class TestLifecycleStateMachine:
         assert worker.start_calls == 1
         assert "start" in to_thread_calls
         assert coord.state == LifecycleState.READY_PRIMARY
+
+    @pytest.mark.asyncio
+    async def test_start_uses_context_git_discovery_for_git_watcher(
+        self,
+        monkeypatch,
+    ) -> None:
+        coord = _make_coordinator()
+        observed: dict[str, object] = {"discover_calls": 0}
+
+        @dataclass
+        class _GitContext(FakeContext):
+            config: FakeConfig = field(
+                default_factory=lambda: FakeConfig(
+                    git_indexing=FakeGitConfig(enabled=True, watch_enabled=True),
+                )
+            )
+            commit_indexer: object | None = field(default_factory=object)
+
+            def discover_git_repositories(self) -> list[str]:
+                observed["discover_calls"] = observed["discover_calls"] + 1
+                return ["/tmp/project-a/.git", "/tmp/project-b/.git"]
+
+        class _FakeGitWatcher:
+            def __init__(
+                self,
+                *,
+                git_repos,
+                commit_indexer,
+                config,
+                poll_interval,
+                use_tasks,
+            ) -> None:
+                observed["git_repos"] = git_repos
+                observed["commit_indexer"] = commit_indexer
+                observed["use_tasks"] = use_tasks
+
+            def start(self) -> None:
+                observed["started"] = True
+
+            async def stop(self) -> None:
+                return None
+
+        async def _fake_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr("src.lifecycle.GitWatcher", _FakeGitWatcher)
+        monkeypatch.setattr("src.lifecycle.asyncio.to_thread", _fake_to_thread)
+
+        ctx = cast(Any, _GitContext())
+        await coord.start(ctx)
+
+        assert observed["discover_calls"] == 1
+        assert observed["git_repos"] == [
+            "/tmp/project-a/.git",
+            "/tmp/project-b/.git",
+        ]
+        assert observed["started"] is True
 
     @pytest.mark.asyncio
     async def test_cannot_start_twice(self) -> None:
