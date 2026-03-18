@@ -38,24 +38,6 @@ class DatabaseManager:
 
     def _initialize_schema_on(self, conn: sqlite3.Connection) -> None:
         conn.executescript("""
-            CREATE TABLE IF NOT EXISTS documents (
-                doc_id TEXT PRIMARY KEY,
-                file_path TEXT,
-                content_hash TEXT,
-                mtime REAL,
-                status TEXT,
-                indexed_at REAL
-            );
-
-            CREATE TABLE IF NOT EXISTS chunks (
-                chunk_id TEXT PRIMARY KEY,
-                doc_id TEXT,
-                content TEXT,
-                metadata TEXT,
-                vector BLOB,
-                indexed_at REAL
-            );
-
             CREATE TABLE IF NOT EXISTS kv_store (
                 key TEXT PRIMARY KEY,
                 value TEXT

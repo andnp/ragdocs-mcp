@@ -1444,7 +1444,6 @@ class VectorIndex:
         """Persist VectorIndex state to SQLite via DatabaseManager.
 
         Stores:
-        - Individual chunk vectors in the ``chunks`` table
         - FAISS binary, docstore, and JSON mappings in ``kv_store``
         """
         import base64
@@ -1457,37 +1456,7 @@ class VectorIndex:
         conn = db_manager.get_connection()
 
         with self._index_lock:
-            # --- a) Store each chunk's vector in the chunks table ---
-            docstore = self._index.docstore
-            for chunk_id in list(self._chunk_id_to_node_id.keys()):
-                try:
-                    node = docstore.get_document(chunk_id)
-                    if node is None:
-                        continue
-                    text = (
-                        node.get_content()
-                        if hasattr(node, "get_content")
-                        else getattr(node, "text", "")
-                    )
-                    metadata = dict(node.metadata) if hasattr(node, "metadata") else {}
-                    doc_id = metadata.get("doc_id", "")
-                    embedding = getattr(node, "embedding", None)
-                    vector_blob: bytes | None = None
-                    if embedding is not None:
-                        vector_blob = np.array(embedding, dtype=np.float32).tobytes()
-
-                    conn.execute(
-                        """INSERT OR REPLACE INTO chunks
-                           (chunk_id, doc_id, content, metadata, vector, indexed_at)
-                           VALUES (?, ?, ?, ?, ?, strftime('%%s', 'now'))""",
-                        (chunk_id, doc_id, text, json.dumps(metadata), vector_blob),
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to save chunk %s to DB", chunk_id, exc_info=True
-                    )
-
-            # --- b) Store FAISS index binary in kv_store ---
+            # --- a) Store FAISS index binary in kv_store ---
             if self._vector_store is not None:
                 faiss_bytes = faiss.serialize_index(self._vector_store._faiss_index)
                 faiss_b64 = base64.b64encode(faiss_bytes.tobytes()).decode("ascii")
@@ -1496,7 +1465,7 @@ class VectorIndex:
                     ("vector_index:faiss_binary", faiss_b64),
                 )
 
-            # --- c) Store JSON mappings in kv_store ---
+            # --- b) Store JSON mappings in kv_store ---
             mappings: dict[str, str] = {
                 "vector_index:doc_id_mapping": json.dumps(self._doc_id_to_node_ids),
                 "vector_index:chunk_id_mapping": json.dumps(self._chunk_id_to_node_id),
@@ -1510,7 +1479,7 @@ class VectorIndex:
                     (key, value),
                 )
 
-            # --- d) Store LlamaIndex docstore and index_store in kv_store ---
+            # --- c) Store LlamaIndex docstore and index_store in kv_store ---
             docstore_dict = self._index.storage_context.docstore.to_dict()  # type: ignore[attr-defined]
             conn.execute(
                 "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",

@@ -55,19 +55,21 @@ class TestVectorSqlitePersistence:
         results = vi2.search("topic number 50", top_k=5)
         assert len(results) > 0
 
-    def test_vectors_stored_in_chunks_table(self, db, vector):
-        """Verify individual vectors are written to the chunks table."""
+    def test_save_to_db_stores_vector_state_in_kv_store(self, db, vector):
+        """Verify SQLite vector persistence stores state in kv_store only."""
         chunks = [_make_chunk("vec_doc", i, f"Chunk content {i}") for i in range(5)]
         vector.add_chunks(chunks)
         vector.save_to_db(db)
 
         conn = db.get_connection()
-        rows = conn.execute("SELECT chunk_id, vector FROM chunks").fetchall()
-        assert len(rows) == 5
-        for row in rows:
-            # vector may be None if embedding wasn't stored on the node,
-            # but chunk_id must be present
-            assert row["chunk_id"].startswith("vec_doc_chunk_")
+        rows = conn.execute(
+            "SELECT key FROM kv_store WHERE key LIKE 'vector_index:%' ORDER BY key"
+        ).fetchall()
+        keys = [row["key"] for row in rows]
+        assert "vector_index:faiss_binary" in keys
+        assert "vector_index:doc_id_mapping" in keys
+        assert "vector_index:chunk_id_mapping" in keys
+        assert "vector_index:docstore" in keys
 
     def test_mappings_stored_in_kv_store(self, db, vector):
         """Verify JSON mappings are present in kv_store after save."""

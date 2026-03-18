@@ -13,13 +13,12 @@ from src.storage.db import DatabaseManager
 
 
 def _writer(db_path: str, done_event) -> None:
-    """Run in child process: write a document row to the database."""
+    """Run in child process: write a kv_store row to the database."""
     db = DatabaseManager(Path(db_path))
     conn = db.get_connection()
     conn.execute(
-        "INSERT INTO documents (doc_id, file_path, content_hash, mtime, status, indexed_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        ("cross_proc_doc", "/test/cross.md", "abc123", 1000.0, "indexed", 1000.0),
+        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+        ("cross_proc_doc", "/test/cross.md"),
     )
     conn.commit()
     db.close()
@@ -43,14 +42,16 @@ def _kv_writer(db_path_str: str, process_id: int, done_event) -> None:
 @pytest.mark.serial
 class TestCrossProcessConsistency:
     def test_writer_process_visible_to_reader(self, tmp_path: Path) -> None:
-        """A document written by a child process is immediately visible
+        """A kv_store row written by a child process is immediately visible
         to a reader on the main process without any sync calls."""
         db_path = tmp_path / "shared.db"
         db = DatabaseManager(db_path)
 
-        # Pre-check: no documents
+        # Pre-check: no kv row
         conn = db.get_connection()
-        count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        count = conn.execute(
+            "SELECT COUNT(*) FROM kv_store WHERE key = ?", ("cross_proc_doc",)
+        ).fetchone()[0]
         assert count == 0
 
         # Spawn writer in a separate process
@@ -67,11 +68,11 @@ class TestCrossProcessConsistency:
 
         # Reader: verify the row is visible WITHOUT any explicit sync
         row = conn.execute(
-            "SELECT doc_id, file_path FROM documents WHERE doc_id = ?",
+            "SELECT key, value FROM kv_store WHERE key = ?",
             ("cross_proc_doc",),
         ).fetchone()
         assert row is not None, (
-            "Document written by child process not visible to reader"
+            "Row written by child process not visible to reader"
         )
         assert row[0] == "cross_proc_doc"
         assert row[1] == "/test/cross.md"
