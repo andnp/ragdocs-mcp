@@ -13,39 +13,35 @@ def base_config():
 def test_resolve_index_path_local_override(base_config):
     base_config.indexing.index_path = "/custom/index/path"
 
-    result = resolve_index_path(base_config, detected_project="myproject")
+    result = resolve_index_path(base_config)
 
     assert result == Path("/custom/index/path").resolve()
 
 
-def test_resolve_index_path_detected_project(base_config, monkeypatch):
+def test_resolve_index_path_is_global_even_with_project_context(base_config, monkeypatch):
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
 
-    result = resolve_index_path(base_config, detected_project="myproject")
+    result = resolve_index_path(base_config)
 
-    expected = Path.home() / ".local/share/mcp-markdown-ragdocs/myproject"
+    expected = Path.home() / ".local/share/mcp-markdown-ragdocs"
     assert result == expected
 
 
 def test_resolve_index_path_xdg_data_home(base_config, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", "/custom/data")
 
-    result = resolve_index_path(base_config, detected_project="myproject")
+    result = resolve_index_path(base_config)
 
-    expected = Path("/custom/data/mcp-markdown-ragdocs/myproject")
+    expected = Path("/custom/data/mcp-markdown-ragdocs")
     assert result == expected
 
 
-def test_resolve_index_path_fallback(base_config, monkeypatch):
-    """
-    When no project is detected, should use global directory with local-{cwd_name} subdirectory.
-    """
+def test_resolve_index_path_default_is_global(base_config, monkeypatch):
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
 
-    result = resolve_index_path(base_config, detected_project=None)
+    result = resolve_index_path(base_config)
 
-    cwd_name = Path.cwd().name
-    expected = Path.home() / ".local/share/mcp-markdown-ragdocs" / f"local-{cwd_name}"
+    expected = Path.home() / ".local/share/mcp-markdown-ragdocs"
     assert result == expected
 
 
@@ -57,10 +53,9 @@ def test_resolve_index_path_backward_compat(base_config, monkeypatch):
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     base_config.indexing.index_path = ".index_data/"
 
-    result = resolve_index_path(base_config, detected_project=None)
+    result = resolve_index_path(base_config)
 
-    cwd_name = Path.cwd().name
-    expected = Path.home() / ".local/share/mcp-markdown-ragdocs" / f"local-{cwd_name}"
+    expected = Path.home() / ".local/share/mcp-markdown-ragdocs"
     assert result == expected
 
 
@@ -70,7 +65,7 @@ def test_resolve_index_path_explicit_relative_path(base_config):
     """
     base_config.indexing.index_path = "./my_custom_index/"
 
-    result = resolve_index_path(base_config, detected_project=None)
+    result = resolve_index_path(base_config)
 
     expected = Path("./my_custom_index/").resolve()
     assert result == expected

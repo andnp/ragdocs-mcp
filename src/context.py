@@ -75,6 +75,7 @@ class ApplicationContext:
         lazy_embeddings: bool = True,
         use_tasks: bool = False,
         index_path_override: Path | None = None,
+        documents_path_override: Path | None = None,
     ) -> ApplicationContext:
         config = load_config()
 
@@ -86,9 +87,23 @@ class ApplicationContext:
         if detected_project and project_override:
             config = load_config()
 
-        index_path = index_path_override or resolve_index_path(config, detected_project)
-        documents_path = resolve_documents_path(
-            config, detected_project, config.projects
+        index_path = index_path_override or resolve_index_path(config)
+
+        explicit_documents_path = documents_path_override
+        if explicit_documents_path is None and project_override:
+            override_path = Path(project_override).expanduser()
+            if override_path.exists():
+                explicit_documents_path = override_path.resolve()
+            elif detected_project:
+                for project in config.projects:
+                    if project.name == detected_project:
+                        explicit_documents_path = Path(project.path).resolve()
+                        break
+
+        documents_path = (
+            str(explicit_documents_path)
+            if explicit_documents_path is not None
+            else resolve_documents_path(config)
         )
 
         config.indexing.index_path = str(index_path)

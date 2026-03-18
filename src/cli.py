@@ -319,11 +319,28 @@ def _apply_project_detection(config, project_override: str | None = None):
     detected_project = detect_project(
         projects=config.projects, project_override=project_override
     )
-    index_path = resolve_index_path(config, detected_project)
-    documents_path = resolve_documents_path(config, detected_project, config.projects)
+    index_path = resolve_index_path(config)
+
+    explicit_documents_path: Path | None = None
+    if project_override:
+        override_path = Path(project_override).expanduser()
+        if override_path.exists():
+            explicit_documents_path = override_path.resolve()
+        elif detected_project:
+            for project in config.projects:
+                if project.name == detected_project:
+                    explicit_documents_path = Path(project.path).resolve()
+                    break
+
+    documents_path = (
+        str(explicit_documents_path)
+        if explicit_documents_path is not None
+        else resolve_documents_path(config)
+    )
 
     config.indexing.index_path = str(index_path)
     config.indexing.documents_path = documents_path
+    config.detected_project = detected_project
     return config
 
 

@@ -17,17 +17,16 @@ def default_config():
 
 
 def test_resolve_documents_path_relative_with_project(default_config, sample_projects):
-    """When project detected, ALWAYS use project path (ignore documents_path)."""
+    """Project context no longer overrides documents_path resolution."""
     result = resolve_documents_path(default_config, "project1", sample_projects)
-    assert result == "/home/user/projects/project1"
+    assert result == str(Path.cwd())
 
 
 def test_resolve_documents_path_relative_subdir_with_project(sample_projects):
-    """When project detected, ALWAYS use project path (ignore documents_path, even if it's a subdir)."""
+    """Relative documents path is resolved from config even with project context."""
     config = Config(indexing=IndexingConfig(documents_path="docs"))
     result = resolve_documents_path(config, "project1", sample_projects)
-    # New behavior: project path is ALWAYS the documents root, documents_path is ignored
-    assert result == "/home/user/projects/project1"
+    assert result == str(Path("docs").resolve())
 
 
 def test_resolve_documents_path_absolute():
@@ -51,7 +50,7 @@ def test_resolve_documents_path_no_project(default_config, tmp_path):
 
 
 def test_resolve_documents_path_project_not_in_list(default_config, sample_projects):
-    """When detected project not found in projects list, resolve relative to CWD."""
+    """Unknown project context does not change configured document discovery root."""
     import os
 
     original_cwd = Path.cwd()

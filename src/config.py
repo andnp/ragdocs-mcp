@@ -479,7 +479,7 @@ def detect_project(
     return None
 
 
-def resolve_index_path(config: Config, detected_project: str | None = None):
+def resolve_index_path(config: Config):
     index_path_str = config.indexing.index_path
 
     expanded = Path(index_path_str).expanduser()
@@ -497,27 +497,8 @@ def resolve_index_path(config: Config, detected_project: str | None = None):
     else:
         base_dir = Path.home() / ".local" / "share"
 
-    if detected_project:
-        safe_project_name = detected_project.replace("/", "_").replace("\\", "_")
-        index_path = base_dir / "mcp-markdown-ragdocs" / safe_project_name
-        logger.info(
-            f"Using global data directory for project '{detected_project}': {index_path}"
-        )
-        return index_path
-
-    cwd = Path.cwd()
-    cwd_name = cwd.name
-    sanitized_name = re.sub(r"[^a-zA-Z0-9_-]", "-", cwd_name)
-    sanitized_name = re.sub(r"-+", "-", sanitized_name).strip("-")
-
-    if not sanitized_name:
-        sanitized_name = "default"
-
-    fallback_name = f"local-{sanitized_name}"
-    index_path = base_dir / "mcp-markdown-ragdocs" / fallback_name
-    logger.info(
-        f"No project detected, using global data directory with fallback: {index_path}"
-    )
+    index_path = base_dir / "mcp-markdown-ragdocs"
+    logger.info(f"Using global data directory: {index_path}")
     return index_path
 
 
@@ -526,17 +507,6 @@ def resolve_documents_path(
     detected_project: str | None = None,
     projects: list[ProjectConfig] | None = None,
 ) -> str:
-    # If project detected, use the project's path (ignore config.indexing.documents_path)
-    if detected_project and projects:
-        for project in projects:
-            if project.name == detected_project:
-                project_path = Path(project.path)
-                logger.info(
-                    f"Using project path as documents root for '{detected_project}': {project_path}"
-                )
-                return str(project_path)
-
-    # No project: use documents_path from config
     documents_path_str = config.indexing.documents_path
     documents_path = Path(documents_path_str).expanduser()
 
