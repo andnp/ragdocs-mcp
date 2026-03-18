@@ -5,7 +5,6 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
-import os
 
 from src.config import (
     Config,

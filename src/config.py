@@ -576,5 +576,3 @@ def resolve_project_id_for_path(file_path: Path, config: Config) -> str | None:
             pass
 
     return None
-
-

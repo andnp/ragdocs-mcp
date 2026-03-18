@@ -16,7 +16,6 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from src.daemon.health import (
-    DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
     request_daemon_socket,
 )
 from src.daemon.management import (
@@ -24,7 +23,6 @@ from src.daemon.management import (
     start_daemon,
     wait_for_daemon_ready,
 )
-from src.mcp.tools.document_tools import get_document_tools
 import src.mcp.tools.document_tools  # noqa: F401 - registers handlers
 
 logger = logging.getLogger(__name__)
