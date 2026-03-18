@@ -54,7 +54,7 @@ from src.git.parallel_indexer import (
 )
 from src.context import ApplicationContext
 from src.coordination.queue import get_huey
-from src.indexing.manifest import IndexManifest, save_manifest
+from src.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexManifest, save_manifest
 from src.indexing.tasks import register_tasks
 from src.indexing.reconciler import build_indexed_files_map
 from src.lifecycle import LifecycleCoordinator, LifecycleState
@@ -402,7 +402,7 @@ def _build_rebuild_manifest(
 ) -> IndexManifest:
     docs_path = Path(ctx.config.indexing.documents_path)
     return IndexManifest(
-        spec_version="1.0.0",
+        spec_version=CURRENT_MANIFEST_SPEC_VERSION,
         embedding_model=ctx.config.llm.embedding_model,
         chunking_config={
             "strategy": ctx.config.chunking.strategy,

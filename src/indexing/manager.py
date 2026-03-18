@@ -14,7 +14,7 @@ from src.indices.hash_store import ChunkHashStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.indexing.implicit_graph import ImplicitGraphBuilder
-from src.indexing.manifest import IndexManifest, load_manifest, save_manifest
+from src.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexManifest, load_manifest, save_manifest
 from src.models import Chunk
 from src.parsers.dispatcher import dispatch_parser
 from src.search.edge_types import infer_edge_type
@@ -98,7 +98,7 @@ class IndexManager:
         manifest = load_manifest(index_path)
         if manifest is None:
             manifest = IndexManifest(
-                spec_version="1.0.0",
+                spec_version=CURRENT_MANIFEST_SPEC_VERSION,
                 embedding_model=self._config.llm.embedding_model,
                 chunking_config={
                     "strategy": self._config.chunking.strategy,

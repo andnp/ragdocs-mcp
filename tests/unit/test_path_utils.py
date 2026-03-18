@@ -151,7 +151,22 @@ def test_compute_doc_id_multi_root_uses_matching_root(tmp_path):
     project_b = (tmp_path / "project_b").resolve()
     file_path = project_b / "docs" / "guide.md"
 
-    assert compute_doc_id_multi_root(file_path, [project_a, project_b]) == "docs/guide"
+    assert compute_doc_id_multi_root(file_path, [project_a, project_b]) == "project_b/docs/guide"
+
+
+def test_resolve_doc_path_multi_root_handles_common_ancestor_relative_doc_id(tmp_path):
+    project_a = tmp_path / "project_a"
+    project_b = tmp_path / "project_b"
+    target = project_b / "docs" / "guide.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# Guide")
+
+    resolved = resolve_doc_path_multi_root(
+        "project_b/docs/guide",
+        [project_a, project_b],
+    )
+
+    assert resolved == target.resolve()
 
 
 def test_compute_doc_id_backslash_normalization():

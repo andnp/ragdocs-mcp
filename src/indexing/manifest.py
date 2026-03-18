@@ -6,6 +6,9 @@ from typing import Any
 from src.utils.atomic_io import atomic_write_json
 
 
+CURRENT_MANIFEST_SPEC_VERSION = "1.1.0"
+
+
 @dataclass
 class IndexManifest:
     spec_version: str

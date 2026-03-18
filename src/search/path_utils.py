@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -59,25 +60,35 @@ def compute_doc_id(file_path: Path, docs_root: Path) -> str:
 
 
 def compute_doc_id_multi_root(file_path: Path, docs_roots: list[Path]) -> str:
-    """Compute document ID using the first matching root from a list of roots."""
+    """Compute document ID relative to the common ancestor of multiple roots."""
     resolved_path = file_path.resolve()
+    common_root = _compute_common_docs_root(docs_roots)
 
     for docs_root in docs_roots:
         try:
-            rel_path = resolved_path.relative_to(docs_root.resolve())
-            return str(rel_path.with_suffix("")).replace("\\", "/")
+            resolved_path.relative_to(docs_root.resolve())
+            return compute_doc_id(resolved_path, common_root)
         except ValueError:
             continue
 
-    if docs_roots:
+    if common_root is not None:
         logger.warning(
-            "File %s is outside configured document roots %s. Falling back to first root.",
+            "File %s is outside configured document roots %s. Falling back to common ancestor.",
             file_path,
             docs_roots,
         )
-        return compute_doc_id(resolved_path, docs_roots[0].resolve())
+        return compute_doc_id(resolved_path, common_root)
 
     return str(resolved_path.with_suffix("")).replace("\\", "/")
+
+
+def _compute_common_docs_root(docs_roots: list[Path]) -> Path | None:
+    if not docs_roots:
+        return None
+    if len(docs_roots) == 1:
+        return docs_roots[0].resolve()
+    common = os.path.commonpath([str(root.resolve()) for root in docs_roots])
+    return Path(common).resolve()
 
 
 def extract_doc_id_from_chunk_id(chunk_id: str) -> str:
@@ -156,7 +167,17 @@ def resolve_doc_path_multi_root(
     docs_roots: list[Path],
     extensions: list[str] | None = None,
 ) -> Path | None:
-    """Resolve a document ID by searching across multiple document roots."""
+    """Resolve a document ID across multiple roots.
+
+    Tries the common-ancestor-relative document ID format first, then falls
+    back to per-root-relative resolution for older manifest/doc_id formats.
+    """
+    common_root = _compute_common_docs_root(docs_roots)
+    if common_root is not None:
+        resolved = resolve_doc_path(doc_id, common_root, extensions)
+        if resolved is not None:
+            return resolved
+
     for docs_root in docs_roots:
         resolved = resolve_doc_path(doc_id, docs_root, extensions)
         if resolved is not None:

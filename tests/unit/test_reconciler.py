@@ -220,8 +220,8 @@ def test_build_indexed_files_map_multi_root(tmp_path):
     )
 
     assert indexed_map == {
-        "docs/readme": "docs/readme.md",
-        "docs/guide": "docs/guide.md",
+        "project_a/docs/readme": "project_a/docs/readme.md",
+        "project_b/docs/guide": "project_b/docs/guide.md",
     }
 
 
@@ -268,7 +268,7 @@ def test_reconcile_multi_root_uses_matching_root(tmp_path):
         spec_version="1.0.0",
         embedding_model="local",
         chunking_config={},
-        indexed_files={"docs/readme": "docs/readme.md"},
+        indexed_files={"project_a/docs/readme": "project_a/docs/readme.md"},
     )
 
     files_to_add, doc_ids_to_remove, _ = reconcile_indices(

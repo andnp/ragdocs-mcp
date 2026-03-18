@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 from src.indexing.manifest import IndexManifest
@@ -9,12 +10,25 @@ logger = logging.getLogger(__name__)
 
 def _relative_path_for_roots(abs_path: str, docs_roots: list[Path]) -> Path | None:
     resolved = Path(abs_path).resolve()
+    common_root = _common_docs_root(docs_roots)
+    if common_root is None:
+        return None
     for root in docs_roots:
         try:
-            return resolved.relative_to(root.resolve())
+            resolved.relative_to(root.resolve())
+            return resolved.relative_to(common_root)
         except ValueError:
             continue
     return None
+
+
+def _common_docs_root(docs_roots: list[Path]) -> Path | None:
+    if not docs_roots:
+        return None
+    if len(docs_roots) == 1:
+        return docs_roots[0].resolve()
+    common = os.path.commonpath([str(root.resolve()) for root in docs_roots])
+    return Path(common).resolve()
 
 
 def find_excluded_indexed_files(

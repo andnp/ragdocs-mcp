@@ -22,6 +22,7 @@ from src.indexing.discovery import (
 )
 from src.indexing.manager import IndexManager
 from src.indexing.manifest import (
+    CURRENT_MANIFEST_SPEC_VERSION,
     IndexManifest,
     load_manifest,
     save_manifest,
@@ -250,7 +251,7 @@ class ApplicationContext:
 
     def _build_manifest(self) -> IndexManifest:
         return IndexManifest(
-            spec_version="1.0.0",
+            spec_version=CURRENT_MANIFEST_SPEC_VERSION,
             embedding_model=self.config.llm.embedding_model,
             chunking_config={
                 "strategy": self.config.chunking.strategy,
