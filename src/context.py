@@ -77,6 +77,7 @@ class ApplicationContext:
     )
     _freshness_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _loaded_index_state_version: float = field(default=0.0, repr=False)
+    _is_virgin_startup: bool = field(default=False, repr=False)
 
     @classmethod
     def create(
@@ -87,13 +88,16 @@ class ApplicationContext:
         use_tasks: bool = False,
         index_path_override: Path | None = None,
         documents_path_override: Path | None = None,
+        global_runtime: bool = False,
     ) -> ApplicationContext:
         config = load_config()
 
-        detected_project = detect_project(
-            projects=config.projects,
-            project_override=project_override,
-        )
+        detected_project = None
+        if not global_runtime:
+            detected_project = detect_project(
+                projects=config.projects,
+                project_override=project_override,
+            )
 
         if detected_project and project_override:
             config = load_config()
@@ -105,13 +109,14 @@ class ApplicationContext:
             detected_project=detected_project,
             project_override=project_override,
             documents_path_override=documents_path_override,
+            global_runtime=global_runtime,
         )
         documents_root = cls._compute_common_documents_root(documents_roots)
         documents_path = str(documents_root)
 
         config.indexing.index_path = str(index_path)
         config.indexing.documents_path = documents_path
-        config.detected_project = detected_project
+        config.detected_project = None if global_runtime else detected_project
         os.environ["OMP_NUM_THREADS"] = str(config.indexing.torch_num_threads)
         os.environ["MKL_NUM_THREADS"] = str(config.indexing.torch_num_threads)
         os.environ["TORCH_NUM_THREADS"] = str(config.indexing.torch_num_threads)
@@ -208,16 +213,23 @@ class ApplicationContext:
         detected_project: str | None,
         project_override: str | None,
         documents_path_override: Path | None,
+        global_runtime: bool,
     ) -> list[Path]:
         if documents_path_override is not None:
             return [documents_path_override.expanduser().resolve()]
+
+        if global_runtime:
+            if config.projects:
+                return [Path(project.path).resolve() for project in config.projects]
+
+            return [Path(resolve_documents_path(config)).resolve()]
 
         if project_override:
             override_path = Path(project_override).expanduser()
             if override_path.exists():
                 return [override_path.resolve()]
 
-        if project_override and detected_project:
+        if detected_project:
             for project in config.projects:
                 if project.name == detected_project:
                     return [Path(project.path).resolve()]
@@ -284,6 +296,7 @@ class ApplicationContext:
         self.index_path.mkdir(parents=True, exist_ok=True)
         self.current_manifest = self._build_manifest()
         saved_manifest = load_manifest(self.index_path)
+        self._is_virgin_startup = saved_manifest is None
         return should_rebuild(self.current_manifest, saved_manifest)
 
     def _compute_index_state_version(self) -> float:
@@ -613,14 +626,19 @@ class ApplicationContext:
     def is_ready(self) -> bool:
         """Check if initialization is complete and indices are ready.
 
-        Returns True for both 'ready' and 'partial' states, allowing
-        queries on partially indexed data.
+        Returns True when the active indices are queryable.
+
+        On first-ever startup, queries stay blocked until initialization
+        finishes. On later background rebuilds, queries are allowed once the
+        underlying indices are queryable, even if indexing is still ongoing.
         """
-        if not self._ready_event.is_set():
-            return False
         if self._init_error is not None:
             return False
-        if self._index_state.status in ("ready", "partial"):
+        if self._ready_event.is_set():
+            return self.index_manager.is_ready()
+        if self._is_virgin_startup:
+            return False
+        if self._index_state.status == "indexing":
             return self.index_manager.is_ready()
         return self.index_manager.is_ready()
 

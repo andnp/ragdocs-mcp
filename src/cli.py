@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import errno
 import json
 import logging
 import os
@@ -71,7 +72,6 @@ logger = logging.getLogger(__name__)
 
 MIN_TOP_N = 1
 MAX_TOP_N = 100
-_DAEMON_QUERY_READY_WAIT_SECONDS = 120.0
 _DAEMON_OVERVIEW_TIMEOUT_SECONDS = 1.0
 
 
@@ -102,6 +102,7 @@ def _create_daemon_runtime(project: str | None, runtime_paths: RuntimePaths):
         lazy_embeddings=True,
         use_tasks=True,
         index_path_override=runtime_paths.root,
+        global_runtime=True,
     )
     huey = get_huey(runtime_paths.queue_db_path)
     register_tasks(
@@ -112,7 +113,7 @@ def _create_daemon_runtime(project: str | None, runtime_paths: RuntimePaths):
     )
     worker = HueyWorkerProcess(
         runtime_paths=runtime_paths,
-        project_override=project,
+        project_override=None,
     )
     return ctx, worker
 
@@ -139,6 +140,7 @@ async def _run_worker_forever_async(
         lazy_embeddings=True,
         use_tasks=True,
         index_path_override=index_root,
+        global_runtime=True,
     )
     try:
         ctx.index_manager.load()
@@ -166,10 +168,18 @@ async def _run_worker_forever_async(
 
     git_watcher = None
     if ctx.watcher is not None:
-        ctx.watcher.start()
+        try:
+            ctx.watcher.start()
+        except OSError as e:
+            if e.errno != errno.EMFILE:
+                raise
+            logger.warning(
+                "Worker file watcher disabled after hitting the file descriptor limit",
+                exc_info=True,
+            )
+            await ctx.watcher.stop()
 
     if ctx.commit_indexer is not None and ctx.config.git_indexing.watch_enabled:
-        from src.git.repository import discover_git_repositories
         from src.git.watcher import GitWatcher
 
         repos = await asyncio.to_thread(ctx.discover_git_repositories)
@@ -253,6 +263,10 @@ def _build_admin_overview_payload(
         "status": "ok",
         "pid": os.getpid(),
         "lifecycle": lifecycle,
+        "daemon_scope": "global",
+        "project_context_mode": "request_only",
+        "configured_root_count": len(ctx.documents_roots),
+        "documents_roots": [str(root) for root in ctx.documents_roots],
         "worker_health": "healthy" if worker_running else "dead",
         "worker_pid": worker_pid,
         "socket_path": str(runtime_paths.socket_path),
@@ -504,7 +518,8 @@ async def _run_daemon_forever(project: str | None) -> None:
             coordinator.request_shutdown()
             return {"status": "ok", "lifecycle": coordinator.state.value}
         if path == "/api/search/query":
-            await coordinator.wait_ready(timeout=60.0)
+            if not ctx.is_ready():
+                await coordinator.wait_ready(timeout=60.0)
             await ctx.ensure_fresh_indices()
             query_text = str(payload.get("query", ""))
             top_n = int(payload.get("top_n", 5))
@@ -536,7 +551,6 @@ async def _run_daemon_forever(project: str | None) -> None:
                 "strategy_stats": strategy_stats.to_dict(),
             }
         if path == "/api/search/git-history":
-            await coordinator.wait_ready(timeout=60.0)
             if ctx.commit_indexer is None:
                 return {"status": "error", "error": "git_indexing_unavailable"}
 
@@ -726,6 +740,7 @@ def daemon_status(output_json: bool):
         "status": state,
         "pid": inspection.metadata.pid,
         "lifecycle": inspection.metadata.status,
+        "daemon_scope": inspection.metadata.daemon_scope,
         "started_at": started_at,
         "metadata_path": str(runtime_paths.metadata_path),
         "lock_path": str(runtime_paths.lock_path),
@@ -753,6 +768,9 @@ def daemon_status(output_json: bool):
                     "running_count",
                     "failed_count",
                     "worker_running",
+                    "configured_root_count",
+                    "documents_roots",
+                    "project_context_mode",
                 )
                 if key in overview
             }
@@ -765,6 +783,7 @@ def daemon_status(output_json: bool):
     click.echo(f"Daemon status: {state}")
     click.echo(f"PID: {inspection.metadata.pid}")
     click.echo(f"Lifecycle: {inspection.metadata.status}")
+    click.echo(f"Scope: {payload['daemon_scope']}")
     click.echo(f"Started: {started_at}")
     click.echo(f"Metadata path: {runtime_paths.metadata_path}")
     click.echo(f"Lock path: {runtime_paths.lock_path}")
@@ -774,6 +793,9 @@ def daemon_status(output_json: bool):
         click.echo(f"Queue DB: {inspection.metadata.queue_db_path}")
     if inspection.metadata.transport_endpoint:
         click.echo(f"Endpoint: {inspection.metadata.transport_endpoint}")
+    configured_root_count = payload.get("configured_root_count")
+    if isinstance(configured_root_count, int):
+        click.echo(f"Documents roots: {configured_root_count}")
     if "indexed_documents" in payload:
         click.echo(f"Indexed documents: {payload['indexed_documents']}")
         click.echo(f"Indexed chunks: {payload['indexed_chunks']}")
@@ -862,6 +884,11 @@ def index_stats(project: str | None, output_json: bool):
 
         click.echo("Index stats")
         click.echo(f"Documents path: {payload['documents_path']}")
+        documents_roots = payload.get("documents_roots", [])
+        if isinstance(documents_roots, list):
+            click.echo(f"Documents roots: {len(documents_roots)}")
+            for root in documents_roots:
+                click.echo(f"  - {root}")
         click.echo(f"Index path: {payload['index_path']}")
         click.echo(f"Manifest present: {payload['manifest_exists']}")
         click.echo(f"Indexed documents: {payload['indexed_documents']}")
@@ -989,15 +1016,6 @@ def _request_daemon_json(
     if metadata is None and auto_start:
         metadata = start_daemon(
             project_override=project_override,
-            paths=runtime_paths,
-        )
-    if (
-        auto_start
-        and metadata is not None
-        and metadata.status not in {"ready", "ready_primary", "ready_replica"}
-    ):
-        metadata = wait_for_daemon_ready(
-            timeout_seconds=_DAEMON_QUERY_READY_WAIT_SECONDS,
             paths=runtime_paths,
         )
     if metadata is None or not metadata.socket_path:

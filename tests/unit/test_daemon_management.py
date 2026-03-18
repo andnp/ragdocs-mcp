@@ -87,6 +87,34 @@ def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> N
     assert result == metadata
 
 
+def test_spawn_daemon_process_does_not_forward_project_override(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    observed: dict[str, object] = {}
+    fake_process = _FakeProcess(101, [None])
+
+    monkeypatch.setattr(
+        "src.daemon.management._resolve_daemon_python",
+        lambda: Path("/repo/.venv/bin/python"),
+    )
+
+    def _fake_popen(command, **kwargs):
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        return fake_process
+
+    monkeypatch.setattr("src.daemon.management.subprocess.Popen", _fake_popen)
+
+    from src.daemon.management import _spawn_daemon_process
+
+    _spawn_daemon_process("docs", _paths(tmp_path))
+
+    command = observed["command"]
+    assert command[:4] == ["/repo/.venv/bin/python", "-m", "src.cli", "daemon-internal-run"]
+    assert "--project" not in command
+
+
 def test_start_daemon_accepts_race_winner_metadata(monkeypatch, tmp_path: Path) -> None:
     winner_metadata = DaemonMetadata(pid=303, started_at=2.0, status="ready")
     inspections = iter(

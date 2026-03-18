@@ -42,6 +42,7 @@ def test_daemon_status_reports_running(monkeypatch):
     assert "Daemon status: running" in result.output
     assert "PID: 4321" in result.output
     assert "Lifecycle: ready" in result.output
+    assert "Scope: global" in result.output
 
 
 def test_daemon_status_reports_starting_when_not_ready(monkeypatch):
@@ -102,6 +103,7 @@ def test_daemon_status_json_includes_runtime_paths(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     assert '"status": "running"' in result.output
+    assert '"daemon_scope": "global"' in result.output
     assert '"metadata_path":' in result.output
     assert '"index_db_path": "/tmp/index.db"' in result.output
 
@@ -134,6 +136,9 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
             "indexed_chunks": 21,
             "git_commits": 12,
             "git_repositories": 2,
+            "configured_root_count": 2,
+            "documents_roots": ["/docs/a", "/docs/b"],
+            "project_context_mode": "request_only",
             "pending_count": 3,
             "scheduled_count": 1,
             "running_count": 0,
@@ -161,6 +166,8 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
 
     assert result.exit_code == 0
     assert '"indexed_documents": 9' in result.output
+    assert '"configured_root_count": 2' in result.output
+    assert '"project_context_mode": "request_only"' in result.output
     assert '"pending_count": 3' in result.output
     assert '"worker_health": "healthy"' in result.output
 
@@ -313,7 +320,7 @@ async def test_run_daemon_forever_releases_boot_lock_after_startup(
     assert fake_lock.release_calls == 1
 
 
-def test_request_daemon_json_waits_for_ready_before_query(monkeypatch, tmp_path):
+def test_request_daemon_json_does_not_wait_for_ready_before_query(monkeypatch, tmp_path):
     runtime_paths = RuntimePaths(
         root=tmp_path,
         index_db_path=tmp_path / "index.db",
@@ -328,10 +335,68 @@ def test_request_daemon_json_waits_for_ready_before_query(monkeypatch, tmp_path)
         status="initializing",
         socket_path=str(runtime_paths.socket_path),
     )
-    ready = DaemonMetadata(
+    monkeypatch.setattr(
+        RuntimePaths,
+        "resolve",
+        classmethod(lambda cls: runtime_paths),
+    )
+    monkeypatch.setattr(
+        "src.cli.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=initializing,
+            running=True,
+            stale=False,
+            responsive=True,
+            ready=False,
+        ),
+    )
+
+    def _fail_wait_for_daemon_ready(*, timeout_seconds, paths=None):
+        raise AssertionError("wait_for_daemon_ready should not be called")
+
+    monkeypatch.setattr("src.cli.wait_for_daemon_ready", _fail_wait_for_daemon_ready)
+
+    observed: dict[str, object] = {}
+
+    def _fake_request_daemon_socket(socket_path, path, payload, timeout_seconds):
+        observed["socket_path"] = socket_path
+        observed["path"] = path
+        observed["payload"] = payload
+        observed["timeout_seconds"] = timeout_seconds
+        return {"status": "ok", "value": 1}
+
+    monkeypatch.setattr("src.cli.request_daemon_socket", _fake_request_daemon_socket)
+
+    from src.cli import _request_daemon_json
+
+    response = _request_daemon_json(
+        "/api/search/query",
+        {"value": 1},
+        project_override=None,
+        auto_start=True,
+    )
+
+    assert response == {"status": "ok", "value": 1}
+    assert observed["socket_path"] == runtime_paths.socket_path
+    assert observed["path"] == "/api/search/query"
+
+
+def test_request_daemon_json_does_not_wait_for_ready_for_git_history(
+    monkeypatch,
+    tmp_path,
+):
+    runtime_paths = RuntimePaths(
+        root=tmp_path,
+        index_db_path=tmp_path / "index.db",
+        queue_db_path=tmp_path / "queue.db",
+        metadata_path=tmp_path / "daemon.json",
+        lock_path=tmp_path / "daemon.lock",
+        socket_path=tmp_path / "daemon.sock",
+    )
+    initializing = DaemonMetadata(
         pid=321,
         started_at=1.0,
-        status="ready_primary",
+        status="initializing",
         socket_path=str(runtime_paths.socket_path),
     )
 
@@ -351,14 +416,10 @@ def test_request_daemon_json_waits_for_ready_before_query(monkeypatch, tmp_path)
         ),
     )
 
-    waited: dict[str, object] = {}
+    def _fail_wait_for_daemon_ready(*, timeout_seconds, paths=None):
+        raise AssertionError("wait_for_daemon_ready should not be called")
 
-    def _fake_wait_for_daemon_ready(*, timeout_seconds, paths=None):
-        waited["timeout_seconds"] = timeout_seconds
-        waited["paths"] = paths
-        return ready
-
-    monkeypatch.setattr("src.cli.wait_for_daemon_ready", _fake_wait_for_daemon_ready)
+    monkeypatch.setattr("src.cli.wait_for_daemon_ready", _fail_wait_for_daemon_ready)
 
     observed: dict[str, object] = {}
 
@@ -374,17 +435,15 @@ def test_request_daemon_json_waits_for_ready_before_query(monkeypatch, tmp_path)
     from src.cli import _request_daemon_json
 
     response = _request_daemon_json(
-        "/api/example",
-        {"value": 1},
+        "/api/search/git-history",
+        {"query": "daemon"},
         project_override=None,
         auto_start=True,
     )
 
     assert response == {"status": "ok", "value": 1}
-    assert waited["timeout_seconds"] == 120.0
-    assert waited["paths"] == runtime_paths
     assert observed["socket_path"] == runtime_paths.socket_path
-    assert observed["path"] == "/api/example"
+    assert observed["path"] == "/api/search/git-history"
 
 
 def test_daemon_stop_reports_stopped(monkeypatch):
@@ -436,6 +495,17 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
         def __init__(self):
             self.index_manager = _FakeIndexManager()
             self.commit_indexer = object()
+            self.config = type(
+                "_FakeConfig",
+                (),
+                {
+                    "indexing": type(
+                        "_FakeIndexing",
+                        (),
+                        {"task_backpressure_limit": 100},
+                    )()
+                },
+            )()
 
     class _FakeWorker:
         def __init__(self, *, runtime_paths, project_override):
@@ -461,8 +531,18 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
         observed["queue_path"] = path
         return fake_huey
 
-    def _fake_register_tasks(huey, index_manager, commit_indexer=None):
-        observed["register"] = (huey, index_manager, commit_indexer)
+    def _fake_register_tasks(
+        huey,
+        index_manager,
+        commit_indexer=None,
+        task_backpressure_limit=None,
+    ):
+        observed["register"] = (
+            huey,
+            index_manager,
+            commit_indexer,
+            task_backpressure_limit,
+        )
 
     monkeypatch.setattr("src.cli.ApplicationContext.create", _fake_create)
     monkeypatch.setattr("src.cli.get_huey", _fake_get_huey)
@@ -480,15 +560,17 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
         "lazy_embeddings": True,
         "use_tasks": True,
         "index_path_override": runtime_paths.root,
+        "global_runtime": True,
     }
     assert observed["queue_path"] == runtime_paths.queue_db_path
     assert observed["register"] == (
         fake_huey,
         fake_ctx.index_manager,
         fake_ctx.commit_indexer,
+        100,
     )
     assert observed["worker_runtime_paths"] == runtime_paths
-    assert observed["worker_project_override"] == "docs"
+    assert observed["worker_project_override"] is None
     assert worker is not None
 
 
@@ -533,12 +615,30 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
             self.index_path = index_dir
             self.index_manager = _FakeIndexManager()
             self.commit_indexer = _FakeCommitIndexer()
+            self.documents_roots = [docs_dir]
+            self.watcher = None
 
         def discover_files(self):
             return [str(docs_dir / "a.md"), str(docs_dir / "b.md")]
 
+        def discover_git_repositories(self):
+            return [docs_dir]
+
+        def get_index_state(self):
+            return type(
+                "_FakeIndexState",
+                (),
+                {
+                    "to_dict": lambda self: {
+                        "status": "ready",
+                        "indexed_count": 7,
+                        "total_count": 7,
+                        "last_error": None,
+                    }
+                },
+            )()
+
     fake_ctx = _FakeContext()
-    monkeypatch.setattr("src.cli.discover_git_repositories", lambda *args, **kwargs: [docs_dir])
 
     from src.cli import _build_index_stats_payload
 

@@ -207,8 +207,6 @@ def _spawn_daemon_process(
         "src.cli",
         "daemon-internal-run",
     ]
-    if project_override:
-        command.extend(["--project", project_override])
 
     repo_root = Path(__file__).resolve().parents[2]
     env = os.environ.copy()

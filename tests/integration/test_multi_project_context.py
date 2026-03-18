@@ -297,7 +297,7 @@ def test_application_context_discovers_files_across_multiple_project_roots(
     assert str(two_projects["project_b_docs"] / "guide.md") in discovered
 
 
-def test_ambient_detected_project_does_not_narrow_global_corpus_roots(
+def test_ambient_detected_project_narrows_documents_roots(
     two_projects, monkeypatch, tmp_path
 ):
     config = Config(
@@ -321,8 +321,45 @@ def test_ambient_detected_project_does_not_narrow_global_corpus_roots(
         project_override=None, enable_watcher=False, lazy_embeddings=True
     )
 
+    assert len(ctx.documents_roots) == 1
+    assert ctx.documents_roots == [two_projects["project_a"]]
+    assert Path(ctx.config.indexing.documents_path) == two_projects["project_a"]
+
+
+def test_global_runtime_ignores_project_scope_and_uses_all_documents_roots(
+    two_projects, monkeypatch, tmp_path
+):
+    config = Config(
+        indexing=IndexingConfig(
+            documents_path=str(tmp_path / "unused"),
+            index_path=str(tmp_path / "index"),
+        ),
+        search=SearchConfig(),
+        chunking=ChunkingConfig(),
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        projects=[
+            ProjectConfig(name="project-a", path=str(two_projects["project_a"])),
+            ProjectConfig(name="project-b", path=str(two_projects["project_b"])),
+        ],
+    )
+
+    monkeypatch.setattr("src.context.load_config", lambda: config)
+    monkeypatch.setattr("src.context.detect_project", lambda **kwargs: "project-a")
+
+    ctx = ApplicationContext.create(
+        project_override="project-a",
+        enable_watcher=False,
+        lazy_embeddings=True,
+        global_runtime=True,
+    )
+
     assert len(ctx.documents_roots) == 2
+    assert ctx.documents_roots == [
+        two_projects["project_a"],
+        two_projects["project_b"],
+    ]
     assert Path(ctx.config.indexing.documents_path) == two_projects["tmp"]
+    assert ctx.config.detected_project is None
 
 
 def test_multiple_contexts_have_isolated_orchestrator_paths(

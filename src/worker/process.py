@@ -66,8 +66,6 @@ class HueyWorkerProcess:
             "--parent-pid",
             str(os.getpid()),
         ]
-        if self._project_override:
-            command.extend(["--project", self._project_override])
 
         log_path = _worker_log_path(self._runtime_paths)
         log_path.parent.mkdir(parents=True, exist_ok=True)

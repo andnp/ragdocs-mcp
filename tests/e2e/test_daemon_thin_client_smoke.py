@@ -465,3 +465,46 @@ async def test_daemon_indexes_and_queries_multiple_registered_project_roots(
                 await asyncio.to_thread(stop_daemon, paths=runtime_paths)
     finally:
         os.chdir(original_cwd)
+
+
+@pytest.mark.asyncio
+async def test_daemon_started_for_one_project_still_indexes_global_corpus(
+    runner: CliRunner,
+    multi_project_daemon_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_cwd = Path.cwd()
+    os.chdir(multi_project_daemon_env)
+    runtime_paths = _configure_shared_runtime_home(multi_project_daemon_env, monkeypatch)
+
+    try:
+        start = await asyncio.to_thread(
+            runner.invoke,
+            cli,
+            ["daemon", "start", "--project", "project_a", "--timeout", "20"],
+        )
+        assert start.exit_code == 0, start.output
+
+        try:
+            await _wait_for_query_result(
+                runner,
+                "BetaSetupMarker-20260317",
+                "BetaSetupMarker-20260317",
+            )
+
+            stats = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["index", "stats", "--json"],
+            )
+            assert stats.exit_code == 0, stats.output
+            stats_payload = json.loads(stats.output)
+            assert len(stats_payload["documents_roots"]) == 2
+            assert stats_payload["discovered_files"] == 4
+
+            await _wait_for_daemon_socket(runtime_paths.socket_path)
+        finally:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(stop_daemon, paths=runtime_paths)
+    finally:
+        os.chdir(original_cwd)

@@ -73,6 +73,7 @@ def test_worker_process_start_uses_internal_worker_command(monkeypatch, tmp_path
     assert "--queue-db" in command
     assert "--index-root" in command
     assert "--parent-pid" in command
+    assert "--project" not in command
     assert observed["kwargs"]["start_new_session"] is True
     assert worker.is_running is True
 
