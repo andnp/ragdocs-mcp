@@ -237,6 +237,26 @@ def validate_boolean(
     return value
 
 
+def validate_optional_string(
+    arguments: dict,
+    param_name: str,
+    default: str | None = None,
+) -> str | None:
+    """Validate and extract an optional string parameter."""
+    value = arguments.get(param_name)
+
+    if value is None:
+        return default
+
+    if not isinstance(value, str):
+        raise ValidationError(
+            f"{param_name} must be a string, got {type(value).__name__}"
+        )
+
+    stripped = value.strip()
+    return stripped or default
+
+
 def validate_timestamp(
     arguments: dict,
     param_name: str,

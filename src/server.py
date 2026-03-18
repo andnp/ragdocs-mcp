@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 class QueryRequest(BaseModel):
     query: str
     top_n: int = Field(default=5, ge=1, le=100, description="Maximum results to return")
+    project_filter: list[str] = Field(default_factory=list)
+    project_context: str | None = None
 
 
 class QueryResponse(BaseModel):
@@ -80,8 +82,12 @@ def create_app():
         query: str,
         top_n: int,
         max_chunks_per_doc: int = 0,
+        project_filter: list[str] | None = None,
+        project_context: str | None = None,
     ):
         top_k = max(20, top_n * 4)
+        if project_filter:
+            top_k = max(top_k, top_n * 10)
 
         pipeline_config = SearchPipelineConfig(
             min_confidence=0.0,
@@ -94,6 +100,8 @@ def create_app():
             top_k=top_k,
             top_n=top_n,
             pipeline_config=pipeline_config,
+            project_filter=project_filter,
+            project_context=project_context,
         )
 
         query_type = classify_query_type(query)
@@ -114,6 +122,8 @@ def create_app():
             request.query,
             request.top_n,
             max_chunks_per_doc=0,
+            project_filter=request.project_filter,
+            project_context=request.project_context,
         )
         return QueryResponse(results=results_dict)
 

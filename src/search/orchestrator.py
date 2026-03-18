@@ -10,6 +10,7 @@ from src.indexing.manager import IndexManager
 from src.models import ChunkResult, CompressionStats, SearchStrategyStats
 from src.search.base_orchestrator import BaseSearchOrchestrator
 from src.search.classifier import classify_query, get_adaptive_weights
+from src.search.filters import matches_project_filter, normalize_project_filter
 from src.search.path_utils import extract_doc_id_from_chunk_id
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
 from src.search.score_pipeline import ScorePipeline, ScorePipelineConfig
@@ -66,6 +67,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         top_n: int = 5,
         pipeline_config: SearchPipelineConfig | None = None,
         excluded_files: set[str] | None = None,
+        project_filter: list[str] | None = None,
+        project_context: str | None = None,
     ) -> tuple[list[ChunkResult], CompressionStats, SearchStrategyStats]:
         if not query_text or not query_text.strip():
             return (
@@ -172,7 +175,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         fused = self._apply_score_pipeline(strategy_results, weights)
 
         fused = self._apply_community_boost(fused, all_doc_ids, chunk_id_to_doc_id)
-        fused = self._apply_project_uplift(fused)
+        fused = self._apply_project_uplift(fused, project_context=project_context)
+        fused = self._apply_project_filter(fused, project_filter=project_filter)
 
         if pipeline_config is not None:
             pipeline = SearchPipeline(pipeline_config)
@@ -371,8 +375,10 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
     def _apply_project_uplift(
         self,
         fused: list[tuple[str, float]],
+        *,
+        project_context: str | None = None,
     ) -> list[tuple[str, float]]:
-        active_project = self._config.detected_project
+        active_project = project_context or self._config.detected_project
         if not active_project:
             return fused
 
@@ -389,6 +395,31 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 boosted.append((chunk_id, score))
 
         return sorted(boosted, key=lambda x: x[1], reverse=True)
+
+    def _apply_project_filter(
+        self,
+        fused: list[tuple[str, float]],
+        *,
+        project_filter: list[str] | None = None,
+    ) -> list[tuple[str, float]]:
+        normalized_filter = normalize_project_filter(project_filter)
+        if normalized_filter is None:
+            return fused
+
+        filtered: list[tuple[str, float]] = []
+        for chunk_id, score in fused:
+            chunk_data = self._vector.get_chunk_by_id(chunk_id)
+            metadata = chunk_data.get("metadata", {}) if chunk_data else {}
+            project_id = (
+                metadata.get("project_id") if isinstance(metadata, dict) else None
+            )
+            if matches_project_filter(
+                str(project_id) if project_id is not None else None,
+                normalized_filter,
+            ):
+                filtered.append((chunk_id, score))
+
+        return filtered
 
     def _queue_reindex_for_chunks(self, chunk_ids: list[str], reason: str):
         doc_ids = {
@@ -465,6 +496,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         top_k: int = 10,
         top_n: int = 5,
         excluded_files: set[str] | None = None,
+        project_filter: list[str] | None = None,
+        project_context: str | None = None,
     ) -> tuple[list[ChunkResult], CompressionStats, SearchStrategyStats]:
         if not hypothesis or not hypothesis.strip():
             return (
@@ -510,7 +543,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         weights: dict[str, float] = {"semantic": 1.0}
 
         fused = self._apply_score_pipeline(strategy_results, weights)
-        fused = self._apply_project_uplift(fused)
+        fused = self._apply_project_uplift(fused, project_context=project_context)
+        fused = self._apply_project_filter(fused, project_filter=project_filter)
 
         pipeline = self._get_pipeline()
 

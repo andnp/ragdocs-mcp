@@ -25,3 +25,24 @@ def limit_per_document(
             doc_counts[doc_id] = current_count + 1
 
     return limited
+
+
+def normalize_project_filter(
+    project_filter: list[str] | tuple[str, ...] | set[str] | None,
+) -> set[str] | None:
+    if not project_filter:
+        return None
+
+    normalized = {item.strip() for item in project_filter if item and item.strip()}
+    return normalized or None
+
+
+def matches_project_filter(
+    project_id: str | None,
+    project_filter: set[str] | None,
+) -> bool:
+    if project_filter is None:
+        return True
+    if project_id is None:
+        return False
+    return project_id in project_filter

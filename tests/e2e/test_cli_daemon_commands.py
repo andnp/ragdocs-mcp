@@ -684,6 +684,49 @@ def test_query_prefers_daemon_transport(monkeypatch):
     assert '"daemon result"' in result.output
 
 
+def test_query_passes_project_context_and_filter(monkeypatch):
+    runner = CliRunner()
+    observed: dict[str, object] = {}
+
+    def _fake_request(path, payload, project_override, auto_start, allow_error=False):
+        observed["path"] = path
+        observed["payload"] = payload
+        observed["project_override"] = project_override
+        return {
+            "query": payload["query"],
+            "results": [],
+            "compression_stats": {},
+            "strategy_stats": {},
+        }
+
+    monkeypatch.setattr("src.cli._request_daemon_json", _fake_request)
+
+    result = runner.invoke(
+        cli,
+        [
+            "query",
+            "daemon",
+            "--json",
+            "--project",
+            "project-a",
+            "--project-filter",
+            "project-a",
+            "--project-filter",
+            "project-b",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed["project_override"] == "project-a"
+    assert observed["path"] == "/api/search/query"
+    assert observed["payload"] == {
+        "query": "daemon",
+        "top_n": 5,
+        "project_filter": ["project-a", "project-b"],
+        "project_context": "project-a",
+    }
+
+
 def test_search_commits_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
@@ -713,3 +756,46 @@ def test_search_commits_prefers_daemon_transport(monkeypatch):
     assert result.exit_code == 0
     assert '"query": "daemon"' in result.output
     assert '"daemon commit"' in result.output
+
+
+def test_search_commits_passes_project_context_and_filter(monkeypatch):
+    runner = CliRunner()
+    observed: dict[str, object] = {}
+
+    def _fake_request(path, payload, project_override, auto_start, allow_error=False):
+        observed["path"] = path
+        observed["payload"] = payload
+        observed["project_override"] = project_override
+        return {
+            "query": payload["query"],
+            "total_commits_indexed": 0,
+            "results": [],
+        }
+
+    monkeypatch.setattr("src.cli._request_daemon_json", _fake_request)
+
+    result = runner.invoke(
+        cli,
+        [
+            "search-commits",
+            "daemon",
+            "--json",
+            "--project",
+            "project-a",
+            "--project-filter",
+            "project-a",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed["project_override"] == "project-a"
+    assert observed["path"] == "/api/search/git-history"
+    assert observed["payload"] == {
+        "query": "daemon",
+        "top_n": 5,
+        "files_glob": None,
+        "after_timestamp": None,
+        "before_timestamp": None,
+        "project_filter": ["project-a"],
+        "project_context": "project-a",
+    }

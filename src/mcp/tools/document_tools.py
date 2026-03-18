@@ -20,6 +20,7 @@ from src.mcp.validation import (
     validate_integer_range,
     validate_float_range,
     validate_string_list,
+    validate_optional_string,
     validate_boolean,
 )
 from src.search.pipeline import SearchPipelineConfig
@@ -78,6 +79,16 @@ def get_document_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "default": [],
                     },
+                    "project_filter": {
+                        "type": "array",
+                        "description": "Optional list of project IDs to explicitly filter results to",
+                        "items": {"type": "string"},
+                        "default": [],
+                    },
+                    "project_context": {
+                        "type": "string",
+                        "description": "Optional active project context used for bounded ranking uplift",
+                    },
                     "uniqueness_mode": {
                         "type": "string",
                         "enum": ["allow_multiple", "one_per_document"],
@@ -114,6 +125,16 @@ def get_document_tools() -> list[Tool]:
                         "description": "List of file paths to exclude from results",
                         "items": {"type": "string"},
                         "default": [],
+                    },
+                    "project_filter": {
+                        "type": "array",
+                        "description": "Optional list of project IDs to explicitly filter results to",
+                        "items": {"type": "string"},
+                        "default": [],
+                    },
+                    "project_context": {
+                        "type": "string",
+                        "description": "Optional active project context used for bounded ranking uplift",
                     },
                 },
                 "required": ["hypothesis"],
@@ -152,6 +173,16 @@ def get_document_tools() -> list[Tool]:
                         "type": "integer",
                         "description": "Optional Unix timestamp to filter commits before this date",
                     },
+                    "project_filter": {
+                        "type": "array",
+                        "description": "Optional list of project IDs to explicitly filter results to",
+                        "items": {"type": "string"},
+                        "default": [],
+                    },
+                    "project_context": {
+                        "type": "string",
+                        "description": "Optional active project context used for bounded ranking uplift",
+                    },
                 },
                 "required": ["query"],
             },
@@ -181,6 +212,8 @@ async def _query_documents_impl(
         excluded_files_raw = validate_string_list(
             arguments, "excluded_files", default=[]
         )
+        project_filter = validate_string_list(arguments, "project_filter", default=[])
+        project_context = validate_optional_string(arguments, "project_context")
 
     except ValidationError as e:
         return [TextContent(type="text", text=f"Validation error: {e}")]
@@ -197,6 +230,8 @@ async def _query_documents_impl(
         excluded_files = {normalize_path(f, docs_root) for f in excluded_files_raw}
 
     top_k = max(20, top_n * 4)
+    if project_filter:
+        top_k = max(top_k, top_n * 10)
 
     pipeline_config = SearchPipelineConfig(
         min_confidence=min_score,
@@ -210,6 +245,8 @@ async def _query_documents_impl(
         top_n=top_n,
         pipeline_config=pipeline_config,
         excluded_files=excluded_files,
+        project_filter=project_filter,
+        project_context=project_context,
     )
 
     query_type = classify_query_type(query)
@@ -280,6 +317,8 @@ async def handle_search_with_hypothesis(
         excluded_files_raw = validate_string_list(
             arguments, "excluded_files", default=[]
         )
+        project_filter = validate_string_list(arguments, "project_filter", default=[])
+        project_context = validate_optional_string(arguments, "project_context")
 
     except ValidationError as e:
         return [TextContent(type="text", text=f"Validation error: {e}")]
@@ -296,12 +335,16 @@ async def handle_search_with_hypothesis(
         excluded_files = {normalize_path(f, docs_root) for f in excluded_files_raw}
 
     top_k = max(20, top_n * 4)
+    if project_filter:
+        top_k = max(top_k, top_n * 10)
 
     results, _, _ = await ctx.orchestrator.query_with_hypothesis(
         hypothesis,
         top_k=top_k,
         top_n=top_n,
         excluded_files=excluded_files,
+        project_filter=project_filter,
+        project_context=project_context,
     )
 
     results_text = "\n\n".join(
@@ -319,11 +362,18 @@ async def handle_search_with_hypothesis(
 async def handle_search_git_history(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
-    query = arguments["query"]
-    top_n = max(MIN_TOP_N, min(arguments.get("top_n", 5), MAX_TOP_N))
-    files_glob = arguments.get("files_glob")
-    after_timestamp = arguments.get("after_timestamp")
-    before_timestamp = arguments.get("before_timestamp")
+    try:
+        query = validate_query(arguments, "query")
+        top_n = validate_integer_range(
+            arguments, "top_n", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N
+        )
+        files_glob = validate_optional_string(arguments, "files_glob")
+        after_timestamp = arguments.get("after_timestamp")
+        before_timestamp = arguments.get("before_timestamp")
+        project_filter = validate_string_list(arguments, "project_filter", default=[])
+        project_context = validate_optional_string(arguments, "project_context")
+    except ValidationError as e:
+        return [TextContent(type="text", text=f"Validation error: {e}")]
 
     await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
@@ -346,6 +396,9 @@ async def handle_search_git_history(
         files_glob,
         after_timestamp,
         before_timestamp,
+        project_filter,
+        project_context,
+        ctx.config,
     )
 
     output_lines = [

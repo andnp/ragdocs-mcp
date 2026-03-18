@@ -4,9 +4,13 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.config import Config, resolve_project_id_for_path
 from src.git.commit_indexer import CommitIndexer
+from src.search.filters import matches_project_filter, normalize_project_filter
 
 logger = logging.getLogger(__name__)
+
+_ACTIVE_PROJECT_UPLIFT = 1.2
 
 
 @dataclass
@@ -21,6 +25,7 @@ class CommitResult:
     delta_truncated: str
     score: float
     repo_path: str
+    project_id: str | None = None
 
 
 @dataclass
@@ -37,6 +42,9 @@ def search_git_history(
     files_glob: str | None = None,
     after_timestamp: int | None = None,
     before_timestamp: int | None = None,
+    project_filter: list[str] | None = None,
+    project_context: str | None = None,
+    config: Config | None = None,
 ) -> GitSearchResponse:
     """
     Search git commit history with optional filters.
@@ -56,9 +64,16 @@ def search_git_history(
     query_embedding = commit_indexer._embedding_model.get_text_embedding(query)
 
     # Query index (over-fetch for filtering)
+    normalized_project_filter = normalize_project_filter(project_filter)
+
+    overfetch_multiplier = 1
+    if files_glob:
+        overfetch_multiplier = 2
+    if normalized_project_filter:
+        overfetch_multiplier = max(overfetch_multiplier, 10)
     candidates = commit_indexer.query_by_embedding(
         query_embedding,
-        top_k=top_n * 2 if files_glob else top_n,
+        top_k=top_n * overfetch_multiplier,
         after_timestamp=after_timestamp,
         before_timestamp=before_timestamp,
     )
@@ -66,6 +81,13 @@ def search_git_history(
     # Apply glob filtering if specified
     if files_glob:
         candidates = filter_by_glob(candidates, files_glob)
+
+    candidates = apply_project_semantics(
+        candidates,
+        config=config,
+        project_filter=normalized_project_filter,
+        project_context=project_context,
+    )
 
     # Convert top N to CommitResult objects
     results = [
@@ -80,6 +102,7 @@ def search_git_history(
             delta_truncated=c["delta_truncated"],
             score=c["score"],
             repo_path=c.get("repo_path", ""),
+            project_id=c.get("project_id"),
         )
         for c in candidates[:top_n]
     ]
@@ -109,3 +132,29 @@ def filter_by_glob(commits: list[dict], glob_pattern: str) -> list[dict]:
         for commit in commits
         if any(Path(f).match(glob_pattern) for f in commit.get("files_changed", []))
     ]
+
+
+def apply_project_semantics(
+    commits: list[dict],
+    *,
+    config: Config | None,
+    project_filter: set[str] | None,
+    project_context: str | None,
+) -> list[dict]:
+    enriched: list[dict] = []
+    for commit in commits:
+        repo_path = commit.get("repo_path")
+        project_id = None
+        if config is not None and isinstance(repo_path, str) and repo_path:
+            project_id = resolve_project_id_for_path(Path(repo_path), config)
+
+        if not matches_project_filter(project_id, project_filter):
+            continue
+
+        score = float(commit.get("score", 0.0))
+        if project_context and project_id == project_context:
+            score *= _ACTIVE_PROJECT_UPLIFT
+
+        enriched.append({**commit, "project_id": project_id, "score": score})
+
+    return sorted(enriched, key=lambda commit: float(commit.get("score", 0.0)), reverse=True)

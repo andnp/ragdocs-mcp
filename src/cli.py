@@ -440,10 +440,24 @@ async def _run_daemon_forever(project: str | None) -> None:
             query_text = str(payload.get("query", ""))
             top_n = int(payload.get("top_n", 5))
             top_k = max(20, top_n * 4)
+            project_filter_payload = payload.get("project_filter", [])
+            project_filter = (
+                [str(item) for item in project_filter_payload if isinstance(item, str)]
+                if isinstance(project_filter_payload, list)
+                else []
+            )
+            if project_filter:
+                top_k = max(top_k, top_n * 10)
             results, compression_stats, strategy_stats = await ctx.orchestrator.query(
                 query_text,
                 top_k=top_k,
                 top_n=top_n,
+                project_filter=project_filter,
+                project_context=(
+                    str(payload.get("project_context"))
+                    if payload.get("project_context") is not None
+                    else None
+                ),
             )
             await ctx.orchestrator.drain_reindex()
             return {
@@ -466,6 +480,17 @@ async def _run_daemon_forever(project: str | None) -> None:
                 files_glob=str(payload["files_glob"]) if payload.get("files_glob") else None,
                 after_timestamp=int(payload["after_timestamp"]) if payload.get("after_timestamp") is not None else None,
                 before_timestamp=int(payload["before_timestamp"]) if payload.get("before_timestamp") is not None else None,
+                project_filter=(
+                    [str(item) for item in payload.get("project_filter", []) if isinstance(item, str)]
+                    if isinstance(payload.get("project_filter", []), list)
+                    else []
+                ),
+                project_context=(
+                    str(payload.get("project_context"))
+                    if payload.get("project_context") is not None
+                    else None
+                ),
+                config=ctx.config,
             )
             return {
                 "query": response.query,
@@ -482,6 +507,7 @@ async def _run_daemon_forever(project: str | None) -> None:
                         "delta_truncated": r.delta_truncated,
                         "score": r.score,
                         "repo_path": r.repo_path,
+                        "project_id": r.project_id,
                     }
                     for r in response.results
                 ],
@@ -1212,8 +1238,18 @@ def check_config_cmd(project: str | None):
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
 )
+@click.option(
+    "--project-filter",
+    multiple=True,
+    help="Explicitly restrict results to one or more project IDs",
+)
 def query(
-    query_text: str, output_json: bool, top_n: int, debug: bool, project: str | None
+    query_text: str,
+    output_json: bool,
+    top_n: int,
+    debug: bool,
+    project: str | None,
+    project_filter: tuple[str, ...],
 ):
     try:
         console = Console()
@@ -1221,7 +1257,12 @@ def query(
 
         daemon_payload = _request_daemon_json(
             "/api/search/query",
-            {"query": query_text, "top_n": top_n},
+            {
+                "query": query_text,
+                "top_n": top_n,
+                "project_filter": list(project_filter),
+                "project_context": project,
+            },
             project_override=project,
             auto_start=True,
             allow_error=True,
@@ -1359,6 +1400,11 @@ def query(
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
 )
+@click.option(
+    "--project-filter",
+    multiple=True,
+    help="Explicitly restrict results to one or more project IDs",
+)
 def search_commits(
     query_text: str,
     output_json: bool,
@@ -1368,6 +1414,7 @@ def search_commits(
     after_timestamp: int | None,
     before_timestamp: int | None,
     project: str | None,
+    project_filter: tuple[str, ...],
 ):
     """Search git commit history using natural language queries."""
     try:
@@ -1383,6 +1430,8 @@ def search_commits(
                 "files_glob": files_glob,
                 "after_timestamp": after_timestamp,
                 "before_timestamp": before_timestamp,
+                "project_filter": list(project_filter),
+                "project_context": project,
             },
             project_override=project,
             auto_start=True,
