@@ -87,6 +87,35 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         assert config.search.keyword_weight == 1.0
         assert config.search.recency_bias == 0.5
         assert config.llm.embedding_model == "local"
+        assert config.indexing.torch_num_threads == 4
+        assert config.indexing.debounce_window_seconds == 0.5
+        assert config.indexing.task_backpressure_limit == 100
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_indexing_performance_knobs_load_from_config(tmp_path):
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
+    config_file.write_text(
+        """
+[indexing]
+documents_path = "."
+torch_num_threads = 8
+debounce_window_seconds = 1.25
+task_backpressure_limit = 42
+"""
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+
+        assert config.indexing.torch_num_threads == 8
+        assert config.indexing.debounce_window_seconds == 1.25
+        assert config.indexing.task_backpressure_limit == 42
     finally:
         os.chdir(original_cwd)
 

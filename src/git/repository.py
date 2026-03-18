@@ -61,6 +61,23 @@ def discover_git_repositories(
     return git_repos
 
 
+def discover_git_repositories_multi_root(
+    documents_paths: list[Path],
+    exclude_patterns: list[str],
+    exclude_hidden_dirs: bool = True,
+) -> list[Path]:
+    discovered: set[Path] = set()
+
+    for root in documents_paths:
+        if not root.exists():
+            continue
+        discovered.update(
+            discover_git_repositories(root, exclude_patterns, exclude_hidden_dirs)
+        )
+
+    return sorted(discovered)
+
+
 def get_commits_after_timestamp(
     git_dir: Path,
     after_timestamp: int | None = None,

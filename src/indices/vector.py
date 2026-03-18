@@ -133,12 +133,15 @@ class VectorIndex:
         embedding_model_name: str = "BAAI/bge-small-en-v1.5",
         embedding_model: EmbeddingModel | None = None,
         embedding_workers: int = 4,
+        torch_num_threads: int = 4,
     ):
         self._embedding_model_name = embedding_model_name
         self._embedding_model: EmbeddingModel | None = embedding_model
         self._model_lock = threading.Lock()
         self._model_loaded = embedding_model is not None
         self._embedding_workers = max(1, embedding_workers)
+        self._torch_num_threads = max(1, torch_num_threads)
+        self._torch_threads_configured = False
 
         # Circuit breaker for embedding model failure protection
         self._embedding_circuit_breaker = CircuitBreaker(
@@ -191,6 +194,8 @@ class VectorIndex:
             if self._model_loaded:
                 return
 
+            self._configure_torch_threads()
+
             from concurrent.futures import (
                 ThreadPoolExecutor,
                 TimeoutError as FuturesTimeoutError,
@@ -227,6 +232,26 @@ class VectorIndex:
             except Exception as e:
                 logger.error(f"Failed to load embedding model: {e}", exc_info=True)
                 raise
+
+    def _configure_torch_threads(self) -> None:
+        if self._torch_threads_configured:
+            return
+
+        try:
+            import torch
+
+            torch.set_num_threads(self._torch_num_threads)
+            try:
+                torch.set_num_interop_threads(max(1, min(2, self._torch_num_threads)))
+            except RuntimeError:
+                logger.debug("torch interop thread count already configured")
+            logger.info("Configured torch thread limit: %d", self._torch_num_threads)
+        except ImportError:
+            logger.debug("torch not available while configuring thread limit")
+        except Exception:
+            logger.warning("Failed to configure torch thread limit", exc_info=True)
+        finally:
+            self._torch_threads_configured = True
 
     def warm_up(self) -> None:
         self._ensure_model_loaded()

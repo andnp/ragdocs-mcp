@@ -16,7 +16,14 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, SearchConfig, ChunkingConfig, LLMConfig
+from src.config import (
+    Config,
+    IndexingConfig,
+    SearchConfig,
+    ChunkingConfig,
+    LLMConfig,
+    ProjectConfig,
+)
 from src.context import ApplicationContext
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
@@ -257,6 +264,65 @@ def test_application_context_creates_orchestrator_with_correct_path(
     assert ctx.orchestrator.documents_path == Path(
         config_for_project_a.indexing.documents_path
     )
+
+
+def test_application_context_discovers_files_across_multiple_project_roots(
+    two_projects, monkeypatch, tmp_path
+):
+    config = Config(
+        indexing=IndexingConfig(
+            documents_path=str(tmp_path / "unused"),
+            index_path=str(tmp_path / "index"),
+        ),
+        search=SearchConfig(),
+        chunking=ChunkingConfig(),
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        projects=[
+            ProjectConfig(name="project-a", path=str(two_projects["project_a"])),
+            ProjectConfig(name="project-b", path=str(two_projects["project_b"])),
+        ],
+    )
+
+    monkeypatch.setattr("src.context.load_config", lambda: config)
+
+    ctx = ApplicationContext.create(
+        project_override=None, enable_watcher=False, lazy_embeddings=True
+    )
+
+    discovered = ctx.discover_files()
+
+    assert len(ctx.documents_roots) == 2
+    assert Path(ctx.config.indexing.documents_path) == two_projects["tmp"]
+    assert str(two_projects["project_a_docs"] / "readme.md") in discovered
+    assert str(two_projects["project_b_docs"] / "guide.md") in discovered
+
+
+def test_ambient_detected_project_does_not_narrow_global_corpus_roots(
+    two_projects, monkeypatch, tmp_path
+):
+    config = Config(
+        indexing=IndexingConfig(
+            documents_path=str(tmp_path / "unused"),
+            index_path=str(tmp_path / "index"),
+        ),
+        search=SearchConfig(),
+        chunking=ChunkingConfig(),
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        projects=[
+            ProjectConfig(name="project-a", path=str(two_projects["project_a"])),
+            ProjectConfig(name="project-b", path=str(two_projects["project_b"])),
+        ],
+    )
+
+    monkeypatch.setattr("src.context.load_config", lambda: config)
+    monkeypatch.setattr("src.context.detect_project", lambda **kwargs: "project-a")
+
+    ctx = ApplicationContext.create(
+        project_override=None, enable_watcher=False, lazy_embeddings=True
+    )
+
+    assert len(ctx.documents_roots) == 2
+    assert Path(ctx.config.indexing.documents_path) == two_projects["tmp"]
 
 
 def test_multiple_contexts_have_isolated_orchestrator_paths(

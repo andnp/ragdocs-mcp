@@ -58,6 +58,9 @@ class IndexingConfig:
     exclude_hidden_dirs: bool = True
     reconciliation_interval_seconds: int = 3600  # 1 hour, 0 to disable
     embedding_workers: int = 4
+    torch_num_threads: int = 4
+    debounce_window_seconds: float = 0.5
+    task_backpressure_limit: int = 100
     delta_full_reindex_threshold: float = 0.5
     move_detection_threshold: float = 0.8
 

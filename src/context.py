@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -16,6 +17,7 @@ from src.config import (
 from src.git.commit_indexer import CommitIndexer
 from src.indexing.discovery import (
     discover_files as _discover_files,
+    discover_files_multi_root,
     get_parser_suffixes,
 )
 from src.indexing.manager import IndexManager
@@ -54,6 +56,7 @@ class ApplicationContext:
     watcher: FileWatcher | None = None
     commit_indexer: CommitIndexer | None = None
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
+    documents_roots: list[Path] = field(default_factory=list)
     db_manager: DatabaseManager | None = None
     current_manifest: IndexManifest | None = None
     reconciliation_task: asyncio.Task | None = field(default=None, repr=False)
@@ -89,26 +92,21 @@ class ApplicationContext:
 
         index_path = index_path_override or resolve_index_path(config)
 
-        explicit_documents_path = documents_path_override
-        if explicit_documents_path is None and project_override:
-            override_path = Path(project_override).expanduser()
-            if override_path.exists():
-                explicit_documents_path = override_path.resolve()
-            elif detected_project:
-                for project in config.projects:
-                    if project.name == detected_project:
-                        explicit_documents_path = Path(project.path).resolve()
-                        break
-
-        documents_path = (
-            str(explicit_documents_path)
-            if explicit_documents_path is not None
-            else resolve_documents_path(config)
+        documents_roots = cls._resolve_documents_roots(
+            config,
+            detected_project=detected_project,
+            project_override=project_override,
+            documents_path_override=documents_path_override,
         )
+        documents_root = cls._compute_common_documents_root(documents_roots)
+        documents_path = str(documents_root)
 
         config.indexing.index_path = str(index_path)
         config.indexing.documents_path = documents_path
         config.detected_project = detected_project
+        os.environ["OMP_NUM_THREADS"] = str(config.indexing.torch_num_threads)
+        os.environ["MKL_NUM_THREADS"] = str(config.indexing.torch_num_threads)
+        os.environ["TORCH_NUM_THREADS"] = str(config.indexing.torch_num_threads)
 
         embedding_model_name = config.llm.resolved_embedding_model
 
@@ -116,11 +114,13 @@ class ApplicationContext:
             vector = VectorIndex(
                 embedding_model_name=embedding_model_name,
                 embedding_workers=config.indexing.embedding_workers,
+                torch_num_threads=config.indexing.torch_num_threads,
             )
         else:
             vector = VectorIndex(
                 embedding_model_name=embedding_model_name,
                 embedding_workers=config.indexing.embedding_workers,
+                torch_num_threads=config.indexing.torch_num_threads,
             )
             vector.warm_up()
 
@@ -146,12 +146,15 @@ class ApplicationContext:
         if enable_watcher:
             watcher = FileWatcher(
                 documents_path=config.indexing.documents_path,
+                documents_paths=[str(root) for root in documents_roots],
                 index_manager=manager,
+                cooldown=config.indexing.debounce_window_seconds,
                 include_patterns=config.indexing.include,
                 exclude_patterns=config.indexing.exclude,
                 exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
                 parser_suffixes=get_parser_suffixes(),
                 use_tasks=use_tasks,
+                task_backpressure_limit=config.indexing.task_backpressure_limit,
             )
 
         # Initialize commit indexer if enabled and git available
@@ -178,10 +181,46 @@ class ApplicationContext:
             watcher=watcher,
             commit_indexer=commit_indexer,
             index_path=index_path,
+            documents_roots=documents_roots,
             db_manager=db_manager,
             current_manifest=None,
             reconciliation_task=None,
         )
+
+    @staticmethod
+    def _resolve_documents_roots(
+        config: Config,
+        *,
+        detected_project: str | None,
+        project_override: str | None,
+        documents_path_override: Path | None,
+    ) -> list[Path]:
+        if documents_path_override is not None:
+            return [documents_path_override.expanduser().resolve()]
+
+        if project_override:
+            override_path = Path(project_override).expanduser()
+            if override_path.exists():
+                return [override_path.resolve()]
+
+        if project_override and detected_project:
+            for project in config.projects:
+                if project.name == detected_project:
+                    return [Path(project.path).resolve()]
+
+        if config.projects:
+            return [Path(project.path).resolve() for project in config.projects]
+
+        return [Path(resolve_documents_path(config)).resolve()]
+
+    @staticmethod
+    def _compute_common_documents_root(documents_roots: list[Path]) -> Path:
+        if not documents_roots:
+            return Path.cwd().resolve()
+        if len(documents_roots) == 1:
+            return documents_roots[0]
+        common = os.path.commonpath([str(root) for root in documents_roots])
+        return Path(common).resolve()
 
     def _build_manifest(self) -> IndexManifest:
         return IndexManifest(
@@ -196,11 +235,35 @@ class ApplicationContext:
         )
 
     def discover_files(self) -> list[str]:
-        return _discover_files(
-            documents_path=self.config.indexing.documents_path,
+        if len(self.documents_roots) <= 1:
+            return _discover_files(
+                documents_path=self.config.indexing.documents_path,
+                include_patterns=self.config.indexing.include,
+                exclude_patterns=self.config.indexing.exclude,
+                exclude_hidden_dirs=self.config.indexing.exclude_hidden_dirs,
+            )
+
+        return discover_files_multi_root(
+            [str(root) for root in self.documents_roots],
             include_patterns=self.config.indexing.include,
             exclude_patterns=self.config.indexing.exclude,
             exclude_hidden_dirs=self.config.indexing.exclude_hidden_dirs,
+        )
+
+    def discover_git_repositories(self) -> list[Path]:
+        from src.git.repository import discover_git_repositories, discover_git_repositories_multi_root
+
+        if len(self.documents_roots) <= 1:
+            return discover_git_repositories(
+                Path(self.config.indexing.documents_path),
+                self.config.indexing.exclude,
+                self.config.indexing.exclude_hidden_dirs,
+            )
+
+        return discover_git_repositories_multi_root(
+            self.documents_roots,
+            self.config.indexing.exclude,
+            self.config.indexing.exclude_hidden_dirs,
         )
 
     def _check_and_rebuild_if_needed(self) -> bool:
@@ -630,18 +693,11 @@ class ApplicationContext:
             ParallelIndexingConfig,
             index_commits_parallel_sync,
         )
-        from src.git.repository import (
-            discover_git_repositories,
-            get_commits_after_timestamp,
-        )
+        from src.git.repository import get_commits_after_timestamp
 
         logger.info("Starting initial git commit indexing (parallel)")
 
-        repos = discover_git_repositories(
-            Path(self.config.indexing.documents_path),
-            self.config.indexing.exclude,
-            self.config.indexing.exclude_hidden_dirs,
-        )
+        repos = self.discover_git_repositories()
 
         parallel_config = ParallelIndexingConfig()
 

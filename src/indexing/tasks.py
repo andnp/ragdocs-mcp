@@ -25,6 +25,7 @@ class IndexManagerLike(Protocol):
 _huey: SqliteHuey | None = None
 _index_manager: IndexManagerLike | None = None
 _commit_indexer: CommitIndexer | None = None
+_task_backpressure_limit: int = 100
 
 # Task references (set after register_tasks is called)
 index_document_task = None
@@ -36,17 +37,19 @@ def register_tasks(
     huey: SqliteHuey,
     index_manager: IndexManagerLike,
     commit_indexer: CommitIndexer | None = None,
+    task_backpressure_limit: int = 100,
 ) -> None:
     """Register indexing tasks with the given Huey instance.
 
     Must be called before enqueuing tasks. Typically called during
     application startup when the worker is being configured.
     """
-    global _huey, _index_manager, _commit_indexer
+    global _huey, _index_manager, _commit_indexer, _task_backpressure_limit
     global index_document_task, remove_document_task, refresh_git_repository_task
     _huey = huey
     _index_manager = index_manager
     _commit_indexer = commit_indexer
+    _task_backpressure_limit = max(1, task_backpressure_limit)
 
     @huey.task()
     def _index_document(file_path: str, force: bool = False) -> bool:
@@ -125,7 +128,15 @@ def register_tasks(
 
 def enqueue_index(file_path: str, force: bool = False) -> bool:
     """Enqueue an index_document task. Returns True if enqueued, False if no Huey."""
-    if index_document_task is None:
+    if index_document_task is None or _huey is None:
+        return False
+    if get_pending_task_count() >= _task_backpressure_limit:
+        logger.warning(
+            "Skipping index enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
+            file_path,
+            get_pending_task_count(),
+            _task_backpressure_limit,
+        )
         return False
     index_document_task(file_path, force=force)
     return True
@@ -133,7 +144,15 @@ def enqueue_index(file_path: str, force: bool = False) -> bool:
 
 def enqueue_remove(doc_id: str) -> bool:
     """Enqueue a remove_document task. Returns True if enqueued, False if no Huey."""
-    if remove_document_task is None:
+    if remove_document_task is None or _huey is None:
+        return False
+    if get_pending_task_count() >= _task_backpressure_limit:
+        logger.warning(
+            "Skipping remove enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
+            doc_id,
+            get_pending_task_count(),
+            _task_backpressure_limit,
+        )
         return False
     remove_document_task(doc_id)
     return True
@@ -141,7 +160,25 @@ def enqueue_remove(doc_id: str) -> bool:
 
 def enqueue_refresh_git(git_dir: str) -> bool:
     """Enqueue a refresh_git_repository task. Returns True if enqueued."""
-    if refresh_git_repository_task is None:
+    if refresh_git_repository_task is None or _huey is None:
+        return False
+    if get_pending_task_count() >= _task_backpressure_limit:
+        logger.warning(
+            "Skipping git refresh enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
+            git_dir,
+            get_pending_task_count(),
+            _task_backpressure_limit,
+        )
         return False
     refresh_git_repository_task(git_dir)
     return True
+
+
+def get_pending_task_count() -> int:
+    if _huey is None:
+        return 0
+    return int(_huey.pending_count())
+
+
+def is_task_queue_available() -> bool:
+    return _huey is not None and index_document_task is not None

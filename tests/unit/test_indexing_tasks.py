@@ -71,6 +71,7 @@ def _reset_tasks():
     tasks_mod._huey = None
     tasks_mod._index_manager = None
     tasks_mod._commit_indexer = None
+    tasks_mod._task_backpressure_limit = 100
     tasks_mod.index_document_task = None
     tasks_mod.remove_document_task = None
     tasks_mod.refresh_git_repository_task = None
@@ -78,6 +79,7 @@ def _reset_tasks():
     tasks_mod._huey = None
     tasks_mod._index_manager = None
     tasks_mod._commit_indexer = None
+    tasks_mod._task_backpressure_limit = 100
     tasks_mod.index_document_task = None
     tasks_mod.remove_document_task = None
     tasks_mod.refresh_git_repository_task = None
@@ -104,6 +106,15 @@ class TestTaskRegistration:
         register_tasks(huey_instance, fake_manager)
         assert enqueue_index("/some/file.md") is True
         assert enqueue_remove("some-doc") is True
+
+    def test_enqueue_respects_backpressure_limit(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
+
+        assert enqueue_index("/some/file.md") is True
+        assert enqueue_index("/some/other.md") is False
+        assert enqueue_remove("some-doc") is False
 
     def test_enqueue_refresh_git_returns_false_without_registration(self) -> None:
         assert enqueue_refresh_git("/repo/.git") is False

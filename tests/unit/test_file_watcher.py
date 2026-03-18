@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import queue
 from unittest.mock import MagicMock, patch
 
@@ -545,6 +546,62 @@ class TestFileWatcherTaskMode:
 
         enqueue.assert_called_once_with("nested/note")
         mock_index_manager.remove_document.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_batch_process_requeues_when_task_queue_backpressured(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            use_tasks=True,
+        )
+
+        with (
+            patch("src.indexing.tasks.is_task_queue_available", return_value=True),
+            patch("src.indexing.tasks.enqueue_index", return_value=False),
+        ):
+            await watcher._batch_process({str(docs_path / "note.md"): "created"})
+
+        assert watcher._event_queue.get_nowait() == (
+            "created",
+            str(docs_path / "note.md"),
+        )
+        mock_index_manager.index_document.assert_not_called()
+
+
+class TestFileWatcherDebounce:
+    @pytest.mark.asyncio
+    async def test_process_events_last_request_wins_per_file(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            cooldown=0.01,
+        )
+
+        observed: list[dict[str, str]] = []
+
+        async def _record(events):
+            observed.append(events.copy())
+
+        watcher._running = True
+        watcher._batch_process = _record  # type: ignore[method-assign]
+
+        task = asyncio.create_task(watcher._process_events())
+        watcher._event_queue.put_nowait(("created", str(docs_path / "note.md")))
+        watcher._event_queue.put_nowait(("modified", str(docs_path / "note.md")))
+
+        await asyncio.sleep(0.05)
+        watcher._running = False
+        await task
+
+        assert observed == [{str(docs_path / "note.md"): "modified"}]
 
 
 class TestIsExcludedDir:

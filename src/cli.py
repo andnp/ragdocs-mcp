@@ -45,11 +45,7 @@ from src.daemon.management import (
     stop_daemon,
     wait_for_daemon_ready,
 )
-from src.git.repository import (
-    discover_git_repositories,
-    get_commits_after_timestamp,
-    is_git_available,
-)
+from src.git.repository import get_commits_after_timestamp, is_git_available
 from src.git.parallel_indexer import (
     ParallelIndexingConfig,
     index_commits_parallel_sync,
@@ -107,7 +103,12 @@ def _create_daemon_runtime(project: str | None, runtime_paths: RuntimePaths):
         index_path_override=runtime_paths.root,
     )
     huey = get_huey(runtime_paths.queue_db_path)
-    register_tasks(huey, ctx.index_manager, commit_indexer=ctx.commit_indexer)
+    register_tasks(
+        huey,
+        ctx.index_manager,
+        commit_indexer=ctx.commit_indexer,
+        task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
+    )
     worker = HueyWorkerProcess(
         runtime_paths=runtime_paths,
         project_override=project,
@@ -144,7 +145,12 @@ async def _run_worker_forever_async(
         logger.info("Worker runtime starting with fresh indices", exc_info=True)
 
     huey = get_huey(queue_db)
-    register_tasks(huey, ctx.index_manager, commit_indexer=ctx.commit_indexer)
+    register_tasks(
+        huey,
+        ctx.index_manager,
+        commit_indexer=ctx.commit_indexer,
+        task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
+    )
     worker = HueyWorker(huey)
 
     stop_requested = False
@@ -165,12 +171,7 @@ async def _run_worker_forever_async(
         from src.git.repository import discover_git_repositories
         from src.git.watcher import GitWatcher
 
-        repos = await asyncio.to_thread(
-            discover_git_repositories,
-            Path(ctx.config.indexing.documents_path),
-            ctx.config.indexing.exclude,
-            ctx.config.indexing.exclude_hidden_dirs,
-        )
+        repos = await asyncio.to_thread(ctx.discover_git_repositories)
         if repos:
             git_watcher = GitWatcher(
                 git_repos=repos,
@@ -814,13 +815,7 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
 
     docs_root = Path(ctx.config.indexing.documents_path)
     discovered_files = ctx.discover_files() if docs_root.exists() else []
-    repo_count = len(
-        discover_git_repositories(
-            docs_root,
-            ctx.config.indexing.exclude,
-            ctx.config.indexing.exclude_hidden_dirs,
-        )
-    )
+    repo_count = len(ctx.discover_git_repositories())
     git_commit_count = (
         ctx.commit_indexer.get_total_commits() if ctx.commit_indexer is not None else 0
     )
@@ -1052,11 +1047,7 @@ def rebuild_index_cmd(project: str | None):
                     click.echo("Clearing git commit index...")
                     ctx.commit_indexer.clear()
 
-                    repos = discover_git_repositories(
-                        docs_path,
-                        ctx.config.indexing.exclude,
-                        ctx.config.indexing.exclude_hidden_dirs,
-                    )
+                    repos = ctx.discover_git_repositories()
 
                     if repos:
                         # Count total commits across all repos

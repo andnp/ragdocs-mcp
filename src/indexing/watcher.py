@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import logging
 import queue
 import threading
+import time
 from pathlib import Path
 from typing import Literal, TypeAlias
 
@@ -29,13 +30,20 @@ class FileWatcher:
         documents_path: str,
         index_manager: IndexManager,
         cooldown: float = 0.5,
+        documents_paths: list[str] | None = None,
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         exclude_hidden_dirs: bool = True,
         parser_suffixes: set[str] | frozenset[str] | None = None,
         use_tasks: bool = False,
+        task_backpressure_limit: int | None = None,
     ):
         self._documents_path = Path(documents_path)
+        self._documents_paths = (
+            [Path(path) for path in documents_paths]
+            if documents_paths
+            else [self._documents_path]
+        )
         self._index_manager = index_manager
         self._cooldown = cooldown
         self._include_patterns = include_patterns or ["**/*"]
@@ -52,6 +60,7 @@ class FileWatcher:
         self._event_handler: _DocumentEventHandler | None = None
         self._watched_dirs: set[str] = set()
         self._use_tasks = use_tasks
+        self._task_backpressure_limit = task_backpressure_limit
 
     @property
     def stopped_cleanly(self) -> bool:
@@ -72,12 +81,20 @@ class FileWatcher:
         if self._running:
             return
 
-        watched_dirs = walk_dirs_with_files(
-            self._documents_path,
-            self._exclude_patterns,
-            self._exclude_hidden_dirs,
-            self._parser_suffixes,
-        )
+        watched_dirs: list[Path] = []
+        seen_dirs: set[Path] = set()
+        for root in self._documents_paths:
+            if not root.exists():
+                continue
+            for dir_path in walk_dirs_with_files(
+                root,
+                self._exclude_patterns,
+                self._exclude_hidden_dirs,
+                self._parser_suffixes,
+            ):
+                if dir_path not in seen_dirs:
+                    seen_dirs.add(dir_path)
+                    watched_dirs.append(dir_path)
 
         self._running = True
         self._event_handler = _DocumentEventHandler(
@@ -95,8 +112,8 @@ class FileWatcher:
         self._observer = observer
         self._task = asyncio.create_task(self._process_events())
         logger.info(
-            "File watcher started for %s (%d directories with parseable files)",
-            self._documents_path,
+            "File watcher started for %d roots (%d directories with parseable files)",
+            len(self._documents_paths),
             len(watched_dirs),
         )
 
@@ -108,12 +125,20 @@ class FileWatcher:
         if not self._running or self._observer is None or self._event_handler is None:
             return
 
-        current_dirs = walk_dirs_with_files(
-            self._documents_path,
-            self._exclude_patterns,
-            self._exclude_hidden_dirs,
-            self._parser_suffixes,
-        )
+        current_dirs: list[Path] = []
+        seen_dirs: set[Path] = set()
+        for root in self._documents_paths:
+            if not root.exists():
+                continue
+            for dir_path in walk_dirs_with_files(
+                root,
+                self._exclude_patterns,
+                self._exclude_hidden_dirs,
+                self._parser_suffixes,
+            ):
+                if dir_path not in seen_dirs:
+                    seen_dirs.add(dir_path)
+                    current_dirs.append(dir_path)
         new_dirs = [d for d in current_dirs if str(d) not in self._watched_dirs]
         for dir_path in new_dirs:
             try:
@@ -214,34 +239,55 @@ class FileWatcher:
             await self._batch_process(events)
 
     async def _process_events(self):
-        events: dict[str, EventType] = {}
+        pending_events: dict[str, tuple[EventType, float]] = {}
 
         while self._running:
             try:
                 try:
                     # Use timeout on queue.get to allow checking _running flag
                     event_type, file_path = await asyncio.to_thread(
-                        self._event_queue.get, timeout=0.5
+                        self._event_queue.get, timeout=0.1
                     )
                     if file_path:
-                        events[file_path] = event_type
+                        pending_events[file_path] = (event_type, time.monotonic())
                 except queue.Empty:
-                    if events:
-                        await self._batch_process(events)
-                        events = {}
+                    pass
+
+                if pending_events:
+                    now = time.monotonic()
+                    ready_events = {
+                        file_path: event_type
+                        for file_path, (event_type, last_seen)
+                        in pending_events.items()
+                        if (now - last_seen) >= self._cooldown
+                    }
+                    if ready_events:
+                        await self._batch_process(ready_events)
+                        for file_path in ready_events:
+                            pending_events.pop(file_path, None)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error in event processing: {e}")
 
         # Process remaining events with timeout
-        if events:
+        if pending_events:
             try:
-                await asyncio.wait_for(self._batch_process(events), timeout=1.0)
+                await asyncio.wait_for(
+                    self._batch_process(
+                        {
+                            file_path: event_type
+                            for file_path, (event_type, _)
+                            in pending_events.items()
+                        }
+                    ),
+                    timeout=1.0,
+                )
             except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Failed to process final events: {e}")
 
     async def _batch_process(self, events: dict[str, EventType]):
+        deferred_events: dict[str, EventType] = {}
         for file_path, event_type in events.items():
             # Filter out excluded files before processing
             if not should_include_file(
@@ -256,10 +302,13 @@ class FileWatcher:
             try:
                 if event_type in ("created", "modified"):
                     if self._use_tasks:
-                        from src.indexing.tasks import enqueue_index
+                        from src.indexing.tasks import enqueue_index, is_task_queue_available
 
                         if enqueue_index(file_path):
                             logger.info(f"Enqueued indexing task: {file_path}")
+                            continue
+                        if is_task_queue_available():
+                            deferred_events[file_path] = event_type
                             continue
                     # Fallback to direct execution
                     await asyncio.to_thread(
@@ -274,10 +323,13 @@ class FileWatcher:
                     except ValueError:
                         doc_id = Path(file_path).stem
                     if self._use_tasks:
-                        from src.indexing.tasks import enqueue_remove
+                        from src.indexing.tasks import enqueue_remove, is_task_queue_available
 
                         if enqueue_remove(doc_id):
                             logger.info(f"Enqueued removal task: {doc_id}")
+                            continue
+                        if is_task_queue_available():
+                            deferred_events[file_path] = event_type
                             continue
                     # Fallback to direct execution
                     await asyncio.to_thread(self._index_manager.remove_document, doc_id)
@@ -287,6 +339,15 @@ class FileWatcher:
                 logger.error(f"Failed to process {file_path}: {e}")
 
         self._last_sync_time = datetime.now(timezone.utc).isoformat()
+
+        for file_path, event_type in deferred_events.items():
+            try:
+                self._event_queue.put_nowait((event_type, file_path))
+            except queue.Full:
+                logger.warning(
+                    "Watcher queue full while deferring %s for backpressure retry",
+                    file_path,
+                )
 
     def get_pending_queue_size(self) -> int:
         return self._event_queue.qsize()

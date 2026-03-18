@@ -137,3 +137,27 @@ def discover_files(
         for f in sorted(all_files)
         if should_include_file(f, include, exclude, exclude_hidden_dirs)
     ]
+
+
+def discover_files_multi_root(
+    documents_paths: list[str | Path],
+    *,
+    include_patterns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
+    exclude_hidden_dirs: bool = True,
+) -> list[str]:
+    all_files: set[str] = set()
+
+    for root in documents_paths:
+        path = Path(root)
+        if not path.exists():
+            continue
+        discovered = discover_files(
+            path,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            exclude_hidden_dirs=exclude_hidden_dirs,
+        )
+        all_files.update(discovered)
+
+    return sorted(all_files)
