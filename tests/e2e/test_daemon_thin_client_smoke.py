@@ -44,6 +44,39 @@ max_chunk_chars = 2000
     )
 
 
+def _write_multi_project_config(tmp_path: Path, project_a: Path, project_b: Path) -> None:
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir(exist_ok=True)
+    (config_dir / "config.toml").write_text(
+        f"""
+[[projects]]
+name = "project_a"
+path = "{project_a}"
+
+[[projects]]
+name = "project_b"
+path = "{project_b}"
+
+[indexing]
+documents_path = "."
+index_path = ".index_data"
+
+[llm]
+embedding_model = "local"
+
+[search]
+semantic_weight = 1.0
+keyword_weight = 1.0
+
+[chunking]
+strategy = "header_based"
+min_chunk_chars = 200
+max_chunk_chars = 2000
+""",
+        encoding="utf-8",
+    )
+
+
 async def _wait_for_daemon_socket(socket_path: Path, timeout_seconds: float = 30.0) -> None:
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     while asyncio.get_running_loop().time() < deadline:
@@ -72,6 +105,36 @@ def daemon_test_env(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     _write_test_config(tmp_path, docs_path)
+    return tmp_path
+
+
+@pytest.fixture
+def multi_project_daemon_env(tmp_path: Path) -> Path:
+    project_a = tmp_path / "project_a"
+    project_a_docs = project_a / "docs"
+    project_a_docs.mkdir(parents=True)
+    (project_a_docs / "auth.md").write_text(
+        "# Project Alpha\n\n## Authentication\n\nAlphaAuthMarker-20260317\n",
+        encoding="utf-8",
+    )
+    (project_a_docs / "overview.md").write_text(
+        "# Project Alpha Overview\n\nSharedMarker Alpha overview.\n",
+        encoding="utf-8",
+    )
+
+    project_b = tmp_path / "project_b"
+    project_b_docs = project_b / "docs"
+    project_b_docs.mkdir(parents=True)
+    (project_b_docs / "guide.md").write_text(
+        "# Project Beta\n\n## Setup\n\nBetaSetupMarker-20260317\n",
+        encoding="utf-8",
+    )
+    (project_b_docs / "overview.md").write_text(
+        "# Project Beta Overview\n\nSharedMarker Beta overview.\n",
+        encoding="utf-8",
+    )
+
+    _write_multi_project_config(tmp_path, project_a, project_b)
     return tmp_path
 
 
@@ -323,6 +386,80 @@ async def test_task_driven_document_update_survives_daemon_restart(
                 marker in item.get("content", "")
                 for item in payload.get("results", [])
             )
+        finally:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(stop_daemon, paths=runtime_paths)
+    finally:
+        os.chdir(original_cwd)
+
+
+@pytest.mark.asyncio
+async def test_daemon_indexes_and_queries_multiple_registered_project_roots(
+    runner: CliRunner,
+    multi_project_daemon_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_cwd = Path.cwd()
+    os.chdir(multi_project_daemon_env)
+    runtime_paths = _configure_shared_runtime_home(multi_project_daemon_env, monkeypatch)
+
+    try:
+        rebuild = await asyncio.to_thread(runner.invoke, cli, ["rebuild-index"])
+        assert rebuild.exit_code == 0, rebuild.output
+
+        try:
+            alpha = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["query", "AlphaAuthMarker-20260317", "--json"],
+            )
+            assert alpha.exit_code == 0, alpha.output
+            alpha_payload = json.loads(alpha.output)
+            assert any(
+                "AlphaAuthMarker-20260317" in item.get("content", "")
+                for item in alpha_payload.get("results", [])
+            )
+
+            beta = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["query", "BetaSetupMarker-20260317", "--json"],
+            )
+            assert beta.exit_code == 0, beta.output
+            beta_payload = json.loads(beta.output)
+            assert any(
+                "BetaSetupMarker-20260317" in item.get("content", "")
+                for item in beta_payload.get("results", [])
+            )
+
+            filtered = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                [
+                    "query",
+                    "SharedMarker",
+                    "--json",
+                    "--project-filter",
+                    "project_b",
+                ],
+            )
+            assert filtered.exit_code == 0, filtered.output
+            filtered_payload = json.loads(filtered.output)
+            contents = [item.get("content", "") for item in filtered_payload.get("results", [])]
+            assert any("Project Beta Overview" in content for content in contents)
+            assert all("Project Alpha Overview" not in content for content in contents)
+
+            stats = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["index", "stats", "--json"],
+            )
+            assert stats.exit_code == 0, stats.output
+            stats_payload = json.loads(stats.output)
+            assert stats_payload["discovered_files"] == 4
+            assert len(stats_payload["documents_roots"]) == 2
+
+            await _wait_for_daemon_socket(runtime_paths.socket_path)
         finally:
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(stop_daemon, paths=runtime_paths)
