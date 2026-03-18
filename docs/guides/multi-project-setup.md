@@ -51,17 +51,15 @@ You should see:
 
 ### 3. Build Indices
 
-Indices are now stored in one global location by default:
+Indices are now stored in one global location by default, and when `[[projects]]` are configured the default rebuild path will index across all registered project roots in one pass:
 
 ```bash
-cd /home/user/work/monorepo
-mcp-markdown-ragdocs rebuild-index
-
-cd /home/user/Documents/notes
 mcp-markdown-ragdocs rebuild-index
 ```
 
 Project membership is preserved as metadata (`project_id`) inside the shared index, which enables ranking uplift and explicit filtering without silently partitioning storage.
+
+If you want to narrow indexing/querying intentionally, use an explicit project/path override.
 
 ## Configuration Reference
 
@@ -125,6 +123,21 @@ documents_path = "./documentation"  # Override default
 [search]
 semantic_weight = 2.0  # Emphasize semantic search for this project
 ```
+
+### Indexing Performance Controls
+
+You can tune indexing pressure globally:
+
+```toml
+[indexing]
+torch_num_threads = 4
+debounce_window_seconds = 0.5
+task_backpressure_limit = 100
+```
+
+- `torch_num_threads` limits PyTorch/HuggingFace embedding thread fan-out
+- `debounce_window_seconds` collapses rapid repeated file events so the last request wins
+- `task_backpressure_limit` prevents the task queue from growing without bound during large change bursts
 
 ### Custom Index Location
 
