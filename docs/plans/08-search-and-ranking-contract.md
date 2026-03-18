@@ -1,6 +1,6 @@
 # Contract: Search, Filtering, and 1.2x Project Uplift
 
-**Status:** Not started — verified against code on 2026-03-17
+**Status:** In progress — verified against code on 2026-03-17
 **Date:** 2026-03-16
 **Related:** `docs/plans/02-global-daemon-huey-and-soft-projects.md`, `docs/plans/07-global-store-and-schema-contract.md`, `docs/specs/17-search-overhaul.md`
 
@@ -10,11 +10,11 @@ This document defines the ranking contract for soft project semantics in Ragdocs
 
 ## Verified Implementation Status (2026-03-17)
 
-- No verified project metadata pipeline currently stamps `project_id` onto indexed content.
-- No search/ranking code currently applies the fixed $1.2\times$ uplift described here.
-- Project behavior is still driven primarily by path selection and per-project index resolution in `src/config.py`, which is the opposite of this contract's intended storage/ranking split.
+- Indexed content and query results now carry `project_id` metadata.
+- Search/ranking code now applies the fixed $1.2\times$ uplift for matching active-project results in `src/search/orchestrator.py`.
+- Project behavior is still partly driven by path selection and per-project index resolution in `src/config.py`, so the contract is only partially implemented.
 
-This contract remains future work.
+The remaining work is to remove project-aware storage assumptions from the product story and finish explicit filter semantics/documentation.
 
 ## Mandatory Reference Rule
 
