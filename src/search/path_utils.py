@@ -58,6 +58,28 @@ def compute_doc_id(file_path: Path, docs_root: Path) -> str:
         return str(file_path.with_suffix("")).replace("\\", "/")
 
 
+def compute_doc_id_multi_root(file_path: Path, docs_roots: list[Path]) -> str:
+    """Compute document ID using the first matching root from a list of roots."""
+    resolved_path = file_path.resolve()
+
+    for docs_root in docs_roots:
+        try:
+            rel_path = resolved_path.relative_to(docs_root.resolve())
+            return str(rel_path.with_suffix("")).replace("\\", "/")
+        except ValueError:
+            continue
+
+    if docs_roots:
+        logger.warning(
+            "File %s is outside configured document roots %s. Falling back to first root.",
+            file_path,
+            docs_roots,
+        )
+        return compute_doc_id(resolved_path, docs_roots[0].resolve())
+
+    return str(resolved_path.with_suffix("")).replace("\\", "/")
+
+
 def extract_doc_id_from_chunk_id(chunk_id: str) -> str:
     """
     Extract document ID from chunk ID.
@@ -126,4 +148,17 @@ def resolve_doc_path(
         if candidate.exists() and candidate.is_file():
             return candidate.resolve()
 
+    return None
+
+
+def resolve_doc_path_multi_root(
+    doc_id: str,
+    docs_roots: list[Path],
+    extensions: list[str] | None = None,
+) -> Path | None:
+    """Resolve a document ID by searching across multiple document roots."""
+    for docs_root in docs_roots:
+        resolved = resolve_doc_path(doc_id, docs_root, extensions)
+        if resolved is not None:
+            return resolved
     return None

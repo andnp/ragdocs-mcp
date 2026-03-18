@@ -140,7 +140,13 @@ class ApplicationContext:
         keyword = KeywordIndex(db_manager)
         graph = GraphStore(db_manager)
 
-        manager = IndexManager(config, vector, keyword, graph)
+        manager = IndexManager(
+            config,
+            vector,
+            keyword,
+            graph,
+            documents_roots=documents_roots,
+        )
         orchestrator = SearchOrchestrator(
             vector,
             keyword,
@@ -364,7 +370,9 @@ class ApplicationContext:
 
         if self.current_manifest:
             self.current_manifest.indexed_files = build_indexed_files_map(
-                files_to_index, docs_path
+                files_to_index,
+                docs_path,
+                self.documents_roots,
             )
             save_manifest(self.index_path, self.current_manifest)
 
@@ -404,7 +412,9 @@ class ApplicationContext:
 
                 if self.current_manifest:
                     self.current_manifest.indexed_files = build_indexed_files_map(
-                        files_to_index, docs_path
+                        files_to_index,
+                        docs_path,
+                        self.documents_roots,
                     )
                     await asyncio.to_thread(
                         save_manifest, self.index_path, self.current_manifest
@@ -476,6 +486,7 @@ class ApplicationContext:
             self.index_manager.reconcile_indices,
             discovered_files,
             docs_path,
+            self.documents_roots,
         )
 
         if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
@@ -483,7 +494,9 @@ class ApplicationContext:
             self._mark_index_state_loaded()
             if self.current_manifest:
                 self.current_manifest.indexed_files = build_indexed_files_map(
-                    discovered_files, docs_path
+                    discovered_files,
+                    docs_path,
+                    self.documents_roots,
                 )
                 save_manifest(self.index_path, self.current_manifest)
             logger.info(
@@ -511,6 +524,7 @@ class ApplicationContext:
                     self.index_manager.reconcile_indices,
                     discovered_files,
                     docs_path,
+                    self.documents_roots,
                 )
 
                 if (
@@ -522,7 +536,9 @@ class ApplicationContext:
                     self._mark_index_state_loaded()
                     if self.current_manifest:
                         self.current_manifest.indexed_files = build_indexed_files_map(
-                            discovered_files, docs_path
+                            discovered_files,
+                            docs_path,
+                            self.documents_roots,
                         )
                         save_manifest(self.index_path, self.current_manifest)
                     logger.info(

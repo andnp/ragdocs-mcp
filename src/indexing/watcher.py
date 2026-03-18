@@ -15,6 +15,7 @@ from watchdog.observers import Observer
 
 from src.indexing.discovery import PARSER_SUFFIXES, walk_dirs_with_files
 from src.indexing.manager import IndexManager
+from src.search.path_utils import compute_doc_id_multi_root
 from src.utils import should_include_file
 
 logger = logging.getLogger(__name__)
@@ -347,12 +348,7 @@ class FileWatcher:
                     )
                     logger.info(f"Indexed: {file_path}")
                 elif event_type == "deleted":
-                    # Compute doc_id same way as IndexManager
-                    try:
-                        rel_path = Path(file_path).relative_to(self._documents_path)
-                        doc_id = str(rel_path.with_suffix(""))
-                    except ValueError:
-                        doc_id = Path(file_path).stem
+                    doc_id = self._compute_doc_id_for_event(file_path)
                     if self._use_tasks:
                         from src.indexing.tasks import enqueue_remove, is_task_queue_available
 
@@ -395,6 +391,12 @@ class FileWatcher:
             dropped_since_reconcile=self.dropped_since_reconcile,
             last_sync_time=self._last_sync_time,
         )
+
+    def _compute_doc_id_for_event(self, file_path: str) -> str:
+        try:
+            return compute_doc_id_multi_root(Path(file_path).resolve(), self._documents_paths)
+        except Exception:
+            return Path(file_path).stem
 
     def get_pending_queue_size(self) -> int:
         return self._event_queue.qsize()

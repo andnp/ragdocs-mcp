@@ -603,6 +603,22 @@ class TestFileWatcherDebounce:
 
         assert observed == [{str(docs_path / "note.md"): "modified"}]
 
+    def test_compute_doc_id_for_event_uses_matching_root(
+        self, tmp_path, mock_index_manager
+    ):
+        project_a = tmp_path / "project_a"
+        project_b = tmp_path / "project_b"
+        file_path = project_b / "docs" / "guide.md"
+        file_path.parent.mkdir(parents=True)
+
+        watcher = FileWatcher(
+            documents_path=str(tmp_path),
+            documents_paths=[str(project_a), str(project_b)],
+            index_manager=mock_index_manager,
+        )
+
+        assert watcher._compute_doc_id_for_event(str(file_path)) == "docs/guide"
+
     def test_get_stats_reports_debounce_and_backpressure_counters(
         self, tmp_path, mock_index_manager
     ):

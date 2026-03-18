@@ -18,7 +18,12 @@ from src.indexing.manifest import IndexManifest, load_manifest, save_manifest
 from src.models import Chunk
 from src.parsers.dispatcher import dispatch_parser
 from src.search.edge_types import infer_edge_type
-from src.search.path_utils import compute_doc_id, resolve_doc_path
+from src.search.path_utils import (
+    compute_doc_id,
+    compute_doc_id_multi_root,
+    resolve_doc_path,
+    resolve_doc_path_multi_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,7 @@ class IndexManager:
         vector: VectorIndex,
         keyword: KeywordIndex,
         graph: GraphStore,
+        documents_roots: list[Path] | None = None,
     ):
         self._config = config
         self.vector = vector
@@ -44,6 +50,11 @@ class IndexManager:
         self.graph = graph
         self._failed_files: list[FailedFile] = []
         self._chunker = get_chunker(config.chunking)
+        self._documents_roots = (
+            [root.resolve() for root in documents_roots]
+            if documents_roots
+            else [Path(config.indexing.documents_path).resolve()]
+        )
 
         # Initialize hash store for delta indexing
         index_path = Path(config.indexing.index_path)
@@ -61,8 +72,18 @@ class IndexManager:
         return sorted(get_parser_suffixes())
 
     def _record_manifest_index(self, file_path: str, doc_id: str) -> None:
-        docs_path = Path(self._config.indexing.documents_path).resolve()
-        rel_path = str(Path(file_path).resolve().relative_to(docs_path))
+        rel_path_obj: Path | None = None
+        resolved_path = Path(file_path).resolve()
+        for docs_root in self._documents_roots:
+            try:
+                rel_path_obj = resolved_path.relative_to(docs_root)
+                break
+            except ValueError:
+                continue
+        if rel_path_obj is None:
+            docs_path = Path(self._config.indexing.documents_path).resolve()
+            rel_path_obj = resolved_path.relative_to(docs_path)
+        rel_path = str(rel_path_obj)
         self._manifest_indexed_files[doc_id] = rel_path
         self._manifest_removed_doc_ids.discard(doc_id)
 
@@ -101,7 +122,13 @@ class IndexManager:
     def reindex_document(self, doc_id: str, reason: str | None = None):
         docs_path = Path(self._config.indexing.documents_path)
         suffixes = self._get_parser_suffixes()
-        resolved_path = resolve_doc_path(doc_id, docs_path, suffixes)
+        resolved_path = resolve_doc_path_multi_root(
+            doc_id,
+            self._documents_roots,
+            suffixes,
+        )
+        if resolved_path is None:
+            resolved_path = resolve_doc_path(doc_id, docs_path, suffixes)
         if not resolved_path:
             self.prune_document(doc_id, reason=reason)
             if reason:
@@ -402,7 +429,16 @@ class IndexManager:
             document = parser.parse(file_path)
 
             docs_path = Path(self._config.indexing.documents_path)
-            document.id = compute_doc_id(Path(file_path).resolve(), docs_path.resolve())
+            if len(self._documents_roots) > 1:
+                document.id = compute_doc_id_multi_root(
+                    Path(file_path).resolve(),
+                    self._documents_roots,
+                )
+            else:
+                document.id = compute_doc_id(
+                    Path(file_path).resolve(),
+                    docs_path.resolve(),
+                )
             project_id = resolve_project_id_for_path(Path(file_path), self._config)
             document.project_id = project_id
             if project_id is not None:
@@ -632,6 +668,7 @@ class IndexManager:
         self,
         discovered_files: list[str],
         docs_path: Path,
+        docs_roots: list[Path] | None = None,
     ):
         """Reconcile indices with filesystem state, detecting file moves.
 
@@ -654,6 +691,7 @@ class IndexManager:
             discovered_files,
             saved_manifest,
             docs_path,
+            docs_roots=docs_roots or self._documents_roots,
             include_patterns=self._config.indexing.include,
             exclude_patterns=self._config.indexing.exclude,
             exclude_hidden_dirs=self._config.indexing.exclude_hidden_dirs,
@@ -675,9 +713,15 @@ class IndexManager:
                 try:
                     parser = dispatch_parser(file_path)
                     document = parser.parse(file_path)
-                    doc_id = compute_doc_id(
-                        Path(file_path).resolve(), docs_path.resolve()
-                    )
+                    if len(self._documents_roots) > 1:
+                        doc_id = compute_doc_id_multi_root(
+                            Path(file_path).resolve(),
+                            self._documents_roots,
+                        )
+                    else:
+                        doc_id = compute_doc_id(
+                            Path(file_path).resolve(), docs_path.resolve()
+                        )
                     document.id = doc_id
                     chunks = self._chunker.chunk_document(document)
                     added_docs[doc_id] = chunks

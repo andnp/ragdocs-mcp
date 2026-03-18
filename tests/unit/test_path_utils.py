@@ -5,8 +5,10 @@ from src.search.path_utils import (
     normalize_path,
     matches_any_excluded,
     compute_doc_id,
+    compute_doc_id_multi_root,
     extract_doc_id_from_chunk_id,
     resolve_doc_path,
+    resolve_doc_path_multi_root,
 )
 
 
@@ -144,6 +146,13 @@ def test_compute_doc_id_root_file():
     docs_root = Path("/docs")
     assert compute_doc_id(file_path, docs_root) == "README"
 
+def test_compute_doc_id_multi_root_uses_matching_root(tmp_path):
+    project_a = (tmp_path / "project_a").resolve()
+    project_b = (tmp_path / "project_b").resolve()
+    file_path = project_b / "docs" / "guide.md"
+
+    assert compute_doc_id_multi_root(file_path, [project_a, project_b]) == "docs/guide"
+
 
 def test_compute_doc_id_backslash_normalization():
     """Test that backslashes are converted to forward slashes."""
@@ -266,6 +275,19 @@ def test_resolve_doc_path_default_extensions(tmp_path):
     # Should work without specifying extensions
     result = resolve_doc_path("doc", docs_root)
     assert result == md_file.resolve()
+
+def test_resolve_doc_path_multi_root_finds_secondary_root(tmp_path):
+    project_a = tmp_path / "project_a"
+    project_b = tmp_path / "project_b"
+    project_a.mkdir()
+    project_b.mkdir()
+    nested_file = project_b / "docs" / "api.md"
+    nested_file.parent.mkdir(parents=True)
+    nested_file.write_text("# API")
+
+    result = resolve_doc_path_multi_root("docs/api", [project_a, project_b])
+
+    assert result == nested_file.resolve()
 
 
 def test_resolve_doc_path_backslash_in_doc_id(tmp_path):

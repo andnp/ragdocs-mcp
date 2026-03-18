@@ -203,6 +203,28 @@ def test_build_indexed_files_map_empty(docs_path):
     assert indexed_map == {}
 
 
+def test_build_indexed_files_map_multi_root(tmp_path):
+    project_a = tmp_path / "project_a"
+    project_b = tmp_path / "project_b"
+    file_a = project_a / "docs" / "readme.md"
+    file_b = project_b / "docs" / "guide.md"
+    file_a.parent.mkdir(parents=True)
+    file_b.parent.mkdir(parents=True)
+    file_a.write_text("# A")
+    file_b.write_text("# B")
+
+    indexed_map = build_indexed_files_map(
+        [str(file_a), str(file_b)],
+        tmp_path,
+        [project_a, project_b],
+    )
+
+    assert indexed_map == {
+        "docs/readme": "docs/readme.md",
+        "docs/guide": "docs/guide.md",
+    }
+
+
 def test_reconcile_ignores_files_outside_docs_path(docs_path, tmp_path):
     """Test that files outside docs_path are ignored."""
     outside_file = tmp_path / "outside.md"
@@ -229,6 +251,34 @@ def test_reconcile_ignores_files_outside_docs_path(docs_path, tmp_path):
 
     # Outside file should not be added
     assert files_to_add == []
+    assert doc_ids_to_remove == []
+
+
+def test_reconcile_multi_root_uses_matching_root(tmp_path):
+    project_a = tmp_path / "project_a"
+    project_b = tmp_path / "project_b"
+    file_a = project_a / "docs" / "readme.md"
+    file_b = project_b / "docs" / "guide.md"
+    file_a.parent.mkdir(parents=True)
+    file_b.parent.mkdir(parents=True)
+    file_a.write_text("# A")
+    file_b.write_text("# B")
+
+    manifest = IndexManifest(
+        spec_version="1.0.0",
+        embedding_model="local",
+        chunking_config={},
+        indexed_files={"docs/readme": "docs/readme.md"},
+    )
+
+    files_to_add, doc_ids_to_remove, _ = reconcile_indices(
+        [str(file_a), str(file_b)],
+        manifest,
+        tmp_path,
+        docs_roots=[project_a, project_b],
+    )
+
+    assert str(file_b) in files_to_add
     assert doc_ids_to_remove == []
 
 

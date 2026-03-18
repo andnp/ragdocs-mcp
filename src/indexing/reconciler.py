@@ -7,6 +7,16 @@ from src.utils import should_include_file
 logger = logging.getLogger(__name__)
 
 
+def _relative_path_for_roots(abs_path: str, docs_roots: list[Path]) -> Path | None:
+    resolved = Path(abs_path).resolve()
+    for root in docs_roots:
+        try:
+            return resolved.relative_to(root.resolve())
+        except ValueError:
+            continue
+    return None
+
+
 def find_excluded_indexed_files(
     manifest: IndexManifest,
     docs_path: Path,
@@ -51,6 +61,7 @@ def reconcile_indices(
     discovered_files: list[str],
     manifest: IndexManifest,
     docs_path: Path,
+    docs_roots: list[Path] | None = None,
     include_patterns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
     exclude_hidden_dirs: bool = True,
@@ -69,6 +80,8 @@ def reconcile_indices(
         Tuple of (files_to_add, doc_ids_to_remove, moved_files)
         where moved_files maps old_doc_id -> new_file_path
     """
+    roots = docs_roots or [docs_path]
+
     # First, explicitly check for indexed files that should now be excluded
     # This provides clear logging for blacklist changes
     excluded_doc_ids: set[str] = set()
@@ -87,14 +100,13 @@ def reconcile_indices(
     discovered_doc_ids: set[str] = set()
     doc_id_to_abs: dict[str, str] = {}
     for abs_path in discovered_files:
-        try:
-            rel_path = Path(abs_path).relative_to(docs_path)
-            doc_id = str(rel_path.with_suffix(""))
-            discovered_doc_ids.add(doc_id)
-            doc_id_to_abs[doc_id] = abs_path
-        except ValueError:
+        rel_path = _relative_path_for_roots(abs_path, roots)
+        if rel_path is None:
             logger.warning(f"File outside documents path, skipping: {abs_path}")
             continue
+        doc_id = str(rel_path.with_suffix(""))
+        discovered_doc_ids.add(doc_id)
+        doc_id_to_abs[doc_id] = abs_path
 
     # Get currently indexed doc_ids from manifest
     indexed_files = manifest.indexed_files or {}
@@ -134,17 +146,17 @@ def reconcile_indices(
 
 
 def build_indexed_files_map(
-    indexed_files: list[str], docs_path: Path
+    indexed_files: list[str], docs_path: Path, docs_roots: list[Path] | None = None
 ) -> dict[str, str]:
+    roots = docs_roots or [docs_path]
     indexed_map: dict[str, str] = {}
     for abs_path in indexed_files:
-        try:
-            rel_path = Path(abs_path).relative_to(docs_path)
-            doc_id = str(rel_path.with_suffix(""))
-            # Map doc_id -> relative path (with extension for reference)
-            indexed_map[doc_id] = str(rel_path)
-        except ValueError:
+        rel_path = _relative_path_for_roots(abs_path, roots)
+        if rel_path is None:
             logger.warning(f"File outside documents path, skipping: {abs_path}")
             continue
+        doc_id = str(rel_path.with_suffix(""))
+        # Map doc_id -> relative path (with extension for reference)
+        indexed_map[doc_id] = str(rel_path)
 
     return indexed_map
