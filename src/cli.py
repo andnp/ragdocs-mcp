@@ -220,9 +220,14 @@ def _build_queue_status_payload(
     *,
     queue_path: Path,
     worker_running: bool,
+    backpressure_limit: int | None = None,
 ) -> dict[str, object]:
     huey = get_huey(queue_path)
-    stats = get_queue_stats(huey, worker_running=worker_running)
+    stats = get_queue_stats(
+        huey,
+        worker_running=worker_running,
+        backpressure_limit=backpressure_limit,
+    )
     payload = stats.to_dict()
     payload["queue_db_path"] = str(queue_path)
     return payload
@@ -240,7 +245,9 @@ def _build_admin_overview_payload(
     task_payload = _build_queue_status_payload(
         queue_path=runtime_paths.queue_db_path,
         worker_running=worker_running,
+        backpressure_limit=ctx.config.indexing.task_backpressure_limit,
     )
+    watcher_stats = ctx.watcher.get_stats().to_dict() if ctx.watcher else None
     return {
         "status": "ok",
         "pid": os.getpid(),
@@ -260,6 +267,9 @@ def _build_admin_overview_payload(
         "running_count": task_payload["running_count"],
         "failed_count": task_payload["failed_count"],
         "worker_running": task_payload["worker_running"],
+        "queue_stats": task_payload,
+        "watcher_stats": watcher_stats,
+        "index_state": ctx.get_index_state().to_dict(),
     }
 
 
@@ -431,6 +441,7 @@ async def _run_daemon_forever(project: str | None) -> None:
             return _build_queue_status_payload(
                 queue_path=runtime_paths.queue_db_path,
                 worker_running=huey_worker.is_running,
+                backpressure_limit=ctx.config.indexing.task_backpressure_limit,
             )
         if path == "/internal/shutdown":
             coordinator.request_shutdown()
@@ -801,6 +812,14 @@ def index_stats(project: str | None, output_json: bool):
         click.echo(f"Discovered files: {payload['discovered_files']}")
         click.echo(f"Git repositories: {payload['git_repositories']}")
         click.echo(f"Indexed git commits: {payload['git_commits']}")
+        index_state = payload.get("index_state")
+        if isinstance(index_state, dict):
+            click.echo(f"Index state: {index_state.get('status', 'unknown')}")
+        watcher_stats = payload.get("watcher_stats")
+        if isinstance(watcher_stats, dict):
+            click.echo(
+                f"Watcher events: {watcher_stats.get('events_received', 0)} received / {watcher_stats.get('events_processed', 0)} processed"
+            )
     except Exception as e:
         logger.error(f"Failed to inspect index stats: {e}")
         click.echo(f"Error: {e}", err=True)
@@ -822,6 +841,7 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
 
     return {
         "documents_path": str(docs_root),
+        "documents_roots": [str(root) for root in ctx.documents_roots],
         "index_path": str(ctx.index_path),
         "index_db_path": str(ctx.index_path / "index.db"),
         "manifest_path": str(manifest_path),
@@ -833,6 +853,8 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
         "discovered_files": len(discovered_files),
         "git_commits": git_commit_count,
         "git_repositories": repo_count,
+        "index_state": ctx.get_index_state().to_dict(),
+        "watcher_stats": ctx.watcher.get_stats().to_dict() if ctx.watcher else None,
     }
 
 
@@ -865,6 +887,12 @@ def queue_status(project: str | None, output_json: bool):
         click.echo(f"Running tasks: {payload['running_count']}")
         click.echo(f"Failed tasks: {payload['failed_count']}")
         click.echo(f"Worker running: {'yes' if payload['worker_running'] else 'no'}")
+        if payload.get("backpressure_limit") is not None:
+            click.echo(f"Backpressure limit: {payload['backpressure_limit']}")
+        if payload.get("backpressure_utilization") is not None:
+            click.echo(
+                f"Backpressure utilization: {float(payload['backpressure_utilization']):.2f}"
+            )
 
         task_counts = payload.get("task_counts", {})
         if isinstance(task_counts, dict) and task_counts:

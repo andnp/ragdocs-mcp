@@ -566,6 +566,8 @@ def test_index_stats_prefers_daemon_transport(monkeypatch):
             "discovered_files": 4,
             "git_commits": 12,
             "git_repositories": 2,
+            "index_state": {"status": "ready", "indexed_count": 9, "total_count": 9, "last_error": None},
+            "watcher_stats": {"events_received": 7, "events_processed": 5},
         },
     )
 
@@ -574,6 +576,8 @@ def test_index_stats_prefers_daemon_transport(monkeypatch):
     assert result.exit_code == 0
     assert '"indexed_documents": 9' in result.output
     assert '"git_commits": 12' in result.output
+    assert '"index_state"' in result.output
+    assert '"watcher_stats"' in result.output
 
 
 def test_queue_status_prefers_daemon_transport(monkeypatch):
@@ -587,6 +591,8 @@ def test_queue_status_prefers_daemon_transport(monkeypatch):
             "running_count": 0,
             "failed_count": 1,
             "worker_running": True,
+            "backpressure_limit": 100,
+            "backpressure_utilization": 0.02,
             "task_counts": {"_index_document": 2},
             "recent_failures": [
                 {
@@ -605,6 +611,7 @@ def test_queue_status_prefers_daemon_transport(monkeypatch):
     assert result.exit_code == 0
     assert '"pending_count": 2' in result.output
     assert '"failed_count": 1' in result.output
+    assert '"backpressure_limit": 100' in result.output
     assert '"_refresh_git_repository"' in result.output
 
 

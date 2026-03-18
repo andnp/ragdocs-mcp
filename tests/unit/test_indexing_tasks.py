@@ -13,6 +13,7 @@ import pytest
 from huey import SqliteHuey
 
 import src.indexing.tasks as tasks_mod
+from src.daemon.queue_status import get_queue_stats
 from src.indexing.tasks import (
     enqueue_index,
     enqueue_refresh_git,
@@ -115,6 +116,17 @@ class TestTaskRegistration:
         assert enqueue_index("/some/file.md") is True
         assert enqueue_index("/some/other.md") is False
         assert enqueue_remove("some-doc") is False
+
+    def test_queue_stats_include_backpressure_utilization(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        enqueue_index("/some/file.md")
+
+        stats = get_queue_stats(huey_instance, backpressure_limit=4)
+
+        assert stats.backpressure_limit == 4
+        assert stats.backpressure_utilization == 0.25
 
     def test_enqueue_refresh_git_returns_false_without_registration(self) -> None:
         assert enqueue_refresh_git("/repo/.git") is False

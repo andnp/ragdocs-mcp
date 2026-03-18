@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
 import logging
 import queue
 import threading
@@ -22,6 +23,24 @@ EventType: TypeAlias = Literal["created", "modified", "deleted"]
 
 # Maximum queue size to prevent memory exhaustion under load
 MAX_QUEUE_SIZE = 1000
+
+
+@dataclass(frozen=True)
+class WatcherStats:
+    roots_count: int
+    watched_dirs_count: int
+    queue_size: int
+    pending_debounce_count: int
+    events_received: int
+    events_processed: int
+    debounce_overwrites: int
+    deferred_task_retries: int
+    dropped_event_count: int
+    dropped_since_reconcile: int
+    last_sync_time: str | None
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
 
 
 class FileWatcher:
@@ -61,6 +80,11 @@ class FileWatcher:
         self._watched_dirs: set[str] = set()
         self._use_tasks = use_tasks
         self._task_backpressure_limit = task_backpressure_limit
+        self._events_received = 0
+        self._events_processed = 0
+        self._debounce_overwrites = 0
+        self._deferred_task_retries = 0
+        self._pending_debounce_count = 0
 
     @property
     def stopped_cleanly(self) -> bool:
@@ -249,7 +273,11 @@ class FileWatcher:
                         self._event_queue.get, timeout=0.1
                     )
                     if file_path:
+                        self._events_received += 1
+                        if file_path in pending_events:
+                            self._debounce_overwrites += 1
                         pending_events[file_path] = (event_type, time.monotonic())
+                        self._pending_debounce_count = len(pending_events)
                 except queue.Empty:
                     pass
 
@@ -265,6 +293,7 @@ class FileWatcher:
                         await self._batch_process(ready_events)
                         for file_path in ready_events:
                             pending_events.pop(file_path, None)
+                        self._pending_debounce_count = len(pending_events)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -283,11 +312,13 @@ class FileWatcher:
                     ),
                     timeout=1.0,
                 )
+                self._pending_debounce_count = 0
             except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Failed to process final events: {e}")
 
     async def _batch_process(self, events: dict[str, EventType]):
         deferred_events: dict[str, EventType] = {}
+        self._events_processed += len(events)
         for file_path, event_type in events.items():
             # Filter out excluded files before processing
             if not should_include_file(
@@ -342,12 +373,28 @@ class FileWatcher:
 
         for file_path, event_type in deferred_events.items():
             try:
+                self._deferred_task_retries += 1
                 self._event_queue.put_nowait((event_type, file_path))
             except queue.Full:
                 logger.warning(
                     "Watcher queue full while deferring %s for backpressure retry",
                     file_path,
                 )
+
+    def get_stats(self) -> WatcherStats:
+        return WatcherStats(
+            roots_count=len(self._documents_paths),
+            watched_dirs_count=len(self._watched_dirs),
+            queue_size=self.get_pending_queue_size(),
+            pending_debounce_count=self._pending_debounce_count,
+            events_received=self._events_received,
+            events_processed=self._events_processed,
+            debounce_overwrites=self._debounce_overwrites,
+            deferred_task_retries=self._deferred_task_retries,
+            dropped_event_count=self.dropped_event_count,
+            dropped_since_reconcile=self.dropped_since_reconcile,
+            last_sync_time=self._last_sync_time,
+        )
 
     def get_pending_queue_size(self) -> int:
         return self._event_queue.qsize()

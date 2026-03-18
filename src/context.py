@@ -47,6 +47,14 @@ class IndexState:
     total_count: int = 0
     last_error: str | None = None
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "indexed_count": self.indexed_count,
+            "total_count": self.total_count,
+            "last_error": self.last_error,
+        }
+
 
 @dataclass
 class ApplicationContext:

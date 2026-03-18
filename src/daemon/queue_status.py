@@ -28,6 +28,8 @@ class QueueStats:
     running_count: int = 0
     failed_count: int = 0
     worker_running: bool = False
+    backpressure_limit: int | None = None
+    backpressure_utilization: float | None = None
     task_counts: dict[str, int] = field(default_factory=dict)
     recent_failures: list[QueueFailure] = field(default_factory=list)
 
@@ -38,6 +40,8 @@ class QueueStats:
             "running_count": self.running_count,
             "failed_count": self.failed_count,
             "worker_running": self.worker_running,
+            "backpressure_limit": self.backpressure_limit,
+            "backpressure_utilization": self.backpressure_utilization,
             "task_counts": self.task_counts,
             "recent_failures": [failure.to_dict() for failure in self.recent_failures],
         }
@@ -48,15 +52,22 @@ def get_queue_stats(
     *,
     worker_running: bool = False,
     failure_limit: int = 10,
+    backpressure_limit: int | None = None,
 ) -> QueueStats:
     task_counts = _collect_task_counts(huey)
     failures = _collect_failures(huey)
+    pending_count = huey.pending_count()
+    utilization = None
+    if backpressure_limit is not None and backpressure_limit > 0:
+        utilization = pending_count / backpressure_limit
     return QueueStats(
-        pending_count=huey.pending_count(),
+        pending_count=pending_count,
         scheduled_count=huey.scheduled_count(),
         running_count=0,
         failed_count=len(failures),
         worker_running=worker_running,
+        backpressure_limit=backpressure_limit,
+        backpressure_utilization=utilization,
         task_counts=task_counts,
         recent_failures=failures[-failure_limit:],
     )

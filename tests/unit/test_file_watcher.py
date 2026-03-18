@@ -603,6 +603,34 @@ class TestFileWatcherDebounce:
 
         assert observed == [{str(docs_path / "note.md"): "modified"}]
 
+    def test_get_stats_reports_debounce_and_backpressure_counters(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            documents_paths=[str(docs_path), str(tmp_path / "other")],
+            index_manager=mock_index_manager,
+        )
+        watcher._events_received = 5
+        watcher._events_processed = 3
+        watcher._debounce_overwrites = 2
+        watcher._deferred_task_retries = 1
+        watcher._pending_debounce_count = 4
+        watcher._watched_dirs = {"/tmp/a", "/tmp/b"}
+        watcher._last_sync_time = "2026-03-17T00:00:00+00:00"
+
+        stats = watcher.get_stats()
+
+        assert stats.roots_count == 2
+        assert stats.watched_dirs_count == 2
+        assert stats.events_received == 5
+        assert stats.events_processed == 3
+        assert stats.debounce_overwrites == 2
+        assert stats.deferred_task_retries == 1
+        assert stats.pending_debounce_count == 4
+
 
 class TestIsExcludedDir:
     """Tests for is_excluded_dir helper."""
