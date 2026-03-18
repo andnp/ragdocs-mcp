@@ -12,9 +12,10 @@ This document defines the ranking contract for soft project semantics in Ragdocs
 
 - Indexed content and query results now carry `project_id` metadata.
 - Search/ranking code now applies the fixed $1.2\times$ uplift for matching active-project results in `src/search/orchestrator.py`.
-- Project behavior is still partly driven by path selection and per-project index resolution in `src/config.py`, so the contract is only partially implemented.
+- Explicit project-filter semantics now exist on document search, HyDE search, REST query requests, CLI query/search-commits, and git history search.
+- Authoritative index storage is now global by default; explicit path/name overrides may still select a documents root intentionally.
 
-The remaining work is to remove project-aware storage assumptions from the product story and finish explicit filter semantics/documentation.
+The remaining work is mostly documentation cleanup and deeper multi-root/global-corpus evolution, not the core filter/uplift contract itself.
 
 ## Mandatory Reference Rule
 

@@ -1,6 +1,6 @@
 # Contract: Global Store, Paths, and Schema Layout
 
-**Status:** Not started — verified against code on 2026-03-17
+**Status:** In progress — verified against code on 2026-03-17
 **Date:** 2026-03-16
 **Related:** `docs/plans/04-daemon-zmq-control-plane-contract.md`, `docs/plans/05-huey-task-and-cli-contract.md`
 
@@ -10,11 +10,12 @@ This document defines the persistent storage contract for Ragdocs V2: which file
 
 ## Verified Implementation Status (2026-03-17)
 
-- `src/daemon/paths.py` defines global runtime artifact paths, but the authoritative application data path still comes from `src/config.py::resolve_index_path(...)` and remains project-aware.
+- `src/daemon/paths.py` defines global runtime artifact paths, and `src/config.py::resolve_index_path(...)` now resolves the default authoritative application data path to one global store rather than per-project directories.
 - `src/storage/db.py` does **not** yet add `project_id`, `source_kind`, or `last_index_reason` to `documents`, and does **not** add `project_id` or `source_file` to `chunks`.
-- No storage migration currently unifies existing per-project stores into one global corpus.
+- Explicit project/path overrides can still choose a specific documents root for indexing/query context, but that no longer changes the authoritative index path.
+- No storage migration currently unifies legacy per-project stores into one global corpus.
 
-Treat this contract as pending implementation, not merely polish.
+Treat this contract as partially implemented, not fully complete.
 
 ## Mandatory Reference Rule
 

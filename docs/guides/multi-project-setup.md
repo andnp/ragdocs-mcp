@@ -5,9 +5,10 @@ This guide explains how to configure mcp-markdown-ragdocs to manage documentatio
 ## Overview
 
 Multi-project support allows you to:
-- **Isolate indices** for different projects (no cross-contamination)
+- **Keep one global index** while preserving per-result `project_id` metadata
 - **Centralize configuration** in a global config file
 - **Automatically detect** which project you're working in based on current directory
+- **Optionally uplift or explicitly filter** results by project when you ask for it
 
 ## Quick Start
 
@@ -46,11 +47,11 @@ mcp-markdown-ragdocs check-config
 You should see:
 - List of registered projects
 - Active project detected: `monorepo`
-- Index path: `~/.local/share/mcp-markdown-ragdocs/monorepo`
+- Index path: `~/.local/share/mcp-markdown-ragdocs`
 
 ### 3. Build Indices
 
-Indices are automatically built per-project:
+Indices are now stored in one global location by default:
 
 ```bash
 cd /home/user/work/monorepo
@@ -60,7 +61,7 @@ cd /home/user/Documents/notes
 mcp-markdown-ragdocs rebuild-index
 ```
 
-Each project gets isolated storage in `~/.local/share/mcp-markdown-ragdocs/{project-name}/`.
+Project membership is preserved as metadata (`project_id`) inside the shared index, which enables ranking uplift and explicit filtering without silently partitioning storage.
 
 ## Configuration Reference
 
@@ -73,7 +74,7 @@ path = "/absolute/path/root"  # Required: must be absolute
 ```
 
 **Constraints:**
-- `name`: Used as directory name in data storage; must be unique
+- `name`: Used as the stable `project_id`; must be unique
 - `path`: Project root directory; must be unique and exist
 
 ### Project Detection
@@ -107,9 +108,9 @@ Settings are merged with this precedence (highest first):
 3. **Defaults**
 
 **Special Case: Index Path**
-- If local config sets `index_path`, it overrides global storage
-- Otherwise, detected projects use `~/.local/share/mcp-markdown-ragdocs/{name}/`
-- Projects without detection use `.index_data/` (backward compatible)
+- If local config sets `index_path`, it overrides the default global storage path
+- Otherwise, the default authoritative path is `~/.local/share/mcp-markdown-ragdocs`
+- Project detection influences ranking context and optional explicit path overrides, not the default index directory
 
 ## Advanced Usage
 
@@ -194,7 +195,7 @@ path = "/home/user/other"
 
 **Symptom:** Queries return no results despite indexed documents
 
-**Cause:** Index stored in different location than expected
+**Cause:** Index stored in a different location than expected, or documents were indexed from a different root than you intended
 
 **Solution:**
 ```bash
@@ -219,3 +220,9 @@ If you have an existing project using `.index_data/`:
    - Optional: Remove old `.index_data/` directory
 
 **No automatic migration is performed.** Indices are lightweight and rebuild quickly.
+
+## Filtering vs. Context
+
+- **Active project context** can apply a bounded `1.2x` uplift to matching results.
+- **Explicit project filters** restrict eligibility only when you request them.
+- The default query behavior remains global-first.
