@@ -3,6 +3,7 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import sys
 import signal
 import time
@@ -28,7 +29,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from src.config import load_config
+from src.config import load_config, detect_project
 from src.daemon.queue_status import get_queue_stats
 from src.daemon import RuntimePaths, read_daemon_metadata
 from src.daemon.health import (
@@ -353,6 +354,62 @@ def _apply_project_detection(config, project_override: str | None = None):
     config.indexing.documents_path = documents_path
     config.detected_project = detected_project
     return config
+
+
+def _resolve_rebuild_project_scope(
+    *,
+    project: str | None,
+    all_projects: bool,
+) -> str | None:
+    if all_projects:
+        return None
+
+    if project is not None:
+        return project
+
+    config = load_config()
+    detected_project = detect_project(
+        projects=config.projects,
+        project_override=None,
+    )
+    return detected_project
+
+
+def _clear_document_index_artifacts(index_path: Path) -> None:
+    for directory_name in ["vector", "keyword", "graph"]:
+        shutil.rmtree(index_path / directory_name, ignore_errors=True)
+
+    for filename in [
+        "index.db",
+        "index.db-wal",
+        "index.db-shm",
+        "index.manifest.json",
+        "chunk_hashes.json",
+    ]:
+        with contextlib.suppress(FileNotFoundError):
+            (index_path / filename).unlink()
+
+
+def _build_rebuild_manifest(
+    ctx: ApplicationContext,
+    indexed_files: list[str],
+) -> IndexManifest:
+    docs_path = Path(ctx.config.indexing.documents_path)
+    return IndexManifest(
+        spec_version="1.0.0",
+        embedding_model=ctx.config.llm.embedding_model,
+        chunking_config={
+            "strategy": ctx.config.chunking.strategy,
+            "min_chunk_chars": ctx.config.chunking.min_chunk_chars,
+            "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
+            "overlap_chars": ctx.config.chunking.overlap_chars,
+        },
+        indexed_files=build_indexed_files_map(
+            indexed_files,
+            docs_path,
+            docs_roots=ctx.documents_roots,
+        ),
+    )
 
 
 @cli.command()
@@ -1013,19 +1070,53 @@ def run(host: str, port: int, project: str | None):
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
 )
-def rebuild_index_cmd(project: str | None):
+@click.option(
+    "--all-projects",
+    is_flag=True,
+    default=False,
+    help="Rebuild the full global corpus instead of narrowing to the detected current project.",
+)
+def rebuild_index_cmd(project: str | None, all_projects: bool):
     try:
+        if all_projects and project is not None:
+            raise click.UsageError("--all-projects cannot be used with --project")
+
+        effective_project = _resolve_rebuild_project_scope(
+            project=project,
+            all_projects=all_projects,
+        )
+
         ctx = ApplicationContext.create(
-            project_override=project,
+            project_override=effective_project,
             enable_watcher=False,
             lazy_embeddings=False,
         )
 
+        ctx.index_path.mkdir(parents=True, exist_ok=True)
+        if ctx.db_manager is not None:
+            ctx.db_manager.close()
+        _clear_document_index_artifacts(ctx.index_path)
+        if ctx.db_manager is not None:
+            ctx.db_manager.initialize_schema()
+
         docs_path = Path(ctx.config.indexing.documents_path)
         files_to_index = ctx.discover_files()
         total_files = len(files_to_index)
+        checkpoint_interval = max(1, ctx.config.indexing.rebuild_checkpoint_interval)
 
-        ctx.index_path.mkdir(parents=True, exist_ok=True)
+        if effective_project is not None:
+            click.echo(
+                f"Rebuild scope: project '{effective_project}' across {len(ctx.documents_roots)} root(s)"
+            )
+        else:
+            click.echo(
+                f"Rebuild scope: global corpus across {len(ctx.documents_roots)} root(s)"
+            )
+        click.echo(
+            f"Discovered {total_files} files; persisting checkpoints every {checkpoint_interval} file(s)"
+        )
+
+        indexed_files: list[str] = []
 
         with Progress(
             TextColumn("[bold blue]{task.description}"),
@@ -1046,21 +1137,24 @@ def rebuild_index_cmd(project: str | None):
                     task, description=f"[bold blue]Indexing: {display_path}"
                 )
                 ctx.index_manager.index_document(file_path)
+                indexed_files.append(file_path)
                 progress.advance(task)
 
-        ctx.index_manager.persist()
+                if (
+                    len(indexed_files) % checkpoint_interval == 0
+                    or len(indexed_files) == total_files
+                ):
+                    ctx.index_manager.persist()
+                    save_manifest(
+                        ctx.index_path,
+                        _build_rebuild_manifest(ctx, indexed_files),
+                    )
+                    click.echo(
+                        f"📍 Checkpoint persisted: {len(indexed_files)}/{total_files} documents"
+                    )
 
-        current_manifest = IndexManifest(
-            spec_version="1.0.0",
-            embedding_model=ctx.config.llm.embedding_model,
-            chunking_config={
-                "strategy": ctx.config.chunking.strategy,
-                "min_chunk_chars": ctx.config.chunking.min_chunk_chars,
-                "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
-                "overlap_chars": ctx.config.chunking.overlap_chars,
-            },
-            indexed_files=build_indexed_files_map(files_to_index, docs_path),
-        )
+        ctx.index_manager.persist()
+        current_manifest = _build_rebuild_manifest(ctx, indexed_files)
         save_manifest(ctx.index_path, current_manifest)
 
         click.echo(f"✅ Successfully rebuilt index: {total_files} documents indexed")

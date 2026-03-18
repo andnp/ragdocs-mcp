@@ -61,6 +61,7 @@ class IndexingConfig:
     torch_num_threads: int = 4
     debounce_window_seconds: float = 0.5
     task_backpressure_limit: int = 100
+    rebuild_checkpoint_interval: int = 25
     delta_full_reindex_threshold: float = 0.5
     move_detection_threshold: float = 0.8
 

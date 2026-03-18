@@ -90,6 +90,7 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         assert config.indexing.torch_num_threads == 4
         assert config.indexing.debounce_window_seconds == 0.5
         assert config.indexing.task_backpressure_limit == 100
+        assert config.indexing.rebuild_checkpoint_interval == 25
     finally:
         os.chdir(original_cwd)
 
@@ -116,6 +117,7 @@ task_backpressure_limit = 42
         assert config.indexing.torch_num_threads == 8
         assert config.indexing.debounce_window_seconds == 1.25
         assert config.indexing.task_backpressure_limit == 42
+        assert config.indexing.rebuild_checkpoint_interval == 25
     finally:
         os.chdir(original_cwd)
 
