@@ -375,18 +375,10 @@ def _resolve_rebuild_project_scope(
     project: str | None,
     all_projects: bool,
 ) -> str | None:
-    if all_projects:
-        return None
-
     if project is not None:
         return project
 
-    config = load_config()
-    detected_project = detect_project(
-        projects=config.projects,
-        project_override=None,
-    )
-    return detected_project
+    return None
 
 
 def _clear_document_index_artifacts(index_path: Path) -> None:
@@ -1108,6 +1100,7 @@ def rebuild_index_cmd(project: str | None, all_projects: bool):
             project_override=effective_project,
             enable_watcher=False,
             lazy_embeddings=False,
+            global_runtime=effective_project is None,
         )
 
         ctx.index_path.mkdir(parents=True, exist_ok=True)

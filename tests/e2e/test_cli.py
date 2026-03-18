@@ -127,7 +127,7 @@ def test_rebuild_index_command_rebuilds_indices(
         os.chdir(original_cwd)
 
 
-def test_rebuild_index_defaults_to_detected_project_scope(runner, tmp_path):
+def test_rebuild_index_defaults_to_global_scope(runner, tmp_path):
     project_a = tmp_path / "project_a"
     project_a_docs = project_a / "docs"
     project_a_docs.mkdir(parents=True)
@@ -176,7 +176,62 @@ max_chunk_chars = 2000
         result = runner.invoke(cli, ["rebuild-index"])
 
         assert result.exit_code == 0, result.output
-        assert "Rebuild scope: project 'project_a'" in result.output
+        assert "Rebuild scope: global corpus across 2 root(s)" in result.output
+        assert "2 documents indexed" in result.output
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_rebuild_index_project_flag_narrows_scope(runner, tmp_path):
+    project_a = tmp_path / "project_a"
+    project_a_docs = project_a / "docs"
+    project_a_docs.mkdir(parents=True)
+    (project_a_docs / "alpha.md").write_text("# Alpha\n\nProject alpha doc.")
+
+    project_b = tmp_path / "project_b"
+    project_b_docs = project_b / "docs"
+    project_b_docs.mkdir(parents=True)
+    (project_b_docs / "beta.md").write_text("# Beta\n\nProject beta doc.")
+
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        f"""
+[[projects]]
+name = "project_a"
+path = "{project_a}"
+
+[[projects]]
+name = "project_b"
+path = "{project_b}"
+
+[indexing]
+documents_path = "."
+index_path = ".index_data"
+rebuild_checkpoint_interval = 1
+
+[llm]
+embedding_model = "local"
+
+[search]
+semantic_weight = 1.0
+keyword_weight = 1.0
+
+[chunking]
+strategy = "header_based"
+min_chunk_chars = 200
+max_chunk_chars = 2000
+"""
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(project_a)
+
+        result = runner.invoke(cli, ["rebuild-index", "--project", "project_a"])
+
+        assert result.exit_code == 0, result.output
+        assert "Rebuild scope: project 'project_a' across 1 root(s)" in result.output
         assert "1 documents indexed" in result.output
     finally:
         os.chdir(original_cwd)
