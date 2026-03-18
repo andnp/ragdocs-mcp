@@ -471,6 +471,15 @@ class LifecycleCoordinator:
                 logger.error(f"Error stopping git watcher: {e}", exc_info=True)
             self._git_watcher = None
 
+        if self._ctx:
+            try:
+                async with asyncio.timeout(self._graceful_timeout):
+                    await self._ctx.stop()
+            except asyncio.TimeoutError:
+                logger.warning("Graceful shutdown timed out")
+            except Exception as e:
+                logger.error(f"Error during context cleanup: {e}", exc_info=True)
+
     async def _supervise_worker_health(self) -> None:
         while True:
             await asyncio.sleep(5.0)
@@ -493,15 +502,6 @@ class LifecycleCoordinator:
                 await asyncio.to_thread(worker.restart)
             except Exception:
                 logger.error("Failed to restart Huey worker subprocess", exc_info=True)
-
-        if self._ctx:
-            try:
-                async with asyncio.timeout(self._graceful_timeout):
-                    await self._ctx.stop()
-            except asyncio.TimeoutError:
-                logger.warning("Graceful shutdown timed out")
-            except Exception as e:
-                logger.error(f"Error during context cleanup: {e}", exc_info=True)
 
     def install_signal_handlers(self, loop: asyncio.AbstractEventLoop) -> None:
         for sig in (signal.SIGINT, signal.SIGTERM):
