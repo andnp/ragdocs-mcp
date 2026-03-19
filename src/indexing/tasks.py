@@ -157,8 +157,8 @@ def enqueue_index(file_path: str, force: bool = False) -> bool:
     return True
 
 
-def _get_pending_index_document_paths() -> set[str]:
-    """Return file paths already pending in the queue for _index_document tasks."""
+def _get_pending_task_first_args(task_name: str) -> set[str]:
+    """Return first positional string args already pending for the given task name."""
     if _huey is None:
         return set()
 
@@ -182,7 +182,7 @@ def _get_pending_index_document_paths() -> set[str]:
             )
             continue
 
-        if getattr(task, "name", None) != "_index_document":
+        if getattr(task, "name", None) != task_name:
             continue
 
         args = getattr(task, "args", ())
@@ -194,6 +194,16 @@ def _get_pending_index_document_paths() -> set[str]:
             pending_paths.add(file_path)
 
     return pending_paths
+
+
+def _get_pending_index_document_paths() -> set[str]:
+    """Return file paths already pending in the queue for _index_document tasks."""
+    return _get_pending_task_first_args("_index_document")
+
+
+def _get_pending_refresh_git_dirs() -> set[str]:
+    """Return git dirs already pending in the queue for _refresh_git_repository tasks."""
+    return _get_pending_task_first_args("_refresh_git_repository")
 
 
 def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
@@ -265,6 +275,12 @@ def enqueue_refresh_git(git_dir: str) -> bool:
             _task_backpressure_limit,
         )
         return False
+    if git_dir in _get_pending_refresh_git_dirs():
+        logger.info(
+            "Skipping git refresh enqueue for %s because a pending task already exists",
+            git_dir,
+        )
+        return False
     refresh_git_repository_task(git_dir)
     return True
 
@@ -274,10 +290,25 @@ def enqueue_refresh_git_batch(git_dirs: list[str]) -> int:
     if refresh_git_repository_task is None or _huey is None:
         return 0
 
+    pending_git_dirs = _get_pending_refresh_git_dirs()
     enqueued = 0
+    skipped_pending = 0
+    seen_git_dirs = set(pending_git_dirs)
     for git_dir in git_dirs:
+        if git_dir in seen_git_dirs:
+            if git_dir in pending_git_dirs:
+                skipped_pending += 1
+            continue
         refresh_git_repository_task(git_dir)
+        seen_git_dirs.add(git_dir)
         enqueued += 1
+
+    if skipped_pending > 0:
+        logger.info(
+            "Skipped %d startup git refresh task(s) already pending in queue",
+            skipped_pending,
+        )
+
     return enqueued
 
 

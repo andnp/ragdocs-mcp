@@ -234,6 +234,66 @@ class TestTaskRegistration:
         assert tasks_mod.refresh_git_repository_task is not None
         assert enqueue_refresh_git("/repo/.git") is True
 
+    def test_enqueue_refresh_git_skips_repo_already_pending_in_queue(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        fake_commit_indexer: FakeCommitIndexer,
+    ) -> None:
+        register_tasks(huey_instance, fake_manager, fake_commit_indexer)
+
+        assert enqueue_refresh_git("/repo/.git") is True
+        assert enqueue_refresh_git("/repo/.git") is False
+
+        assert huey_instance.pending_count() == 1
+        task = huey_instance.dequeue()
+        assert task.args == ("/repo/.git",)
+
+    def test_startup_git_batch_skips_repos_already_pending_in_queue(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        fake_commit_indexer: FakeCommitIndexer,
+    ) -> None:
+        register_tasks(huey_instance, fake_manager, fake_commit_indexer)
+
+        assert enqueue_refresh_git("/repo-a/.git") is True
+
+        refreshed = enqueue_refresh_git_batch(
+            [
+                "/repo-a/.git",
+                "/repo-b/.git",
+            ]
+        )
+
+        assert refreshed == 1
+        assert huey_instance.pending_count() == 2
+
+        first_task = huey_instance.dequeue()
+        second_task = huey_instance.dequeue()
+
+        assert first_task.args == ("/repo-a/.git",)
+        assert second_task.args == ("/repo-b/.git",)
+
+    def test_startup_git_batch_deduplicates_duplicate_paths_within_batch(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        fake_commit_indexer: FakeCommitIndexer,
+    ) -> None:
+        register_tasks(huey_instance, fake_manager, fake_commit_indexer)
+
+        refreshed = enqueue_refresh_git_batch(
+            [
+                "/repo-a/.git",
+                "/repo-a/.git",
+                "/repo-b/.git",
+            ]
+        )
+
+        assert refreshed == 2
+        assert huey_instance.pending_count() == 2
+
 
 class TestTaskExecution:
     def test_index_task_calls_manager(
