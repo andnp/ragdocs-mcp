@@ -260,6 +260,133 @@ async def test_query_with_missing_chunk_fallback(
 
 
 @pytest.mark.asyncio
+async def test_query_hydrates_from_keyword_when_vector_docstore_missing(
+    config, indices, manager, orchestrator, monkeypatch
+):
+    docs_dir = Path(config.indexing.documents_path)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    doc = create_test_document(
+        docs_dir,
+        "keyword_hydration",
+        "# Keyword Hydration\n\nFallback hydration should preserve readable content and file paths.",
+    )
+
+    manager.index_document(doc)
+
+    chunk_id = next(
+        candidate
+        for candidate in indices["vector"].get_chunk_ids_for_document("keyword_hydration")
+        if "_chunk_" in candidate
+    )
+    original_get_chunk_by_id = indices["vector"].get_chunk_by_id
+
+    def get_chunk_by_id_with_missing_docstore(requested_chunk_id: str):
+        if requested_chunk_id == chunk_id:
+            return None
+        return original_get_chunk_by_id(requested_chunk_id)
+
+    reindex_calls: list[tuple[str, str | None]] = []
+
+    def record_reindex(doc_id: str, reason: str | None = None) -> bool:
+        reindex_calls.append((doc_id, reason))
+        return False
+
+    monkeypatch.setattr(
+        indices["vector"],
+        "get_chunk_by_id",
+        get_chunk_by_id_with_missing_docstore,
+    )
+    monkeypatch.setattr(manager, "reindex_document", record_reindex)
+
+    results, _, _ = await orchestrator.query(
+        "readable fallback hydration",
+        top_k=10,
+        top_n=5,
+    )
+    await orchestrator.drain_reindex(timeout=1.0)
+
+    hydrated = next(result for result in results if result.doc_id == "keyword_hydration")
+    assert hydrated.content.strip() != ""
+    assert "Fallback hydration" in hydrated.content
+    assert hydrated.file_path.endswith("keyword_hydration.md")
+    assert hydrated.file_path != ""
+    assert hydrated.header_path != ""
+    assert any(doc_id == "keyword_hydration" for doc_id, _ in reindex_calls)
+
+
+@pytest.mark.asyncio
+async def test_query_enriches_incomplete_vector_chunk_from_keyword_metadata(
+    config, indices, manager, orchestrator, monkeypatch
+):
+    docs_dir = Path(config.indexing.documents_path)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    doc = create_test_document(
+        docs_dir,
+        "partial_vector_hydration",
+        "# Partial Vector Hydration\n\nKeyword hydration should fill missing vector fields without clobbering project metadata.",
+    )
+
+    manager.index_document(doc)
+
+    chunk_id = next(
+        candidate
+        for candidate in indices["vector"].get_chunk_ids_for_document(
+            "partial_vector_hydration"
+        )
+        if "_chunk_" in candidate
+    )
+    original_get_chunk_by_id = indices["vector"].get_chunk_by_id
+
+    def get_chunk_by_id_with_partial_metadata(requested_chunk_id: str):
+        chunk = original_get_chunk_by_id(requested_chunk_id)
+        if requested_chunk_id != chunk_id or chunk is None:
+            return chunk
+
+        metadata = dict(chunk.get("metadata", {}))
+        metadata["project_id"] = "vector-project"
+        return {
+            **chunk,
+            "header_path": "",
+            "file_path": "",
+            "content": "",
+            "project_id": "vector-project",
+            "metadata": metadata,
+        }
+
+    reindex_calls: list[tuple[str, str | None]] = []
+
+    def record_reindex(doc_id: str, reason: str | None = None) -> bool:
+        reindex_calls.append((doc_id, reason))
+        return False
+
+    monkeypatch.setattr(
+        indices["vector"],
+        "get_chunk_by_id",
+        get_chunk_by_id_with_partial_metadata,
+    )
+    monkeypatch.setattr(manager, "reindex_document", record_reindex)
+
+    results, _, _ = await orchestrator.query(
+        "fill missing vector fields",
+        top_k=10,
+        top_n=5,
+    )
+    await orchestrator.drain_reindex(timeout=1.0)
+
+    hydrated = next(
+        result for result in results if result.doc_id == "partial_vector_hydration"
+    )
+    assert hydrated.content.strip() != ""
+    assert "Keyword hydration should fill missing vector fields" in hydrated.content
+    assert hydrated.file_path.endswith("partial_vector_hydration.md")
+    assert hydrated.header_path != ""
+    assert hydrated.project_id == "vector-project"
+    assert any(doc_id == "partial_vector_hydration" for doc_id, _ in reindex_calls)
+
+
+@pytest.mark.asyncio
 async def test_chunk_result_serialization_in_pipeline(config, manager, orchestrator):
     """
     Verifies:

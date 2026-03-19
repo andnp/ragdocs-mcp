@@ -279,6 +279,39 @@ def test_keyword_index_no_results(keyword_index, sample_document):
     assert results == []
 
 
+def test_keyword_index_get_chunk_by_id_returns_row_metadata(keyword_index):
+    from src.models import Chunk
+
+    chunk = Chunk(
+        chunk_id="lookup_chunk_0",
+        doc_id="lookup-doc",
+        content="Readable keyword fallback content.",
+        metadata={
+            "title": "Lookup Title",
+            "tags": ["lookup", "fallback"],
+            "source_file": "/tmp/lookup.md",
+        },
+        chunk_index=0,
+        header_path="Guide > Lookup",
+        start_pos=0,
+        end_pos=33,
+        file_path="/tmp/lookup.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(chunk)
+
+    row = keyword_index.get_chunk_by_id("lookup_chunk_0")
+
+    assert row is not None
+    assert row["chunk_id"] == "lookup_chunk_0"
+    assert row["doc_id"] == "lookup-doc"
+    assert row["content"] == "Readable keyword fallback content."
+    assert row["headers"] == "Guide > Lookup"
+    assert row["title"] == "Lookup Title"
+    assert row["source_file"] == "/tmp/lookup.md"
+
+
 def test_keyword_index_aliases_as_string(keyword_index):
     doc = Document(
         id="doc1",

@@ -9,6 +9,7 @@ from src.indices.vector import VectorIndex
 from src.indexing.manager import IndexManager
 from src.models import ChunkResult, CompressionStats, SearchStrategyStats
 from src.search.base_orchestrator import BaseSearchOrchestrator
+from src.search.chunk_hydrator import ChunkHydrator
 from src.search.classifier import classify_query, get_adaptive_weights
 from src.search.filters import matches_project_filter, normalize_project_filter
 from src.search.path_utils import extract_doc_id_from_chunk_id
@@ -43,6 +44,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         self._pipeline: SearchPipeline | None = None
         self._pending_reindex: set[str] = set()
         self._reindex_tasks: set[asyncio.Task] = set()
+        self._chunk_hydrator = ChunkHydrator(
+            vector_index,
+            keyword_index,
+            self._documents_path,
+            self._queue_reindex_for_chunks,
+        )
 
     @property
     def documents_path(self) -> Path:
@@ -194,54 +201,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         # Parent expansion: always expand child chunks to parent chunks
         final = self._expand_to_parents(final)
 
-        chunk_results = []
-        missing_chunk_ids: list[str] = []
-        for chunk_id, score in final:
-            chunk_data = self._get_chunk_data_with_parent_fallback(chunk_id)
-            if chunk_data:
-                metadata = chunk_data.get("metadata", {})
-                parent_chunk_id = (
-                    metadata.get("parent_chunk_id")
-                    if isinstance(metadata, dict)
-                    else None
-                )
-                parent_content = None
-                if parent_chunk_id:
-                    parent_content = self._vector.get_parent_content(parent_chunk_id)
-
-                chunk_results.append(
-                    ChunkResult(
-                        chunk_id=str(chunk_data.get("chunk_id", chunk_id)),
-                        doc_id=str(chunk_data.get("doc_id", "")),
-                        score=score,
-                        header_path=str(chunk_data.get("header_path", "")),
-                        file_path=str(chunk_data.get("file_path", "")),
-                        project_id=(
-                            str(metadata.get("project_id"))
-                            if isinstance(metadata, dict)
-                            and metadata.get("project_id") is not None
-                            else None
-                        ),
-                        content=str(chunk_data.get("content", "")),
-                        parent_chunk_id=parent_chunk_id,
-                        parent_content=parent_content,
-                    )
-                )
-            else:
-                missing_chunk_ids.append(chunk_id)
-                chunk_results.append(
-                    ChunkResult(
-                        chunk_id=chunk_id,
-                        doc_id=extract_doc_id_from_chunk_id(chunk_id),
-                        score=score,
-                        header_path="",
-                        file_path="",
-                        content="",
-                    )
-                )
-
-        if missing_chunk_ids:
-            self._queue_reindex_for_chunks(missing_chunk_ids, "docstore lookup failed")
+        chunk_results = self._materialize_chunk_results(final)
 
         return chunk_results, compression_stats, strategy_stats
 
@@ -301,14 +261,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         return self._vector.get_embedding_for_chunk(chunk_id)
 
     def _get_chunk_content(self, chunk_id: str) -> str | None:
-        chunk_data = self._vector.get_chunk_by_id(chunk_id)
-        if chunk_data:
-            content = chunk_data.get("content")
-            return str(content) if content is not None else None
-        self._queue_reindex_for_chunks(
-            [chunk_id], "docstore lookup failed during content fetch"
-        )
-        return None
+        return self._chunk_hydrator.get_content(chunk_id)
 
     async def _search_vector(
         self,
@@ -569,88 +522,38 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             vector_count=len(vector_results),
         )
 
-        chunk_results = []
-        missing_chunk_ids: list[str] = []
-        for chunk_id, score in final:
-            chunk_data = self._get_chunk_data_with_parent_fallback(chunk_id)
-            if chunk_data:
-                metadata = chunk_data.get("metadata", {})
-                parent_chunk_id = (
-                    metadata.get("parent_chunk_id")
-                    if isinstance(metadata, dict)
-                    else None
-                )
-                parent_content = None
-                if parent_chunk_id:
-                    parent_content = self._vector.get_parent_content(parent_chunk_id)
-
-                chunk_results.append(
-                    ChunkResult(
-                        chunk_id=str(chunk_data.get("chunk_id", chunk_id)),
-                        doc_id=str(chunk_data.get("doc_id", "")),
-                        score=score,
-                        header_path=str(chunk_data.get("header_path", "")),
-                        file_path=str(chunk_data.get("file_path", "")),
-                        project_id=(
-                            str(metadata.get("project_id"))
-                            if isinstance(metadata, dict)
-                            and metadata.get("project_id") is not None
-                            else None
-                        ),
-                        content=str(chunk_data.get("content", "")),
-                        parent_chunk_id=parent_chunk_id,
-                        parent_content=parent_content,
-                    )
-                )
-            else:
-                missing_chunk_ids.append(chunk_id)
-                chunk_results.append(
-                    ChunkResult(
-                        chunk_id=chunk_id,
-                        doc_id=extract_doc_id_from_chunk_id(chunk_id),
-                        score=score,
-                        header_path="",
-                        file_path="",
-                        content="",
-                    )
-                )
-
-        if missing_chunk_ids:
-            self._queue_reindex_for_chunks(missing_chunk_ids, "docstore lookup failed")
+        chunk_results = self._materialize_chunk_results(final)
 
         return chunk_results, compression_stats, strategy_stats
 
-    def _get_chunk_data_with_parent_fallback(self, chunk_id: str):
-        chunk_data = self._vector.get_chunk_by_id(chunk_id)
-        if chunk_data is not None:
-            return chunk_data
+    def _materialize_chunk_results(
+        self, final: list[tuple[str, float]]
+    ) -> list[ChunkResult]:
+        chunk_results: list[ChunkResult] = []
+        missing_chunk_ids: list[str] = []
 
-        if "_parent_" not in chunk_id:
-            return None
+        for chunk_id, score in final:
+            chunk_result = self._chunk_hydrator.hydrate_chunk_result(chunk_id, score)
+            if chunk_result is not None:
+                chunk_results.append(chunk_result)
+                continue
 
-        fallback_chunk_data = self._get_child_chunk_data_for_parent(chunk_id)
-        if fallback_chunk_data is not None:
-            self._queue_reindex_for_chunks(
-                [chunk_id],
-                "parent chunk hydration failed during result assembly",
+            missing_chunk_ids.append(chunk_id)
+            chunk_results.append(
+                ChunkResult(
+                    chunk_id=chunk_id,
+                    doc_id=extract_doc_id_from_chunk_id(chunk_id),
+                    score=score,
+                    header_path="",
+                    file_path="",
+                    content="",
+                )
             )
-        return fallback_chunk_data
 
-    def _get_child_chunk_data_for_parent(self, parent_chunk_id: str):
-        doc_id = extract_doc_id_from_chunk_id(parent_chunk_id)
-        for child_chunk_id in self._vector.get_chunk_ids_for_document(doc_id):
-            if child_chunk_id == parent_chunk_id:
-                continue
+        if missing_chunk_ids:
+            self._queue_reindex_for_chunks(
+                missing_chunk_ids,
+                "chunk hydration failed during result assembly",
+            )
 
-            child_chunk_data = self._vector.get_chunk_by_id(child_chunk_id)
-            if child_chunk_data is None:
-                continue
-
-            metadata = child_chunk_data.get("metadata", {})
-            if not isinstance(metadata, dict):
-                continue
-
-            if metadata.get("parent_chunk_id") == parent_chunk_id:
-                return child_chunk_data
-
-        return None
+        return chunk_results

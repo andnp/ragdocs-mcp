@@ -328,6 +328,40 @@ class KeywordIndex:
     # Search
     # ------------------------------------------------------------------
 
+    def get_chunk_by_id(self, chunk_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            try:
+                row = self._conn().execute(
+                    """
+                    SELECT chunk_id, doc_id, content, title, headers, tags, source_file
+                    FROM search_index
+                    WHERE chunk_id = ?
+                    LIMIT 1
+                    """,
+                    (chunk_id,),
+                ).fetchone()
+            except sqlite3.DatabaseError as e:
+                if _is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return None
+                logger.warning(
+                    "Chunk lookup failed for %s: %s", chunk_id, e, exc_info=True
+                )
+                return None
+
+            if row is None:
+                return None
+
+            return {
+                "chunk_id": row["chunk_id"],
+                "doc_id": row["doc_id"],
+                "content": row["content"],
+                "title": row["title"],
+                "headers": row["headers"],
+                "tags": row["tags"],
+                "source_file": row["source_file"],
+            }
+
     def search(
         self,
         query: str,
