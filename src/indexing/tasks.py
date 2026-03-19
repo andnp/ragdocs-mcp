@@ -10,11 +10,15 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from src.coordination.task_submission import (
     get_pending_task_count as get_shared_pending_task_count,
     get_pending_task_first_args,
+    get_pending_task_values,
     is_backpressured,
     submit_single_task,
     submit_task_batch,
 )
-from src.indexing.bootstrap_checkpoint import mark_bootstrap_file_completed
+from src.indexing.bootstrap_checkpoint import (
+    mark_bootstrap_file_completed,
+    mark_bootstrap_files_completed,
+)
 
 if TYPE_CHECKING:
     from src.git.commit_indexer import CommitIndexer
@@ -65,7 +69,18 @@ class IndexManagerLike(Protocol):
     """Structural type for objects that can index/remove documents."""
 
     def index_document(self, file_path: str, force: bool = False) -> None: ...
+    def index_documents(
+        self,
+        file_paths: list[str],
+        force: bool = False,
+        persist: bool = False,
+    ) -> None: ...
     def remove_document(self, doc_id: str) -> None: ...
+    def remove_documents(
+        self,
+        doc_ids: list[str],
+        persist: bool = False,
+    ) -> None: ...
     def persist(self) -> None: ...
 
 
@@ -79,6 +94,7 @@ _bootstrap_documents_roots: list[Path] = []
 
 # Task references (set after register_tasks is called)
 index_document_task = None
+index_documents_batch_task = None
 remove_document_task = None
 refresh_git_repository_task = None
 
@@ -98,7 +114,7 @@ def register_tasks(
     """
     global _huey, _index_manager, _commit_indexer, _task_backpressure_limit
     global _bootstrap_index_path, _bootstrap_documents_roots
-    global index_document_task, remove_document_task, refresh_git_repository_task
+    global index_document_task, index_documents_batch_task, remove_document_task, refresh_git_repository_task
     _huey = huey
     _index_manager = index_manager
     _commit_indexer = commit_indexer
@@ -126,6 +142,73 @@ def register_tasks(
         except Exception:
             logger.error("Task failed: index %s", file_path, exc_info=True)
             return False
+
+    @huey.task()
+    def _index_documents_batch(file_paths: list[str], force: bool = False) -> bool:
+        """Index a burst of documents and persist once after the batch."""
+        if _index_manager is None:
+            logger.error("IndexManager not available for batch task execution")
+            return False
+
+        unique_file_paths = list(dict.fromkeys(file_paths))
+        if not unique_file_paths:
+            return True
+
+        completed_paths: list[str] = []
+        failures: list[str] = []
+
+        try:
+            _index_manager.index_documents(
+                unique_file_paths,
+                force=force,
+                persist=True,
+            )
+            completed_paths = unique_file_paths
+        except Exception:
+            logger.warning(
+                "Batch index task failed; retrying files individually before one final persist",
+                exc_info=True,
+            )
+            for file_path in unique_file_paths:
+                try:
+                    _index_manager.index_document(file_path, force=force)
+                    completed_paths.append(file_path)
+                except Exception:
+                    failures.append(file_path)
+                    logger.error(
+                        "Task failed within batch: index %s",
+                        file_path,
+                        exc_info=True,
+                    )
+
+            if completed_paths:
+                try:
+                    _index_manager.persist()
+                except Exception:
+                    logger.error(
+                        "Batch fallback persist failed for %d indexed document(s)",
+                        len(completed_paths),
+                        exc_info=True,
+                    )
+                    return False
+
+        if (
+            completed_paths
+            and _bootstrap_index_path is not None
+            and _bootstrap_documents_roots
+        ):
+            mark_bootstrap_files_completed(
+                _bootstrap_index_path,
+                _bootstrap_documents_roots,
+                completed_paths,
+            )
+
+        logger.info(
+            "Task completed: indexed %d document(s) in batch%s",
+            len(completed_paths),
+            "" if not failures else f" with {len(failures)} failure(s)",
+        )
+        return not failures
 
     @huey.task()
     def _remove_document(doc_id: str) -> bool:
@@ -182,6 +265,7 @@ def register_tasks(
             return False
 
     index_document_task = _index_document
+    index_documents_batch_task = _index_documents_batch
     remove_document_task = _remove_document
     refresh_git_repository_task = _refresh_git_repository
     logger.info("Indexing tasks registered with Huey")
@@ -223,8 +307,27 @@ def _get_pending_task_first_args(task_name: str) -> set[str]:
 
 
 def _get_pending_index_document_paths() -> set[str]:
-    """Return file paths already pending in the queue for _index_document tasks."""
-    return _get_pending_task_first_args("_index_document")
+    """Return file paths already pending in single or batch index tasks."""
+
+    def _extract_values(task: object) -> set[str]:
+        args = getattr(task, "args", ())
+        if not args:
+            return set()
+
+        first_arg = args[0]
+        if isinstance(first_arg, str):
+            return {first_arg}
+        if isinstance(first_arg, list):
+            return {item for item in first_arg if isinstance(item, str)}
+        return set()
+
+    return get_pending_task_values(
+        _huey,
+        {"_index_document", "_index_documents_batch"},
+        value_extractor=_extract_values,
+        inspection_failure_log_message="Failed to inspect pending Huey tasks; startup batch dedupe disabled",
+        deserialize_failure_log_message="Failed to deserialize pending Huey task while inspecting startup queue",
+    )
 
 
 def _get_pending_refresh_git_dirs() -> set[str]:
@@ -245,25 +348,36 @@ def submit_index_batch(
     file_paths: list[str],
     force: bool = False,
 ) -> TaskBatchSubmissionResult:
-    if index_document_task is None or _huey is None:
+    if index_documents_batch_task is None or _huey is None:
         return TaskBatchSubmissionResult(
             queue_available=False,
             requested_unique_count=len(set(file_paths)),
             enqueued_count=0,
         )
 
+    unique_file_paths = list(dict.fromkeys(file_paths))
     pending_paths = set() if force else _get_pending_index_document_paths()
-    requested_unique_paths = set(file_paths)
-    enqueued_count = submit_task_batch(
-        index_document_task,
-        file_paths,
-        task_kwargs={"force": force},
-        pending_first_args=pending_paths,
-        skipped_pending_log_message="Skipped %d startup indexing task(s) already pending in queue",
-    )
+    requested_unique_paths = set(unique_file_paths)
+    remaining_paths = [
+        file_path
+        for file_path in unique_file_paths
+        if force or file_path not in pending_paths
+    ]
     already_pending_count = sum(
         1 for file_path in requested_unique_paths if file_path in pending_paths
     )
+
+    enqueued_count = 0
+    if remaining_paths:
+        index_documents_batch_task(remaining_paths, force=force)
+        enqueued_count = len(remaining_paths)
+
+    if already_pending_count > 0:
+        logger.info(
+            "Skipped %d startup indexing task(s) already pending in queue",
+            already_pending_count,
+        )
+
     return TaskBatchSubmissionResult(
         queue_available=True,
         requested_unique_count=len(requested_unique_paths),

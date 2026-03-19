@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 type TaskSubmitter = Callable[..., object]
+type TaskValueExtractor = Callable[[object], set[str]]
 
 
 def get_pending_task_count(huey: SqliteHuey | None) -> int:
@@ -72,6 +73,42 @@ def get_pending_task_first_args(
             pending_args.add(first_arg)
 
     return pending_args
+
+
+def get_pending_task_values(
+    huey: SqliteHuey | None,
+    task_names: set[str],
+    *,
+    value_extractor: TaskValueExtractor,
+    inspection_failure_log_message: str,
+    deserialize_failure_log_message: str,
+) -> set[str]:
+    if huey is None:
+        return set()
+
+    try:
+        pending_messages = huey.storage.enqueued_items()
+    except Exception:
+        logger.warning(inspection_failure_log_message, exc_info=True)
+        return set()
+
+    pending_values: set[str] = set()
+    for message in pending_messages:
+        try:
+            task = huey.deserialize_task(message)
+        except Exception:
+            logger.warning(deserialize_failure_log_message, exc_info=True)
+            continue
+
+        if getattr(task, "name", None) not in task_names:
+            continue
+
+        try:
+            pending_values.update(value_extractor(task))
+        except Exception:
+            logger.warning(deserialize_failure_log_message, exc_info=True)
+
+    return pending_values
 
 
 def submit_single_task(

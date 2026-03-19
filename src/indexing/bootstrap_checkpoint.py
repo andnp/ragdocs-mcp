@@ -277,6 +277,47 @@ def mark_bootstrap_file_completed(
     return True
 
 
+def mark_bootstrap_files_completed(
+    index_path: Path,
+    documents_roots: list[Path],
+    file_paths: list[str],
+) -> int:
+    checkpoint = load_bootstrap_checkpoint(index_path)
+    if checkpoint is None:
+        return 0
+
+    current_stamps = build_file_stamps(file_paths, documents_roots)
+    if not current_stamps:
+        return 0
+
+    updated_targets = dict(checkpoint.targets)
+    updated_completed = dict(checkpoint.completed)
+    changed = 0
+
+    for relative_path, stamp in current_stamps.items():
+        if relative_path not in checkpoint.targets:
+            continue
+        existing = updated_completed.get(relative_path)
+        if existing == stamp:
+            continue
+        updated_targets[relative_path] = stamp
+        updated_completed[relative_path] = stamp
+        changed += 1
+
+    if changed == 0:
+        return 0
+
+    updated_checkpoint = BootstrapCheckpoint(
+        schema_version=CURRENT_BOOTSTRAP_CHECKPOINT_SCHEMA_VERSION,
+        generation=checkpoint.generation,
+        complete=len(updated_completed) == len(updated_targets),
+        targets=updated_targets,
+        completed=updated_completed,
+    )
+    save_bootstrap_checkpoint(index_path, updated_checkpoint)
+    return changed
+
+
 def has_incomplete_bootstrap_checkpoint(index_path: Path) -> bool:
     checkpoint = load_bootstrap_checkpoint(index_path)
     if checkpoint is None:

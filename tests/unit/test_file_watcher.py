@@ -22,7 +22,10 @@ def mock_index_manager():
     """Create a mock IndexManager."""
     manager = MagicMock()
     manager.index_document = MagicMock()
+    manager.index_documents = MagicMock()
     manager.remove_document = MagicMock()
+    manager.remove_documents = MagicMock()
+    manager.persist = MagicMock()
     manager.get_failed_files = MagicMock(return_value=[])
     return manager
 
@@ -532,7 +535,11 @@ class TestFileWatcherTaskMode:
             }
         )
 
-        mock_index_manager.index_document.assert_called_once_with(str(visible_file))
+        mock_index_manager.index_documents.assert_called_once_with(
+            [str(visible_file)],
+            force=False,
+            persist=False,
+        )
 
     @pytest.mark.asyncio
     async def test_batch_process_enqueues_index_when_task_mode_enabled(
@@ -620,9 +627,60 @@ class TestFileWatcherTaskMode:
         ):
             await watcher._batch_process({str(docs_path / "note.md"): "created"})
 
-        mock_index_manager.index_document.assert_called_once_with(
-            str(docs_path / "note.md")
+        mock_index_manager.index_documents.assert_called_once_with(
+            [str(docs_path / "note.md")],
+            force=False,
+            persist=False,
         )
+
+    @pytest.mark.asyncio
+    async def test_direct_batch_process_coalesces_index_persist_once(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+        )
+
+        await watcher._batch_process(
+            {
+                str(docs_path / "a.md"): "created",
+                str(docs_path / "b.md"): "modified",
+            }
+        )
+
+        mock_index_manager.index_documents.assert_called_once_with(
+            [str(docs_path / "a.md"), str(docs_path / "b.md")],
+            force=False,
+            persist=False,
+        )
+        mock_index_manager.persist.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_direct_batch_process_coalesces_remove_persist_once(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+        )
+
+        await watcher._batch_process(
+            {
+                str(docs_path / "nested" / "a.md"): "deleted",
+                str(docs_path / "nested" / "b.md"): "deleted",
+            }
+        )
+
+        mock_index_manager.remove_documents.assert_called_once_with(
+            ["nested/a", "nested/b"],
+            persist=False,
+        )
+        mock_index_manager.persist.assert_called_once_with()
 
 
 class TestFileWatcherDebounce:

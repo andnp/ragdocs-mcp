@@ -39,8 +39,24 @@ class FakeIndexManager:
     def index_document(self, file_path: str, force: bool = False) -> None:
         self.indexed.append((file_path, force))
 
+    def index_documents(
+        self,
+        file_paths: list[str],
+        force: bool = False,
+        persist: bool = False,
+    ) -> None:
+        for file_path in file_paths:
+            self.indexed.append((file_path, force))
+        if persist:
+            self.persist_calls += 1
+
     def remove_document(self, doc_id: str) -> None:
         self.removed.append(doc_id)
+
+    def remove_documents(self, doc_ids: list[str], persist: bool = False) -> None:
+        self.removed.extend(doc_ids)
+        if persist:
+            self.persist_calls += 1
 
     def persist(self) -> None:
         self.persist_calls += 1
@@ -82,6 +98,7 @@ def _reset_tasks():
     tasks_mod._bootstrap_index_path = None
     tasks_mod._bootstrap_documents_roots = []
     tasks_mod.index_document_task = None
+    tasks_mod.index_documents_batch_task = None
     tasks_mod.remove_document_task = None
     tasks_mod.refresh_git_repository_task = None
     yield
@@ -92,6 +109,7 @@ def _reset_tasks():
     tasks_mod._bootstrap_index_path = None
     tasks_mod._bootstrap_documents_roots = []
     tasks_mod.index_document_task = None
+    tasks_mod.index_documents_batch_task = None
     tasks_mod.remove_document_task = None
     tasks_mod.refresh_git_repository_task = None
 
@@ -103,6 +121,7 @@ class TestTaskRegistration:
         """register_tasks() creates index and remove tasks."""
         register_tasks(huey_instance, fake_manager)
         assert tasks_mod.index_document_task is not None
+        assert tasks_mod.index_documents_batch_task is not None
         assert tasks_mod.remove_document_task is not None
 
     def test_enqueue_without_registration_returns_false(self) -> None:
@@ -145,7 +164,7 @@ class TestTaskRegistration:
 
         assert indexed == 2
         assert refreshed == 2
-        assert huey_instance.pending_count() == 4
+        assert huey_instance.pending_count() == 3
 
     def test_startup_batch_skips_files_already_pending_in_queue(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -166,7 +185,7 @@ class TestTaskRegistration:
         second_task = huey_instance.dequeue()
 
         assert first_task.args == ("/some/file.md",)
-        assert second_task.args == ("/some/other.md",)
+        assert second_task.args == (["/some/other.md"],)
 
     def test_get_pending_index_document_count_counts_matching_pending_paths(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -198,7 +217,7 @@ class TestTaskRegistration:
         ])
 
         assert indexed == 2
-        assert huey_instance.pending_count() == 2
+        assert huey_instance.pending_count() == 1
 
     def test_startup_batch_preserves_force_reindex_behavior(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -330,6 +349,19 @@ class TestTaskRegistration:
         assert submission.already_pending_count == 1
         assert submission.all_represented is True
 
+    def test_pending_index_count_includes_batch_tasks(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        assert enqueue_index_batch(["/some/file.md", "/some/other.md"]) == 2
+
+        pending = get_pending_index_document_count(
+            ["/some/file.md", "/some/other.md", "/some/missing.md"]
+        )
+
+        assert pending == 2
+
 
 class TestTaskExecution:
     def test_index_task_calls_manager(
@@ -395,6 +427,52 @@ class TestTaskExecution:
         assert checkpoint is not None
         assert checkpoint.complete is True
         assert set(checkpoint.completed) == {"guide.md"}
+
+    def test_index_batch_task_marks_all_bootstrap_files_after_single_persist(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        docs_root = tmp_path / "docs"
+        docs_root.mkdir()
+        first = docs_root / "guide.md"
+        second = docs_root / "api.md"
+        first.write_text("# Guide")
+        second.write_text("# API")
+
+        save_bootstrap_checkpoint(
+            tmp_path,
+            BootstrapCheckpoint(
+                schema_version="1.0.0",
+                generation="current",
+                complete=False,
+                targets={
+                    "guide.md": BootstrapFileStamp("guide.md", mtime_ns=0, size=0),
+                    "api.md": BootstrapFileStamp("api.md", mtime_ns=0, size=0),
+                },
+                completed={},
+            ),
+        )
+
+        register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=tmp_path,
+            bootstrap_documents_roots=[docs_root],
+        )
+
+        assert enqueue_index_batch([str(first), str(second)]) == 2
+
+        task = huey_instance.dequeue()
+        huey_instance.execute(task)
+
+        checkpoint = load_bootstrap_checkpoint(tmp_path)
+
+        assert checkpoint is not None
+        assert checkpoint.complete is True
+        assert set(checkpoint.completed) == {"guide.md", "api.md"}
+        assert fake_manager.persist_calls == 1
 
     def test_remove_task_calls_manager(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager

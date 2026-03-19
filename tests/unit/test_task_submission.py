@@ -8,6 +8,7 @@ from huey import SqliteHuey
 from src.coordination.task_submission import (
     get_pending_task_count,
     get_pending_task_first_args,
+    get_pending_task_values,
     is_backpressured,
     submit_single_task,
     submit_task_batch,
@@ -41,6 +42,26 @@ def test_get_pending_task_first_args_filters_matching_task_names(
     pending_paths = get_pending_task_first_args(
         huey_instance,
         "_index_document",
+        inspection_failure_log_message="inspect failed",
+        deserialize_failure_log_message="deserialize failed",
+    )
+
+    assert pending_paths == {"/docs/a.md", "/docs/b.md"}
+
+
+def test_get_pending_task_values_extracts_items_from_batch_args(
+    huey_instance: SqliteHuey,
+) -> None:
+    @huey_instance.task()
+    def _index_documents_batch(file_paths: list[str], force: bool = False) -> bool:
+        return force or bool(file_paths)
+
+    _index_documents_batch(["/docs/a.md", "/docs/b.md"])
+
+    pending_paths = get_pending_task_values(
+        huey_instance,
+        {"_index_documents_batch"},
+        value_extractor=lambda task: set(task.args[0]),
         inspection_failure_log_message="inspect failed",
         deserialize_failure_log_message="deserialize failed",
     )

@@ -320,6 +320,9 @@ class FileWatcher:
     async def _batch_process(self, events: dict[str, EventType]):
         deferred_events: dict[str, EventType] = {}
         self._events_processed += len(events)
+        direct_index_paths: list[str] = []
+        direct_remove_doc_ids: list[str] = []
+
         for file_path, event_type in events.items():
             # Filter out excluded files before processing
             if not should_include_file(
@@ -344,11 +347,7 @@ class FileWatcher:
                         if submission.should_retry_later:
                             deferred_events[file_path] = event_type
                             continue
-                    # Fallback to direct execution
-                    await asyncio.to_thread(
-                        self._index_manager.index_document, file_path
-                    )
-                    logger.info(f"Indexed: {file_path}")
+                    direct_index_paths.append(file_path)
                 elif event_type == "deleted":
                     doc_id = self._compute_doc_id_for_event(file_path)
                     if self._use_tasks:
@@ -361,12 +360,14 @@ class FileWatcher:
                         if submission.should_retry_later:
                             deferred_events[file_path] = event_type
                             continue
-                    # Fallback to direct execution
-                    await asyncio.to_thread(self._index_manager.remove_document, doc_id)
-                    await asyncio.to_thread(self._index_manager.persist)
-                    logger.info(f"Removed: {file_path}")
+                    direct_remove_doc_ids.append(doc_id)
             except Exception as e:
                 logger.error(f"Failed to process {file_path}: {e}")
+
+        await self._process_direct_batch(
+            index_paths=direct_index_paths,
+            remove_doc_ids=direct_remove_doc_ids,
+        )
 
         self._last_sync_time = datetime.now(timezone.utc).isoformat()
 
@@ -379,6 +380,75 @@ class FileWatcher:
                     "Watcher queue full while deferring %s for backpressure retry",
                     file_path,
                 )
+
+    async def _process_direct_batch(
+        self,
+        *,
+        index_paths: list[str],
+        remove_doc_ids: list[str],
+    ) -> None:
+        mutated = False
+
+        if index_paths:
+            unique_index_paths = list(dict.fromkeys(index_paths))
+            try:
+                await asyncio.to_thread(
+                    self._index_manager.index_documents,
+                    unique_index_paths,
+                    force=False,
+                    persist=False,
+                )
+                mutated = True
+                logger.info("Indexed %d file(s) directly from watcher burst", len(unique_index_paths))
+            except Exception:
+                logger.warning(
+                    "Direct watcher index batch failed; retrying files individually before one final persist",
+                    exc_info=True,
+                )
+                for file_path in unique_index_paths:
+                    try:
+                        await asyncio.to_thread(
+                            self._index_manager.index_document,
+                            file_path,
+                        )
+                        mutated = True
+                        logger.info(f"Indexed: {file_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to process {file_path}: {e}")
+
+        if remove_doc_ids:
+            unique_remove_doc_ids = list(dict.fromkeys(remove_doc_ids))
+            try:
+                await asyncio.to_thread(
+                    self._index_manager.remove_documents,
+                    unique_remove_doc_ids,
+                    persist=False,
+                )
+                mutated = True
+                logger.info(
+                    "Removed %d document(s) directly from watcher burst",
+                    len(unique_remove_doc_ids),
+                )
+            except Exception:
+                logger.warning(
+                    "Direct watcher remove batch failed; retrying removals individually before one final persist",
+                    exc_info=True,
+                )
+                for doc_id in unique_remove_doc_ids:
+                    try:
+                        await asyncio.to_thread(
+                            self._index_manager.remove_document,
+                            doc_id,
+                        )
+                        mutated = True
+                    except Exception as e:
+                        logger.error(f"Failed to remove {doc_id}: {e}")
+
+        if mutated:
+            try:
+                await asyncio.to_thread(self._index_manager.persist)
+            except Exception as e:
+                logger.error(f"Failed to persist watcher burst changes: {e}")
 
     def get_stats(self) -> WatcherStats:
         return WatcherStats(
