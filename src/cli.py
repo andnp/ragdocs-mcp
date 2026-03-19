@@ -1427,6 +1427,15 @@ def check_config_cmd(project: str | None):
                     "⚠️  None detected (using local index)",
                 )
 
+        if config.config_warnings:
+            table.add_row("", "")
+            table.add_row(
+                "[bold yellow]Warnings[/bold yellow]",
+                f"{len(config.config_warnings)} warning(s)",
+            )
+            for warning in config.config_warnings:
+                table.add_row("  •", warning)
+
         table.add_row("", "")
         table.add_row("Semantic Weight", str(config.search.semantic_weight))
         table.add_row("Keyword Weight", str(config.search.keyword_weight))
@@ -1438,6 +1447,8 @@ def check_config_cmd(project: str | None):
         console.print(table)
 
         console.print("\n[bold green]✅ Configuration is valid[/bold green]")
+        if config.config_warnings:
+            console.print("[bold yellow]⚠️  Configuration warnings detected[/bold yellow]")
 
         index_path = Path(config.indexing.index_path)
         if index_path.exists():

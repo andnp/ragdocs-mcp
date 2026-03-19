@@ -143,6 +143,7 @@ class Config:
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     projects: list[ProjectConfig] = field(default_factory=list)
     detected_project: str | None = None
+    config_warnings: list[str] = field(default_factory=list)
 
 
 def _expand_path(path_str: str):
@@ -246,6 +247,9 @@ def load_config():
                 )
 
     _validate_projects(projects)
+    config_warnings = get_project_root_warnings(projects)
+    for warning in config_warnings:
+        logger.warning(f"Configuration warning: {warning}")
 
     return Config(
         indexing=indexing,
@@ -254,6 +258,7 @@ def load_config():
         llm=llm,
         chunking=chunking,
         projects=projects,
+        config_warnings=config_warnings,
     )
 
 
@@ -273,6 +278,49 @@ def _validate_projects(projects: list[ProjectConfig]):
             f"Duplicate project paths found: {', '.join(set(dupes))}. "
             "Each project must have a unique path."
         )
+
+
+def get_project_root_warnings(projects: list[ProjectConfig]):
+    warnings: list[str] = []
+    home_path = Path.home().resolve()
+    resolved_paths = {
+        project.name: Path(project.path).resolve() for project in projects
+    }
+
+    for project in projects:
+        project_path = resolved_paths[project.name]
+
+        if project_path == home_path:
+            warnings.append(
+                f"Project '{project.name}' path '{project.path}' is the current user's home directory."
+            )
+
+        if project_path.parent == project_path:
+            warnings.append(
+                f"Project '{project.name}' path '{project.path}' is the filesystem root."
+            )
+
+        contained_projects: list[str] = []
+        for other_project in projects:
+            if other_project.name == project.name:
+                continue
+
+            other_path = resolved_paths[other_project.name]
+            try:
+                other_path.relative_to(project_path)
+            except ValueError:
+                continue
+
+            if other_path != project_path:
+                contained_projects.append(other_project.name)
+
+        if contained_projects:
+            child_projects = ", ".join(sorted(contained_projects))
+            warnings.append(
+                f"Project '{project.name}' path '{project.path}' contains other registered project roots: {child_projects}."
+            )
+
+    return warnings
 
 
 def _generate_unique_project_name(base_name: str, existing_names: list[str]):

@@ -56,3 +56,35 @@ def test_cli_project_detection_from_subdirectory(multi_project_workspace, monkey
     assert result.exit_code == 0
     assert "project_a" in result.output
     assert "Active Project" in result.output
+
+
+def test_cli_check_config_shows_project_root_warnings(tmp_path, monkeypatch):
+    home_project = tmp_path / "workspace"
+    nested_project = home_project / "service"
+    nested_project.mkdir(parents=True)
+
+    monkeypatch.setenv("HOME", str(home_project))
+    monkeypatch.chdir(home_project)
+
+    config_dir = home_project / ".config" / "mcp-markdown-ragdocs"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(f"""
+[[projects]]
+name = "workspace"
+path = "{home_project}"
+
+[[projects]]
+name = "service"
+path = "{nested_project}"
+
+[indexing]
+documents_path = "."
+""")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["check-config"])
+
+    assert result.exit_code == 0
+    assert "Warnings" in result.output
+    assert "current user's home directory" in result.output
+    assert "contains other registered project roots: service" in result.output
