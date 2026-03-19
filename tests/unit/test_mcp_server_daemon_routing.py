@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from src.daemon.metadata import DaemonMetadata
@@ -12,7 +14,7 @@ async def test_mcp_server_prefers_daemon_tool_listing(monkeypatch):
 
     monkeypatch.setattr(
         "src.mcp.server.start_daemon",
-        lambda *, project_override, timeout_seconds=10.0, paths=None: DaemonMetadata(
+        lambda *, timeout_seconds=10.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
             status="ready",
@@ -44,7 +46,7 @@ async def test_mcp_server_prefers_daemon_tool_calls(monkeypatch):
 
     monkeypatch.setattr(
         "src.mcp.server.start_daemon",
-        lambda *, project_override, timeout_seconds=10.0, paths=None: DaemonMetadata(
+        lambda *, timeout_seconds=10.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
             status="ready",
@@ -71,7 +73,7 @@ async def test_mcp_server_does_not_wait_for_ready_daemon_before_tool_call(monkey
 
     monkeypatch.setattr(
         "src.mcp.server.start_daemon",
-        lambda *, project_override, timeout_seconds=30.0, paths=None: DaemonMetadata(
+        lambda *, timeout_seconds=30.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
             status="initializing",
@@ -104,7 +106,7 @@ async def test_mcp_server_retries_tool_call_after_timeout(monkeypatch):
 
     monkeypatch.setattr(
         "src.mcp.server.start_daemon",
-        lambda *, project_override, timeout_seconds=30.0, paths=None: DaemonMetadata(
+        lambda *, timeout_seconds=30.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
             status="ready_primary",
@@ -141,3 +143,27 @@ async def test_mcp_server_retries_tool_call_after_timeout(monkeypatch):
 
     assert calls["count"] == 2
     assert len(contents) == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_server_startup_does_not_forward_project_context(monkeypatch):
+    server = MCPServer(project_override="docs")
+    observed: dict[str, object] = {}
+
+    def _fake_start_daemon(*, timeout_seconds=30.0, paths=None):
+        observed["timeout_seconds"] = timeout_seconds
+        observed["paths"] = paths
+        return DaemonMetadata(
+            pid=1,
+            started_at=1.0,
+            status="ready",
+            socket_path="/tmp/ragdocs.sock",
+        )
+
+    monkeypatch.setattr("src.mcp.server.start_daemon", _fake_start_daemon)
+
+    socket_path, status = server._get_daemon_metadata()
+
+    assert socket_path == Path("/tmp/ragdocs.sock")
+    assert status == "ready"
+    assert observed == {"timeout_seconds": 30.0, "paths": None}

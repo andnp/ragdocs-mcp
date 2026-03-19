@@ -16,10 +16,8 @@ class HueyWorkerProcess:
         self,
         *,
         runtime_paths: RuntimePaths,
-        project_override: str | None = None,
     ) -> None:
         self._runtime_paths = runtime_paths
-        self._project_override = project_override
         self._process: subprocess.Popen[bytes] | None = None
 
     @property

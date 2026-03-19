@@ -74,7 +74,7 @@ def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> N
     )
     monkeypatch.setattr(
         "src.daemon.management._spawn_daemon_process",
-        lambda project_override, runtime_paths: _FakeProcess(101, [None, None, None]),
+        lambda runtime_paths: _FakeProcess(101, [None, None, None]),
     )
     monkeypatch.setattr(
         "src.daemon.management.probe_daemon_socket",
@@ -87,7 +87,7 @@ def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> N
     assert result == metadata
 
 
-def test_spawn_daemon_process_does_not_forward_project_override(
+def test_spawn_daemon_process_uses_project_agnostic_command(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -108,7 +108,7 @@ def test_spawn_daemon_process_does_not_forward_project_override(
 
     from src.daemon.management import _spawn_daemon_process
 
-    _spawn_daemon_process("docs", _paths(tmp_path))
+    _spawn_daemon_process(_paths(tmp_path))
 
     command = observed["command"]
     assert command[:4] == ["/repo/.venv/bin/python", "-m", "src.cli", "daemon-internal-run"]
@@ -149,7 +149,7 @@ def test_start_daemon_accepts_race_winner_metadata(monkeypatch, tmp_path: Path) 
     )
     monkeypatch.setattr(
         "src.daemon.management._spawn_daemon_process",
-        lambda project_override, runtime_paths: _FakeProcess(202, [1, 1, 1]),
+        lambda runtime_paths: _FakeProcess(202, [1, 1, 1]),
     )
     monkeypatch.setattr(
         "src.daemon.management.probe_daemon_socket",
@@ -223,7 +223,7 @@ def test_start_daemon_surfaces_log_excerpt_on_spawn_failure(
     )
     monkeypatch.setattr(
         "src.daemon.management._spawn_daemon_process",
-        lambda project_override, runtime_paths: _FakeProcess(909, [7, 7, 7]),
+        lambda runtime_paths: _FakeProcess(909, [7, 7, 7]),
     )
     monkeypatch.setattr("src.daemon.management.time.sleep", lambda _: None)
 
@@ -314,7 +314,7 @@ def test_start_daemon_cleans_up_old_nonresponsive_metadata_before_spawn(
     )
     monkeypatch.setattr(
         "src.daemon.management._spawn_daemon_process",
-        lambda project_override, runtime_paths: _FakeProcess(717, [None, None]),
+        lambda runtime_paths: _FakeProcess(717, [None, None]),
     )
 
     def _fake_wait_for_ready_daemon(*, deadline, paths, spawned_process=None):

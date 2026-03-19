@@ -230,8 +230,7 @@ def test_daemon_start_invokes_management_helper(monkeypatch):
     runner = CliRunner()
     observed: dict[str, object] = {}
 
-    def _fake_start_daemon(*, project_override, timeout_seconds, paths=None):
-        observed["project_override"] = project_override
+    def _fake_start_daemon(*, timeout_seconds, paths=None):
         observed["timeout_seconds"] = timeout_seconds
         return DaemonMetadata(pid=99, started_at=1.0, status="ready")
 
@@ -243,7 +242,7 @@ def test_daemon_start_invokes_management_helper(monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert observed == {"project_override": "docs", "timeout_seconds": 3.5}
+    assert observed == {"timeout_seconds": 3.5}
     assert "Daemon running (pid=99, status=ready)" in result.output
 
 
@@ -463,8 +462,7 @@ def test_daemon_restart_invokes_management_helper(monkeypatch):
     runner = CliRunner()
     observed: dict[str, object] = {}
 
-    def _fake_restart_daemon(*, project_override, start_timeout_seconds, paths=None, stop_timeout_seconds=5.0):
-        observed["project_override"] = project_override
+    def _fake_restart_daemon(*, start_timeout_seconds, paths=None, stop_timeout_seconds=5.0):
         observed["start_timeout_seconds"] = start_timeout_seconds
         observed["stop_timeout_seconds"] = stop_timeout_seconds
         return DaemonMetadata(pid=123, started_at=1.0, status="ready")
@@ -478,7 +476,6 @@ def test_daemon_restart_invokes_management_helper(monkeypatch):
 
     assert result.exit_code == 0
     assert observed == {
-        "project_override": "notes",
         "start_timeout_seconds": 4.0,
         "stop_timeout_seconds": 5.0,
     }
@@ -508,9 +505,8 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
             )()
 
     class _FakeWorker:
-        def __init__(self, *, runtime_paths, project_override):
+        def __init__(self, *, runtime_paths):
             observed["worker_runtime_paths"] = runtime_paths
-            observed["worker_project_override"] = project_override
 
     fake_ctx = _FakeContext()
     fake_huey = object()
@@ -570,8 +566,74 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
         100,
     )
     assert observed["worker_runtime_paths"] == runtime_paths
-    assert observed["worker_project_override"] is None
     assert worker is not None
+
+
+def test_request_daemon_json_auto_start_ignores_project_context_for_startup(monkeypatch, tmp_path):
+    runtime_paths = RuntimePaths(
+        root=tmp_path,
+        index_db_path=tmp_path / "index.db",
+        queue_db_path=tmp_path / "queue.db",
+        metadata_path=tmp_path / "daemon.json",
+        lock_path=tmp_path / "daemon.lock",
+        socket_path=tmp_path / "daemon.sock",
+    )
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        RuntimePaths,
+        "resolve",
+        classmethod(lambda cls: runtime_paths),
+    )
+    monkeypatch.setattr(
+        "src.cli.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=None,
+            running=False,
+            stale=False,
+            responsive=False,
+            ready=False,
+        ),
+    )
+
+    def _fake_start_daemon(*, timeout_seconds=10.0, paths=None):
+        observed["timeout_seconds"] = timeout_seconds
+        observed["paths"] = paths
+        return DaemonMetadata(
+            pid=321,
+            started_at=1.0,
+            status="ready",
+            socket_path=str(runtime_paths.socket_path),
+        )
+
+    def _fake_request_daemon_socket(socket_path, path, payload, timeout_seconds):
+        observed["socket_path"] = socket_path
+        observed["path"] = path
+        observed["payload"] = payload
+        observed["request_timeout_seconds"] = timeout_seconds
+        return {"status": "ok", "value": 1}
+
+    monkeypatch.setattr("src.cli.start_daemon", _fake_start_daemon)
+    monkeypatch.setattr("src.cli.request_daemon_socket", _fake_request_daemon_socket)
+
+    from src.cli import _request_daemon_json
+
+    response = _request_daemon_json(
+        "/api/search/query",
+        {"project_context": "project-a"},
+        project_override="project-a",
+        auto_start=True,
+    )
+
+    assert response == {"status": "ok", "value": 1}
+    assert observed == {
+        "timeout_seconds": 10.0,
+        "paths": runtime_paths,
+        "socket_path": runtime_paths.socket_path,
+        "path": "/api/search/query",
+        "payload": {"project_context": "project-a"},
+        "request_timeout_seconds": 30.0,
+    }
 
 
 def test_index_stats_reports_index_counts(monkeypatch, tmp_path):

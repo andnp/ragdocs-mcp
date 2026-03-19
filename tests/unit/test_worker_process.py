@@ -60,7 +60,7 @@ def test_worker_process_start_uses_internal_worker_command(monkeypatch, tmp_path
 
     monkeypatch.setattr("src.worker.process.subprocess.Popen", _fake_popen)
 
-    worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path), project_override="docs")
+    worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
     worker.start()
 
     command = observed["command"]

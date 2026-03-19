@@ -113,7 +113,6 @@ def _create_daemon_runtime(project: str | None, runtime_paths: RuntimePaths):
     )
     worker = HueyWorkerProcess(
         runtime_paths=runtime_paths,
-        project_override=None,
     )
     return ctx, worker
 
@@ -678,7 +677,6 @@ def daemon_start(project: str | None, timeout: float):
     """Start the daemon in the background."""
     try:
         metadata = start_daemon(
-            project_override=project,
             timeout_seconds=timeout,
         )
     except Exception as e:
@@ -836,7 +834,6 @@ def daemon_restart(project: str | None, timeout: float):
     """Restart the daemon."""
     try:
         metadata = restart_daemon(
-            project_override=project,
             start_timeout_seconds=timeout,
         )
     except Exception as e:
@@ -1007,7 +1004,6 @@ def _request_daemon_json(
     metadata = inspection.metadata if inspection.responsive else None
     if metadata is None and auto_start:
         metadata = start_daemon(
-            project_override=project_override,
             paths=runtime_paths,
         )
     if metadata is None or not metadata.socket_path:

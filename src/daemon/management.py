@@ -76,7 +76,6 @@ def inspect_daemon(paths: RuntimePaths | None = None) -> DaemonInspection:
 
 def start_daemon(
     *,
-    project_override: str | None = None,
     timeout_seconds: float = 10.0,
     paths: RuntimePaths | None = None,
 ) -> DaemonMetadata:
@@ -95,7 +94,7 @@ def start_daemon(
     if current.stale:
         _cleanup_stale_runtime_state(runtime_paths)
 
-    process = _spawn_daemon_process(project_override, runtime_paths)
+    process = _spawn_daemon_process(runtime_paths)
     return _wait_for_ready_daemon(
         deadline=deadline,
         paths=runtime_paths,
@@ -159,14 +158,12 @@ def _request_internal_shutdown(metadata: DaemonMetadata) -> bool:
 
 def restart_daemon(
     *,
-    project_override: str | None = None,
     start_timeout_seconds: float = 10.0,
     stop_timeout_seconds: float = 5.0,
     paths: RuntimePaths | None = None,
 ) -> DaemonMetadata:
     stop_daemon(timeout_seconds=stop_timeout_seconds, paths=paths)
     return start_daemon(
-        project_override=project_override,
         timeout_seconds=start_timeout_seconds,
         paths=paths,
     )
@@ -198,7 +195,6 @@ def wait_for_daemon_ready(
 
 
 def _spawn_daemon_process(
-    project_override: str | None,
     runtime_paths: RuntimePaths,
 ) -> subprocess.Popen[bytes]:
     command = [
