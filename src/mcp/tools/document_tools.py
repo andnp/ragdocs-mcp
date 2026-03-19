@@ -10,6 +10,7 @@ from mcp.types import Tool, TextContent
 
 from src.mcp.handlers import (
     HandlerContext,
+    format_search_status_text,
     tool_handler,
     MIN_TOP_N,
     MAX_TOP_N,
@@ -218,6 +219,15 @@ async def _query_documents_impl(
     except ValidationError as e:
         return [TextContent(type="text", text=f"Validation error: {e}")]
 
+    cold_start_payload = hctx.get_nonblocking_search_payload(query=query)
+    if cold_start_payload is not None:
+        return [
+            TextContent(
+                type="text",
+                text=format_search_status_text(result_header, cold_start_payload),
+            )
+        ]
+
     await hctx.wait_for_ready()
 
     ctx = hctx.require_ctx()
@@ -374,6 +384,22 @@ async def handle_search_git_history(
         project_context = validate_optional_string(arguments, "project_context")
     except ValidationError as e:
         return [TextContent(type="text", text=f"Validation error: {e}")]
+
+    cold_start_payload = hctx.get_nonblocking_search_payload(
+        query=query,
+        include_git_metadata=True,
+    )
+    if cold_start_payload is not None:
+        return [
+            TextContent(
+                type="text",
+                text=format_search_status_text(
+                    "Git History Search Results",
+                    cold_start_payload,
+                    include_git_metadata=True,
+                ),
+            )
+        ]
 
     await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
