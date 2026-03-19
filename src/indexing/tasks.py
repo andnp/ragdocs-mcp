@@ -6,6 +6,13 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from src.coordination.task_submission import (
+    get_pending_task_count as get_shared_pending_task_count,
+    get_pending_task_first_args,
+    is_backpressured,
+    submit_single_task,
+    submit_task_batch,
+)
 from src.indexing.bootstrap_checkpoint import mark_bootstrap_file_completed
 
 if TYPE_CHECKING:
@@ -145,55 +152,28 @@ def enqueue_index(file_path: str, force: bool = False) -> bool:
     """Enqueue an index_document task. Returns True if enqueued, False if no Huey."""
     if index_document_task is None or _huey is None:
         return False
-    if get_pending_task_count() >= _task_backpressure_limit:
-        logger.warning(
-            "Skipping index enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
-            file_path,
-            get_pending_task_count(),
-            _task_backpressure_limit,
-        )
+    if is_backpressured(
+        _huey,
+        _task_backpressure_limit,
+        item=file_path,
+        warning_message="Skipping index enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
+    ):
         return False
-    index_document_task(file_path, force=force)
-    return True
+    return submit_single_task(
+        index_document_task,
+        file_path,
+        task_kwargs={"force": force},
+    )
 
 
 def _get_pending_task_first_args(task_name: str) -> set[str]:
     """Return first positional string args already pending for the given task name."""
-    if _huey is None:
-        return set()
-
-    try:
-        pending_messages = _huey.storage.enqueued_items()
-    except Exception:
-        logger.warning(
-            "Failed to inspect pending Huey tasks; startup batch dedupe disabled",
-            exc_info=True,
-        )
-        return set()
-
-    pending_paths: set[str] = set()
-    for message in pending_messages:
-        try:
-            task = _huey.deserialize_task(message)
-        except Exception:
-            logger.warning(
-                "Failed to deserialize pending Huey task while inspecting startup queue",
-                exc_info=True,
-            )
-            continue
-
-        if getattr(task, "name", None) != task_name:
-            continue
-
-        args = getattr(task, "args", ())
-        if not args:
-            continue
-
-        file_path = args[0]
-        if isinstance(file_path, str):
-            pending_paths.add(file_path)
-
-    return pending_paths
+    return get_pending_task_first_args(
+        _huey,
+        task_name,
+        inspection_failure_log_message="Failed to inspect pending Huey tasks; startup batch dedupe disabled",
+        deserialize_failure_log_message="Failed to deserialize pending Huey task while inspecting startup queue",
+    )
 
 
 def _get_pending_index_document_paths() -> set[str]:
@@ -216,25 +196,13 @@ def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
         return 0
 
     pending_paths = set() if force else _get_pending_index_document_paths()
-    enqueued = 0
-    skipped_pending = 0
-    seen_paths = set(pending_paths)
-    for file_path in file_paths:
-        if file_path in seen_paths:
-            if file_path in pending_paths:
-                skipped_pending += 1
-            continue
-        index_document_task(file_path, force=force)
-        seen_paths.add(file_path)
-        enqueued += 1
-
-    if skipped_pending > 0:
-        logger.info(
-            "Skipped %d startup indexing task(s) already pending in queue",
-            skipped_pending,
-        )
-
-    return enqueued
+    return submit_task_batch(
+        index_document_task,
+        file_paths,
+        task_kwargs={"force": force},
+        pending_first_args=pending_paths,
+        skipped_pending_log_message="Skipped %d startup indexing task(s) already pending in queue",
+    )
 
 
 def get_pending_index_document_count(file_paths: list[str]) -> int:
@@ -251,38 +219,33 @@ def enqueue_remove(doc_id: str) -> bool:
     """Enqueue a remove_document task. Returns True if enqueued, False if no Huey."""
     if remove_document_task is None or _huey is None:
         return False
-    if get_pending_task_count() >= _task_backpressure_limit:
-        logger.warning(
-            "Skipping remove enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
-            doc_id,
-            get_pending_task_count(),
-            _task_backpressure_limit,
-        )
+    if is_backpressured(
+        _huey,
+        _task_backpressure_limit,
+        item=doc_id,
+        warning_message="Skipping remove enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
+    ):
         return False
-    remove_document_task(doc_id)
-    return True
+    return submit_single_task(remove_document_task, doc_id)
 
 
 def enqueue_refresh_git(git_dir: str) -> bool:
     """Enqueue a refresh_git_repository task. Returns True if enqueued."""
     if refresh_git_repository_task is None or _huey is None:
         return False
-    if get_pending_task_count() >= _task_backpressure_limit:
-        logger.warning(
-            "Skipping git refresh enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
-            git_dir,
-            get_pending_task_count(),
-            _task_backpressure_limit,
-        )
+    if is_backpressured(
+        _huey,
+        _task_backpressure_limit,
+        item=git_dir,
+        warning_message="Skipping git refresh enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
+    ):
         return False
-    if git_dir in _get_pending_refresh_git_dirs():
-        logger.info(
-            "Skipping git refresh enqueue for %s because a pending task already exists",
-            git_dir,
-        )
-        return False
-    refresh_git_repository_task(git_dir)
-    return True
+    return submit_single_task(
+        refresh_git_repository_task,
+        git_dir,
+        pending_first_args=_get_pending_refresh_git_dirs(),
+        pending_skip_log_message="Skipping git refresh enqueue for %s because a pending task already exists",
+    )
 
 
 def enqueue_refresh_git_batch(git_dirs: list[str]) -> int:
@@ -290,32 +253,16 @@ def enqueue_refresh_git_batch(git_dirs: list[str]) -> int:
     if refresh_git_repository_task is None or _huey is None:
         return 0
 
-    pending_git_dirs = _get_pending_refresh_git_dirs()
-    enqueued = 0
-    skipped_pending = 0
-    seen_git_dirs = set(pending_git_dirs)
-    for git_dir in git_dirs:
-        if git_dir in seen_git_dirs:
-            if git_dir in pending_git_dirs:
-                skipped_pending += 1
-            continue
-        refresh_git_repository_task(git_dir)
-        seen_git_dirs.add(git_dir)
-        enqueued += 1
-
-    if skipped_pending > 0:
-        logger.info(
-            "Skipped %d startup git refresh task(s) already pending in queue",
-            skipped_pending,
-        )
-
-    return enqueued
+    return submit_task_batch(
+        refresh_git_repository_task,
+        git_dirs,
+        pending_first_args=_get_pending_refresh_git_dirs(),
+        skipped_pending_log_message="Skipped %d startup git refresh task(s) already pending in queue",
+    )
 
 
 def get_pending_task_count() -> int:
-    if _huey is None:
-        return 0
-    return int(_huey.pending_count())
+    return get_shared_pending_task_count(_huey)
 
 
 def is_task_queue_available() -> bool:
