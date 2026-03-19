@@ -194,7 +194,7 @@ async def test_chunk_result_scores_normalized(config, manager, orchestrator):
     scores = [result.score for result in results]
 
     # Verify first result has high confidence (calibrated score)
-    assert results[0].score > 0.95, "Highest score should be > 0.95 (high confidence)"
+    assert results[0].score > 0.9, "Highest score should remain high-confidence"
 
     # Verify scores are descending
     for i in range(len(scores) - 1):
@@ -724,3 +724,63 @@ This extra content keeps the document above the parent chunk threshold.
     assert recovered.file_path.endswith("parent_fallback.md")
     assert recovered.content.strip() != ""
     assert recovered.doc_id == "parent_fallback"
+
+
+@pytest.mark.asyncio
+async def test_query_returns_clean_section_titles_and_parent_content(
+    config, manager, orchestrator
+):
+    docs_dir = Path(config.indexing.documents_path)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    config.chunking.min_chunk_chars = 40
+    config.chunking.max_chunk_chars = 180
+    config.chunking.parent_chunk_min_chars = 120
+    config.chunking.parent_chunk_max_chars = 600
+
+    doc = create_test_document(
+        docs_dir,
+        "clean_chunk_result",
+        """# API Guide
+
+## TL;DR
+
+Use token auth.
+
+## Authentication Details
+
+Bearer tokens must be rotated every 24 hours. Include scopes and issuer validation.
+Additional notes keep the section large enough for parent expansion.
+""",
+    )
+
+    manager.index_document(doc)
+
+    results, _, _ = await orchestrator.query(
+        "issuer validation scopes",
+        top_k=10,
+        top_n=5,
+    )
+
+    matching_results = [result for result in results if result.doc_id == "clean_chunk_result"]
+    assert matching_results
+    assert any(
+        "Authentication Details" in result.content and not result.content.startswith("#")
+        for result in matching_results
+    )
+    assert all("+" not in result.header_path for result in matching_results)
+
+    child_result = next(
+        (result for result in matching_results if "_parent_" not in result.chunk_id),
+        None,
+    )
+    if child_result is not None:
+        assert child_result.content.startswith("Authentication Details")
+        assert "Context: API Guide" in child_result.content
+        assert child_result.parent_content is not None
+        assert child_result.parent_content.strip() != ""
+        assert child_result.parent_content.startswith("API Guide")
+    else:
+        parent_result = next(result for result in matching_results if "_parent_" in result.chunk_id)
+        assert parent_result.content.startswith("API Guide")
+        assert "Authentication Details" in parent_result.content

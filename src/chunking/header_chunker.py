@@ -104,9 +104,9 @@ class HeaderBasedChunker(ChunkingStrategy):
             start_pos = header.start_pos
             end_pos = headers[i + 1].start_pos if i + 1 < len(headers) else len(content)
 
-            chunk_content = content[start_pos:end_pos].strip()
-
             header_path = self._build_header_path(headers, i)
+            section_body = content[header.end_pos:end_pos].strip()
+            chunk_content = self._compose_chunk_content(header_path, section_body)
 
             chunk_id = f"{document.id}_chunk_{i}"
 
@@ -144,6 +144,145 @@ class HeaderBasedChunker(ChunkingStrategy):
 
         return " > ".join(path_parts)
 
+    def _compose_chunk_content(self, header_path: str, section_body: str) -> str:
+        cleaned_body = section_body.strip()
+        header_parts = self._split_header_path(header_path)
+        if not header_parts:
+            return cleaned_body
+
+        display_lines = [header_parts[-1]]
+        parent_context = " > ".join(header_parts[:-1])
+        if parent_context:
+            display_lines.append(f"Context: {parent_context}")
+
+        display_prefix = "\n".join(display_lines)
+        if cleaned_body:
+            return f"{display_prefix}\n\n{cleaned_body}"
+        return display_prefix
+
+    def _split_header_path(self, header_path: str) -> list[str]:
+        return [part.strip() for part in header_path.split(">") if part.strip()]
+
+    def _shared_header_prefix(self, header_paths: list[str]) -> list[str]:
+        split_paths = [self._split_header_path(path) for path in header_paths if path]
+        if not split_paths:
+            return []
+
+        shared = split_paths[0]
+        for parts in split_paths[1:]:
+            prefix_length = 0
+            for left, right in zip(shared, parts):
+                if left != right:
+                    break
+                prefix_length += 1
+            shared = shared[:prefix_length]
+            if not shared:
+                break
+
+        return shared
+
+    def _combine_header_paths(self, *header_paths: str) -> str:
+        non_empty_paths = [path for path in header_paths if path]
+        if not non_empty_paths:
+            return ""
+
+        shared_prefix = self._shared_header_prefix(non_empty_paths)
+        shared_prefix_text = " > ".join(shared_prefix)
+
+        suffixes: list[str] = []
+        for header_path in non_empty_paths:
+            parts = self._split_header_path(header_path)
+            suffix = " > ".join(parts[len(shared_prefix) :])
+            if suffix and suffix not in suffixes:
+                suffixes.append(suffix)
+
+        if shared_prefix_text and not suffixes:
+            return shared_prefix_text
+        if shared_prefix_text and len(suffixes) == 1:
+            return f"{shared_prefix_text} > {suffixes[0]}"
+        if shared_prefix_text and suffixes:
+            return f"{shared_prefix_text} > {' / '.join(suffixes)}"
+
+        return " / ".join(non_empty_paths)
+
+    def _header_path_extends(self, base_path: str, candidate_path: str) -> bool:
+        base_parts = self._split_header_path(base_path)
+        candidate_parts = self._split_header_path(candidate_path)
+        return bool(base_parts) and candidate_parts[: len(base_parts)] == base_parts
+
+    def _merge_chunk_pair(self, left: Chunk, right: Chunk) -> Chunk:
+        left_body = self._strip_structured_chunk_prefix(left.content, left.header_path)
+        right_body = self._strip_structured_chunk_prefix(right.content, right.header_path)
+
+        left_is_context_only = left.content.strip() != "" and not left_body.strip()
+        right_is_context_only = right.content.strip() != "" and not right_body.strip()
+
+        if left_is_context_only and self._header_path_extends(
+            left.header_path,
+            right.header_path,
+        ):
+            combined_content = right.content
+            merged_header_path = right.header_path
+        elif right_is_context_only and self._header_path_extends(
+            right.header_path,
+            left.header_path,
+        ):
+            combined_content = left.content
+            merged_header_path = left.header_path
+        else:
+            combined_content = f"{left.content}\n\n{right.content}"
+            merged_header_path = self._combine_header_paths(
+                left.header_path,
+                right.header_path,
+            )
+
+        return Chunk(
+            chunk_id=left.chunk_id,
+            doc_id=left.doc_id,
+            content=combined_content,
+            metadata=left.metadata,
+            chunk_index=left.chunk_index,
+            header_path=merged_header_path,
+            start_pos=left.start_pos,
+            end_pos=right.end_pos,
+            file_path=left.file_path,
+            modified_time=left.modified_time,
+        )
+
+    def _strip_structured_chunk_prefix(self, content: str, header_path: str) -> str:
+        header_parts = self._split_header_path(header_path)
+        if not header_parts:
+            return content
+
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != header_parts[-1]:
+            return content
+
+        index = 1
+        expected_context = " > ".join(header_parts[:-1])
+        if expected_context and index < len(lines):
+            context_prefix = "Context: "
+            if lines[index].startswith(context_prefix):
+                observed_context = lines[index][len(context_prefix) :].strip()
+                if observed_context == expected_context:
+                    index += 1
+
+        while index < len(lines) and not lines[index].strip():
+            index += 1
+
+        return "\n".join(lines[index:]).lstrip()
+
+    def _select_parent_header_path(self, chunks: list[Chunk]) -> str:
+        header_paths = [chunk.header_path for chunk in chunks if chunk.header_path]
+        if not header_paths:
+            return ""
+
+        shared_prefix = self._shared_header_prefix(header_paths)
+        if shared_prefix:
+            return " > ".join(shared_prefix)
+
+        return header_paths[0]
+
     def _merge_small_chunks(self, chunks: list[Chunk]) -> list[Chunk]:
         if not chunks:
             return chunks
@@ -160,26 +299,15 @@ class HeaderBasedChunker(ChunkingStrategy):
                 continue
 
             if i + 1 < len(chunks):
-                next_chunk = chunks[i + 1]
-                combined_content = current.content + "\n\n" + next_chunk.content
-
-                merged_chunk = Chunk(
-                    chunk_id=current.chunk_id,
-                    doc_id=current.doc_id,
-                    content=combined_content,
-                    metadata=current.metadata,
-                    chunk_index=current.chunk_index,
-                    header_path=f"{current.header_path} + {next_chunk.header_path}",
-                    start_pos=current.start_pos,
-                    end_pos=next_chunk.end_pos,
-                    file_path=current.file_path,
-                    modified_time=current.modified_time,
-                )
-                merged.append(merged_chunk)
+                merged.append(self._merge_chunk_pair(current, chunks[i + 1]))
                 i += 2
+                continue
+
+            if merged:
+                merged[-1] = self._merge_chunk_pair(merged[-1], current)
             else:
                 merged.append(current)
-                i += 1
+            i += 1
 
         return merged
 
@@ -191,7 +319,11 @@ class HeaderBasedChunker(ChunkingStrategy):
                 result.append(chunk)
                 continue
 
-            paragraphs = re.split(r"\n\n+", chunk.content)
+            section_body = self._strip_structured_chunk_prefix(
+                chunk.content,
+                chunk.header_path,
+            )
+            paragraphs = re.split(r"\n\n+", section_body if section_body else chunk.content)
             current_content = ""
             sub_index = 0
 
@@ -203,10 +335,14 @@ class HeaderBasedChunker(ChunkingStrategy):
                 ):
                     current_content += "\n\n" + para
                 else:
+                    sub_chunk_content = self._compose_chunk_content(
+                        chunk.header_path,
+                        current_content,
+                    )
                     sub_chunk = Chunk(
                         chunk_id=f"{chunk.chunk_id}_sub_{sub_index}",
                         doc_id=chunk.doc_id,
-                        content=current_content,
+                        content=sub_chunk_content,
                         metadata=chunk.metadata,
                         chunk_index=chunk.chunk_index,
                         header_path=chunk.header_path,
@@ -220,12 +356,16 @@ class HeaderBasedChunker(ChunkingStrategy):
                     sub_index += 1
 
             if current_content:
+                sub_chunk_content = self._compose_chunk_content(
+                    chunk.header_path,
+                    current_content,
+                )
                 sub_chunk = Chunk(
                     chunk_id=f"{chunk.chunk_id}_sub_{sub_index}"
                     if sub_index > 0
                     else chunk.chunk_id,
                     doc_id=chunk.doc_id,
-                    content=current_content,
+                    content=sub_chunk_content,
                     metadata=chunk.metadata,
                     chunk_index=chunk.chunk_index,
                     header_path=chunk.header_path,
@@ -395,7 +535,9 @@ class HeaderBasedChunker(ChunkingStrategy):
                         content=current_parent_content,
                         metadata=current_parent_chunks[0].metadata,
                         chunk_index=parent_index,
-                        header_path=current_parent_chunks[0].header_path,
+                        header_path=self._select_parent_header_path(
+                            current_parent_chunks
+                        ),
                         start_pos=current_parent_chunks[0].start_pos,
                         end_pos=current_parent_chunks[-1].end_pos,
                         file_path=document.file_path,
@@ -436,7 +578,7 @@ class HeaderBasedChunker(ChunkingStrategy):
                     content=current_parent_content,
                     metadata=current_parent_chunks[0].metadata,
                     chunk_index=parent_index,
-                    header_path=current_parent_chunks[0].header_path,
+                    header_path=self._select_parent_header_path(current_parent_chunks),
                     start_pos=current_parent_chunks[0].start_pos,
                     end_pos=current_parent_chunks[-1].end_pos,
                     file_path=document.file_path,
