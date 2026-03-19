@@ -30,7 +30,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from src.config import load_config, detect_project
+from src.config import load_config
 from src.daemon.queue_status import get_queue_stats
 from src.daemon import RuntimePaths, read_daemon_metadata
 from src.daemon.health import (
@@ -45,7 +45,6 @@ from src.daemon.management import (
     restart_daemon,
     start_daemon,
     stop_daemon,
-    wait_for_daemon_ready,
 )
 from src.git.repository import get_commits_after_timestamp, is_git_available
 from src.git.parallel_indexer import (
@@ -287,6 +286,104 @@ def _build_admin_overview_payload(
     }
 
 
+def _build_initializing_search_payload(
+    ctx: ApplicationContext,
+    coordinator: LifecycleCoordinator,
+    *,
+    query: str,
+    include_git_metadata: bool = False,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "status": "initializing",
+        "message": "Search indices are still initializing. Retry shortly.",
+        "query": query,
+        "results": [],
+        "lifecycle": coordinator.state.value,
+        "daemon_scope": "global",
+        "project_context_mode": "request_only",
+        "configured_root_count": len(ctx.documents_roots),
+        "index_state": ctx.get_index_state().to_dict(),
+    }
+    if include_git_metadata:
+        payload["total_commits_indexed"] = (
+            ctx.commit_indexer.get_total_commits() if ctx.commit_indexer is not None else 0
+        )
+    else:
+        payload["compression_stats"] = {}
+        payload["strategy_stats"] = {}
+    return payload
+
+
+def _build_unavailable_search_payload(
+    ctx: ApplicationContext,
+    coordinator: LifecycleCoordinator,
+) -> dict[str, object]:
+    index_state = ctx.get_index_state()
+    return {
+        "status": "error",
+        "error": "index_initialization_failed",
+        "details": index_state.last_error or "Search indices are not queryable.",
+        "lifecycle": coordinator.state.value,
+        "daemon_scope": "global",
+        "project_context_mode": "request_only",
+        "configured_root_count": len(ctx.documents_roots),
+        "index_state": index_state.to_dict(),
+    }
+
+
+def _get_cold_start_search_response(
+    ctx: ApplicationContext,
+    coordinator: LifecycleCoordinator,
+    *,
+    query: str,
+    include_git_metadata: bool = False,
+) -> dict[str, object] | None:
+    if ctx.is_ready():
+        return None
+
+    index_state = ctx.get_index_state()
+    if index_state.status in {"failed", "partial"}:
+        return _build_unavailable_search_payload(ctx, coordinator)
+
+    return _build_initializing_search_payload(
+        ctx,
+        coordinator,
+        query=query,
+        include_git_metadata=include_git_metadata,
+    )
+
+
+def _render_initializing_search_response(
+    console: Console,
+    payload: dict[str, object],
+    *,
+    include_git_metadata: bool = False,
+) -> None:
+    lifecycle = str(payload.get("lifecycle", "unknown"))
+    configured_root_count = payload.get("configured_root_count")
+    index_state = payload.get("index_state", {})
+    status = "unknown"
+    indexed_count = 0
+    total_count = 0
+    if isinstance(index_state, dict):
+        status = str(index_state.get("status", "unknown"))
+        indexed_count = int(index_state.get("indexed_count", 0) or 0)
+        total_count = int(index_state.get("total_count", 0) or 0)
+
+    console.print("[yellow]Search service is initializing.[/yellow]")
+    console.print(f"[dim]Lifecycle:[/dim] {lifecycle}")
+    if isinstance(configured_root_count, int):
+        console.print(f"[dim]Configured roots:[/dim] {configured_root_count}")
+    console.print(
+        f"[dim]Index state:[/dim] {status} ({indexed_count}/{total_count})"
+    )
+    if include_git_metadata:
+        console.print(
+            f"[dim]Total commits indexed:[/dim] {int(payload.get('total_commits_indexed', 0) or 0)}"
+        )
+    console.print("[dim]Results will appear once background initialization completes.[/dim]")
+
+
 def _request_daemon_overview(
     inspection: DaemonInspection,
     *,
@@ -509,8 +606,13 @@ async def _run_daemon_forever(project: str | None) -> None:
             coordinator.request_shutdown()
             return {"status": "ok", "lifecycle": coordinator.state.value}
         if path == "/api/search/query":
-            if not ctx.is_ready():
-                await coordinator.wait_ready(timeout=60.0)
+            cold_start_response = _get_cold_start_search_response(
+                ctx,
+                coordinator,
+                query=str(payload.get("query", "")),
+            )
+            if cold_start_response is not None:
+                return cold_start_response
             await ctx.ensure_fresh_indices()
             query_text = str(payload.get("query", ""))
             top_n = int(payload.get("top_n", 5))
@@ -544,6 +646,15 @@ async def _run_daemon_forever(project: str | None) -> None:
         if path == "/api/search/git-history":
             if ctx.commit_indexer is None:
                 return {"status": "error", "error": "git_indexing_unavailable"}
+
+            cold_start_response = _get_cold_start_search_response(
+                ctx,
+                coordinator,
+                query=str(payload.get("query", "")),
+                include_git_metadata=True,
+            )
+            if cold_start_response is not None:
+                return cold_start_response
 
             from src.git.commit_search import search_git_history
 
@@ -1394,6 +1505,10 @@ def query(
             click.echo(json.dumps(daemon_payload, indent=2))
             return
 
+        if daemon_payload.get("status") == "initializing":
+            _render_initializing_search_response(console, daemon_payload)
+            return
+
         console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
         if debug:
             from src.models import CompressionStats, SearchStrategyStats
@@ -1443,40 +1558,6 @@ def query(
         else:
             console.print("[yellow]No results found.[/yellow]")
         return
-
-        if output_json:
-            output = {
-                "query": query_text,
-                "results": [result.to_dict() for result in results],
-            }
-            click.echo(json.dumps(output, indent=2))
-            return
-
-        console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
-
-        if debug:
-            print_debug_stats(console, strategy_stats, compression_stats, 0.02)
-
-        if results:
-            console.print(f"[bold]Found {len(results)} results:[/bold]\n")
-
-            for idx, result in enumerate(results, 1):
-                panel_content = [
-                    f"[yellow]Document:[/yellow] {result.doc_id}",
-                    f"[magenta]Section:[/magenta] {result.header_path or '(no section)'}",
-                    f"[blue]File:[/blue] {result.file_path or '(unknown)'}",
-                    "",
-                    result.content,
-                ]
-                print_result_panel(
-                    console,
-                    idx,
-                    result.score,
-                    panel_content,
-                    is_last=(idx == len(results)),
-                )
-        else:
-            console.print("[yellow]No results found.[/yellow]")
 
     except FileNotFoundError as e:
         logger.error(f"Indices not found: {e}")
@@ -1564,6 +1645,14 @@ def search_commits(
             click.echo(json.dumps(daemon_payload, indent=2))
             return
 
+        if daemon_payload.get("status") == "initializing":
+            _render_initializing_search_response(
+                console,
+                daemon_payload,
+                include_git_metadata=True,
+            )
+            return
+
         console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
         console.print(
             f"[dim]Total commits indexed: {daemon_payload.get('total_commits_indexed', 0)}[/dim]\n"
@@ -1600,73 +1689,6 @@ def search_commits(
         else:
             console.print("[yellow]No results found.[/yellow]")
         return
-
-        if output_json:
-            output = {
-                "query": response.query,
-                "total_commits_indexed": response.total_commits_indexed,
-                "results": [
-                    {
-                        "hash": r.hash,
-                        "title": r.title,
-                        "author": r.author,
-                        "committer": r.committer,
-                        "timestamp": r.timestamp,
-                        "message": r.message,
-                        "files_changed": r.files_changed,
-                        "delta_truncated": r.delta_truncated,
-                        "score": r.score,
-                        "repo_path": r.repo_path,
-                    }
-                    for r in response.results
-                ],
-            }
-            click.echo(json.dumps(output, indent=2))
-            return
-
-        console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
-        console.print(
-            f"[dim]Total commits indexed: {response.total_commits_indexed}[/dim]\n"
-        )
-
-        if response.results:
-            console.print(f"[bold]Found {len(response.results)} results:[/bold]\n")
-
-            from datetime import datetime, timezone
-
-            for idx, commit in enumerate(response.results, 1):
-                commit_date = datetime.fromtimestamp(commit.timestamp, timezone.utc)
-                date_str = commit_date.strftime("%Y-%m-%d %H:%M:%S UTC")
-
-                panel_content = [
-                    f"[yellow]Commit:[/yellow] {commit.hash[:8]}",
-                    f"[cyan]Author:[/cyan] {commit.author}",
-                    f"[blue]Date:[/blue] {date_str}",
-                    "",
-                    commit.title,
-                ]
-
-                if len(commit.files_changed) > 0:
-                    panel_content.append("")
-                    panel_content.append(
-                        f"[magenta]Files Changed ({len(commit.files_changed)}):[/magenta]"
-                    )
-                    for file_path in commit.files_changed[:5]:
-                        panel_content.append(f"  • {file_path}")
-                    if len(commit.files_changed) > 5:
-                        panel_content.append(
-                            f"  ... and {len(commit.files_changed) - 5} more"
-                        )
-
-                print_result_panel(
-                    console,
-                    idx,
-                    commit.score,
-                    panel_content,
-                    is_last=(idx == len(response.results)),
-                )
-        else:
-            console.print("[yellow]No results found.[/yellow]")
 
     except Exception as e:
         logger.error(f"Git commit search failed: {e}")

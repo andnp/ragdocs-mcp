@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from click.testing import CliRunner
+from pathlib import Path
 import pytest
 
 from src.cli import cli
@@ -353,7 +354,7 @@ def test_request_daemon_json_does_not_wait_for_ready_before_query(monkeypatch, t
     def _fail_wait_for_daemon_ready(*, timeout_seconds, paths=None):
         raise AssertionError("wait_for_daemon_ready should not be called")
 
-    monkeypatch.setattr("src.cli.wait_for_daemon_ready", _fail_wait_for_daemon_ready)
+    monkeypatch.setattr("src.cli.wait_for_daemon_ready", _fail_wait_for_daemon_ready, raising=False)
 
     observed: dict[str, object] = {}
 
@@ -418,7 +419,7 @@ def test_request_daemon_json_does_not_wait_for_ready_for_git_history(
     def _fail_wait_for_daemon_ready(*, timeout_seconds, paths=None):
         raise AssertionError("wait_for_daemon_ready should not be called")
 
-    monkeypatch.setattr("src.cli.wait_for_daemon_ready", _fail_wait_for_daemon_ready)
+    monkeypatch.setattr("src.cli.wait_for_daemon_ready", _fail_wait_for_daemon_ready, raising=False)
 
     observed: dict[str, object] = {}
 
@@ -851,6 +852,154 @@ def test_query_prefers_daemon_transport(monkeypatch):
     assert result.exit_code == 0
     assert '"query": "daemon"' in result.output
     assert '"daemon result"' in result.output
+
+
+def test_build_initializing_search_payload_for_query_includes_machine_readable_fields():
+    class _FakeIndexState:
+        def to_dict(self):
+            return {
+                "status": "uninitialized",
+                "indexed_count": 0,
+                "total_count": 0,
+                "last_error": None,
+            }
+
+    class _FakeContext:
+        documents_roots = [Path("/docs/a"), Path("/docs/b")]
+        commit_indexer = None
+
+        def get_index_state(self):
+            return _FakeIndexState()
+
+    class _FakeCoordinator:
+        state = LifecycleState.INITIALIZING
+
+    from src.cli import _build_initializing_search_payload
+
+    payload = _build_initializing_search_payload(
+        _FakeContext(),
+        _FakeCoordinator(),
+        query="auth",
+    )
+
+    assert payload == {
+        "status": "initializing",
+        "message": "Search indices are still initializing. Retry shortly.",
+        "query": "auth",
+        "results": [],
+        "lifecycle": "initializing",
+        "daemon_scope": "global",
+        "project_context_mode": "request_only",
+        "configured_root_count": 2,
+        "index_state": {
+            "status": "uninitialized",
+            "indexed_count": 0,
+            "total_count": 0,
+            "last_error": None,
+        },
+        "compression_stats": {},
+        "strategy_stats": {},
+    }
+
+
+def test_build_initializing_search_payload_for_git_history_includes_commit_count():
+    class _FakeIndexState:
+        def to_dict(self):
+            return {
+                "status": "indexing",
+                "indexed_count": 0,
+                "total_count": 4,
+                "last_error": None,
+            }
+
+    class _FakeCommitIndexer:
+        def get_total_commits(self):
+            return 17
+
+    class _FakeContext:
+        documents_roots = [Path("/docs")]
+        commit_indexer = _FakeCommitIndexer()
+
+        def get_index_state(self):
+            return _FakeIndexState()
+
+    class _FakeCoordinator:
+        state = LifecycleState.INITIALIZING
+
+    from src.cli import _build_initializing_search_payload
+
+    payload = _build_initializing_search_payload(
+        _FakeContext(),
+        _FakeCoordinator(),
+        query="fix bug",
+        include_git_metadata=True,
+    )
+
+    assert payload["status"] == "initializing"
+    assert payload["query"] == "fix bug"
+    assert payload["results"] == []
+    assert payload["total_commits_indexed"] == 17
+    assert payload["index_state"]["status"] == "indexing"
+
+
+def test_query_surfaces_initializing_response_in_human_output(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "src.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start, allow_error=False: {
+            "status": "initializing",
+            "message": "Search indices are still initializing. Retry shortly.",
+            "query": payload["query"],
+            "results": [],
+            "lifecycle": "initializing",
+            "configured_root_count": 2,
+            "index_state": {
+                "status": "uninitialized",
+                "indexed_count": 0,
+                "total_count": 0,
+                "last_error": None,
+            },
+            "compression_stats": {},
+            "strategy_stats": {},
+        },
+    )
+
+    result = runner.invoke(cli, ["query", "daemon"])
+
+    assert result.exit_code == 0
+    assert "Search service is initializing" in result.output
+    assert "Lifecycle:" in result.output
+    assert "Configured roots:" in result.output
+    assert "Results will appear once background initialization completes." in result.output
+
+
+def test_search_commits_surfaces_initializing_response_in_human_output(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "src.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start, allow_error=False: {
+            "status": "initializing",
+            "message": "Search indices are still initializing. Retry shortly.",
+            "query": payload["query"],
+            "results": [],
+            "lifecycle": "initializing",
+            "configured_root_count": 1,
+            "index_state": {
+                "status": "indexing",
+                "indexed_count": 0,
+                "total_count": 8,
+                "last_error": None,
+            },
+            "total_commits_indexed": 0,
+        },
+    )
+
+    result = runner.invoke(cli, ["search-commits", "daemon"])
+
+    assert result.exit_code == 0
+    assert "Search service is initializing" in result.output
+    assert "Total commits indexed:" in result.output
+    assert "Results will appear once background initialization completes." in result.output
 
 
 def test_query_passes_project_context_and_filter(monkeypatch):
