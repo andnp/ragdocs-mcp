@@ -17,13 +17,17 @@ from src.config import (
 )
 from src.git.commit_indexer import CommitIndexer
 from src.indexing.bootstrap_checkpoint import (
-    BootstrapCheckpoint,
-    BootstrapFileStamp,
     compute_bootstrap_generation,
     has_incomplete_bootstrap_checkpoint,
     prepare_bootstrap_checkpoint,
     build_file_stamps,
     load_bootstrap_checkpoint,
+)
+from src.indexing.bootstrap_snapshot import (
+    PublicIndexStateSnapshot,
+    compute_bootstrap_completed_paths,
+    derive_bootstrap_readiness_snapshot,
+    derive_loaded_index_state_snapshot,
 )
 from src.indexing.discovery import (
     discover_files as _discover_files,
@@ -391,56 +395,22 @@ class ApplicationContext:
     def _mark_index_state_loaded(self) -> None:
         self._loaded_index_state_version = self._compute_index_state_version()
 
-    def _refresh_index_state_from_loaded_indices(self) -> None:
-        indexed_count = self.index_manager.get_document_count()
-        total_count = self._index_state.total_count
-        status = "ready"
-        if total_count > 0 and indexed_count < total_count:
-            status = "partial"
-        self._index_state = IndexState(
-            status=status,
-            indexed_count=indexed_count,
-            total_count=total_count,
-        )
-
-    def _build_preloaded_bootstrap_index_state(
-        self,
-        checkpoint: BootstrapCheckpoint | None,
-        saved_manifest: IndexManifest | None,
-        target_stamps: dict[str, BootstrapFileStamp],
-        *,
-        rebuild_pending: bool,
-    ) -> IndexState | None:
-        total_count = len(target_stamps)
-        completed_paths = self._compute_bootstrap_completed_paths(
-            checkpoint,
-            saved_manifest,
-            target_stamps,
-        )
-        indexed_count = max(
-            self.index_manager.get_document_count(),
-            len(completed_paths),
-        )
-        if total_count > 0:
-            indexed_count = min(indexed_count, total_count)
-
-        if indexed_count == 0 and total_count > 0:
-            return None
-
-        if total_count == 0:
-            status: Literal["partial", "indexing", "ready"] = "ready"
-        elif indexed_count < total_count:
-            status = "partial"
-        elif rebuild_pending:
-            status = "indexing"
-        else:
-            status = "ready"
-
+    @staticmethod
+    def _index_state_from_snapshot(
+        snapshot: PublicIndexStateSnapshot,
+    ) -> IndexState:
         return IndexState(
-            status=status,
-            indexed_count=indexed_count,
-            total_count=total_count,
+            status=snapshot.status,
+            indexed_count=snapshot.indexed_count,
+            total_count=snapshot.total_count,
         )
+
+    def _refresh_index_state_from_loaded_indices(self) -> None:
+        snapshot = derive_loaded_index_state_snapshot(
+            total_targets=self._index_state.total_count,
+            loaded_indexed_count=self.index_manager.get_document_count(),
+        )
+        self._index_state = self._index_state_from_snapshot(snapshot)
 
     async def _preload_existing_indices_for_background_bootstrap(
         self,
@@ -466,16 +436,20 @@ class ApplicationContext:
         checkpoint = await asyncio.to_thread(load_bootstrap_checkpoint, self.index_path)
         saved_manifest = await asyncio.to_thread(load_manifest, self.index_path)
 
-        preloaded_state = self._build_preloaded_bootstrap_index_state(
+        preloaded_snapshot = derive_bootstrap_readiness_snapshot(
             checkpoint,
             saved_manifest,
             target_stamps,
+            loaded_indexed_count=self.index_manager.get_document_count(),
+            queryable=self.index_manager.is_ready(),
             rebuild_pending=rebuild_pending,
         )
-        if preloaded_state is None:
+        if preloaded_snapshot is None:
             return False
 
-        self._index_state = preloaded_state
+        self._index_state = self._index_state_from_snapshot(
+            preloaded_snapshot.public_state
+        )
         self._ready_event.set()
         self.schedule_embedding_model_warmup()
         return True
@@ -517,7 +491,7 @@ class ApplicationContext:
             target_stamps,
         )
         saved_manifest = await asyncio.to_thread(load_manifest, self.index_path)
-        completed_paths = self._compute_bootstrap_completed_paths(
+        completed_paths = compute_bootstrap_completed_paths(
             checkpoint,
             saved_manifest,
             target_stamps,
@@ -610,7 +584,7 @@ class ApplicationContext:
                         load_manifest,
                         self.index_path,
                     )
-                    completed_paths = self._compute_bootstrap_completed_paths(
+                    completed_paths = compute_bootstrap_completed_paths(
                         checkpoint,
                         saved_manifest,
                         target_stamps,
@@ -722,28 +696,6 @@ class ApplicationContext:
         if not stamps:
             return None
         return next(iter(stamps.keys()))
-
-    def _compute_bootstrap_completed_paths(
-        self,
-        checkpoint: BootstrapCheckpoint | None,
-        saved_manifest: IndexManifest | None,
-        target_stamps: dict[str, BootstrapFileStamp],
-    ) -> set[str]:
-        if checkpoint is None or saved_manifest is None:
-            return set()
-
-        indexed_files = saved_manifest.indexed_files or {}
-        completed_paths: set[str] = set()
-        for relative_path, stamp in checkpoint.completed.items():
-            if relative_path not in target_stamps:
-                continue
-            if not stamp.matches(target_stamps[relative_path]):
-                continue
-            doc_id = str(Path(relative_path).with_suffix(""))
-            if indexed_files.get(doc_id) != relative_path:
-                continue
-            completed_paths.add(relative_path)
-        return completed_paths
 
     def _full_index(self) -> None:
         files_to_index = self.discover_files()

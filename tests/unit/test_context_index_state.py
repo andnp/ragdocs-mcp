@@ -903,48 +903,76 @@ async def test_start_rebuild_preloads_partial_indices_before_background_task(
 
 
 @pytest.mark.asyncio
-async def test_build_preloaded_bootstrap_index_state_marks_complete_rebuild_as_indexing(
+async def test_preload_existing_indices_for_background_bootstrap_marks_complete_rebuild_as_indexing(
     tmp_path: Path,
 ):
     ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
     _setattr(ctx, "documents_roots", [tmp_path])
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_loaded_index_state_version", 0.0)
+    _setattr(ctx, "_is_virgin_startup", False)
 
     file_path = tmp_path / "doc.md"
     file_path.write_text("# Doc")
-    file_stat = file_path.stat()
+    _setattr(ctx, "discover_files", MagicMock(return_value=[str(file_path)]))
 
     class PreloadedIndexManager:
+        def __init__(self) -> None:
+            self.load_calls = 0
+
+        def load(self) -> None:
+            self.load_calls += 1
+
         def get_document_count(self) -> int:
             return 1
 
-    _setattr(ctx, "index_manager", PreloadedIndexManager())
+        def is_ready(self) -> bool:
+            return self.load_calls > 0
 
-    target_stamps = {
-        "doc.md": BootstrapFileStamp(
-            "doc.md",
-            mtime_ns=file_stat.st_mtime_ns,
-            size=file_stat.st_size,
-        )
-    }
-    saved_manifest = IndexManifest(
-        spec_version=CURRENT_MANIFEST_SPEC_VERSION,
-        embedding_model="local",
-        chunking_config={},
-        indexed_files={"doc": "doc.md"},
+    _setattr(ctx, "index_manager", PreloadedIndexManager())
+    _setattr(ctx, "_compute_index_state_version", lambda: 1.0)
+
+    save_manifest(
+        ctx.index_path,
+        IndexManifest(
+            spec_version=CURRENT_MANIFEST_SPEC_VERSION,
+            embedding_model="local",
+            chunking_config={},
+            indexed_files={"doc": "doc.md"},
+        ),
     )
 
-    preloaded_state = ctx._build_preloaded_bootstrap_index_state(
-        checkpoint=None,
-        saved_manifest=saved_manifest,
-        target_stamps=target_stamps,
+    scheduled_warmups: list[str] = []
+
+    def fake_schedule_embedding_model_warmup() -> bool:
+        scheduled_warmups.append("called")
+        return True
+
+    _setattr(
+        ctx,
+        "schedule_embedding_model_warmup",
+        fake_schedule_embedding_model_warmup,
+    )
+
+    preloaded = await ctx._preload_existing_indices_for_background_bootstrap(
         rebuild_pending=True,
     )
 
-    assert preloaded_state == IndexState(
+    assert preloaded is True
+    assert ctx._ready_event.is_set()
+    assert ctx._index_state == IndexState(
         status="indexing",
         indexed_count=1,
         total_count=1,
     )
+    assert scheduled_warmups == ["called"]
 
 
 @pytest.mark.asyncio
