@@ -771,6 +771,50 @@ class VectorIndex:
         with self._index_lock:
             return list(self._doc_id_to_node_ids.keys())
 
+    def describe_documents(self) -> list[dict[str, object]]:
+        if self._index is None:
+            return []
+
+        with self._index_lock:
+            document_chunks = [
+                (doc_id, list(chunk_ids))
+                for doc_id, chunk_ids in self._doc_id_to_node_ids.items()
+            ]
+
+        docstore = self._index.docstore
+        descriptions: list[dict[str, object]] = []
+        for doc_id, chunk_ids in document_chunks:
+            file_path: str | None = None
+            for chunk_id in chunk_ids:
+                try:
+                    node = docstore.get_document(chunk_id)
+                except Exception:
+                    logger.debug(
+                        "Failed to load chunk metadata while describing %s",
+                        chunk_id,
+                        exc_info=True,
+                    )
+                    continue
+
+                if node is None:
+                    continue
+
+                metadata = getattr(node, "metadata", {})
+                raw_file_path = metadata.get("file_path")
+                if isinstance(raw_file_path, str) and raw_file_path:
+                    file_path = raw_file_path
+                    break
+
+            descriptions.append(
+                {
+                    "doc_id": doc_id,
+                    "file_path": file_path,
+                    "chunk_count": len(chunk_ids),
+                }
+            )
+
+        return descriptions
+
     def get_parent_content(self, parent_chunk_id: str) -> str | None:
         chunk_data = self.get_chunk_by_id(parent_chunk_id)
         if chunk_data:

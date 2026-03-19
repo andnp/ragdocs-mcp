@@ -1031,17 +1031,19 @@ def index_stats(project: str | None, output_json: bool):
             return
 
         click.echo("Index stats")
-        click.echo(f"Documents path: {payload['documents_path']}")
+        click.echo(f"Common documents root: {payload['documents_common_root']}")
         documents_roots = payload.get("documents_roots", [])
         if isinstance(documents_roots, list):
             click.echo(f"Documents roots: {len(documents_roots)}")
             for root in documents_roots:
                 click.echo(f"  - {root}")
+        _render_index_stats_table(payload)
         click.echo(f"Index path: {payload['index_path']}")
         click.echo(f"Manifest present: {payload['manifest_exists']}")
         click.echo(f"Indexed documents: {payload['indexed_documents']}")
         click.echo(f"Indexed chunks: {payload['indexed_chunks']}")
         click.echo(f"Discovered files: {payload['discovered_files']}")
+        click.echo(f"Remaining estimate: {payload['remaining_estimate']}")
         click.echo(f"Git repositories: {payload['git_repositories']}")
         click.echo(f"Indexed git commits: {payload['git_commits']}")
         index_state = payload.get("index_state")
@@ -1062,27 +1064,60 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
     manifest_path = ctx.index_path / "index.manifest.json"
     manifest_exists = manifest_path.exists()
     if manifest_exists:
-        ctx.index_manager.load()
+        try:
+            ctx.index_manager.load()
+        except TimeoutError as exc:
+            if "Failed to acquire shared lock" not in str(exc):
+                raise
+            logger.warning(
+                "Index stats refresh skipped after shared-lock timeout; using current in-memory snapshot",
+                exc_info=True,
+            )
 
-    docs_root = Path(ctx.config.indexing.documents_path)
+    docs_root = Path(ctx.config.indexing.documents_path).resolve()
     discovered_files = ctx.discover_files() if docs_root.exists() else []
     repo_count = len(ctx.discover_git_repositories())
     git_commit_count = (
         ctx.commit_indexer.get_total_commits() if ctx.commit_indexer is not None else 0
     )
 
+    indexed_documents = 0
+    indexed_chunks = 0
+    if manifest_exists:
+        indexed_descriptions = ctx.index_manager.vector.describe_documents()
+        indexed_documents = len(indexed_descriptions)
+        indexed_chunks = sum(
+            int(description.get("chunk_count", 0) or 0)
+            for description in indexed_descriptions
+        )
+
+    per_root_rows, unattributed_indexed_documents, unattributed_indexed_chunks = (
+        _build_per_root_index_rows(
+            ctx,
+            discovered_files=discovered_files,
+            common_root=docs_root,
+            include_indexed_estimates=manifest_exists,
+        )
+    )
+    remaining_estimate = max(len(discovered_files) - indexed_documents, 0)
+
     return {
         "documents_path": str(docs_root),
+        "documents_common_root": str(docs_root),
+        "documents_path_kind": "common_root",
         "documents_roots": [str(root) for root in ctx.documents_roots],
         "index_path": str(ctx.index_path),
         "index_db_path": str(ctx.index_path / "index.db"),
         "manifest_path": str(manifest_path),
         "manifest_exists": manifest_exists,
-        "indexed_documents": ctx.index_manager.get_document_count()
-        if manifest_exists
-        else 0,
-        "indexed_chunks": len(ctx.index_manager.vector) if manifest_exists else 0,
+        "indexed_documents": indexed_documents,
+        "indexed_chunks": indexed_chunks,
         "discovered_files": len(discovered_files),
+        "remaining_estimate": remaining_estimate,
+        "per_root": per_root_rows,
+        "per_root_counts_are_estimates": True,
+        "unattributed_indexed_documents": unattributed_indexed_documents,
+        "unattributed_indexed_chunks": unattributed_indexed_chunks,
         "git_commits": git_commit_count,
         "git_repositories": repo_count,
         "index_state": ctx.get_index_state().to_dict(),
@@ -1227,6 +1262,151 @@ def _raise_daemon_request_error(response: dict[str, object] | None) -> None:
         raise RuntimeError(details)
 
     raise RuntimeError(f"Daemon request failed: {error}")
+
+
+def _resolve_stats_file_path(
+    file_path: str | None,
+    *,
+    common_root: Path,
+) -> Path | None:
+    if not file_path:
+        return None
+
+    candidate = Path(file_path).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+
+    return (common_root / candidate).resolve()
+
+
+def _match_documents_root(
+    file_path: Path,
+    documents_roots: list[Path],
+) -> int | None:
+    for index, root in enumerate(documents_roots):
+        try:
+            file_path.relative_to(root)
+            return index
+        except ValueError:
+            continue
+
+    return None
+
+
+def _build_per_root_index_rows(
+    ctx: ApplicationContext,
+    *,
+    discovered_files: list[str],
+    common_root: Path,
+    include_indexed_estimates: bool,
+) -> tuple[list[dict[str, object]], int, int]:
+    documents_roots = [root.resolve() for root in ctx.documents_roots]
+    rows = [
+        {
+            "root_path": str(root),
+            "discovered_files": 0,
+            "indexed_documents_estimate": 0,
+            "indexed_chunks_estimate": 0,
+            "remaining_estimate": 0,
+        }
+        for root in documents_roots
+    ]
+
+    for discovered_file in discovered_files:
+        resolved_path = Path(discovered_file).expanduser().resolve()
+        root_index = _match_documents_root(resolved_path, documents_roots)
+        if root_index is None:
+            continue
+        rows[root_index]["discovered_files"] += 1
+
+    unattributed_indexed_documents = 0
+    unattributed_indexed_chunks = 0
+    if include_indexed_estimates:
+        for description in ctx.index_manager.vector.describe_documents():
+            raw_file_path = description.get("file_path")
+            resolved_path = _resolve_stats_file_path(
+                raw_file_path if isinstance(raw_file_path, str) else None,
+                common_root=common_root,
+            )
+            chunk_count = int(description.get("chunk_count", 0) or 0)
+            if resolved_path is None:
+                unattributed_indexed_documents += 1
+                unattributed_indexed_chunks += chunk_count
+                continue
+
+            root_index = _match_documents_root(resolved_path, documents_roots)
+            if root_index is None:
+                unattributed_indexed_documents += 1
+                unattributed_indexed_chunks += chunk_count
+                continue
+
+            rows[root_index]["indexed_documents_estimate"] += 1
+            rows[root_index]["indexed_chunks_estimate"] += chunk_count
+
+    for row in rows:
+        row["remaining_estimate"] = max(
+            int(row["discovered_files"]) - int(row["indexed_documents_estimate"]),
+            0,
+        )
+
+    return rows, unattributed_indexed_documents, unattributed_indexed_chunks
+
+
+def _render_index_stats_table(payload: dict[str, object]) -> None:
+    console = Console()
+    per_root_rows = payload.get("per_root")
+    if not isinstance(per_root_rows, list):
+        per_root_rows = []
+
+    table = Table(title="Indexed corpus by root", show_footer=True)
+    table.add_column("Root", style="cyan", footer="Total")
+    table.add_column(
+        "Discovered",
+        justify="right",
+        footer=str(int(payload.get("discovered_files", 0) or 0)),
+    )
+    table.add_column(
+        "Indexed docs≈",
+        justify="right",
+        footer=str(int(payload.get("indexed_documents", 0) or 0)),
+    )
+    table.add_column(
+        "Indexed chunks≈",
+        justify="right",
+        footer=str(int(payload.get("indexed_chunks", 0) or 0)),
+    )
+    table.add_column(
+        "Remaining≈",
+        justify="right",
+        footer=str(int(payload.get("remaining_estimate", 0) or 0)),
+    )
+
+    for row in per_root_rows:
+        if not isinstance(row, dict):
+            continue
+        table.add_row(
+            str(row.get("root_path", "(unknown)")),
+            str(int(row.get("discovered_files", 0) or 0)),
+            str(int(row.get("indexed_documents_estimate", 0) or 0)),
+            str(int(row.get("indexed_chunks_estimate", 0) or 0)),
+            str(int(row.get("remaining_estimate", 0) or 0)),
+        )
+
+    caption_parts = []
+    if payload.get("per_root_counts_are_estimates"):
+        caption_parts.append(
+            "≈ per-root indexed counts are estimated from indexed file paths; aggregate indexed totals remain exact."
+        )
+    unattributed_documents = int(payload.get("unattributed_indexed_documents", 0) or 0)
+    unattributed_chunks = int(payload.get("unattributed_indexed_chunks", 0) or 0)
+    if unattributed_documents > 0 or unattributed_chunks > 0:
+        caption_parts.append(
+            f"Unattributed indexed items: {unattributed_documents} docs / {unattributed_chunks} chunks."
+        )
+    if caption_parts:
+        table.caption = " ".join(caption_parts)
+
+    console.print(table)
 
 
 @cli.command()

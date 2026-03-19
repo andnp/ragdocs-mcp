@@ -694,8 +694,15 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
     (index_dir / "index.manifest.json").write_text("{}", encoding="utf-8")
 
     class _FakeVector:
-        def __len__(self):
-            return 23
+        def describe_documents(self):
+            return [
+                {
+                    "doc_id": f"doc-{index}",
+                    "file_path": str(docs_dir / f"doc-{index}.md"),
+                    "chunk_count": chunk_count,
+                }
+                for index, chunk_count in enumerate([4, 3, 5, 2, 4, 3, 2], start=1)
+            ]
 
     class _FakeIndexManager:
         def __init__(self):
@@ -761,6 +768,189 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
     assert payload["git_commits"] == 11
     assert payload["discovered_files"] == 2
     assert payload["index_db_path"] == str(index_dir / "index.db")
+    assert payload["documents_common_root"] == str(docs_dir)
+    assert payload["remaining_estimate"] == 0
+    assert payload["per_root"] == [
+        {
+            "root_path": str(docs_dir),
+            "discovered_files": 2,
+            "indexed_documents_estimate": 7,
+            "indexed_chunks_estimate": 23,
+            "remaining_estimate": 0,
+        }
+    ]
+
+
+def test_index_stats_reports_per_root_breakdown(tmp_path):
+    root_a = tmp_path / "project_a"
+    root_b = tmp_path / "project_b"
+    root_a.mkdir()
+    root_b.mkdir()
+    index_dir = tmp_path / "index"
+    index_dir.mkdir()
+    (index_dir / "index.manifest.json").write_text("{}", encoding="utf-8")
+
+    class _FakeVector:
+        def describe_documents(self):
+            return [
+                {
+                    "doc_id": "project_a/docs/a.md",
+                    "file_path": str(root_a / "docs" / "a.md"),
+                    "chunk_count": 4,
+                },
+                {
+                    "doc_id": "project_b/docs/b.md",
+                    "file_path": str(root_b / "docs" / "b.md"),
+                    "chunk_count": 7,
+                },
+            ]
+
+    class _FakeIndexManager:
+        def __init__(self):
+            self.vector = _FakeVector()
+
+        def load(self):
+            return None
+
+    class _FakeIndexingConfig:
+        documents_path = str(tmp_path)
+        index_path = str(index_dir)
+        exclude: list[str] = []
+        exclude_hidden_dirs = True
+
+    class _FakeConfig:
+        indexing = _FakeIndexingConfig()
+
+    class _FakeContext:
+        def __init__(self):
+            self.config = _FakeConfig()
+            self.index_path = index_dir
+            self.index_manager = _FakeIndexManager()
+            self.commit_indexer = None
+            self.documents_roots = [root_a, root_b]
+            self.watcher = None
+
+        def discover_files(self):
+            return [
+                str(root_a / "docs" / "a.md"),
+                str(root_a / "docs" / "extra.md"),
+                str(root_b / "docs" / "b.md"),
+            ]
+
+        def discover_git_repositories(self):
+            return []
+
+        def get_index_state(self):
+            return type(
+                "_FakeIndexState",
+                (),
+                {"to_dict": lambda self: {"status": "ready"}},
+            )()
+
+    from src.cli import _build_index_stats_payload
+
+    payload = _build_index_stats_payload(_FakeContext())
+
+    assert payload["indexed_documents"] == 2
+    assert payload["indexed_chunks"] == 11
+    assert payload["remaining_estimate"] == 1
+    assert payload["per_root"] == [
+        {
+            "root_path": str(root_a),
+            "discovered_files": 2,
+            "indexed_documents_estimate": 1,
+            "indexed_chunks_estimate": 4,
+            "remaining_estimate": 1,
+        },
+        {
+            "root_path": str(root_b),
+            "discovered_files": 1,
+            "indexed_documents_estimate": 1,
+            "indexed_chunks_estimate": 7,
+            "remaining_estimate": 0,
+        },
+    ]
+    assert payload["per_root_counts_are_estimates"] is True
+    assert payload["unattributed_indexed_documents"] == 0
+    assert payload["unattributed_indexed_chunks"] == 0
+
+
+def test_index_stats_uses_loaded_snapshot_when_refresh_lock_times_out(
+    tmp_path,
+    caplog,
+):
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    index_dir = tmp_path / "index"
+    index_dir.mkdir()
+    (index_dir / "index.manifest.json").write_text("{}", encoding="utf-8")
+
+    class _FakeVector:
+        def describe_documents(self):
+            return [
+                {
+                    "doc_id": "doc-1",
+                    "file_path": str(docs_dir / "doc-1.md"),
+                    "chunk_count": 4,
+                },
+                {
+                    "doc_id": "doc-2",
+                    "file_path": str(docs_dir / "doc-2.md"),
+                    "chunk_count": 3,
+                },
+            ]
+
+    class _FakeIndexManager:
+        def __init__(self):
+            self.vector = _FakeVector()
+            self.load_calls = 0
+
+        def load(self):
+            self.load_calls += 1
+            raise TimeoutError(
+                f"Failed to acquire shared lock after 5.0s: {index_dir / '.index.lock'}"
+            )
+
+    class _FakeIndexingConfig:
+        documents_path = str(docs_dir)
+        index_path = str(index_dir)
+        exclude: list[str] = []
+        exclude_hidden_dirs = True
+
+    class _FakeConfig:
+        indexing = _FakeIndexingConfig()
+
+    class _FakeContext:
+        def __init__(self):
+            self.config = _FakeConfig()
+            self.index_path = index_dir
+            self.index_manager = _FakeIndexManager()
+            self.commit_indexer = None
+            self.documents_roots = [docs_dir]
+            self.watcher = None
+
+        def discover_files(self):
+            return [str(docs_dir / "doc-1.md"), str(docs_dir / "doc-2.md")]
+
+        def discover_git_repositories(self):
+            return []
+
+        def get_index_state(self):
+            return type(
+                "_FakeIndexState",
+                (),
+                {"to_dict": lambda self: {"status": "ready"}},
+            )()
+
+    from src.cli import _build_index_stats_payload
+
+    with caplog.at_level("WARNING"):
+        payload = _build_index_stats_payload(_FakeContext())
+
+    assert payload["indexed_documents"] == 2
+    assert payload["indexed_chunks"] == 7
+    assert payload["remaining_estimate"] == 0
+    assert "Index stats refresh skipped after shared-lock timeout" in caplog.text
 
 
 def test_index_stats_prefers_daemon_transport(monkeypatch):
@@ -769,6 +959,9 @@ def test_index_stats_prefers_daemon_transport(monkeypatch):
         "src.cli._request_daemon_json",
         lambda path, payload, project_override, auto_start, allow_error=False: {
             "documents_path": "/docs",
+            "documents_common_root": "/docs",
+            "documents_path_kind": "common_root",
+            "documents_roots": ["/docs/a", "/docs/b"],
             "index_path": "/index",
             "index_db_path": "/index/index.db",
             "manifest_path": "/index/index.manifest.json",
@@ -776,6 +969,26 @@ def test_index_stats_prefers_daemon_transport(monkeypatch):
             "indexed_documents": 9,
             "indexed_chunks": 21,
             "discovered_files": 4,
+            "remaining_estimate": 0,
+            "per_root": [
+                {
+                    "root_path": "/docs/a",
+                    "discovered_files": 3,
+                    "indexed_documents_estimate": 8,
+                    "indexed_chunks_estimate": 18,
+                    "remaining_estimate": 0,
+                },
+                {
+                    "root_path": "/docs/b",
+                    "discovered_files": 1,
+                    "indexed_documents_estimate": 1,
+                    "indexed_chunks_estimate": 3,
+                    "remaining_estimate": 0,
+                },
+            ],
+            "per_root_counts_are_estimates": True,
+            "unattributed_indexed_documents": 0,
+            "unattributed_indexed_chunks": 0,
             "git_commits": 12,
             "git_repositories": 2,
             "index_state": {"status": "ready", "indexed_count": 9, "total_count": 9, "last_error": None},
@@ -790,6 +1003,61 @@ def test_index_stats_prefers_daemon_transport(monkeypatch):
     assert '"git_commits": 12' in result.output
     assert '"index_state"' in result.output
     assert '"watcher_stats"' in result.output
+    assert '"per_root"' in result.output
+
+
+def test_index_stats_human_output_renders_per_root_table(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "src.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start, allow_error=False: {
+            "documents_path": "/home/andy",
+            "documents_common_root": "/home/andy",
+            "documents_path_kind": "common_root",
+            "documents_roots": ["/home/andy/project_a", "/home/andy/project_b"],
+            "index_path": "/index",
+            "index_db_path": "/index/index.db",
+            "manifest_path": "/index/index.manifest.json",
+            "manifest_exists": True,
+            "indexed_documents": 9,
+            "indexed_chunks": 21,
+            "discovered_files": 12,
+            "remaining_estimate": 3,
+            "per_root": [
+                {
+                    "root_path": "/home/andy/project_a",
+                    "discovered_files": 10,
+                    "indexed_documents_estimate": 7,
+                    "indexed_chunks_estimate": 16,
+                    "remaining_estimate": 3,
+                },
+                {
+                    "root_path": "/home/andy/project_b",
+                    "discovered_files": 2,
+                    "indexed_documents_estimate": 2,
+                    "indexed_chunks_estimate": 5,
+                    "remaining_estimate": 0,
+                },
+            ],
+            "per_root_counts_are_estimates": True,
+            "unattributed_indexed_documents": 0,
+            "unattributed_indexed_chunks": 0,
+            "git_commits": 12,
+            "git_repositories": 2,
+            "index_state": {"status": "ready", "indexed_count": 9, "total_count": 9, "last_error": None},
+            "watcher_stats": {"events_received": 7, "events_processed": 5},
+        },
+    )
+
+    result = runner.invoke(cli, ["index", "stats"])
+
+    assert result.exit_code == 0
+    assert "Common documents root: /home/andy" in result.output
+    assert "Indexed corpus by root" in result.output
+    assert "Indexed docs" in result.output
+    assert "/home/andy/project_a" in result.output
+    assert "/home/andy/project_b" in result.output
+    assert "Remaining estimate: 3" in result.output
 
 
 def test_queue_status_prefers_daemon_transport(monkeypatch):
