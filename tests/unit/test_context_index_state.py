@@ -18,6 +18,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.context import ApplicationContext, IndexState
+from src.indexing.manifest import (
+    CURRENT_MANIFEST_SPEC_VERSION,
+    IndexManifest,
+    save_manifest,
+)
 
 
 def _setattr(obj: Any, name: str, value: Any):
@@ -100,6 +105,23 @@ class SlowLoadIndexManager:
     def load(self):
         time.sleep(self.delay_seconds)
         self.loaded = True
+
+    def is_ready(self) -> bool:
+        return self.loaded
+
+
+class ExistingIndexManager:
+    def __init__(self):
+        self.loaded = False
+        self.load_calls = 0
+        self.vector = type("VectorStub", (), {"_concept_vocabulary": {"warm": 1}})()
+
+    def load(self):
+        self.load_calls += 1
+        self.loaded = True
+
+    def get_document_count(self) -> int:
+        return 2
 
     def is_ready(self) -> bool:
         return self.loaded
@@ -493,6 +515,103 @@ async def test_background_start_with_existing_index_does_not_block_event_loop(
     assert ctx._index_state.status == "ready"
     assert ctx.index_manager.loaded is True
     assert reconciliation_calls == ["called"]
+
+
+@pytest.mark.asyncio
+async def test_task_mode_existing_index_becomes_ready_before_reconciliation(
+    tmp_path: Path,
+):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "index_manager", ExistingIndexManager())
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "reconciliation_task", None)
+    _setattr(ctx, "_background_index_task", None)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_is_virgin_startup", False)
+    _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=False))
+
+    reconciliation_started = asyncio.Event()
+    allow_reconciliation_to_finish = asyncio.Event()
+
+    async def fake_startup_reconciliation() -> None:
+        reconciliation_started.set()
+        await allow_reconciliation_to_finish.wait()
+
+    async def fake_build_initial_vocabulary() -> None:
+        return None
+
+    _setattr(ctx, "_startup_reconciliation", fake_startup_reconciliation)
+    _setattr(ctx, "_build_initial_vocabulary", fake_build_initial_vocabulary)
+
+    await asyncio.wait_for(ctx.start(background_index=True), timeout=1.0)
+    await asyncio.wait_for(reconciliation_started.wait(), timeout=1.0)
+
+    assert ctx.index_manager.load_calls == 1
+    assert ctx.index_manager.loaded is True
+    assert ctx._ready_event.is_set()
+    assert ctx._index_state.status == "ready"
+    assert ctx._background_index_task is not None
+    assert ctx._background_index_task.done() is False
+
+    allow_reconciliation_to_finish.set()
+    await asyncio.wait_for(ctx._background_index_task, timeout=1.0)
+
+
+def test_check_and_rebuild_uses_fallback_persisted_index_for_runtime_root(
+    tmp_path: Path,
+):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.llm.embedding_model = "local"
+    mock_config.chunking.strategy = "header_based"
+    mock_config.chunking.min_chunk_chars = 200
+    mock_config.chunking.max_chunk_chars = 2000
+    mock_config.chunking.overlap_chars = 100
+    _setattr(ctx, "config", mock_config)
+
+    runtime_index_path = tmp_path / "daemon"
+    fallback_index_path = tmp_path / "persisted"
+    runtime_index_path.mkdir()
+    fallback_index_path.mkdir()
+    (fallback_index_path / "vector").mkdir()
+    (fallback_index_path / "vector" / "docstore.json").write_text("{}")
+
+    save_manifest(
+        fallback_index_path,
+        IndexManifest(
+            spec_version=CURRENT_MANIFEST_SPEC_VERSION,
+            embedding_model="local",
+            chunking_config={
+                "strategy": "header_based",
+                "min_chunk_chars": 200,
+                "max_chunk_chars": 2000,
+                "overlap_chars": 100,
+            },
+            indexed_files={"doc": "doc.md"},
+        ),
+    )
+
+    _setattr(ctx, "index_path", runtime_index_path)
+    _setattr(ctx, "fallback_index_path", fallback_index_path)
+    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "_is_virgin_startup", True)
+
+    needs_rebuild = ctx._check_and_rebuild_if_needed()
+
+    assert needs_rebuild is False
+    assert ctx._is_virgin_startup is False
+    assert (runtime_index_path / "index.manifest.json").exists()
+    assert (runtime_index_path / "vector" / "docstore.json").exists()
 
 
 class TestIsReadyMethods:

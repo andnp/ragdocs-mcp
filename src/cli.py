@@ -713,6 +713,7 @@ async def _run_daemon_forever() -> None:
         metadata_provider=lambda: read_daemon_metadata(runtime_paths.metadata_path),
         request_handler=_handle_daemon_request,
     )
+    health_server_started = False
     coordinator = LifecycleCoordinator()
     loop = asyncio.get_running_loop()
     coordinator.install_signal_handlers(loop)
@@ -723,7 +724,6 @@ async def _run_daemon_forever() -> None:
     )
 
     try:
-        await health_server.start()
         try:
             await coordinator.start(
                 ctx,
@@ -731,6 +731,8 @@ async def _run_daemon_forever() -> None:
                 db_manager=ctx.db_manager,
                 huey_worker=huey_worker,
             )
+            await health_server.start()
+            health_server_started = True
             await asyncio.to_thread(lock.release)
             lock_released = True
             while coordinator.state not in (
@@ -740,7 +742,8 @@ async def _run_daemon_forever() -> None:
                 await asyncio.sleep(0.2)
         finally:
             await coordinator.shutdown()
-            await health_server.stop()
+            if health_server_started:
+                await health_server.stop()
     finally:
         if not lock_released:
             await asyncio.to_thread(lock.release)

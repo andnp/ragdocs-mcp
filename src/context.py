@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -66,6 +67,7 @@ class ApplicationContext:
     watcher: FileWatcher | None = None
     commit_indexer: CommitIndexer | None = None
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
+    fallback_index_path: Path | None = None
     documents_roots: list[Path] = field(default_factory=list)
     db_manager: DatabaseManager | None = None
     current_manifest: IndexManifest | None = None
@@ -104,7 +106,11 @@ class ApplicationContext:
         if detected_project and project_override:
             config = load_config()
 
-        index_path = index_path_override or resolve_index_path(config)
+        configured_index_path = resolve_index_path(config)
+        index_path = index_path_override or configured_index_path
+        fallback_index_path = None
+        if index_path_override is not None and configured_index_path != index_path:
+            fallback_index_path = configured_index_path
 
         documents_roots = cls._resolve_documents_roots(
             config,
@@ -203,6 +209,7 @@ class ApplicationContext:
             watcher=watcher,
             commit_indexer=commit_indexer,
             index_path=index_path,
+            fallback_index_path=fallback_index_path,
             documents_roots=documents_roots,
             db_manager=db_manager,
             current_manifest=None,
@@ -297,10 +304,59 @@ class ApplicationContext:
 
     def _check_and_rebuild_if_needed(self) -> bool:
         self.index_path.mkdir(parents=True, exist_ok=True)
+        self._hydrate_index_path_from_fallback()
         self.current_manifest = self._build_manifest()
         saved_manifest = load_manifest(self.index_path)
         self._is_virgin_startup = saved_manifest is None
         return should_rebuild(self.current_manifest, saved_manifest)
+
+    def _has_persisted_index_state(self, index_path: Path) -> bool:
+        return any(
+            candidate.exists()
+            for candidate in [
+                index_path / "index.manifest.json",
+                index_path / "vector" / "docstore.json",
+                index_path / "vector" / "faiss_index.bin",
+                index_path / "graph" / "graph.json",
+            ]
+        )
+
+    def _hydrate_index_path_from_fallback(self) -> None:
+        if self.fallback_index_path is None:
+            return
+        if self.index_path == self.fallback_index_path:
+            return
+        if self._has_persisted_index_state(self.index_path):
+            return
+        if not self._has_persisted_index_state(self.fallback_index_path):
+            return
+
+        logger.info(
+            "Hydrating runtime index at %s from existing persisted index at %s",
+            self.index_path,
+            self.fallback_index_path,
+        )
+
+        for directory_name in ["vector", "keyword", "graph"]:
+            source_dir = self.fallback_index_path / directory_name
+            if source_dir.exists():
+                shutil.copytree(
+                    source_dir,
+                    self.index_path / directory_name,
+                    dirs_exist_ok=True,
+                )
+
+        for file_name in [
+            "index.manifest.json",
+            "index.db",
+            "index.db-shm",
+            "index.db-wal",
+            "chunk_hashes.json",
+            "git_commits.db",
+        ]:
+            source_file = self.fallback_index_path / file_name
+            if source_file.exists():
+                shutil.copy2(source_file, self.index_path / file_name)
 
     def _compute_index_state_version(self) -> float:
         candidates = [
@@ -438,10 +494,19 @@ class ApplicationContext:
         else:
             logger.info("Loading existing indices")
             if background_index:
-                self._index_state = IndexState(status="indexing")
-                self._background_index_task = asyncio.create_task(
-                    self._load_existing_indices_background()
-                )
+                if self.use_tasks:
+                    await asyncio.to_thread(self.index_manager.load)
+                    self._mark_index_state_loaded()
+                    self._refresh_index_state_from_loaded_indices()
+                    self._ready_event.set()
+                    self._background_index_task = asyncio.create_task(
+                        self._reconcile_existing_indices_background()
+                    )
+                else:
+                    self._index_state = IndexState(status="indexing")
+                    self._background_index_task = asyncio.create_task(
+                        self._load_existing_indices_background()
+                    )
             else:
                 await asyncio.to_thread(self.index_manager.load)
                 self._mark_index_state_loaded()
@@ -594,6 +659,18 @@ class ApplicationContext:
             self._init_error = e
             self._ready_event.set()
 
+    async def _reconcile_existing_indices_background(self) -> None:
+        try:
+            await self._startup_reconciliation()
+
+            if not self.index_manager.vector._concept_vocabulary:
+                asyncio.create_task(self._build_initial_vocabulary())
+        except Exception as e:
+            logger.error(
+                f"Startup reconciliation failed after loading existing indices: {e}",
+                exc_info=True,
+            )
+
     async def _startup_reconciliation(self) -> None:
         logger.info("Running startup reconciliation")
         docs_path = Path(self.config.indexing.documents_path)
@@ -633,10 +710,8 @@ class ApplicationContext:
             try:
                 await asyncio.sleep(interval)
                 logger.info("Starting periodic reconciliation")
-
                 docs_path = Path(self.config.indexing.documents_path)
                 discovered_files = await asyncio.to_thread(self.discover_files)
-
                 result = await asyncio.to_thread(
                     self.index_manager.reconcile_indices,
                     discovered_files,
