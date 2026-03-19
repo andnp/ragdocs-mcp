@@ -19,10 +19,12 @@ from src.mcp.validation import (
     ValidationError,
     validate_query,
     validate_integer_range,
-    validate_float_range,
     validate_string_list,
     validate_optional_string,
-    validate_boolean,
+)
+from src.mcp.tools.document_request import (
+    NormalizedQueryDocumentsRequest,
+    normalize_query_documents_request,
 )
 from src.search.pipeline import SearchPipelineConfig
 from src.search.utils import classify_query_type, truncate_content
@@ -80,15 +82,31 @@ def get_document_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "default": [],
                     },
+                    "scope_mode": {
+                        "type": "string",
+                        "enum": ["global", "active_project", "explicit_projects"],
+                        "description": "Canonical scope mode for agents: 'global' keeps search corpus-wide, 'active_project' applies bounded uplift for the active or preferred project, and 'explicit_projects' hard-filters to scope_projects.",
+                        "default": "global",
+                    },
+                    "scope_projects": {
+                        "type": "array",
+                        "description": "Canonical project IDs for explicit scoping. Used when scope_mode is 'explicit_projects'.",
+                        "items": {"type": "string"},
+                        "default": [],
+                    },
+                    "preferred_project": {
+                        "type": "string",
+                        "description": "Canonical preferred project used for bounded ranking uplift. Legacy alias: project_context.",
+                    },
                     "project_filter": {
                         "type": "array",
-                        "description": "Optional list of project IDs to explicitly filter results to",
+                        "description": "Legacy alias for scope_mode='explicit_projects' + scope_projects. Applies a hard filter when provided.",
                         "items": {"type": "string"},
                         "default": [],
                     },
                     "project_context": {
                         "type": "string",
-                        "description": "Optional active project context used for bounded ranking uplift",
+                        "description": "Legacy alias for preferred_project. Applies bounded ranking uplift without hard filtering.",
                     },
                     "uniqueness_mode": {
                         "type": "string",
@@ -193,38 +211,15 @@ def get_document_tools() -> list[Tool]:
 
 async def _query_documents_impl(
     hctx: HandlerContext,
-    arguments: dict,
-    max_chunks_per_doc: int,
-    result_header: str,
+    request: NormalizedQueryDocumentsRequest,
 ) -> list[TextContent]:
     """Query documents implementation with comprehensive validation."""
-    try:
-        query = validate_query(arguments, "query")
-        top_n = validate_integer_range(
-            arguments, "top_n", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N
-        )
-        min_score = validate_float_range(
-            arguments, "min_score", default=0.3, min_val=0.0, max_val=1.0
-        )
-        similarity_threshold = validate_float_range(
-            arguments, "similarity_threshold", default=0.85, min_val=0.5, max_val=1.0
-        )
-        show_stats = validate_boolean(arguments, "show_stats", default=False)
-        excluded_files_raw = validate_string_list(
-            arguments, "excluded_files", default=[]
-        )
-        project_filter = validate_string_list(arguments, "project_filter", default=[])
-        project_context = validate_optional_string(arguments, "project_context")
-
-    except ValidationError as e:
-        return [TextContent(type="text", text=f"Validation error: {e}")]
-
-    cold_start_payload = hctx.get_nonblocking_search_payload(query=query)
+    cold_start_payload = hctx.get_nonblocking_search_payload(query=request.query)
     if cold_start_payload is not None:
         return [
             TextContent(
                 type="text",
-                text=format_search_status_text(result_header, cold_start_payload),
+                text=format_search_status_text(request.result_header, cold_start_payload),
             )
         ]
 
@@ -233,33 +228,35 @@ async def _query_documents_impl(
     ctx = hctx.require_ctx()
 
     excluded_files = None
-    if excluded_files_raw:
+    if request.excluded_files_raw:
         from src.search.path_utils import normalize_path
 
         docs_root = ctx.orchestrator.documents_path
-        excluded_files = {normalize_path(f, docs_root) for f in excluded_files_raw}
+        excluded_files = {
+            normalize_path(f, docs_root) for f in request.excluded_files_raw
+        }
 
-    top_k = max(20, top_n * 4)
-    if project_filter:
-        top_k = max(top_k, top_n * 10)
+    top_k = max(20, request.top_n * 4)
+    if request.project_filter:
+        top_k = max(top_k, request.top_n * 10)
 
     pipeline_config = SearchPipelineConfig(
-        min_confidence=min_score,
-        max_chunks_per_doc=max_chunks_per_doc,
-        dedup_threshold=similarity_threshold,
+        min_confidence=request.min_score,
+        max_chunks_per_doc=request.max_chunks_per_doc,
+        dedup_threshold=request.similarity_threshold,
     )
 
     results, stats, _ = await ctx.orchestrator.query(
-        query,
+        request.query,
         top_k=top_k,
-        top_n=top_n,
+        top_n=request.top_n,
         pipeline_config=pipeline_config,
         excluded_files=excluded_files,
-        project_filter=project_filter,
-        project_context=project_context,
+        project_filter=request.project_filter,
+        project_context=request.project_context,
     )
 
-    query_type = classify_query_type(query)
+    query_type = classify_query_type(request.query)
 
     results_text = "\n\n".join(
         [
@@ -270,21 +267,23 @@ async def _query_documents_impl(
     )
 
     filtering_occurred = stats.original_count > stats.after_dedup
-    if show_stats or filtering_occurred:
+    if request.show_stats or filtering_occurred:
         stats_parts = [
             f"- Original results: {stats.original_count}",
-            f"- After score filter (≥{min_score}): {stats.after_threshold}",
+            f"- After score filter (≥{request.min_score}): {stats.after_threshold}",
             f"- After deduplication: {stats.after_dedup}",
         ]
-        if max_chunks_per_doc == 1:
+        if request.max_chunks_per_doc == 1:
             stats_parts.append(
                 f"- After document limit (1 per doc): {stats.after_doc_limit}"
             )
         stats_parts.append(f"- Clusters merged: {stats.clusters_merged}")
         stats_text = "\n".join(stats_parts)
-        response = f"# {result_header}\n\n{results_text}\n\n# Compression Stats\n\n{stats_text}"
+        response = (
+            f"# {request.result_header}\n\n{results_text}\n\n# Compression Stats\n\n{stats_text}"
+        )
     else:
-        response = f"# {result_header}\n\n{results_text}"
+        response = f"# {request.result_header}\n\n{results_text}"
 
     return [TextContent(type="text", text=response)]
 
@@ -293,25 +292,12 @@ async def _query_documents_impl(
 async def handle_query_documents(
     hctx: HandlerContext, arguments: dict
 ) -> list[TextContent]:
-    uniqueness_mode = arguments.get("uniqueness_mode", "allow_multiple")
+    try:
+        request = normalize_query_documents_request(arguments)
+    except ValidationError as e:
+        return [TextContent(type="text", text=f"Validation error: {e}")]
 
-    if uniqueness_mode == "one_per_document":
-        max_chunks_per_doc = 1
-        result_header = "Search Results (Unique Documents)"
-    elif uniqueness_mode == "allow_multiple":
-        max_chunks_per_doc = 0
-        result_header = "Search Results"
-    else:
-        raise ValueError(
-            f"Invalid uniqueness_mode: {uniqueness_mode}. Must be 'allow_multiple' or 'one_per_document'"
-        )
-
-    return await _query_documents_impl(
-        hctx,
-        arguments,
-        max_chunks_per_doc=max_chunks_per_doc,
-        result_header=result_header,
-    )
+    return await _query_documents_impl(hctx, request)
 
 
 @tool_handler("search_with_hypothesis")
