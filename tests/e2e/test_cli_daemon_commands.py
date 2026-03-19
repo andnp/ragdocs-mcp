@@ -884,6 +884,145 @@ def test_request_daemon_json_uses_running_daemon(monkeypatch):
     assert payload == {"status": "ok", "path": "/api/admin/tasks"}
 
 
+def test_request_daemon_json_uses_running_nonresponsive_daemon_before_auto_start(
+    monkeypatch,
+):
+    metadata = DaemonMetadata(
+        pid=4321,
+        started_at=1.0,
+        status="ready",
+        socket_path="/tmp/ragdocs.sock",
+    )
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "src.cli.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=metadata,
+            running=True,
+            stale=False,
+            responsive=False,
+            ready=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "src.cli.start_daemon",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("start_daemon should not be called")
+        ),
+    )
+
+    def _fake_request_daemon_socket(socket_path, path, payload, timeout_seconds):
+        observed["socket_path"] = socket_path
+        observed["path"] = path
+        observed["payload"] = payload
+        observed["timeout_seconds"] = timeout_seconds
+        return {"status": "ok", "value": 1}
+
+    monkeypatch.setattr("src.cli.request_daemon_socket", _fake_request_daemon_socket)
+
+    from src.cli import _request_daemon_json
+
+    response = _request_daemon_json(
+        "/api/search/query",
+        {"query": "testing strategies"},
+        project_override=None,
+        auto_start=True,
+    )
+
+    assert response == {"status": "ok", "value": 1}
+    assert observed == {
+        "socket_path": Path("/tmp/ragdocs.sock"),
+        "path": "/api/search/query",
+        "payload": {"query": "testing strategies"},
+        "timeout_seconds": 30.0,
+    }
+
+
+def test_request_daemon_json_falls_back_to_start_after_transport_failure(
+    monkeypatch,
+    tmp_path,
+):
+    runtime_paths = RuntimePaths(
+        root=tmp_path,
+        index_db_path=tmp_path / "index.db",
+        queue_db_path=tmp_path / "queue.db",
+        metadata_path=tmp_path / "daemon.json",
+        lock_path=tmp_path / "daemon.lock",
+        socket_path=tmp_path / "daemon.sock",
+    )
+    initial_metadata = DaemonMetadata(
+        pid=4321,
+        started_at=1.0,
+        status="ready",
+        socket_path="/tmp/busy.sock",
+    )
+    started_metadata = DaemonMetadata(
+        pid=5432,
+        started_at=2.0,
+        status="ready",
+        socket_path=str(runtime_paths.socket_path),
+    )
+    observed: dict[str, object] = {"requests": []}
+
+    monkeypatch.setattr(
+        RuntimePaths,
+        "resolve",
+        classmethod(lambda cls: runtime_paths),
+    )
+    monkeypatch.setattr(
+        "src.cli.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=initial_metadata,
+            running=True,
+            stale=False,
+            responsive=False,
+            ready=False,
+        ),
+    )
+
+    def _fake_start_daemon(*, timeout_seconds=10.0, paths=None):
+        observed["start_timeout_seconds"] = timeout_seconds
+        observed["start_paths"] = paths
+        return started_metadata
+
+    def _fake_request_daemon_socket(socket_path, path, payload, timeout_seconds):
+        observed["requests"].append((socket_path, path, payload, timeout_seconds))
+        if len(observed["requests"]) == 1:
+            return {"status": "error", "error": "daemon_socket_unavailable"}
+        return {"status": "ok", "value": 2}
+
+    monkeypatch.setattr("src.cli.start_daemon", _fake_start_daemon)
+    monkeypatch.setattr("src.cli.request_daemon_socket", _fake_request_daemon_socket)
+
+    from src.cli import _request_daemon_json
+
+    response = _request_daemon_json(
+        "/api/search/query",
+        {"query": "global daemon"},
+        project_override=None,
+        auto_start=True,
+    )
+
+    assert response == {"status": "ok", "value": 2}
+    assert observed["start_timeout_seconds"] == 10.0
+    assert observed["start_paths"] == runtime_paths
+    assert observed["requests"] == [
+        (
+            Path("/tmp/busy.sock"),
+            "/api/search/query",
+            {"query": "global daemon"},
+            30.0,
+        ),
+        (
+            runtime_paths.socket_path,
+            "/api/search/query",
+            {"query": "global daemon"},
+            30.0,
+        ),
+    ]
+
+
 def test_query_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(

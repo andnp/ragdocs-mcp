@@ -59,7 +59,11 @@ from src.indexing.reconciler import build_indexed_files_map
 from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.utils import should_include_file
 from src.worker.consumer import HueyWorker
-from src.worker.process import HueyWorkerProcess, _worker_status_path
+from src.worker.process import (
+    HueyWorkerProcess,
+    _worker_status_path,
+    is_expected_daemon_parent,
+)
 from src.cli_utils.validators import (
     validate_range,
     validate_timestamp_range,
@@ -91,6 +95,12 @@ def _ignore_daemon_startup_project_option(project: str | None) -> None:
     """Keep legacy daemon --project options as explicit no-ops."""
 
     _ = project
+
+
+def _ignore_daemon_runtime_root_option(runtime_root: Path | None) -> None:
+    """Accept runtime-root markers used for daemon process identification."""
+
+    _ = runtime_root
 
 
 def _should_include_file(
@@ -125,14 +135,11 @@ def _create_daemon_runtime(runtime_paths: RuntimePaths):
     return ctx, worker
 
 
-def _parent_process_alive(parent_pid: int) -> bool:
-    try:
-        os.kill(parent_pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+def _parent_process_alive(
+    parent_pid: int,
+    parent_start_time: int | None = None,
+) -> bool:
+    return is_expected_daemon_parent(parent_pid, parent_start_time)
 
 
 async def _run_worker_forever_async(
@@ -140,6 +147,7 @@ async def _run_worker_forever_async(
     queue_db: Path,
     index_root: Path,
     parent_pid: int,
+    parent_start_time: int | None = None,
 ) -> None:
     ctx = ApplicationContext.create(
         project_override=project,
@@ -219,7 +227,7 @@ async def _run_worker_forever_async(
     _write_worker_status("ready")
     try:
         while worker.is_running and not stop_requested:
-            if not _parent_process_alive(parent_pid):
+            if not _parent_process_alive(parent_pid, parent_start_time):
                 worker.stop()
                 break
             _write_worker_status("ready")
@@ -425,16 +433,24 @@ def cli():
 @click.option("--queue-db", type=click.Path(path_type=Path), required=True)
 @click.option("--index-root", type=click.Path(path_type=Path), required=True)
 @click.option("--parent-pid", type=int, required=True)
+@click.option("--parent-start-time", type=int, default=None)
 def worker_run(
     project: str | None,
     queue_db: Path,
     index_root: Path,
     parent_pid: int,
+    parent_start_time: int | None,
 ):
     """Run the Huey task worker in a dedicated subprocess."""
     try:
         asyncio.run(
-            _run_worker_forever_async(project, queue_db, index_root, parent_pid)
+            _run_worker_forever_async(
+                project,
+                queue_db,
+                index_root,
+                parent_pid,
+                parent_start_time,
+            )
         )
     except KeyboardInterrupt:
         pass
@@ -622,7 +638,7 @@ async def _run_daemon_forever() -> None:
             )
             if cold_start_response is not None:
                 return cold_start_response
-            await ctx.ensure_fresh_indices()
+            ctx.schedule_freshness_refresh()
             query_text = str(payload.get("query", ""))
             top_n = int(payload.get("top_n", 5))
             top_k = max(20, top_n * 4)
@@ -664,6 +680,8 @@ async def _run_daemon_forever() -> None:
             )
             if cold_start_response is not None:
                 return cold_start_response
+
+            ctx.schedule_freshness_refresh()
 
             from src.git.commit_search import search_git_history
 
@@ -784,9 +802,16 @@ def daemon_run(project: str | None):
     default=None,
     help=_GLOBAL_DAEMON_PROJECT_OPTION_HELP,
 )
-def daemon_internal_run(project: str | None):
+@click.option(
+    "--runtime-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    hidden=True,
+)
+def daemon_internal_run(project: str | None, runtime_root: Path | None):
     """Run the daemon in the foreground for internal start/restart flows."""
     _ignore_daemon_startup_project_option(project)
+    _ignore_daemon_runtime_root_option(runtime_root)
     daemon_run.callback(None)
 
 
@@ -1135,25 +1160,48 @@ def _request_daemon_json(
 ) -> dict[str, object] | None:
     runtime_paths = RuntimePaths.resolve()
     inspection = inspect_daemon(runtime_paths)
-    metadata = inspection.metadata if inspection.responsive else None
-    if metadata is None and auto_start:
+    metadata = inspection.metadata if inspection.running else None
+    response: dict[str, object] | None = None
+
+    if metadata is not None and metadata.socket_path:
+        response = request_daemon_socket(
+            Path(metadata.socket_path),
+            path,
+            payload,
+            timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
+        )
+        if not _should_retry_daemon_request(response) or not auto_start:
+            if response.get("status") == "error" and not allow_error:
+                return None
+            return response
+
+    if auto_start:
         metadata = start_daemon(
             paths=runtime_paths,
         )
-    if metadata is None or not metadata.socket_path:
+        if metadata.socket_path:
+            response = request_daemon_socket(
+                Path(metadata.socket_path),
+                path,
+                payload,
+                timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
+            )
+
+    if response is None:
         return None
 
-    response = request_daemon_socket(
-        Path(metadata.socket_path),
-        path,
-        payload,
-        timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
-    )
-    if response.get("status") == "error":
-        if allow_error:
-            return response
+    if response.get("status") == "error" and not allow_error:
         return None
     return response
+
+
+def _should_retry_daemon_request(response: dict[str, object]) -> bool:
+    return response.get("status") == "error" and response.get("error") in {
+        "daemon_request_timed_out",
+        "daemon_socket_unavailable",
+        "empty_response",
+        "invalid_response",
+    }
 
 
 def _raise_daemon_request_error(response: dict[str, object] | None) -> None:
