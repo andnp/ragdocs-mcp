@@ -26,8 +26,9 @@ from src.mcp.tools.document_request import (
     NormalizedQueryDocumentsRequest,
     normalize_query_documents_request,
 )
+from src.mcp.tools.document_response import build_query_documents_response_envelope
 from src.search.pipeline import SearchPipelineConfig
-from src.search.utils import classify_query_type, truncate_content
+from src.search.utils import classify_query_type
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +247,7 @@ async def _query_documents_impl(
         dedup_threshold=request.similarity_threshold,
     )
 
-    results, stats, _ = await ctx.orchestrator.query(
+    results, stats, strategy_stats = await ctx.orchestrator.query(
         request.query,
         top_k=top_k,
         top_n=request.top_n,
@@ -257,33 +258,19 @@ async def _query_documents_impl(
     )
 
     query_type = classify_query_type(request.query)
-
-    results_text = "\n\n".join(
-        [
-            f"[{i + 1}] {r.file_path or 'unknown'} § {r.header_path or '(no section)'} ({r.score:.2f})\n"
-            f"{truncate_content(r.content, 200) if query_type == 'factual' else r.content}"
-            for i, r in enumerate(results)
-        ]
+    effective_project_context = request.project_context or getattr(
+        getattr(ctx, "config", None),
+        "detected_project",
+        None,
     )
-
-    filtering_occurred = stats.original_count > stats.after_dedup
-    if request.show_stats or filtering_occurred:
-        stats_parts = [
-            f"- Original results: {stats.original_count}",
-            f"- After score filter (≥{request.min_score}): {stats.after_threshold}",
-            f"- After deduplication: {stats.after_dedup}",
-        ]
-        if request.max_chunks_per_doc == 1:
-            stats_parts.append(
-                f"- After document limit (1 per doc): {stats.after_doc_limit}"
-            )
-        stats_parts.append(f"- Clusters merged: {stats.clusters_merged}")
-        stats_text = "\n".join(stats_parts)
-        response = (
-            f"# {request.result_header}\n\n{results_text}\n\n# Compression Stats\n\n{stats_text}"
-        )
-    else:
-        response = f"# {request.result_header}\n\n{results_text}"
+    response = build_query_documents_response_envelope(
+        request,
+        query_type=query_type,
+        results=results,
+        strategy_stats=strategy_stats,
+        compression_stats=stats,
+        effective_project_context=effective_project_context,
+    ).render_text(show_stats=request.show_stats or stats.original_count > stats.after_dedup)
 
     return [TextContent(type="text", text=response)]
 
