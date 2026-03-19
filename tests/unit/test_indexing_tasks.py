@@ -139,6 +139,53 @@ class TestTaskRegistration:
         assert refreshed == 2
         assert huey_instance.pending_count() == 4
 
+    def test_startup_batch_skips_files_already_pending_in_queue(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        assert enqueue_index("/some/file.md") is True
+
+        indexed = enqueue_index_batch([
+            "/some/file.md",
+            "/some/other.md",
+        ])
+
+        assert indexed == 1
+        assert huey_instance.pending_count() == 2
+
+        first_task = huey_instance.dequeue()
+        second_task = huey_instance.dequeue()
+
+        assert first_task.args == ("/some/file.md",)
+        assert second_task.args == ("/some/other.md",)
+
+    def test_startup_batch_deduplicates_duplicate_paths_within_batch(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        indexed = enqueue_index_batch([
+            "/some/file.md",
+            "/some/file.md",
+            "/some/other.md",
+        ])
+
+        assert indexed == 2
+        assert huey_instance.pending_count() == 2
+
+    def test_startup_batch_preserves_force_reindex_behavior(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        assert enqueue_index("/some/file.md") is True
+
+        indexed = enqueue_index_batch(["/some/file.md"], force=True)
+
+        assert indexed == 1
+        assert huey_instance.pending_count() == 2
+
     def test_queue_stats_include_backpressure_utilization(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:

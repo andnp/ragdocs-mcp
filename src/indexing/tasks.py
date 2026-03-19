@@ -142,6 +142,45 @@ def enqueue_index(file_path: str, force: bool = False) -> bool:
     return True
 
 
+def _get_pending_index_document_paths() -> set[str]:
+    """Return file paths already pending in the queue for _index_document tasks."""
+    if _huey is None:
+        return set()
+
+    try:
+        pending_messages = _huey.storage.enqueued_items()
+    except Exception:
+        logger.warning(
+            "Failed to inspect pending Huey tasks; startup batch dedupe disabled",
+            exc_info=True,
+        )
+        return set()
+
+    pending_paths: set[str] = set()
+    for message in pending_messages:
+        try:
+            task = _huey.deserialize_task(message)
+        except Exception:
+            logger.warning(
+                "Failed to deserialize pending Huey task while inspecting startup queue",
+                exc_info=True,
+            )
+            continue
+
+        if getattr(task, "name", None) != "_index_document":
+            continue
+
+        args = getattr(task, "args", ())
+        if not args:
+            continue
+
+        file_path = args[0]
+        if isinstance(file_path, str):
+            pending_paths.add(file_path)
+
+    return pending_paths
+
+
 def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
     """Enqueue many index tasks without watcher backpressure throttling.
 
@@ -151,10 +190,25 @@ def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
     if index_document_task is None or _huey is None:
         return 0
 
+    pending_paths = set() if force else _get_pending_index_document_paths()
     enqueued = 0
+    skipped_pending = 0
+    seen_paths = set(pending_paths)
     for file_path in file_paths:
+        if file_path in seen_paths:
+            if file_path in pending_paths:
+                skipped_pending += 1
+            continue
         index_document_task(file_path, force=force)
+        seen_paths.add(file_path)
         enqueued += 1
+
+    if skipped_pending > 0:
+        logger.info(
+            "Skipped %d startup indexing task(s) already pending in queue",
+            skipped_pending,
+        )
+
     return enqueued
 
 
