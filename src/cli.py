@@ -32,7 +32,7 @@ from rich.table import Table
 
 from src.config import ensure_runtime_project_registered, load_config
 from src.daemon.queue_status import get_queue_stats
-from src.daemon import RuntimePaths, read_daemon_metadata
+from src.daemon import DaemonMetadata, RuntimePaths, read_daemon_metadata
 from src.daemon.health import (
     DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
     DaemonHealthServer,
@@ -45,6 +45,7 @@ from src.daemon.management import (
     restart_daemon,
     start_daemon,
     stop_daemon,
+    wait_for_daemon_ready,
 )
 from src.git.repository import get_commits_after_timestamp, is_git_available
 from src.git.parallel_indexer import (
@@ -80,6 +81,7 @@ _GLOBAL_DAEMON_PROJECT_OPTION_HELP = (
     "Accepted for backward compatibility but ignored; daemon runtime is global "
     "and project is request metadata only."
 )
+_DAEMON_PENDING_READY_STATUSES = {"starting", "initializing"}
 
 
 def _create_query_context(project: str | None) -> ApplicationContext:
@@ -871,7 +873,7 @@ def daemon_start(project: str | None, timeout: float):
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    click.echo(f"Daemon running (pid={metadata.pid}, status={metadata.status})")
+    click.echo(_format_daemon_startup_result("started", metadata))
 
 
 @daemon_group.command("status")
@@ -1033,7 +1035,17 @@ def daemon_restart(project: str | None, timeout: float):
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    click.echo(f"Daemon restarted (pid={metadata.pid}, status={metadata.status})")
+    click.echo(_format_daemon_startup_result("restarted", metadata))
+
+
+def _format_daemon_startup_result(action: str, metadata: DaemonMetadata) -> str:
+    if metadata.status in _DAEMON_PENDING_READY_STATUSES:
+        return (
+            f"Daemon {action} (pid={metadata.pid}, lifecycle={metadata.status}, "
+            "socket readiness pending)"
+        )
+
+    return f"Daemon {action} (pid={metadata.pid}, lifecycle={metadata.status})"
 
 
 @cli.group("index")
@@ -1235,6 +1247,8 @@ def _request_daemon_json(
             project_override=project_override,
             paths=runtime_paths,
         )
+        if metadata.status in _DAEMON_PENDING_READY_STATUSES:
+            metadata = wait_for_daemon_ready(paths=runtime_paths)
     else:
         inspection = inspect_daemon(runtime_paths)
         metadata = inspection.metadata if inspection.running else None

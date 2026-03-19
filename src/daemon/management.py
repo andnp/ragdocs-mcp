@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 _READY_STATUSES = {"ready", "ready_primary", "ready_replica"}
+_STARTUP_STATUSES = {"starting", "initializing"}
 _NONRESPONSIVE_METADATA_GRACE_SECONDS = 30.0
 _INTERNAL_SHUTDOWN_TIMEOUT_SECONDS = 1.0
 _RUNTIME_DAEMON_COMMAND = ("-m", "src.cli", "daemon-internal-run")
@@ -124,6 +125,8 @@ def start_daemon(
         if _metadata_has_exceeded_grace_period(current.metadata):
             _terminate_extra_runtime_daemon_processes(runtime_paths)
             _cleanup_stale_runtime_state(runtime_paths)
+        elif current.responsive or _metadata_is_starting(current.metadata):
+            return current.metadata
         else:
             return _wait_for_ready_daemon(deadline=deadline, paths=runtime_paths)
     if current.stale:
@@ -479,6 +482,10 @@ def _metadata_has_exceeded_grace_period(
     )
 
 
+def _metadata_is_starting(metadata: DaemonMetadata) -> bool:
+    return metadata.status in _STARTUP_STATUSES
+
+
 def _daemon_log_path(paths: RuntimePaths) -> Path:
     return paths.root / "daemon.log"
 
@@ -530,6 +537,14 @@ def _wait_for_ready_daemon(
             if require_ready and inspection.ready:
                 return inspection.metadata
             if not require_ready and inspection.running and inspection.responsive:
+                return inspection.metadata
+            if (
+                not require_ready
+                and spawned_process is not None
+                and inspection.running
+                and inspection.metadata.pid == spawned_process.pid
+                and _metadata_is_starting(inspection.metadata)
+            ):
                 return inspection.metadata
 
         if require_ready and inspection.running and inspection.metadata is not None:

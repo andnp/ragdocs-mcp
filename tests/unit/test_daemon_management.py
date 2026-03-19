@@ -5,7 +5,13 @@ import sys
 
 import pytest
 
-from src.daemon.management import DaemonInspection, DaemonManagementError, start_daemon, stop_daemon
+from src.daemon.management import (
+    DaemonInspection,
+    DaemonManagementError,
+    start_daemon,
+    stop_daemon,
+    wait_for_daemon_ready,
+)
 from src.daemon.metadata import DaemonMetadata
 from src.daemon.paths import RuntimePaths
 
@@ -46,8 +52,11 @@ def _paths(tmp_path: Path) -> RuntimePaths:
     )
 
 
-def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> None:
-    metadata = DaemonMetadata(pid=101, started_at=1.0, status="ready")
+def test_start_daemon_returns_spawned_starting_metadata_before_socket_ready(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    metadata = DaemonMetadata(pid=101, started_at=1.0, status="starting")
     inspections = iter(
         [
             DaemonInspection(
@@ -58,18 +67,11 @@ def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> N
                 ready=False,
             ),
             DaemonInspection(
-                metadata=DaemonMetadata(pid=101, started_at=1.0, status="starting"),
+                metadata=metadata,
                 running=True,
                 stale=False,
                 responsive=False,
                 ready=False,
-            ),
-            DaemonInspection(
-                metadata=metadata,
-                running=True,
-                stale=False,
-                responsive=True,
-                ready=True,
             ),
         ]
     )
@@ -77,8 +79,8 @@ def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> N
         metadata=metadata,
         running=True,
         stale=False,
-        responsive=True,
-        ready=True,
+        responsive=False,
+        ready=False,
     )
 
     monkeypatch.setattr(
@@ -89,15 +91,47 @@ def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> N
         "src.daemon.management._spawn_daemon_process",
         lambda runtime_paths: _FakeProcess(101, [None, None, None]),
     )
-    monkeypatch.setattr(
-        "src.daemon.management.probe_daemon_socket",
-        lambda *args, **kwargs: metadata,
-    )
     monkeypatch.setattr("src.daemon.management.time.sleep", lambda _: None)
 
     result = start_daemon(timeout_seconds=0.5, paths=_paths(tmp_path))
 
     assert result == metadata
+
+
+def test_wait_for_daemon_ready_still_requires_ready_status(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    starting_metadata = DaemonMetadata(pid=101, started_at=1.0, status="starting")
+    ready_metadata = DaemonMetadata(pid=101, started_at=1.0, status="ready")
+    inspections = iter(
+        [
+            DaemonInspection(
+                metadata=starting_metadata,
+                running=True,
+                stale=False,
+                responsive=False,
+                ready=False,
+            ),
+            DaemonInspection(
+                metadata=ready_metadata,
+                running=True,
+                stale=False,
+                responsive=True,
+                ready=True,
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "src.daemon.management.inspect_daemon",
+        lambda paths=None: next(inspections),
+    )
+    monkeypatch.setattr("src.daemon.management.time.sleep", lambda _: None)
+
+    result = wait_for_daemon_ready(timeout_seconds=0.5, paths=_paths(tmp_path))
+
+    assert result == ready_metadata
 
 
 def test_start_daemon_restarts_running_daemon_after_auto_registration_change(
