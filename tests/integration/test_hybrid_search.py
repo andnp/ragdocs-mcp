@@ -266,6 +266,44 @@ async def test_graph_expansion_caps_neighbor_chunk_candidates(
 
 
 @pytest.mark.asyncio
+async def test_graph_expansion_prefers_precise_non_hub_neighbor(
+    config, indices, manager, orchestrator
+):
+    docs_path = Path(config.indexing.documents_path)
+
+    seed_doc = docs_path / "seed.md"
+    seed_doc.write_text(
+        "# Seed Document\n\n"
+        "Ultra specific graph precision lookup phrase."
+    )
+    manager.index_document(str(seed_doc))
+
+    precise_doc = docs_path / "precise_impl.md"
+    precise_doc.write_text("# Precise Implementation\n\nGeneric implementation notes.")
+    manager.index_document(str(precise_doc))
+
+    noisy_doc = docs_path / "noisy_hub.md"
+    noisy_doc.write_text("# Noisy Hub\n\nGeneric related notes.")
+    manager.index_document(str(noisy_doc))
+
+    vector, _keyword, graph = indices
+    graph.add_edge("seed", "precise_impl", "implements")
+    graph.add_edge("seed", "noisy_hub", "links_to")
+    for index in range(6):
+        graph.add_edge("noisy_hub", f"noise_{index}", "links_to")
+
+    results, _compression_stats, strategy_stats = await orchestrator.query(
+        "Ultra specific graph precision lookup phrase",
+        top_k=1,
+        top_n=10,
+    )
+
+    assert strategy_stats.graph_count == 1
+    assert _doc_in_chunk_ids("precise_impl", results)
+    assert not _doc_in_chunk_ids("noisy_hub", results)
+
+
+@pytest.mark.asyncio
 async def test_recency_boosts_recent_docs(config, manager, orchestrator):
     """
     Test that recently modified documents receive score boost.

@@ -8,7 +8,14 @@ Tests cover:
 - Fallback to LINKS_TO for unknown contexts
 """
 
-from src.search.edge_types import EdgeType, HEADER_TO_EDGE_TYPE, infer_edge_type
+from src.search.edge_types import (
+    EDGE_TYPE_WEIGHTS,
+    EdgeType,
+    HEADER_TO_EDGE_TYPE,
+    edge_type_weight,
+    infer_edge_type,
+    normalize_edge_type,
+)
 
 
 # ============================================================================
@@ -43,6 +50,11 @@ class TestEdgeTypeEnum:
         """
         assert str(EdgeType.LINKS_TO.value) == "links_to"
         assert str(EdgeType.TESTS.value) == "tests"
+
+    def test_edge_type_weights_prioritize_precise_links(self):
+        assert EDGE_TYPE_WEIGHTS[EdgeType.IMPLEMENTS] > EDGE_TYPE_WEIGHTS[EdgeType.LINKS_TO]
+        assert EDGE_TYPE_WEIGHTS[EdgeType.LINKS_TO] > EDGE_TYPE_WEIGHTS[EdgeType.RELATED]
+        assert EDGE_TYPE_WEIGHTS[EdgeType.RELATED] > EDGE_TYPE_WEIGHTS[EdgeType.TESTS]
 
 
 class TestHeaderToEdgeTypeMapping:
@@ -181,6 +193,18 @@ class TestInferEdgeTypeFromTarget:
             == EdgeType.IMPLEMENTS
         )
         assert infer_edge_type("Related", "test_bar.py") == EdgeType.RELATED
+
+
+class TestNormalizeEdgeType:
+    def test_normalize_edge_type_handles_legacy_and_uppercase_values(self):
+        assert normalize_edge_type("LINKS_TO") == EdgeType.LINKS_TO
+        assert normalize_edge_type("related_to") == EdgeType.RELATED
+        assert normalize_edge_type("implementation") == EdgeType.IMPLEMENTS
+        assert normalize_edge_type("tests") == EdgeType.TESTS
+
+    def test_edge_type_weight_accepts_string_aliases(self):
+        assert edge_type_weight("IMPLEMENTS") == EDGE_TYPE_WEIGHTS[EdgeType.IMPLEMENTS]
+        assert edge_type_weight("transclusion") == EDGE_TYPE_WEIGHTS[EdgeType.LINKS_TO]
 
 
 class TestInferEdgeTypeDefault:

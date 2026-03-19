@@ -3,6 +3,7 @@ import logging
 import random
 import sqlite3
 from collections import Counter
+from math import sqrt
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 from src.indices._corruption import is_corruption_error
 from src.indices.protocol import SearchResult
 from src.search.community import compute_community_boost, get_community_members
+from src.search.edge_types import edge_type_weight
 from src.storage.db import DatabaseManager
 
 logger = logging.getLogger(__name__)
@@ -383,6 +385,117 @@ class GraphStore:
                     self._reinitialize_after_corruption()
                     return []
                 raise
+
+    def rank_neighbors(self, seed_scores: dict[str, float]) -> list[tuple[str, float]]:
+        with self._lock:
+            try:
+                weighted_seeds = self._existing_seed_scores(seed_scores)
+                if not weighted_seeds:
+                    return []
+
+                edge_rows = self._one_hop_edge_rows(list(weighted_seeds))
+                if not edge_rows:
+                    return []
+
+                candidate_scores: dict[str, float] = {}
+                candidate_ids: set[str] = set()
+
+                for source, target, edge_type in edge_rows:
+                    seed_id: str | None = None
+                    neighbor_id: str | None = None
+
+                    if source in weighted_seeds and target not in weighted_seeds:
+                        seed_id = source
+                        neighbor_id = target
+                    elif target in weighted_seeds and source not in weighted_seeds:
+                        seed_id = target
+                        neighbor_id = source
+
+                    if seed_id is None or neighbor_id is None:
+                        continue
+
+                    candidate_ids.add(neighbor_id)
+                    contribution = weighted_seeds[seed_id] * edge_type_weight(edge_type)
+                    candidate_scores[neighbor_id] = (
+                        candidate_scores.get(neighbor_id, 0.0) + contribution
+                    )
+
+                if not candidate_scores:
+                    return []
+
+                degrees = self._node_degrees(list(candidate_ids))
+                ranked = [
+                    (
+                        candidate_id,
+                        score / sqrt(max(1.0, float(degrees.get(candidate_id, 1)))),
+                    )
+                    for candidate_id, score in candidate_scores.items()
+                ]
+                ranked.sort(key=lambda item: (-item[1], item[0]))
+                return ranked
+            except Exception as e:
+                if is_corruption_error(e):
+                    self._reinitialize_after_corruption()
+                    return []
+                raise
+
+    def _existing_seed_scores(self, seed_scores: dict[str, float]) -> dict[str, float]:
+        if not seed_scores:
+            return {}
+
+        conn = self._conn()
+        seed_ids = list(seed_scores)
+        placeholders = ",".join("?" * len(seed_ids))
+        rows = conn.execute(
+            f"SELECT node_id FROM graph_nodes WHERE node_id IN ({placeholders})",
+            seed_ids,
+        ).fetchall()
+        existing_seed_ids = {row[0] for row in rows}
+        return {
+            doc_id: score
+            for doc_id, score in seed_scores.items()
+            if doc_id in existing_seed_ids and score > 0.0
+        }
+
+    def _one_hop_edge_rows(self, seed_ids: list[str]) -> list[tuple[str, str, str]]:
+        if not seed_ids:
+            return []
+
+        conn = self._conn()
+        placeholders = ",".join("?" * len(seed_ids))
+        outgoing_rows = conn.execute(
+            f"SELECT source, target, edge_type FROM graph_edges WHERE source IN ({placeholders})",
+            seed_ids,
+        ).fetchall()
+        incoming_rows = conn.execute(
+            f"SELECT source, target, edge_type FROM graph_edges WHERE target IN ({placeholders})",
+            seed_ids,
+        ).fetchall()
+        return [(row[0], row[1], row[2]) for row in outgoing_rows + incoming_rows]
+
+    def _node_degrees(self, node_ids: list[str]) -> dict[str, int]:
+        if not node_ids:
+            return {}
+
+        conn = self._conn()
+        placeholders = ",".join("?" * len(node_ids))
+        degrees = {node_id: 0 for node_id in node_ids}
+
+        outgoing_rows = conn.execute(
+            f"SELECT source, COUNT(*) FROM graph_edges WHERE source IN ({placeholders}) GROUP BY source",
+            node_ids,
+        ).fetchall()
+        for node_id, count in outgoing_rows:
+            degrees[node_id] = degrees.get(node_id, 0) + count
+
+        incoming_rows = conn.execute(
+            f"SELECT target, COUNT(*) FROM graph_edges WHERE target IN ({placeholders}) GROUP BY target",
+            node_ids,
+        ).fetchall()
+        for node_id, count in incoming_rows:
+            degrees[node_id] = degrees.get(node_id, 0) + count
+
+        return degrees
 
     # ------------------------------------------------------------------
     # Bulk access (used by ImplicitGraphBuilder and MemorySearchOrchestrator)

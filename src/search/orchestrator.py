@@ -125,6 +125,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             all_doc_ids.add(doc_id)
             chunk_id_to_doc_id[chunk_id] = doc_id
 
+        graph_seed_scores = self._build_graph_seed_scores(vector_results, keyword_results)
+
         # Tag-based query expansion: Find related documents via tag graph traversal
         tag_expansion_count = 0
         combined_initial_results = vector_results + keyword_results
@@ -149,9 +151,13 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 applied_tag_expansion_results.append(result)
                 tag_expansion_count += 1
 
-        graph_neighbors = self._get_graph_neighbors(list(all_doc_ids))
+        ranked_graph_neighbors = self._get_ranked_graph_neighbors(graph_seed_scores)
+        graph_neighbor_ids = [doc_id for doc_id, _score in ranked_graph_neighbors]
+        graph_doc_scores = {
+            doc_id: score for doc_id, score in ranked_graph_neighbors
+        }
         graph_chunk_ids = build_graph_chunk_candidates(
-            graph_neighbors,
+            graph_neighbor_ids,
             self._vector,
             top_k,
             excluded_chunk_ids=set(chunk_id_to_doc_id),
@@ -184,7 +190,13 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         strategy_results: dict[str, list[tuple[str, float]]] = {
             "semantic": [(r["chunk_id"], r.get("score", 0.0)) for r in vector_results],
             "keyword": [(r["chunk_id"], r.get("score", 0.0)) for r in keyword_results],
-            "graph": [(cid, 1.0) for cid in graph_chunk_ids],
+            "graph": [
+                (
+                    cid,
+                    graph_doc_scores.get(extract_doc_id_from_chunk_id(cid), 0.0),
+                )
+                for cid in graph_chunk_ids
+            ],
         }
         provenance_results = dict(strategy_results)
         if applied_tag_expansion_results:
@@ -346,10 +358,33 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         )
         return results
 
-    def _get_graph_neighbors(self, doc_ids: list[str]):
-        neighbors = self._graph.get_neighbors_batch(doc_ids, depth=1)
+    def _build_graph_seed_scores(
+        self,
+        vector_results: list[dict[str, object]],
+        keyword_results: list[dict[str, object]],
+    ):
+        seed_scores: dict[str, float] = {}
+
+        for result in vector_results + keyword_results:
+            doc_id_obj = result.get("doc_id")
+            if not isinstance(doc_id_obj, str) or not doc_id_obj:
+                continue
+
+            raw_score = result.get("score", 0.0)
+            score = float(raw_score) if isinstance(raw_score, int | float) else 0.0
+            current_score = seed_scores.get(doc_id_obj, 0.0)
+            if score > current_score:
+                seed_scores[doc_id_obj] = score
+
+        return seed_scores
+
+    def _get_ranked_graph_neighbors(self, seed_scores: dict[str, float]):
+        neighbors = self._graph.rank_neighbors(seed_scores)
         logger.info(
-            f"Graph traversal for {doc_ids[:3]} returned {len(neighbors)} neighbors: {list(neighbors)[:5]}"
+            "Graph traversal for %s returned %d ranked neighbors: %s",
+            list(seed_scores)[:3],
+            len(neighbors),
+            neighbors[:5],
         )
         return neighbors
 

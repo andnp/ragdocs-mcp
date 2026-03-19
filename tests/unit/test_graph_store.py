@@ -151,6 +151,41 @@ def test_graph_store_get_neighbors_nonexistent_node(graph_store):
     assert neighbors == []
 
 
+def test_rank_neighbors_prefers_precise_edges_and_strong_seeds(graph_store):
+    graph_store.add_node("strong_seed", {})
+    graph_store.add_node("weak_seed", {})
+    graph_store.add_node("implements_target", {})
+    graph_store.add_node("links_target", {})
+
+    graph_store.add_edge("strong_seed", "implements_target", "implements")
+    graph_store.add_edge("weak_seed", "links_target", "links_to")
+
+    ranked = graph_store.rank_neighbors({"strong_seed": 1.0, "weak_seed": 0.25})
+
+    assert ranked[0][0] == "implements_target"
+    assert ranked[1][0] == "links_target"
+    assert ranked[0][1] > ranked[1][1]
+
+
+def test_rank_neighbors_penalizes_hub_documents(graph_store):
+    graph_store.add_node("seed", {})
+    graph_store.add_node("focused_doc", {})
+    graph_store.add_node("hub_doc", {})
+
+    graph_store.add_edge("seed", "focused_doc", "links_to")
+    graph_store.add_edge("seed", "hub_doc", "links_to")
+
+    for index in range(5):
+        graph_store.add_node(f"hub_neighbor_{index}", {})
+        graph_store.add_edge("hub_doc", f"hub_neighbor_{index}", "links_to")
+
+    ranked = graph_store.rank_neighbors({"seed": 1.0})
+
+    assert ranked[0][0] == "focused_doc"
+    assert ranked[1][0] == "hub_doc"
+    assert ranked[0][1] > ranked[1][1]
+
+
 def test_graph_store_persist_and_load(tmp_path, graph_store):
     graph_store.add_node("doc1", {"title": "Document 1"})
     graph_store.add_node("doc2", {"title": "Document 2"})
