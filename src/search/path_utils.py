@@ -95,9 +95,10 @@ def extract_doc_id_from_chunk_id(chunk_id: str) -> str:
     """
     Extract document ID from chunk ID.
 
-    Handles both formats:
+    Handles all supported formats:
     - "doc/path#chunk_0" → "doc/path"
     - "doc_path_chunk_0" → "doc_path"
+    - "doc_path_parent_0" → "doc_path"
 
     Args:
         chunk_id: Chunk identifier (with separator)
@@ -119,6 +120,9 @@ def extract_doc_id_from_chunk_id(chunk_id: str) -> str:
     # Split from right, remove last part if it matches "chunk_N"
     parts = chunk_id.rsplit("_", 2)  # ["doc", "chunk", "0"]
     if len(parts) >= 3 and parts[-2] == "chunk":
+        return "_".join(parts[:-2])
+
+    if len(parts) >= 3 and parts[-2] == "parent":
         return "_".join(parts[:-2])
 
     # No valid separator found, return as-is

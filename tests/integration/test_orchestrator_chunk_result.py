@@ -395,3 +395,71 @@ async def test_chunk_result_contains_project_id(config, manager, orchestrator, t
     assert any(
         result.to_dict().get("project_id") == "docs-project" for result in results
     )
+
+
+@pytest.mark.asyncio
+async def test_query_falls_back_to_child_when_parent_chunk_missing(
+    config, indices, manager, orchestrator, monkeypatch
+):
+    docs_dir = Path(config.indexing.documents_path)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    config.chunking.parent_chunk_min_chars = 200
+    config.chunking.parent_chunk_max_chars = 1200
+
+    doc = create_test_document(
+        docs_dir,
+        "parent_fallback",
+        """# Parent Fallback
+
+## Authentication
+
+Authentication setup details with enough content to create a child chunk.
+This paragraph repeats the key phrase so it remains searchable after indexing.
+
+## Authorization
+
+Authorization details continue here with more content to keep the document long.
+More repeated authorization text ensures the parent chunk is generated.
+
+## Tokens
+
+Token lifecycle notes add more text so parent-child chunking stays enabled.
+This extra content keeps the document above the parent chunk threshold.
+""",
+    )
+
+    manager.index_document(doc)
+
+    chunk_ids = indices["vector"].get_chunk_ids_for_document("parent_fallback")
+    parent_chunk_id = next(chunk_id for chunk_id in chunk_ids if "_parent_" in chunk_id)
+    child_chunk_id = next(chunk_id for chunk_id in chunk_ids if "_chunk_" in chunk_id)
+
+    original_get_chunk_by_id = indices["vector"].get_chunk_by_id
+
+    def get_chunk_by_id_with_missing_parent(chunk_id: str):
+        if chunk_id == parent_chunk_id:
+            return None
+        return original_get_chunk_by_id(chunk_id)
+
+    monkeypatch.setattr(
+        indices["vector"],
+        "get_chunk_by_id",
+        get_chunk_by_id_with_missing_parent,
+    )
+
+    fallback_results, _, _ = await orchestrator.query(
+        "authentication setup details",
+        top_k=10,
+        top_n=5,
+    )
+
+    assert all("_parent_" not in result.chunk_id for result in fallback_results)
+    assert any(result.chunk_id == child_chunk_id for result in fallback_results)
+
+    recovered = next(
+        result for result in fallback_results if result.chunk_id == child_chunk_id
+    )
+    assert recovered.file_path.endswith("parent_fallback.md")
+    assert recovered.content.strip() != ""
+    assert recovered.doc_id == "parent_fallback"
