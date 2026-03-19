@@ -45,6 +45,10 @@ def _normalize_artifact_value(value: str) -> str:
     return value.strip().lower().replace("\\", "/")
 
 
+def _normalize_field_text(value: str) -> str:
+    return " ".join(value.strip().lower().split())
+
+
 def _looks_like_artifact_query(query: str) -> bool:
     normalized = query.strip()
     if not normalized:
@@ -405,18 +409,20 @@ class KeywordIndex:
                     )
 
             sanitized = _sanitize_fts_query(query)
+            candidate_limit = max(top_k * 5, 25)
 
             try:
                 conn = self._conn()
                 rows = conn.execute(
                     """
-                    SELECT chunk_id, doc_id, bm25(search_index) AS score
+                    SELECT chunk_id, doc_id, content, title, headers, source_file,
+                           bm25(search_index) AS score
                     FROM search_index
                     WHERE search_index MATCH ?
                     ORDER BY score
                     LIMIT ?
                     """,
-                    (sanitized, top_k * 2 if excluded_files else top_k),
+                    (sanitized, candidate_limit),
                 ).fetchall()
             except sqlite3.DatabaseError as e:
                 if _is_corruption_error(e):
@@ -430,7 +436,8 @@ class KeywordIndex:
                             self._conn()
                             .execute(
                                 """
-                            SELECT chunk_id, doc_id, -1.0 AS score
+                            SELECT chunk_id, doc_id, content, title, headers,
+                                   source_file, -1.0 AS score
                             FROM search_index
                             WHERE content LIKE ? OR title LIKE ? OR source_file LIKE ?
                             LIMIT ?
@@ -439,7 +446,7 @@ class KeywordIndex:
                                     like_query,
                                     like_query,
                                     like_query,
-                                    top_k * 2 if excluded_files else top_k,
+                                    candidate_limit,
                                 ),
                             )
                             .fetchall()
@@ -452,6 +459,8 @@ class KeywordIndex:
                 else:
                     logger.warning("Search error: %s", e, exc_info=True)
                     return []
+
+            ranked_rows = self._rerank_keyword_rows(query, rows)
 
             results: list[SearchResultDict] = []
             seen_chunk_ids: set[str] = set()
@@ -476,11 +485,10 @@ class KeywordIndex:
                 if len(results) >= top_k:
                     return results
 
-            for row in rows:
+            for row in ranked_rows:
                 chunk_id = row["chunk_id"]
                 doc_id = row["doc_id"]
-                # bm25() returns negative values; negate so higher = better
-                score = -float(row["score"])
+                score = float(row["score"])
 
                 if chunk_id in seen_chunk_ids:
                     continue
@@ -500,6 +508,92 @@ class KeywordIndex:
                     break
 
             return results
+
+    def _rerank_keyword_rows(
+        self,
+        query: str,
+        rows: list[sqlite3.Row],
+    ) -> list[dict[str, Any]]:
+        ranked_rows: list[dict[str, Any]] = []
+        for row in rows:
+            bm25_score = -float(row["score"])
+            lexical_boost = self._score_field_aware_match(
+                query,
+                content=str(row["content"] or ""),
+                title=str(row["title"] or ""),
+                headers=str(row["headers"] or ""),
+                source_file=str(row["source_file"] or ""),
+            )
+            ranked_rows.append(
+                {
+                    "chunk_id": row["chunk_id"],
+                    "doc_id": row["doc_id"],
+                    "score": bm25_score + lexical_boost,
+                }
+            )
+
+        ranked_rows.sort(key=lambda item: (-float(item["score"]), str(item["chunk_id"])))
+        return ranked_rows
+
+    def _score_field_aware_match(
+        self,
+        query: str,
+        *,
+        content: str,
+        title: str,
+        headers: str,
+        source_file: str,
+    ) -> float:
+        normalized_query = _normalize_field_text(query)
+        if not normalized_query:
+            return 0.0
+
+        normalized_title = _normalize_field_text(title)
+        normalized_headers = _normalize_field_text(headers)
+        normalized_content = _normalize_field_text(content)
+        normalized_source = _normalize_artifact_value(source_file)
+        normalized_query_artifact = _normalize_artifact_value(query)
+        basename_query = Path(normalized_query_artifact).name
+        source_basename = Path(normalized_source).name if normalized_source else ""
+        header_segments = [
+            _normalize_field_text(segment)
+            for segment in headers.split(">")
+            if _normalize_field_text(segment)
+        ]
+
+        score = 0.0
+
+        if normalized_title == normalized_query:
+            score += 40.0
+        elif normalized_query in normalized_title:
+            score += 14.0
+
+        if normalized_query in header_segments:
+            score += 34.0
+        elif normalized_headers == normalized_query:
+            score += 30.0
+        elif normalized_query in normalized_headers:
+            score += 12.0
+
+        if normalized_source == normalized_query_artifact:
+            score += 60.0
+        elif source_basename == normalized_query_artifact:
+            score += 56.0
+        elif basename_query and source_basename == basename_query:
+            score += 52.0
+        elif normalized_source.endswith(f"/{normalized_query_artifact}"):
+            score += 48.0
+        elif basename_query and normalized_source.endswith(f"/{basename_query}"):
+            score += 44.0
+        elif normalized_query_artifact in normalized_source:
+            score += 16.0
+        elif basename_query and basename_query in normalized_source:
+            score += 12.0
+
+        if normalized_query in normalized_content:
+            score += 4.0
+
+        return score
 
     def _search_artifact_matches(
         self,

@@ -710,6 +710,139 @@ def test_keyword_index_all_boosted_fields_together():
     )
 
 
+def test_keyword_index_prefers_exact_title_over_header_and_content_matches():
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    title_match = Chunk(
+        chunk_id="title_exact_chunk_0",
+        doc_id="title-exact-doc",
+        content="General implementation notes without the key phrase.",
+        metadata={"title": "Authentication Overview", "tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=47,
+        file_path="/tmp/title-exact.md",
+        modified_time=datetime.now(),
+    )
+    header_match = Chunk(
+        chunk_id="header_exact_chunk_0",
+        doc_id="header-exact-doc",
+        content="General implementation notes without the key phrase.",
+        metadata={"title": "Security Notes", "tags": []},
+        chunk_index=0,
+        header_path="Reference > Authentication Overview",
+        start_pos=0,
+        end_pos=47,
+        file_path="/tmp/header-exact.md",
+        modified_time=datetime.now(),
+    )
+    content_match = Chunk(
+        chunk_id="content_phrase_chunk_0",
+        doc_id="content-phrase-doc",
+        content="This page contains an authentication overview for platform setup.",
+        metadata={"title": "General Setup", "tags": []},
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=66,
+        file_path="/tmp/content-phrase.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(title_match)
+    keyword_index.add_chunk(header_match)
+    keyword_index.add_chunk(content_match)
+
+    chunk_ids = _extract_chunk_ids(
+        keyword_index.search("Authentication Overview", top_k=5)
+    )
+
+    assert chunk_ids[:3] == [
+        "title_exact_chunk_0",
+        "header_exact_chunk_0",
+        "content_phrase_chunk_0",
+    ]
+
+
+def test_keyword_index_prefers_exact_header_segment_over_content_match():
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    header_match = Chunk(
+        chunk_id="header_segment_chunk_0",
+        doc_id="header-segment-doc",
+        content="Operational notes without the query phrase.",
+        metadata={"title": "Operational Notes", "tags": []},
+        chunk_index=0,
+        header_path="Config > worker.enabled",
+        start_pos=0,
+        end_pos=42,
+        file_path="/tmp/worker-config.md",
+        modified_time=datetime.now(),
+    )
+    content_match = Chunk(
+        chunk_id="content_config_chunk_0",
+        doc_id="content-config-doc",
+        content="Set worker.enabled to false when running locally.",
+        metadata={"title": "Runtime Flags", "tags": []},
+        chunk_index=0,
+        header_path="Config > Runtime",
+        start_pos=0,
+        end_pos=49,
+        file_path="/tmp/runtime-flags.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(header_match)
+    keyword_index.add_chunk(content_match)
+
+    chunk_ids = _extract_chunk_ids(keyword_index.search("worker.enabled", top_k=5))
+
+    assert chunk_ids[:2] == ["header_segment_chunk_0", "content_config_chunk_0"]
+
+
+def test_keyword_index_prefers_exact_config_key_title_over_content_match():
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    title_match = Chunk(
+        chunk_id="title_config_chunk_0",
+        doc_id="title-config-doc",
+        content="Configuration reference without the literal key in the body.",
+        metadata={"title": "worker.enabled", "tags": []},
+        chunk_index=0,
+        header_path="Config",
+        start_pos=0,
+        end_pos=57,
+        file_path="/tmp/config-reference.md",
+        modified_time=datetime.now(),
+    )
+    content_match = Chunk(
+        chunk_id="body_config_chunk_0",
+        doc_id="body-config-doc",
+        content="Use worker.enabled to disable the background worker in tests.",
+        metadata={"title": "Testing Notes", "tags": []},
+        chunk_index=0,
+        header_path="Testing",
+        start_pos=0,
+        end_pos=62,
+        file_path="/tmp/testing-notes.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(title_match)
+    keyword_index.add_chunk(content_match)
+
+    chunk_ids = _extract_chunk_ids(keyword_index.search("worker.enabled", top_k=5))
+
+    assert chunk_ids[:2] == ["title_config_chunk_0", "body_config_chunk_0"]
+
+
 def test_keyword_index_artifact_lane_matches_dotted_source_file():
     from src.models import Chunk
 
