@@ -362,6 +362,44 @@ def test_global_runtime_ignores_project_scope_and_uses_all_documents_roots(
     assert ctx.config.detected_project is None
 
 
+def test_global_runtime_ignores_transient_override_outside_registered_projects(
+    two_projects, monkeypatch, tmp_path
+):
+    external_project = tmp_path / "ad-hoc"
+    external_project.mkdir()
+
+    config = Config(
+        indexing=IndexingConfig(
+            documents_path=str(tmp_path / "unused"),
+            index_path=str(tmp_path / "index"),
+        ),
+        search=SearchConfig(),
+        chunking=ChunkingConfig(),
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        projects=[
+            ProjectConfig(name="project-a", path=str(two_projects["project_a"])),
+            ProjectConfig(name="project-b", path=str(two_projects["project_b"])),
+        ],
+    )
+
+    monkeypatch.setattr("src.context.load_config", lambda: config)
+
+    ctx = ApplicationContext.create(
+        project_override=str(external_project),
+        enable_watcher=False,
+        lazy_embeddings=True,
+        global_runtime=True,
+    )
+
+    assert ctx.documents_roots == [
+        two_projects["project_a"],
+        two_projects["project_b"],
+    ]
+    assert external_project not in ctx.documents_roots
+    assert Path(ctx.config.indexing.documents_path) == two_projects["tmp"]
+    assert ctx.config.detected_project is None
+
+
 def test_multiple_contexts_have_isolated_orchestrator_paths(
     config_for_project_a, config_for_project_b, two_projects, monkeypatch
 ):

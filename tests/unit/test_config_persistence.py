@@ -199,9 +199,9 @@ embedding_model = "custom"
     assert len(data["projects"]) == 1
 
 
-def test_detect_project_arbitrary_path_persists(tmp_path, temp_config_home):
+def test_detect_project_arbitrary_path_is_transient(tmp_path, temp_config_home):
     """
-    Test that arbitrary path via --project flag gets persisted.
+    Test that arbitrary path via --project flag is not persisted.
     """
     config_path = temp_config_home / "config.toml"
 
@@ -213,21 +213,14 @@ def test_detect_project_arbitrary_path_persists(tmp_path, temp_config_home):
     )
 
     assert result == "new-project"
-    assert config_path.exists()
-
-    with open(config_path, "rb") as f:
-        data = tomllib.load(f)
-
-    assert len(data["projects"]) == 1
-    assert data["projects"][0]["name"] == "new-project"
-    assert data["projects"][0]["path"] == str(arbitrary_dir)
+    assert not config_path.exists()
 
 
-def test_detect_project_arbitrary_path_generates_unique_name(
+def test_detect_project_arbitrary_path_generates_unique_transient_name(
     tmp_path, temp_config_home
 ):
     """
-    Test that arbitrary path generates unique name when conflicts exist.
+    Test that arbitrary path generates a unique transient name when conflicts exist.
     """
     config_path = temp_config_home / "config.toml"
 
@@ -249,13 +242,13 @@ path = "/existing/my-project"
     with open(config_path, "rb") as f:
         data = tomllib.load(f)
 
-    assert len(data["projects"]) == 2
-    assert data["projects"][1]["name"] == "my-project-2"
+    assert len(data["projects"]) == 1
+    assert data["projects"][0]["name"] == "my-project"
 
 
 def test_detect_project_arbitrary_path_invalid_chars(tmp_path, temp_config_home):
     """
-    Test that arbitrary path with invalid chars gets sanitized.
+    Test that arbitrary path with invalid chars gets sanitized without persistence.
     """
     config_path = temp_config_home / "config.toml"
 
@@ -267,11 +260,7 @@ def test_detect_project_arbitrary_path_invalid_chars(tmp_path, temp_config_home)
     )
 
     assert result == "my-project"
-
-    with open(config_path, "rb") as f:
-        data = tomllib.load(f)
-
-    assert data["projects"][0]["name"] == "my-project"
+    assert not config_path.exists()
 
 
 def test_detect_project_cwd_match_does_not_persist(tmp_path, temp_config_home):
@@ -327,17 +316,17 @@ path = "/path/to/existing"
     assert data["projects"][0]["name"] == "existing"
 
 
-def test_detect_project_persistence_failure_returns_name(
+def test_detect_project_arbitrary_path_does_not_call_persistence(
     tmp_path, temp_config_home, monkeypatch
 ):
     """
-    Test that detect_project returns project name even if persistence fails.
+    Test that arbitrary path detection no longer attempts to persist projects.
     """
     arbitrary_dir = tmp_path / "test-project"
     arbitrary_dir.mkdir()
 
     def failing_persist(name, path):
-        raise OSError("Simulated persistence failure")
+        raise AssertionError("persist_project_to_config should not be called")
 
     monkeypatch.setattr(src.config, "persist_project_to_config", failing_persist)
 
@@ -348,11 +337,11 @@ def test_detect_project_persistence_failure_returns_name(
     assert result == "test-project"
 
 
-def test_detect_project_cwd_auto_persists_when_not_registered(
+def test_detect_project_cwd_unmatched_does_not_persist(
     tmp_path, temp_config_home
 ):
     """
-    Test that CWD-based detection auto-persists when no registered project matches.
+    Test that unmatched CWD detection does not auto-persist new projects.
     """
     config_path = temp_config_home / "config.toml"
 
@@ -361,15 +350,8 @@ def test_detect_project_cwd_auto_persists_when_not_registered(
 
     result = detect_project(cwd=project_dir, projects=[], project_override=None)
 
-    assert result == "unregistered-project"
-    assert config_path.exists()
-
-    with open(config_path, "rb") as f:
-        data = tomllib.load(f)
-
-    assert len(data["projects"]) == 1
-    assert data["projects"][0]["name"] == "unregistered-project"
-    assert data["projects"][0]["path"] == str(project_dir)
+    assert result is None
+    assert not config_path.exists()
 
 
 def test_detect_project_cwd_no_persist_when_already_registered(
@@ -399,17 +381,17 @@ path = "{project_dir}"
     assert len(data["projects"]) == 1
 
 
-def test_detect_project_cwd_auto_persist_failure_returns_none(
+def test_detect_project_cwd_unmatched_does_not_call_persistence(
     tmp_path, temp_config_home, monkeypatch
 ):
     """
-    Test that CWD auto-persist failure logs warning and returns None.
+    Test that unmatched CWD detection no longer attempts persistence.
     """
     project_dir = tmp_path / "test-project"
     project_dir.mkdir()
 
     def failing_persist(name, path):
-        raise OSError("Simulated persistence failure")
+        raise AssertionError("persist_project_to_config should not be called")
 
     monkeypatch.setattr(src.config, "persist_project_to_config", failing_persist)
 

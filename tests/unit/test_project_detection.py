@@ -116,9 +116,9 @@ def test_detect_project_override_takes_precedence(sample_projects):
     assert result == "sibling"
 
 
-def test_detect_project_override_arbitrary_path(tmp_path, sample_projects):
+def test_detect_project_override_arbitrary_path_is_transient(tmp_path, sample_projects):
     """
-    Test that --project flag accepts arbitrary absolute paths not in registry.
+    Test that --project flag accepts arbitrary absolute paths without registering them.
     """
     arbitrary_dir = tmp_path / "arbitrary_project"
     arbitrary_dir.mkdir()
