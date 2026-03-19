@@ -20,6 +20,7 @@ from src.search.filters import matches_project_filter, normalize_project_filter
 from src.search.graph_expansion import build_graph_chunk_candidates
 from src.search.path_utils import extract_doc_id_from_chunk_id
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
+from src.search.query_execution import QueryExecutionContext
 from src.search.score_pipeline import ScorePipeline, ScorePipelineConfig
 from src.search.tag_expansion import expand_query_with_tags
 
@@ -56,6 +57,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             self._documents_path,
             self._queue_reindex_for_chunks,
         )
+        self._last_query_execution_stats: dict[str, int] | None = None
 
     @property
     def documents_path(self) -> Path:
@@ -99,6 +101,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             )
 
         docs_root = self._documents_path
+        query_context = self._create_query_execution_context()
 
         search_tasks = [
             self._search_vector(query_text, top_k, excluded_files, docs_root),
@@ -216,10 +219,15 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         )
         fused = self._apply_project_uplift(
             fused,
+            query_context=query_context,
             project_context=project_context,
             result_provenance=result_provenance,
         )
-        fused = self._apply_project_filter(fused, project_filter=project_filter)
+        fused = self._apply_project_filter(
+            fused,
+            query_context=query_context,
+            project_filter=project_filter,
+        )
 
         if pipeline_config is not None:
             pipeline = SearchPipeline(pipeline_config)
@@ -228,32 +236,47 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         final, compression_stats = pipeline.process(
             fused,
-            self._get_chunk_embedding,
-            self._get_chunk_content,
+            query_context.get_chunk_embedding,
+            query_context.get_chunk_content,
             query_text,
             top_n,
         )
 
         # Parent expansion: always expand child chunks to parent chunks
-        final = self._expand_to_parents(final, result_provenance=result_provenance)
-
-        chunk_results = self._materialize_chunk_results(
+        final = self._expand_to_parents(
             final,
+            query_context=query_context,
             result_provenance=result_provenance,
         )
 
+        chunk_results = self._materialize_chunk_results(
+            final,
+            query_context=query_context,
+            result_provenance=result_provenance,
+        )
+
+        self._last_query_execution_stats = query_context.stats.to_dict()
+
         return chunk_results, compression_stats, strategy_stats
+
+    def _create_query_execution_context(self) -> QueryExecutionContext:
+        return QueryExecutionContext(self._vector, self._keyword, self._chunk_hydrator)
 
     def _expand_to_parents(
         self,
         results: list[tuple[str, float]],
+        query_context: QueryExecutionContext | None = None,
         result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[tuple[str, float]]:
         seen_parents: set[str] = set()
         expanded: list[tuple[str, float]] = []
 
         for chunk_id, score in results:
-            chunk_data = self._vector.get_chunk_by_id(chunk_id)
+            chunk_data = (
+                query_context.get_vector_chunk(chunk_id)
+                if query_context is not None
+                else self._vector.get_chunk_by_id(chunk_id)
+            )
             if not chunk_data:
                 self._queue_reindex_for_chunks(
                     [chunk_id], "docstore lookup failed during parent expansion"
@@ -266,20 +289,25 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 metadata.get("parent_chunk_id") if isinstance(metadata, dict) else None
             )
             if parent_chunk_id:
-                parent_chunk = self._vector.get_chunk_by_id(parent_chunk_id)
+                parent_chunk_id_str = str(parent_chunk_id)
+                parent_chunk = (
+                    query_context.get_parent_chunk(parent_chunk_id_str)
+                    if query_context is not None
+                    else self._vector.get_chunk_by_id(parent_chunk_id_str)
+                )
                 if parent_chunk is not None:
-                    if parent_chunk_id not in seen_parents:
-                        seen_parents.add(parent_chunk_id)
+                    if parent_chunk_id_str not in seen_parents:
+                        seen_parents.add(parent_chunk_id_str)
                         if result_provenance is not None:
                             source_provenance = result_provenance.get(chunk_id)
                             if source_provenance is not None:
                                 parent_provenance = source_provenance.clone()
                                 parent_provenance.parent_expanded_from = chunk_id
-                                result_provenance[parent_chunk_id] = parent_provenance
-                        expanded.append((parent_chunk_id, score))
+                                result_provenance[parent_chunk_id_str] = parent_provenance
+                        expanded.append((parent_chunk_id_str, score))
                 else:
                     self._queue_reindex_for_chunks(
-                        [parent_chunk_id],
+                        [parent_chunk_id_str],
                         "parent chunk lookup failed during parent expansion",
                     )
                     expanded.append((chunk_id, score))
@@ -430,6 +458,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         self,
         fused: list[tuple[str, float]],
         *,
+        query_context: QueryExecutionContext | None = None,
         project_context: str | None = None,
         result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[tuple[str, float]]:
@@ -439,7 +468,11 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         boosted: list[tuple[str, float]] = []
         for chunk_id, score in fused:
-            chunk_data = self._vector.get_chunk_by_id(chunk_id)
+            chunk_data = (
+                query_context.get_vector_chunk(chunk_id)
+                if query_context is not None
+                else self._vector.get_chunk_by_id(chunk_id)
+            )
             metadata = chunk_data.get("metadata", {}) if chunk_data else {}
             project_id = (
                 metadata.get("project_id") if isinstance(metadata, dict) else None
@@ -461,6 +494,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         self,
         fused: list[tuple[str, float]],
         *,
+        query_context: QueryExecutionContext | None = None,
         project_filter: list[str] | None = None,
     ) -> list[tuple[str, float]]:
         normalized_filter = normalize_project_filter(project_filter)
@@ -469,7 +503,11 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         filtered: list[tuple[str, float]] = []
         for chunk_id, score in fused:
-            chunk_data = self._vector.get_chunk_by_id(chunk_id)
+            chunk_data = (
+                query_context.get_vector_chunk(chunk_id)
+                if query_context is not None
+                else self._vector.get_chunk_by_id(chunk_id)
+            )
             metadata = chunk_data.get("metadata", {}) if chunk_data else {}
             project_id = (
                 metadata.get("project_id") if isinstance(metadata, dict) else None
@@ -576,6 +614,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             )
 
         docs_root = self._documents_path
+        query_context = self._create_query_execution_context()
 
         from src.search.hyde import search_with_hypothesis
 
@@ -607,17 +646,22 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         fused = self._apply_score_pipeline(strategy_results, weights)
         fused = self._apply_project_uplift(
             fused,
+            query_context=query_context,
             project_context=project_context,
             result_provenance=result_provenance,
         )
-        fused = self._apply_project_filter(fused, project_filter=project_filter)
+        fused = self._apply_project_filter(
+            fused,
+            query_context=query_context,
+            project_filter=project_filter,
+        )
 
         pipeline = self._get_pipeline()
 
         final, compression_stats = pipeline.process(
             fused,
-            self._get_chunk_embedding,
-            self._get_chunk_content,
+            query_context.get_chunk_embedding,
+            query_context.get_chunk_content,
             hypothesis,
             top_n,
         )
@@ -629,21 +673,29 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         chunk_results = self._materialize_chunk_results(
             final,
+            query_context=query_context,
             result_provenance=result_provenance,
         )
+
+        self._last_query_execution_stats = query_context.stats.to_dict()
 
         return chunk_results, compression_stats, strategy_stats
 
     def _materialize_chunk_results(
         self,
         final: list[tuple[str, float]],
+        query_context: QueryExecutionContext | None = None,
         result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[ChunkResult]:
         chunk_results: list[ChunkResult] = []
         missing_chunk_ids: list[str] = []
 
         for chunk_id, score in final:
-            chunk_result = self._chunk_hydrator.hydrate_chunk_result(chunk_id, score)
+            chunk_result = (
+                query_context.hydrate_chunk_result(chunk_id, score)
+                if query_context is not None
+                else self._chunk_hydrator.hydrate_chunk_result(chunk_id, score)
+            )
             if chunk_result is not None:
                 if result_provenance is not None:
                     chunk_result.provenance = result_provenance.get(chunk_id)

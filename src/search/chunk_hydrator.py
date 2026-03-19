@@ -3,12 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.models import ChunkResult
 from src.search.path_utils import extract_doc_id_from_chunk_id, resolve_doc_path
+
+if TYPE_CHECKING:
+    from src.search.query_execution import QueryExecutionContext
 
 
 @dataclass(frozen=True)
@@ -35,10 +38,16 @@ class ChunkHydrator:
         self._documents_path = documents_path
         self._queue_reindex = queue_reindex
 
-    def hydrate_chunk_result(self, chunk_id: str, score: float) -> ChunkResult | None:
+    def hydrate_chunk_result(
+        self,
+        chunk_id: str,
+        score: float,
+        query_context: QueryExecutionContext | None = None,
+    ) -> ChunkResult | None:
         hydrated = self.get_chunk_data(
             chunk_id,
             reason="chunk hydration fell back to keyword metadata during result assembly",
+            query_context=query_context,
         )
         if hydrated is None:
             return None
@@ -49,7 +58,11 @@ class ChunkHydrator:
         )
         parent_content = None
         if parent_chunk_id:
-            parent_content = self._vector.get_parent_content(parent_chunk_id)
+            parent_chunk_id_str = str(parent_chunk_id)
+            if query_context is not None:
+                parent_content = query_context.get_parent_content(parent_chunk_id_str)
+            else:
+                parent_content = self._vector.get_parent_content(parent_chunk_id_str)
 
         return ChunkResult(
             chunk_id=hydrated.chunk_id,
@@ -63,26 +76,47 @@ class ChunkHydrator:
             parent_content=(str(parent_content) if parent_content is not None else None),
         )
 
-    def get_content(self, chunk_id: str) -> str | None:
+    def get_content(
+        self,
+        chunk_id: str,
+        query_context: QueryExecutionContext | None = None,
+    ) -> str | None:
         hydrated = self.get_chunk_data(
             chunk_id,
             reason="chunk hydration fell back to keyword metadata during content fetch",
+            query_context=query_context,
         )
         if hydrated is None:
             return None
         return hydrated.content
 
-    def get_chunk_data(self, chunk_id: str, reason: str) -> HydratedChunk | None:
-        vector_chunk = self._vector.get_chunk_by_id(chunk_id)
+    def get_chunk_data(
+        self,
+        chunk_id: str,
+        reason: str,
+        query_context: QueryExecutionContext | None = None,
+    ) -> HydratedChunk | None:
+        vector_chunk = (
+            query_context.get_vector_chunk(chunk_id)
+            if query_context is not None
+            else self._vector.get_chunk_by_id(chunk_id)
+        )
         if vector_chunk is not None:
             hydrated = self._from_vector_chunk(chunk_id, vector_chunk)
             if self._has_missing_core_fields(hydrated):
                 self._queue_if_configured([chunk_id], reason)
-                return self._enrich_vector_chunk(chunk_id, hydrated)
+                return self._enrich_vector_chunk(
+                    chunk_id,
+                    hydrated,
+                    query_context=query_context,
+                )
             return hydrated
 
         if "_parent_" in chunk_id:
-            fallback_chunk = self._get_child_chunk_for_parent(chunk_id)
+            fallback_chunk = self._get_child_chunk_for_parent(
+                chunk_id,
+                query_context=query_context,
+            )
             if fallback_chunk is not None:
                 self._queue_if_configured(
                     [chunk_id],
@@ -90,7 +124,11 @@ class ChunkHydrator:
                 )
                 return fallback_chunk
 
-        keyword_chunk = self._keyword.get_chunk_by_id(chunk_id)
+        keyword_chunk = (
+            query_context.get_keyword_chunk(chunk_id)
+            if query_context is not None
+            else self._keyword.get_chunk_by_id(chunk_id)
+        )
         if keyword_chunk is not None:
             self._queue_if_configured([chunk_id], reason)
             return self._from_keyword_chunk(chunk_id, keyword_chunk)
@@ -117,9 +155,16 @@ class ChunkHydrator:
         )
 
     def _enrich_vector_chunk(
-        self, chunk_id: str, chunk_data: HydratedChunk
+        self,
+        chunk_id: str,
+        chunk_data: HydratedChunk,
+        query_context: QueryExecutionContext | None = None,
     ) -> HydratedChunk:
-        keyword_chunk = self._keyword.get_chunk_by_id(chunk_id)
+        keyword_chunk = (
+            query_context.get_keyword_chunk(chunk_id)
+            if query_context is not None
+            else self._keyword.get_chunk_by_id(chunk_id)
+        )
         if keyword_chunk is None:
             return chunk_data
 
@@ -150,13 +195,21 @@ class ChunkHydrator:
             project_id=None,
         )
 
-    def _get_child_chunk_for_parent(self, parent_chunk_id: str) -> HydratedChunk | None:
+    def _get_child_chunk_for_parent(
+        self,
+        parent_chunk_id: str,
+        query_context: QueryExecutionContext | None = None,
+    ) -> HydratedChunk | None:
         doc_id = extract_doc_id_from_chunk_id(parent_chunk_id)
         for child_chunk_id in self._vector.get_chunk_ids_for_document(doc_id):
             if child_chunk_id == parent_chunk_id:
                 continue
 
-            child_chunk = self._vector.get_chunk_by_id(child_chunk_id)
+            child_chunk = (
+                query_context.get_vector_chunk(child_chunk_id)
+                if query_context is not None
+                else self._vector.get_chunk_by_id(child_chunk_id)
+            )
             if child_chunk is None:
                 continue
 
