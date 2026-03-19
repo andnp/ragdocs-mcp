@@ -221,7 +221,7 @@ uv run mcp-markdown-ragdocs check-config --project monorepo
 
 ✅ Configuration is valid
 
-📊 Index exists at: /home/user/.local/share/mcp-markdown-ragdocs/monorepo
+📊 Index exists at: /home/user/.local/share/mcp-markdown-ragdocs
 ```
 
 **When to Use:**
@@ -364,13 +364,13 @@ If no configuration file is found, all options use their default values.
 
 ## Multi-Project Support
 
-The global configuration file (`~/.config/mcp-markdown-ragdocs/config.toml`) supports registering multiple projects. The server automatically detects which project you're working in based on your current directory and uses isolated indices for each project.
+The global configuration file (`~/.config/mcp-markdown-ragdocs/config.toml`) supports registering multiple projects. The server automatically detects which project you're working in based on your current directory, keeps one shared corpus by default, and preserves project membership as metadata for ranking or explicit filters.
 
 See [Multi-Project Setup Guide](guides/multi-project-setup.md) for complete details.
 
 ### [[projects]]
 
-Define multiple projects with automatic detection and isolated storage.
+Define multiple projects with automatic detection and shared-corpus membership.
 
 ```toml
 [[projects]]
@@ -387,7 +387,7 @@ path = "/home/user/Documents/notes"
 - **Type:** string
 - **Required:** yes
 - **Constraints:** Alphanumeric, hyphens, and underscores only
-- **Description:** Unique identifier for the project. Used as directory name in data storage.
+- **Description:** Unique identifier for the project. Used as stable `project_id` metadata.
 
 #### `path`
 
@@ -399,7 +399,8 @@ path = "/home/user/Documents/notes"
 **Project Detection:**
 - If CWD matches or is a subdirectory of a registered project path, that project is active
 - For nested projects, the deepest match wins
-- Indices stored in `~/.local/share/mcp-markdown-ragdocs/{project-name}/`
+- Runtime-affecting entrypoints may auto-register an untracked working directory using the canonical root order: nearest local config root, else git root, else CWD
+- Explicit `--project` overrides and inspection commands remain non-mutating
 
 ## Configuration Sections
 
