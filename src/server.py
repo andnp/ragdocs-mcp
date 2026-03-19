@@ -21,7 +21,7 @@ class QueryRequest(BaseModel):
 
 
 class QueryResponse(BaseModel):
-    results: list[dict[str, str | float]]
+    results: list[dict[str, object]]
 
 
 class HealthResponse(BaseModel):

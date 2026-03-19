@@ -7,7 +7,12 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.indexing.manager import IndexManager
-from src.models import ChunkResult, CompressionStats, SearchStrategyStats
+from src.models import (
+    ChunkResult,
+    CompressionStats,
+    SearchResultProvenance,
+    SearchStrategyStats,
+)
 from src.search.base_orchestrator import BaseSearchOrchestrator
 from src.search.chunk_hydrator import ChunkHydrator
 from src.search.classifier import classify_query, get_adaptive_weights
@@ -131,6 +136,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             max_related_tags=5,
             max_depth=2,
         )
+        applied_tag_expansion_results: list[dict[str, object]] = []
 
         # Merge tag-expanded results into existing result sets
         for result in tag_expanded_results:
@@ -140,6 +146,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 all_doc_ids.add(doc_id)
                 chunk_id_to_doc_id[chunk_id] = doc_id
                 vector_results.append(result)  # Add to semantic results for fusion
+                applied_tag_expansion_results.append(result)
                 tag_expansion_count += 1
 
         graph_neighbors = self._get_graph_neighbors(list(all_doc_ids))
@@ -179,11 +186,27 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             "keyword": [(r["chunk_id"], r.get("score", 0.0)) for r in keyword_results],
             "graph": [(cid, 1.0) for cid in graph_chunk_ids],
         }
+        provenance_results = dict(strategy_results)
+        if applied_tag_expansion_results:
+            provenance_results["tag_expansion"] = [
+                (r["chunk_id"], r.get("score", 0.0))
+                for r in applied_tag_expansion_results
+            ]
+        result_provenance = self._build_result_provenance(provenance_results)
 
         fused = self._apply_score_pipeline(strategy_results, weights)
 
-        fused = self._apply_community_boost(fused, all_doc_ids, chunk_id_to_doc_id)
-        fused = self._apply_project_uplift(fused, project_context=project_context)
+        fused = self._apply_community_boost(
+            fused,
+            all_doc_ids,
+            chunk_id_to_doc_id,
+            result_provenance=result_provenance,
+        )
+        fused = self._apply_project_uplift(
+            fused,
+            project_context=project_context,
+            result_provenance=result_provenance,
+        )
         fused = self._apply_project_filter(fused, project_filter=project_filter)
 
         if pipeline_config is not None:
@@ -200,14 +223,19 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         )
 
         # Parent expansion: always expand child chunks to parent chunks
-        final = self._expand_to_parents(final)
+        final = self._expand_to_parents(final, result_provenance=result_provenance)
 
-        chunk_results = self._materialize_chunk_results(final)
+        chunk_results = self._materialize_chunk_results(
+            final,
+            result_provenance=result_provenance,
+        )
 
         return chunk_results, compression_stats, strategy_stats
 
     def _expand_to_parents(
-        self, results: list[tuple[str, float]]
+        self,
+        results: list[tuple[str, float]],
+        result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[tuple[str, float]]:
         seen_parents: set[str] = set()
         expanded: list[tuple[str, float]] = []
@@ -230,6 +258,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 if parent_chunk is not None:
                     if parent_chunk_id not in seen_parents:
                         seen_parents.add(parent_chunk_id)
+                        if result_provenance is not None:
+                            source_provenance = result_provenance.get(chunk_id)
+                            if source_provenance is not None:
+                                parent_provenance = source_provenance.clone()
+                                parent_provenance.parent_expanded_from = chunk_id
+                                result_provenance[parent_chunk_id] = parent_provenance
                         expanded.append((parent_chunk_id, score))
                 else:
                     self._queue_reindex_for_chunks(
@@ -241,6 +275,22 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 expanded.append((chunk_id, score))
 
         return expanded
+
+    def _build_result_provenance(
+        self,
+        strategy_results: dict[str, list[tuple[str, float]]],
+    ) -> dict[str, SearchResultProvenance]:
+        result_provenance: dict[str, SearchResultProvenance] = {}
+
+        for strategy, result_list in strategy_results.items():
+            for rank, (chunk_id, raw_score) in enumerate(result_list, start=1):
+                provenance = result_provenance.setdefault(
+                    chunk_id,
+                    SearchResultProvenance(),
+                )
+                provenance.add_strategy(strategy, rank, raw_score)
+
+        return result_provenance
 
     def _build_score_pipeline_config(
         self, weights: dict[str, float]
@@ -308,6 +358,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         fused: list[tuple[str, float]],
         seed_doc_ids: set[str],
         chunk_id_to_doc_id: dict[str, str],
+        result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[tuple[str, float]]:
         chunk_doc_ids = []
         for chunk_id, _ in fused:
@@ -329,6 +380,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         boosted = []
         for (chunk_id, score), doc_id in zip(fused, chunk_doc_ids):
             boost = boosts.get(doc_id, 1.0)
+            if result_provenance is not None and boost != 1.0:
+                provenance = result_provenance.setdefault(
+                    chunk_id,
+                    SearchResultProvenance(),
+                )
+                provenance.community_boost = boost
             # Clamp to [0, 1] since scores are calibrated confidence values
             boosted.append((chunk_id, min(1.0, score * boost)))
 
@@ -339,6 +396,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         fused: list[tuple[str, float]],
         *,
         project_context: str | None = None,
+        result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[tuple[str, float]]:
         active_project = project_context or self._config.detected_project
         if not active_project:
@@ -352,6 +410,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 metadata.get("project_id") if isinstance(metadata, dict) else None
             )
             if project_id == active_project:
+                if result_provenance is not None:
+                    provenance = result_provenance.setdefault(
+                        chunk_id,
+                        SearchResultProvenance(),
+                    )
+                    provenance.project_uplift = _ACTIVE_PROJECT_UPLIFT
                 boosted.append((chunk_id, score * _ACTIVE_PROJECT_UPLIFT))
             else:
                 boosted.append((chunk_id, score))
@@ -501,11 +565,16 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         strategy_results: dict[str, list[tuple[str, float]]] = {
             "semantic": [(r["chunk_id"], r.get("score", 0.0)) for r in vector_results],
         }
+        result_provenance = self._build_result_provenance(strategy_results)
 
         weights: dict[str, float] = {"semantic": 1.0}
 
         fused = self._apply_score_pipeline(strategy_results, weights)
-        fused = self._apply_project_uplift(fused, project_context=project_context)
+        fused = self._apply_project_uplift(
+            fused,
+            project_context=project_context,
+            result_provenance=result_provenance,
+        )
         fused = self._apply_project_filter(fused, project_filter=project_filter)
 
         pipeline = self._get_pipeline()
@@ -523,12 +592,17 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             vector_count=len(vector_results),
         )
 
-        chunk_results = self._materialize_chunk_results(final)
+        chunk_results = self._materialize_chunk_results(
+            final,
+            result_provenance=result_provenance,
+        )
 
         return chunk_results, compression_stats, strategy_stats
 
     def _materialize_chunk_results(
-        self, final: list[tuple[str, float]]
+        self,
+        final: list[tuple[str, float]],
+        result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[ChunkResult]:
         chunk_results: list[ChunkResult] = []
         missing_chunk_ids: list[str] = []
@@ -536,6 +610,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         for chunk_id, score in final:
             chunk_result = self._chunk_hydrator.hydrate_chunk_result(chunk_id, score)
             if chunk_result is not None:
+                if result_provenance is not None:
+                    chunk_result.provenance = result_provenance.get(chunk_id)
                 chunk_results.append(chunk_result)
                 continue
 
@@ -548,6 +624,11 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                     header_path="",
                     file_path="",
                     content="",
+                    provenance=(
+                        result_provenance.get(chunk_id)
+                        if result_provenance is not None
+                        else None
+                    ),
                 )
             )
 

@@ -6,7 +6,7 @@ from src.indexing.manager import IndexManager
 from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
-from src.models import ChunkResult
+from src.models import ChunkResult, SearchResultProvenance
 from src.search.orchestrator import SearchOrchestrator
 from tests.conftest import create_test_document
 
@@ -522,6 +522,140 @@ async def test_chunk_result_contains_project_id(config, manager, orchestrator, t
     assert any(
         result.to_dict().get("project_id") == "docs-project" for result in results
     )
+
+
+@pytest.mark.asyncio
+async def test_query_records_strategy_provenance(config, manager, orchestrator):
+    docs_dir = Path(config.indexing.documents_path)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    doc = create_test_document(
+        docs_dir,
+        "provenance_doc",
+        "# Authentication Setup\n\nAuthentication setup requires an API key and a token exchange flow.",
+    )
+
+    manager.index_document(doc)
+
+    results, _, _ = await orchestrator.query(
+        "authentication setup token",
+        top_k=10,
+        top_n=5,
+    )
+
+    assert results
+    top_result = results[0]
+    assert top_result.provenance is not None
+    assert "semantic" in top_result.provenance.strategies
+    assert "keyword" in top_result.provenance.strategies
+
+    semantic_details = top_result.provenance.strategy_details["semantic"]
+    keyword_details = top_result.provenance.strategy_details["keyword"]
+    assert semantic_details.rank >= 1
+    assert keyword_details.rank >= 1
+    assert semantic_details.raw_score > 0.0
+    assert keyword_details.raw_score > 0.0
+
+
+def test_build_result_provenance_records_tag_expansion(orchestrator):
+    result_provenance = orchestrator._build_result_provenance(
+        {
+            "semantic": [("expanded_doc_chunk_0", 0.42)],
+            "tag_expansion": [("expanded_doc_chunk_0", 0.5)],
+        }
+    )
+
+    expanded_result = result_provenance["expanded_doc_chunk_0"]
+    assert "semantic" in expanded_result.strategies
+    assert "tag_expansion" in expanded_result.strategies
+    assert expanded_result.strategy_details["tag_expansion"].rank == 1
+    assert expanded_result.strategy_details["tag_expansion"].raw_score == 0.5
+
+
+def test_expand_to_parents_records_parent_expansion_provenance(
+    config, indices, manager, orchestrator
+):
+    docs_dir = Path(config.indexing.documents_path)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    config.chunking.parent_chunk_min_chars = 200
+    config.chunking.parent_chunk_max_chars = 1200
+
+    doc = create_test_document(
+        docs_dir,
+        "parent_provenance",
+        """# Parent Provenance
+
+## Authentication
+
+Authentication setup details with enough content to create a child chunk.
+This paragraph repeats the key phrase so it remains searchable after indexing.
+
+## Authorization
+
+Authorization details continue here with more content to keep the document long.
+More repeated authorization text ensures the parent chunk is generated.
+
+## Tokens
+
+Token lifecycle notes add more text so parent-child chunking stays enabled.
+This extra content keeps the document above the parent chunk threshold.
+""",
+    )
+
+    manager.index_document(doc)
+
+    chunk_ids = indices["vector"].get_chunk_ids_for_document("parent_provenance")
+    child_chunk_id = next(chunk_id for chunk_id in chunk_ids if "_chunk_" in chunk_id)
+    provenance = SearchResultProvenance()
+    provenance.add_strategy("semantic", rank=1, raw_score=0.9)
+    result_provenance = {child_chunk_id: provenance}
+
+    expanded = orchestrator._expand_to_parents(
+        [(child_chunk_id, 0.5)],
+        result_provenance=result_provenance,
+    )
+
+    parent_chunk_id = next(chunk_id for chunk_id, _ in expanded if "_parent_" in chunk_id)
+    parent_result = next(
+        item
+        for chunk_id, item in result_provenance.items()
+        if chunk_id == parent_chunk_id
+    )
+    adjustments = parent_result.to_dict().get("adjustments", {})
+    assert isinstance(adjustments, dict)
+    assert isinstance(adjustments.get("parent_expanded_from"), str)
+
+
+@pytest.mark.asyncio
+async def test_query_records_project_uplift_provenance(
+    config, manager, orchestrator, tmp_path
+):
+    docs_dir = Path(config.indexing.documents_path)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    config.projects = [ProjectConfig(name="docs-project", path=str(docs_dir))]
+
+    doc = create_test_document(
+        docs_dir,
+        "uplifted_doc",
+        "# Uplifted Doc\n\nProject scoped metadata should receive active-project uplift.",
+    )
+
+    manager.index_document(doc)
+
+    results, _, _ = await orchestrator.query(
+        "project scoped metadata",
+        top_k=10,
+        top_n=5,
+        project_context="docs-project",
+    )
+
+    uplifted = next(result for result in results if result.doc_id == "uplifted_doc")
+    assert uplifted.provenance is not None
+    adjustments = uplifted.provenance.to_dict().get("adjustments", {})
+    assert isinstance(adjustments, dict)
+    assert adjustments.get("project_uplift") == pytest.approx(1.2)
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,69 @@ class Chunk:
         return hashlib.sha256(self.content.encode("utf-8")).hexdigest()
 
 
+@dataclass(frozen=True)
+class StrategyContribution:
+    rank: int
+    raw_score: float
+
+    def to_dict(self):
+        return {
+            "rank": self.rank,
+            "raw_score": self.raw_score,
+        }
+
+
+@dataclass
+class SearchResultProvenance:
+    strategies: tuple[str, ...] = ()
+    strategy_details: dict[str, StrategyContribution] = field(default_factory=dict)
+    community_boost: float | None = None
+    project_uplift: float | None = None
+    parent_expanded_from: str | None = None
+
+    def add_strategy(self, strategy: str, rank: int, raw_score: float):
+        if strategy in self.strategy_details:
+            return
+
+        self.strategy_details[strategy] = StrategyContribution(
+            rank=rank,
+            raw_score=raw_score,
+        )
+        if strategy not in self.strategies:
+            self.strategies = (*self.strategies, strategy)
+
+    def clone(self):
+        return SearchResultProvenance(
+            strategies=tuple(self.strategies),
+            strategy_details=dict(self.strategy_details),
+            community_boost=self.community_boost,
+            project_uplift=self.project_uplift,
+            parent_expanded_from=self.parent_expanded_from,
+        )
+
+    def to_dict(self):
+        result: dict[str, object] = {
+            "strategies": list(self.strategies),
+        }
+        if self.strategy_details:
+            result["strategy_details"] = {
+                strategy: contribution.to_dict()
+                for strategy, contribution in self.strategy_details.items()
+            }
+
+        adjustments: dict[str, object] = {}
+        if self.community_boost is not None and self.community_boost != 1.0:
+            adjustments["community_boost"] = self.community_boost
+        if self.project_uplift is not None and self.project_uplift != 1.0:
+            adjustments["project_uplift"] = self.project_uplift
+        if self.parent_expanded_from is not None:
+            adjustments["parent_expanded_from"] = self.parent_expanded_from
+        if adjustments:
+            result["adjustments"] = adjustments
+
+        return result
+
+
 @dataclass
 class ChunkResult:
     chunk_id: str
@@ -40,6 +103,7 @@ class ChunkResult:
     content: str = ""
     parent_chunk_id: str | None = None
     parent_content: str | None = None
+    provenance: SearchResultProvenance | None = None
 
     def to_dict(self):
         result = {
@@ -56,6 +120,8 @@ class ChunkResult:
             result["parent_chunk_id"] = self.parent_chunk_id
         if self.parent_content is not None:
             result["parent_content"] = self.parent_content
+        if self.provenance is not None:
+            result["provenance"] = self.provenance.to_dict()
         return result
 
 

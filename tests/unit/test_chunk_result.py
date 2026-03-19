@@ -4,7 +4,7 @@ Unit tests for ChunkResult dataclass.
 Tests the ChunkResult model serialization, validation, and data integrity.
 """
 
-from src.models import ChunkResult
+from src.models import ChunkResult, SearchResultProvenance
 
 
 def test_chunk_result_creation():
@@ -102,6 +102,31 @@ def test_chunk_result_to_dict_includes_project_id_when_present():
     result_dict = result.to_dict()
 
     assert result_dict["project_id"] == "project-a"
+
+
+def test_chunk_result_to_dict_includes_provenance_when_present():
+    provenance = SearchResultProvenance()
+    provenance.add_strategy("semantic", rank=1, raw_score=0.91)
+    provenance.project_uplift = 1.2
+
+    result = ChunkResult(
+        chunk_id="test_chunk_1",
+        doc_id="test_doc",
+        score=1.0,
+        header_path="Section A > Subsection B",
+        file_path="path/to/file.md",
+        provenance=provenance,
+    )
+
+    result_dict = result.to_dict()
+
+    assert result_dict["provenance"] == {
+        "strategies": ["semantic"],
+        "strategy_details": {
+            "semantic": {"rank": 1, "raw_score": 0.91},
+        },
+        "adjustments": {"project_uplift": 1.2},
+    }
 
 
 def test_chunk_result_score_range_valid():

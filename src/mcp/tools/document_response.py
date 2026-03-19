@@ -38,6 +38,7 @@ class QueryDocumentsResultEnvelopeItem:
     content: str
     project_id: str | None = None
     parent_chunk_id: str | None = None
+    provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         result: dict[str, object] = {
@@ -51,6 +52,8 @@ class QueryDocumentsResultEnvelopeItem:
             "project_id": self.project_id,
             "parent_chunk_id": self.parent_chunk_id,
         }
+        if self.provenance is not None:
+            result["provenance"] = self.provenance
         return result
 
 
@@ -152,6 +155,11 @@ def build_query_documents_response_envelope(
             content=result.content,
             project_id=result.project_id,
             parent_chunk_id=result.parent_chunk_id,
+            provenance=(
+                result_provenance.to_dict()
+                if (result_provenance := getattr(result, "provenance", None)) is not None
+                else None
+            ),
         )
         for index, result in enumerate(results, start=1)
     )

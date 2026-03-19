@@ -14,7 +14,7 @@ from src.mcp.tools.document_tools import (
     handle_query_documents,
     handle_search_git_history,
 )
-from src.models import CompressionStats, SearchStrategyStats
+from src.models import CompressionStats, SearchResultProvenance, SearchStrategyStats
 
 
 class _FakeCoordinator:
@@ -91,6 +91,10 @@ async def test_query_documents_preserves_validation_errors_during_cold_start() -
 @pytest.mark.asyncio
 async def test_query_documents_runs_immediately_when_indices_are_queryable() -> None:
     captured: dict[str, object] = {}
+    provenance = SearchResultProvenance()
+    provenance.add_strategy("semantic", rank=1, raw_score=0.91)
+    provenance.add_strategy("keyword", rank=1, raw_score=13.0)
+    provenance.project_uplift = 1.2
 
     class _FakeOrchestrator:
         documents_path = Path("/docs")
@@ -121,6 +125,7 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
                         content="Fast cold start contract.",
                         project_id="docs-project",
                         parent_chunk_id=None,
+                        provenance=provenance,
                     )
                 ],
                 CompressionStats(
@@ -172,6 +177,14 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
             "content": "Fast cold start contract.",
             "project_id": "docs-project",
             "parent_chunk_id": None,
+            "provenance": {
+                "strategies": ["semantic", "keyword"],
+                "strategy_details": {
+                    "semantic": {"rank": 1, "raw_score": 0.91},
+                    "keyword": {"rank": 1, "raw_score": 13.0},
+                },
+                "adjustments": {"project_uplift": 1.2},
+            },
         }
     ]
     assert captured == {"project_filter": [], "project_context": None}
