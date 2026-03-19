@@ -17,18 +17,14 @@ from src.config import (
 )
 from src.git.commit_indexer import CommitIndexer
 from src.indexing.bootstrap_checkpoint import (
-    compute_bootstrap_generation,
     has_incomplete_bootstrap_checkpoint,
-    prepare_bootstrap_checkpoint,
     build_file_stamps,
-    load_bootstrap_checkpoint,
 )
 from src.indexing.bootstrap_snapshot import (
     PublicIndexStateSnapshot,
-    compute_bootstrap_completed_paths,
-    derive_bootstrap_readiness_snapshot,
     derive_loaded_index_state_snapshot,
 )
+from src.indexing.bootstrap_session import BootstrapSession
 from src.indexing.discovery import (
     discover_files as _discover_files,
     discover_files_multi_root,
@@ -97,6 +93,7 @@ class ApplicationContext:
     _embedding_warmup_task: asyncio.Task | None = field(default=None, repr=False)
     _loaded_index_state_version: float = field(default=0.0, repr=False)
     _is_virgin_startup: bool = field(default=False, repr=False)
+    _bootstrap_session: BootstrapSession | None = field(default=None, repr=False)
 
     @classmethod
     def create(
@@ -417,42 +414,8 @@ class ApplicationContext:
         *,
         rebuild_pending: bool,
     ) -> bool:
-        try:
-            await asyncio.to_thread(self.index_manager.load)
-        except Exception:
-            logger.warning(
-                "Failed to load persisted indices before background startup bootstrap",
-                exc_info=True,
-            )
-            return False
-
-        self._mark_index_state_loaded()
-        files_to_index = await asyncio.to_thread(self.discover_files)
-        target_stamps = await asyncio.to_thread(
-            build_file_stamps,
-            files_to_index,
-            self.documents_roots,
-        )
-        checkpoint = await asyncio.to_thread(load_bootstrap_checkpoint, self.index_path)
-        saved_manifest = await asyncio.to_thread(load_manifest, self.index_path)
-
-        preloaded_snapshot = derive_bootstrap_readiness_snapshot(
-            checkpoint,
-            saved_manifest,
-            target_stamps,
-            loaded_indexed_count=self.index_manager.get_document_count(),
-            queryable=self.index_manager.is_ready(),
-            rebuild_pending=rebuild_pending,
-        )
-        if preloaded_snapshot is None:
-            return False
-
-        self._index_state = self._index_state_from_snapshot(
-            preloaded_snapshot.public_state
-        )
-        self._ready_event.set()
-        self.schedule_embedding_model_warmup()
-        return True
+        session = self._get_bootstrap_session()
+        return await session.preload_persisted_state(rebuild_pending=rebuild_pending)
 
     async def _enqueue_initial_git_refresh_tasks(self) -> None:
         if self.commit_indexer is None:
@@ -474,136 +437,12 @@ class ApplicationContext:
         )
 
     async def _bootstrap_via_tasks(self) -> None:
-        from src.indexing.tasks import submit_index_batch
-
-        files_to_index = await asyncio.to_thread(self.discover_files)
-        target_stamps = await asyncio.to_thread(
-            build_file_stamps,
-            files_to_index,
-            self.documents_roots,
-        )
-        bootstrap_manifest = self.current_manifest or self._build_manifest()
-        generation = compute_bootstrap_generation(bootstrap_manifest, target_stamps)
-        checkpoint = await asyncio.to_thread(
-            prepare_bootstrap_checkpoint,
-            self.index_path,
-            generation,
-            target_stamps,
-        )
-        saved_manifest = await asyncio.to_thread(load_manifest, self.index_path)
-        completed_paths = compute_bootstrap_completed_paths(
-            checkpoint,
-            saved_manifest,
-            target_stamps,
-        )
-        remaining_files = [
-            file_path
-            for file_path in files_to_index
-            if self._bootstrap_relative_path_for_file(file_path) not in completed_paths
-        ]
-        self._index_state = IndexState(
-            status="indexing",
-            indexed_count=max(self._index_state.indexed_count, len(completed_paths)),
-            total_count=len(files_to_index),
-        )
-
-        if self.commit_indexer is not None:
-            await self._enqueue_initial_git_refresh_tasks()
-
-        if not files_to_index:
-            await asyncio.to_thread(self.index_manager.persist)
-            self._mark_index_state_loaded()
-            self._refresh_index_state_from_loaded_indices()
-            self._ready_event.set()
-            self.schedule_embedding_model_warmup()
-            return
-
-        if not remaining_files:
-            try:
-                await asyncio.to_thread(self.index_manager.load)
-            except Exception as exc:
-                self._index_state = IndexState(
-                    status="failed",
-                    indexed_count=len(completed_paths),
-                    total_count=len(files_to_index),
-                    last_error=str(exc),
-                )
-                self._init_error = exc
-            else:
-                self._mark_index_state_loaded()
-                self._refresh_index_state_from_loaded_indices()
-                self._ready_event.set()
-                self.schedule_embedding_model_warmup()
-                if not self.index_manager.vector._concept_vocabulary:
-                    asyncio.create_task(self._build_initial_vocabulary())
-            return
-
-        submission = submit_index_batch(remaining_files)
-        logger.info(
-            "Enqueued %d startup indexing task(s) for %d remaining documents (%d already durably complete, %d already pending)",
-            submission.enqueued_count,
-            len(remaining_files),
-            len(completed_paths),
-            submission.already_pending_count,
-        )
-
-        if submission.enqueued_count == 0:
-            if submission.all_represented:
-                logger.info(
-                    "Startup bootstrap found %d remaining document(s) already pending in queue; continuing to monitor persisted progress",
-                    submission.already_pending_count,
-                )
-            else:
-                self._index_state = IndexState(
-                    status="failed",
-                    indexed_count=len(completed_paths),
-                    total_count=len(files_to_index),
-                    last_error="Task queue unavailable during startup bootstrap",
-                )
-                self._init_error = RuntimeError(self._index_state.last_error)
-                self._ready_event.set()
-                return
-
-        while True:
-            current_version = await asyncio.to_thread(self._compute_index_state_version)
-            if current_version > self._loaded_index_state_version:
-                try:
-                    await asyncio.to_thread(self.index_manager.load)
-                except Exception:
-                    logger.debug(
-                        "Startup bootstrap monitor could not load persisted state yet",
-                        exc_info=True,
-                    )
-                else:
-                    self._loaded_index_state_version = current_version
-                    checkpoint = await asyncio.to_thread(
-                        load_bootstrap_checkpoint,
-                        self.index_path,
-                    )
-                    saved_manifest = await asyncio.to_thread(
-                        load_manifest,
-                        self.index_path,
-                    )
-                    completed_paths = compute_bootstrap_completed_paths(
-                        checkpoint,
-                        saved_manifest,
-                        target_stamps,
-                    )
-                    self._refresh_index_state_from_loaded_indices()
-                    self._index_state.indexed_count = max(
-                        self._index_state.indexed_count,
-                        len(completed_paths),
-                    )
-                    if self.index_manager.is_ready() and not self._ready_event.is_set():
-                        self._ready_event.set()
-                    if self.index_manager.is_ready():
-                        self.schedule_embedding_model_warmup()
-                    if len(completed_paths) >= self._index_state.total_count:
-                        if not self.index_manager.vector._concept_vocabulary:
-                            asyncio.create_task(self._build_initial_vocabulary())
-                        return
-
-            await asyncio.sleep(0.2)
+        session = self._get_bootstrap_session()
+        try:
+            await session.run()
+        finally:
+            if self._bootstrap_session is session:
+                self._bootstrap_session = None
 
     async def start(self, background_index: bool = False) -> None:
         needs_rebuild = await asyncio.to_thread(self._check_and_rebuild_if_needed)
@@ -696,6 +535,73 @@ class ApplicationContext:
         if not stamps:
             return None
         return next(iter(stamps.keys()))
+
+    def _get_bootstrap_session(self) -> BootstrapSession:
+        session = getattr(self, "_bootstrap_session", None)
+        if session is not None:
+            return session
+
+        session = self._create_bootstrap_session()
+        self._bootstrap_session = session
+        return session
+
+    def _create_bootstrap_session(self) -> BootstrapSession:
+        async def load_persisted_indices() -> None:
+            await asyncio.to_thread(self.index_manager.load)
+            self._mark_index_state_loaded()
+
+        async def persist_indices() -> None:
+            await asyncio.to_thread(self.index_manager.persist)
+            self._mark_index_state_loaded()
+
+        async def compute_index_state_version() -> float:
+            return await asyncio.to_thread(self._compute_index_state_version)
+
+        return BootstrapSession(
+            index_path=self.index_path,
+            documents_roots=self.documents_roots,
+            git_refresh_enabled=self.commit_indexer is not None,
+            discover_files=self.discover_files,
+            discover_git_repositories=self.discover_git_repositories,
+            get_bootstrap_manifest=lambda: self.current_manifest or self._build_manifest(),
+            load_persisted_indices=load_persisted_indices,
+            persist_indices=persist_indices,
+            compute_index_state_version=compute_index_state_version,
+            get_loaded_index_state_version=lambda: self._loaded_index_state_version,
+            get_loaded_document_count=self.index_manager.get_document_count,
+            is_queryable=self.index_manager.is_ready,
+            publish_public_state=self._publish_bootstrap_public_state,
+            mark_ready=self._ready_event.set,
+            schedule_embedding_warmup=self.schedule_embedding_model_warmup,
+            schedule_initial_vocabulary_build=self._schedule_initial_vocabulary_build,
+            report_failure=self._report_bootstrap_failure,
+        )
+
+    def _publish_bootstrap_public_state(
+        self,
+        snapshot: PublicIndexStateSnapshot,
+    ) -> None:
+        self._index_state = self._index_state_from_snapshot(snapshot)
+
+    def _schedule_initial_vocabulary_build(self) -> None:
+        if self.index_manager.vector._concept_vocabulary:
+            return
+        asyncio.create_task(self._build_initial_vocabulary())
+
+    def _report_bootstrap_failure(
+        self,
+        error: Exception,
+        indexed_count: int,
+        total_count: int,
+    ) -> None:
+        self._index_state = IndexState(
+            status="failed",
+            indexed_count=indexed_count,
+            total_count=total_count,
+            last_error=str(error),
+        )
+        self._init_error = error
+        self._ready_event.set()
 
     def _full_index(self) -> None:
         files_to_index = self.discover_files()
@@ -1122,6 +1028,7 @@ class ApplicationContext:
         self.reconciliation_task = None
         self._freshness_task = None
         self._embedding_warmup_task = None
+        self._bootstrap_session = None
 
         if self.watcher:
             try:

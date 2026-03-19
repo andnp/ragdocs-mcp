@@ -597,22 +597,33 @@ async def test_start_uses_task_bootstrap_for_virgin_background_start(tmp_path: P
     _setattr(ctx, "_init_error", None)
     _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
     _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=True))
+    _setattr(ctx, "_bootstrap_session", None)
 
-    bootstrap_calls: list[str] = []
+    preload_calls: list[bool] = []
+    run_calls: list[str] = []
 
-    async def fake_bootstrap_via_tasks() -> None:
-        bootstrap_calls.append("called")
+    class StubBootstrapSession:
+        async def preload_persisted_state(self, *, rebuild_pending: bool) -> bool:
+            preload_calls.append(rebuild_pending)
+            return False
+
+        async def run(self) -> None:
+            run_calls.append("called")
+
+    def create_bootstrap_session() -> StubBootstrapSession:
+        return StubBootstrapSession()
 
     async def fail_if_called() -> None:
         raise AssertionError("main-process _background_index should not run")
 
-    _setattr(ctx, "_bootstrap_via_tasks", fake_bootstrap_via_tasks)
+    _setattr(ctx, "_create_bootstrap_session", create_bootstrap_session)
     _setattr(ctx, "_background_index", fail_if_called)
 
     await ctx.start(background_index=True)
     await asyncio.wait_for(ctx._background_index_task, timeout=1.0)
 
-    assert bootstrap_calls == ["called"]
+    assert preload_calls == [True]
+    assert run_calls == ["called"]
 
 
 @pytest.mark.asyncio
@@ -635,6 +646,7 @@ async def test_start_uses_task_bootstrap_when_checkpoint_resume_is_pending(
     _setattr(ctx, "_init_error", None)
     _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
     _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=False))
+    _setattr(ctx, "_bootstrap_session", None)
 
     save_bootstrap_checkpoint(
         ctx.index_path,
@@ -649,21 +661,31 @@ async def test_start_uses_task_bootstrap_when_checkpoint_resume_is_pending(
         ),
     )
 
-    bootstrap_calls: list[str] = []
+    preload_calls: list[bool] = []
+    run_calls: list[str] = []
 
-    async def fake_bootstrap_via_tasks() -> None:
-        bootstrap_calls.append("called")
+    class StubBootstrapSession:
+        async def preload_persisted_state(self, *, rebuild_pending: bool) -> bool:
+            preload_calls.append(rebuild_pending)
+            return False
+
+        async def run(self) -> None:
+            run_calls.append("called")
+
+    def create_bootstrap_session() -> StubBootstrapSession:
+        return StubBootstrapSession()
 
     async def fail_if_called() -> None:
         raise AssertionError("main-process _background_index should not run")
 
-    _setattr(ctx, "_bootstrap_via_tasks", fake_bootstrap_via_tasks)
+    _setattr(ctx, "_create_bootstrap_session", create_bootstrap_session)
     _setattr(ctx, "_background_index", fail_if_called)
 
     await ctx.start(background_index=True)
     await asyncio.wait_for(ctx._background_index_task, timeout=1.0)
 
-    assert bootstrap_calls == ["called"]
+    assert preload_calls == [False]
+    assert run_calls == ["called"]
 
 
 @pytest.mark.asyncio
