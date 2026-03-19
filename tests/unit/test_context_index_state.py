@@ -101,7 +101,15 @@ class SlowLoadIndexManager:
     def __init__(self, delay_seconds: float = 0.2):
         self.delay_seconds = delay_seconds
         self.loaded = False
-        self.vector = type("VectorStub", (), {"_concept_vocabulary": {"warm": 1}})()
+        self.vector = type(
+            "VectorStub",
+            (),
+            {
+                "_concept_vocabulary": {"warm": 1},
+                "model_ready": lambda self: False,
+                "warm_up": lambda self: None,
+            },
+        )()
 
     def load(self):
         time.sleep(self.delay_seconds)
@@ -115,7 +123,15 @@ class ExistingIndexManager:
     def __init__(self):
         self.loaded = False
         self.load_calls = 0
-        self.vector = type("VectorStub", (), {"_concept_vocabulary": {"warm": 1}})()
+        self.vector = type(
+            "VectorStub",
+            (),
+            {
+                "_concept_vocabulary": {"warm": 1},
+                "model_ready": lambda self: False,
+                "warm_up": lambda self: None,
+            },
+        )()
 
     def load(self):
         self.load_calls += 1
@@ -126,6 +142,32 @@ class ExistingIndexManager:
 
     def is_ready(self) -> bool:
         return self.loaded
+
+
+class WarmupVectorStub:
+    def __init__(self, *, ready: bool = False):
+        self._ready = ready
+        self.warm_up_calls = 0
+        self._concept_vocabulary = {"warm": 1}
+
+    def model_ready(self) -> bool:
+        return self._ready
+
+    def warm_up(self) -> None:
+        self.warm_up_calls += 1
+        self._ready = True
+
+
+class WarmupIndexManager:
+    def __init__(self, *, ready: bool = True, model_ready: bool = False):
+        self._ready = ready
+        self.vector = WarmupVectorStub(ready=model_ready)
+
+    def is_ready(self) -> bool:
+        return self._ready
+
+    def get_document_count(self) -> int:
+        return 0
 
 
 class TestBackgroundIndexRetry:
@@ -360,6 +402,175 @@ async def test_ensure_fresh_indices_keeps_serving_loaded_state_on_lock_timeout(
 
 
 @pytest.mark.asyncio
+async def test_schedule_freshness_refresh_runs_reload_in_background(tmp_path: Path):
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "index_path", tmp_path)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    ctx._ready_event.set()
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_freshness_lock", asyncio.Lock())
+    _setattr(ctx, "_freshness_task", None)
+    _setattr(ctx, "_loaded_index_state_version", 1.0)
+    _setattr(ctx, "_index_state", IndexState(status="ready"))
+    _setattr(ctx, "_is_virgin_startup", False)
+
+    class _Manager:
+        def __init__(self):
+            self.load_calls = 0
+
+        def load(self):
+            self.load_calls += 1
+
+        def get_document_count(self) -> int:
+            return 0
+
+    manager = _Manager()
+    _setattr(ctx, "index_manager", manager)
+    _setattr(ctx, "_compute_index_state_version", lambda: 2.0)
+
+    scheduled = ctx.schedule_freshness_refresh()
+
+    assert scheduled is True
+    assert ctx._freshness_task is not None
+
+    task = ctx._freshness_task
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert manager.load_calls == 1
+    assert ctx._loaded_index_state_version == 2.0
+    assert ctx._freshness_task is None
+
+
+@pytest.mark.asyncio
+async def test_schedule_freshness_refresh_deduplicates_in_flight_task(tmp_path: Path):
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "index_path", tmp_path)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    ctx._ready_event.set()
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_freshness_lock", asyncio.Lock())
+    _setattr(ctx, "_freshness_task", None)
+    _setattr(ctx, "_loaded_index_state_version", 1.0)
+    _setattr(ctx, "_index_state", IndexState(status="ready"))
+    _setattr(ctx, "_is_virgin_startup", False)
+
+    class _Manager:
+        def get_document_count(self) -> int:
+            return 0
+
+    manager = _Manager()
+    _setattr(ctx, "index_manager", manager)
+    _setattr(ctx, "_compute_index_state_version", lambda: 2.0)
+
+    refresh_started = asyncio.Event()
+    allow_refresh_to_finish = asyncio.Event()
+
+    async def fake_run_freshness_refresh():
+        refresh_started.set()
+        await allow_refresh_to_finish.wait()
+
+    _setattr(ctx, "_run_freshness_refresh", fake_run_freshness_refresh)
+
+    first_scheduled = ctx.schedule_freshness_refresh()
+    await asyncio.wait_for(refresh_started.wait(), timeout=1.0)
+
+    second_scheduled = ctx.schedule_freshness_refresh()
+
+    assert first_scheduled is True
+    assert second_scheduled is False
+    assert ctx._freshness_task is not None
+
+    task = ctx._freshness_task
+    allow_refresh_to_finish.set()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert ctx._freshness_task is None
+
+
+@pytest.mark.asyncio
+async def test_schedule_embedding_model_warmup_runs_in_background(tmp_path: Path):
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "index_path", tmp_path)
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_embedding_warmup_task", None)
+    _setattr(ctx, "index_manager", WarmupIndexManager())
+
+    scheduled = ctx.schedule_embedding_model_warmup()
+
+    assert scheduled is True
+    assert ctx._embedding_warmup_task is not None
+
+    task = ctx._embedding_warmup_task
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert ctx.index_manager.vector.warm_up_calls == 1
+    assert ctx.index_manager.vector.model_ready() is True
+    assert ctx._embedding_warmup_task is None
+
+
+@pytest.mark.asyncio
+async def test_schedule_embedding_model_warmup_deduplicates_in_flight_task(
+    tmp_path: Path,
+):
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "index_path", tmp_path)
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_embedding_warmup_task", None)
+    _setattr(ctx, "index_manager", WarmupIndexManager())
+
+    warmup_started = asyncio.Event()
+    allow_warmup_to_finish = asyncio.Event()
+
+    async def fake_run_embedding_model_warmup() -> None:
+        warmup_started.set()
+        await allow_warmup_to_finish.wait()
+
+    _setattr(ctx, "_run_embedding_model_warmup", fake_run_embedding_model_warmup)
+
+    first_scheduled = ctx.schedule_embedding_model_warmup()
+    await asyncio.wait_for(warmup_started.wait(), timeout=1.0)
+
+    second_scheduled = ctx.schedule_embedding_model_warmup()
+
+    assert first_scheduled is True
+    assert second_scheduled is False
+    assert ctx._embedding_warmup_task is not None
+
+    task = ctx._embedding_warmup_task
+    allow_warmup_to_finish.set()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert ctx._embedding_warmup_task is None
+
+
+def test_schedule_embedding_model_warmup_skips_ready_or_unloaded_states(
+    tmp_path: Path,
+):
+    ready_ctx = object.__new__(ApplicationContext)
+    _setattr(ready_ctx, "index_path", tmp_path)
+    _setattr(ready_ctx, "_init_error", None)
+    _setattr(ready_ctx, "_embedding_warmup_task", None)
+    _setattr(
+        ready_ctx,
+        "index_manager",
+        WarmupIndexManager(ready=True, model_ready=True),
+    )
+
+    not_ready_ctx = object.__new__(ApplicationContext)
+    _setattr(not_ready_ctx, "index_path", tmp_path)
+    _setattr(not_ready_ctx, "_init_error", None)
+    _setattr(not_ready_ctx, "_embedding_warmup_task", None)
+    _setattr(
+        not_ready_ctx,
+        "index_manager",
+        WarmupIndexManager(ready=False, model_ready=False),
+    )
+
+    assert ready_ctx.schedule_embedding_model_warmup() is False
+    assert not_ready_ctx.schedule_embedding_model_warmup() is False
+
+
+@pytest.mark.asyncio
 async def test_start_uses_task_bootstrap_for_virgin_background_start(tmp_path: Path):
     ctx = object.__new__(ApplicationContext)
     mock_config = MockConfig()
@@ -423,7 +634,11 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
             self.vector = type(
                 "VectorStub",
                 (),
-                {"_concept_vocabulary": {"warm": 1}},
+                {
+                    "_concept_vocabulary": {"warm": 1},
+                    "model_ready": lambda self: False,
+                    "warm_up": lambda self: None,
+                },
             )()
 
         def persist(self) -> None:
@@ -614,6 +829,95 @@ async def test_task_mode_existing_index_becomes_ready_before_reconciliation(
 
     allow_reconciliation_to_finish.set()
     await asyncio.wait_for(ctx._background_index_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_task_mode_existing_index_schedules_embedding_warmup(tmp_path: Path):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "index_manager", ExistingIndexManager())
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "reconciliation_task", None)
+    _setattr(ctx, "_background_index_task", None)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_is_virgin_startup", False)
+    _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=False))
+
+    scheduled: list[str] = []
+
+    def fake_schedule_embedding_model_warmup() -> bool:
+        scheduled.append("called")
+        return True
+
+    async def fake_startup_reconciliation() -> None:
+        return None
+
+    _setattr(
+        ctx,
+        "schedule_embedding_model_warmup",
+        fake_schedule_embedding_model_warmup,
+    )
+    _setattr(ctx, "_startup_reconciliation", fake_startup_reconciliation)
+
+    await asyncio.wait_for(ctx.start(background_index=True), timeout=1.0)
+
+    assert ctx._ready_event.is_set()
+    assert scheduled == ["called"]
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_inflight_embedding_warmup_task(tmp_path: Path):
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "reconciliation_task", None)
+    _setattr(ctx, "_background_index_task", None)
+    _setattr(ctx, "_freshness_task", None)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_index_state", IndexState(status="ready"))
+    _setattr(ctx, "_is_virgin_startup", False)
+
+    class _Manager:
+        def __init__(self) -> None:
+            self.persist_calls = 0
+            self.vector = WarmupVectorStub()
+
+        def persist(self) -> None:
+            self.persist_calls += 1
+
+        def is_ready(self) -> bool:
+            return True
+
+    _setattr(ctx, "index_manager", _Manager())
+    _setattr(ctx, "_mark_index_state_loaded", lambda: None)
+
+    warmup_started = asyncio.Event()
+    allow_warmup_to_finish = asyncio.Event()
+
+    async def fake_run_embedding_model_warmup() -> None:
+        warmup_started.set()
+        await allow_warmup_to_finish.wait()
+
+    _setattr(ctx, "_run_embedding_model_warmup", fake_run_embedding_model_warmup)
+
+    assert ctx.schedule_embedding_model_warmup() is True
+    await asyncio.wait_for(warmup_started.wait(), timeout=1.0)
+
+    await ctx.stop()
+
+    assert ctx._embedding_warmup_task is None
 
 
 def test_check_and_rebuild_uses_fallback_persisted_index_for_runtime_root(

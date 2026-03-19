@@ -80,6 +80,8 @@ class ApplicationContext:
         repr=False,
     )
     _freshness_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _freshness_task: asyncio.Task | None = field(default=None, repr=False)
+    _embedding_warmup_task: asyncio.Task | None = field(default=None, repr=False)
     _loaded_index_state_version: float = field(default=0.0, repr=False)
     _is_virgin_startup: bool = field(default=False, repr=False)
 
@@ -427,6 +429,7 @@ class ApplicationContext:
             self._mark_index_state_loaded()
             self._refresh_index_state_from_loaded_indices()
             self._ready_event.set()
+            self.schedule_embedding_model_warmup()
             return
 
         enqueued = enqueue_index_batch(files_to_index)
@@ -462,6 +465,8 @@ class ApplicationContext:
                     self._refresh_index_state_from_loaded_indices()
                     if self.index_manager.is_ready() and not self._ready_event.is_set():
                         self._ready_event.set()
+                    if self.index_manager.is_ready():
+                        self.schedule_embedding_model_warmup()
                     if self._index_state.indexed_count >= self._index_state.total_count:
                         if not self.index_manager.vector._concept_vocabulary:
                             asyncio.create_task(self._build_initial_vocabulary())
@@ -499,6 +504,7 @@ class ApplicationContext:
                     self._mark_index_state_loaded()
                     self._refresh_index_state_from_loaded_indices()
                     self._ready_event.set()
+                    self.schedule_embedding_model_warmup()
                     self._background_index_task = asyncio.create_task(
                         self._reconcile_existing_indices_background()
                     )
@@ -512,6 +518,7 @@ class ApplicationContext:
                 self._mark_index_state_loaded()
                 self._index_state = IndexState(status="ready")
                 self._ready_event.set()
+                self.schedule_embedding_model_warmup()
                 await self._startup_reconciliation()
                 # Build vocabulary if empty (migration from old index)
                 if not self.index_manager.vector._concept_vocabulary:
@@ -644,6 +651,7 @@ class ApplicationContext:
         try:
             await asyncio.to_thread(self.index_manager.load)
             self._mark_index_state_loaded()
+            self.schedule_embedding_model_warmup()
             await self._startup_reconciliation()
 
             if not self.index_manager.vector._concept_vocabulary:
@@ -876,6 +884,67 @@ class ApplicationContext:
             self._loaded_index_state_version = current_version
             self._refresh_index_state_from_loaded_indices()
 
+    def schedule_freshness_refresh(self) -> bool:
+        if not self._ready_event.is_set() or self._init_error is not None:
+            return False
+
+        current_task = getattr(self, "_freshness_task", None)
+        if current_task is not None and not current_task.done():
+            return False
+
+        task = asyncio.create_task(self._run_freshness_refresh())
+        self._freshness_task = task
+        task.add_done_callback(self._clear_freshness_task)
+        return True
+
+    async def _run_freshness_refresh(self) -> None:
+        try:
+            await self.ensure_fresh_indices()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Background freshness refresh failed; continuing to serve existing in-memory indices",
+                exc_info=True,
+            )
+
+    def _clear_freshness_task(self, task: asyncio.Task) -> None:
+        if getattr(self, "_freshness_task", None) is task:
+            self._freshness_task = None
+
+    def schedule_embedding_model_warmup(self) -> bool:
+        if self._init_error is not None:
+            return False
+        if not self.index_manager.is_ready():
+            return False
+        if self.index_manager.vector.model_ready():
+            return False
+
+        current_task = getattr(self, "_embedding_warmup_task", None)
+        if current_task is not None and not current_task.done():
+            return False
+
+        task = asyncio.create_task(self._run_embedding_model_warmup())
+        self._embedding_warmup_task = task
+        task.add_done_callback(self._clear_embedding_warmup_task)
+        return True
+
+    async def _run_embedding_model_warmup(self) -> None:
+        try:
+            await asyncio.to_thread(self.index_manager.vector.warm_up)
+            logger.info("Background embedding model warmup complete")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Background embedding warmup failed; semantic search will lazy-load on demand",
+                exc_info=True,
+            )
+
+    def _clear_embedding_warmup_task(self, task: asyncio.Task) -> None:
+        if getattr(self, "_embedding_warmup_task", None) is task:
+            self._embedding_warmup_task = None
+
     async def stop(self) -> None:
         logger.info("Stopping ApplicationContext")
 
@@ -888,10 +957,22 @@ class ApplicationContext:
             self.reconciliation_task.cancel()
             tasks_to_cancel.append(self.reconciliation_task)
 
+        freshness_task = getattr(self, "_freshness_task", None)
+        if freshness_task and not freshness_task.done():
+            freshness_task.cancel()
+            tasks_to_cancel.append(freshness_task)
+
+        embedding_warmup_task = getattr(self, "_embedding_warmup_task", None)
+        if embedding_warmup_task and not embedding_warmup_task.done():
+            embedding_warmup_task.cancel()
+            tasks_to_cancel.append(embedding_warmup_task)
+
         if tasks_to_cancel:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
         self._background_index_task = None
         self.reconciliation_task = None
+        self._freshness_task = None
+        self._embedding_warmup_task = None
 
         if self.watcher:
             try:
