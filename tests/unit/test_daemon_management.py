@@ -113,6 +113,69 @@ def test_spawn_daemon_process_uses_project_agnostic_command(
     command = observed["command"]
     assert command[:4] == ["/repo/.venv/bin/python", "-m", "src.cli", "daemon-internal-run"]
     assert "--project" not in command
+    assert command[4:] == ["--runtime-root", str(tmp_path)]
+
+
+def test_find_runtime_daemon_pids_matches_runtime_root_argument(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+
+    monkeypatch.setattr(
+        "src.daemon.management._iter_proc_pids",
+        lambda: [101, 202, 303],
+    )
+    monkeypatch.setattr(
+        "src.daemon.management._read_process_cmdline",
+        lambda pid: {
+            101: [
+                sys.executable,
+                "-m",
+                "src.cli",
+                "daemon-internal-run",
+                "--runtime-root",
+                str(paths.root),
+            ],
+            202: [
+                sys.executable,
+                "-m",
+                "src.cli",
+                "daemon-internal-run",
+                "--runtime-root",
+                str(tmp_path / "other-runtime"),
+            ],
+            303: [sys.executable, "-m", "src.cli", "worker-run"],
+        }[pid],
+    )
+
+    from src.daemon.management import _find_runtime_daemon_pids
+
+    assert _find_runtime_daemon_pids(paths) == [101]
+
+
+def test_find_runtime_daemon_pids_uses_legacy_proc_fallback_per_runtime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+
+    monkeypatch.setattr(
+        "src.daemon.management._iter_proc_pids",
+        lambda: [111, 222],
+    )
+    monkeypatch.setattr(
+        "src.daemon.management._read_process_cmdline",
+        lambda pid: [sys.executable, "-m", "src.cli", "daemon-internal-run"],
+    )
+    monkeypatch.setattr(
+        "src.daemon.management._legacy_runtime_daemon_matches_root",
+        lambda pid, runtime_paths: pid == 111 and runtime_paths == paths,
+    )
+
+    from src.daemon.management import _find_runtime_daemon_pids
+
+    assert _find_runtime_daemon_pids(paths) == [111]
 
 
 def test_start_daemon_accepts_race_winner_metadata(monkeypatch, tmp_path: Path) -> None:
@@ -279,6 +342,36 @@ def test_start_daemon_waits_for_responsive_existing_ready_daemon(
     assert stop_calls == []
 
 
+def test_start_daemon_reaps_extra_matching_runtime_processes_before_returning(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    metadata = DaemonMetadata(pid=515, started_at=1.0, status="ready_primary")
+
+    monkeypatch.setattr(
+        "src.daemon.management.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=metadata,
+            running=True,
+            stale=False,
+            responsive=True,
+            ready=True,
+        ),
+    )
+
+    observed: list[tuple[RuntimePaths, int | None]] = []
+    monkeypatch.setattr(
+        "src.daemon.management._terminate_extra_runtime_daemon_processes",
+        lambda runtime_paths, *, keep_pid=None: observed.append((runtime_paths, keep_pid)) or [999],
+    )
+
+    result = start_daemon(timeout_seconds=0.5, paths=paths)
+
+    assert result == metadata
+    assert observed == [(paths, 515)]
+
+
 def test_start_daemon_cleans_up_old_nonresponsive_metadata_before_spawn(
     monkeypatch,
     tmp_path: Path,
@@ -391,6 +484,40 @@ def test_stop_daemon_prefers_internal_shutdown_for_responsive_daemon(
     assert result == metadata
     assert observed["path"] == "/internal/shutdown"
     assert terminations == []
+    assert cleaned == [paths]
+
+
+def test_stop_daemon_without_metadata_reaps_matching_runtime_processes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+
+    monkeypatch.setattr(
+        "src.daemon.management.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=None,
+            running=False,
+            stale=False,
+            responsive=False,
+            ready=False,
+        ),
+    )
+
+    observed: list[tuple[RuntimePaths, int | None]] = []
+    monkeypatch.setattr(
+        "src.daemon.management._terminate_extra_runtime_daemon_processes",
+        lambda runtime_paths, *, keep_pid=None: observed.append((runtime_paths, keep_pid)) or [901, 902],
+    )
+
+    cleaned: list[RuntimePaths] = []
+    monkeypatch.setattr(
+        "src.daemon.management._cleanup_stale_runtime_state",
+        lambda runtime_paths: cleaned.append(runtime_paths),
+    )
+
+    assert stop_daemon(timeout_seconds=0.5, paths=paths) is None
+    assert observed == [(paths, None)]
     assert cleaned == [paths]
 
 

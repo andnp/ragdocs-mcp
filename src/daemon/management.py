@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 import signal
@@ -14,9 +15,14 @@ from src.daemon.metadata import DaemonMetadata, read_daemon_metadata, remove_dae
 from src.daemon.paths import RuntimePaths
 
 
+logger = logging.getLogger(__name__)
+
+
 _READY_STATUSES = {"ready", "ready_primary", "ready_replica"}
 _NONRESPONSIVE_METADATA_GRACE_SECONDS = 30.0
 _INTERNAL_SHUTDOWN_TIMEOUT_SECONDS = 1.0
+_RUNTIME_DAEMON_COMMAND = ("-m", "src.cli", "daemon-internal-run")
+_RUNTIME_ROOT_OPTION = "--runtime-root"
 
 
 class DaemonManagementError(RuntimeError):
@@ -85,14 +91,26 @@ def start_daemon(
 
     current = inspect_daemon(runtime_paths)
     if current.running and current.ready and current.metadata is not None:
+        _terminate_extra_runtime_daemon_processes(
+            runtime_paths,
+            keep_pid=current.metadata.pid,
+        )
         return current.metadata
     if current.running and current.metadata is not None:
+        _terminate_extra_runtime_daemon_processes(
+            runtime_paths,
+            keep_pid=current.metadata.pid,
+        )
         if _metadata_has_exceeded_grace_period(current.metadata):
+            _terminate_extra_runtime_daemon_processes(runtime_paths)
             _cleanup_stale_runtime_state(runtime_paths)
         else:
             return _wait_for_ready_daemon(deadline=deadline, paths=runtime_paths)
     if current.stale:
+        _terminate_extra_runtime_daemon_processes(runtime_paths)
         _cleanup_stale_runtime_state(runtime_paths)
+    elif current.metadata is None:
+        _terminate_extra_runtime_daemon_processes(runtime_paths)
 
     process = _spawn_daemon_process(runtime_paths)
     return _wait_for_ready_daemon(
@@ -111,9 +129,15 @@ def stop_daemon(
     inspection = inspect_daemon(runtime_paths)
     metadata = inspection.metadata
     if metadata is None:
+        terminated = _terminate_extra_runtime_daemon_processes(runtime_paths)
+        if terminated:
+            _cleanup_stale_runtime_state(runtime_paths)
         return None
 
+    _terminate_extra_runtime_daemon_processes(runtime_paths, keep_pid=metadata.pid)
+
     if not inspection.running:
+        _terminate_extra_runtime_daemon_processes(runtime_paths)
         _cleanup_stale_runtime_state(runtime_paths)
         return metadata
 
@@ -124,6 +148,7 @@ def stop_daemon(
 
     while time.monotonic() < deadline:
         if not is_process_running(metadata.pid):
+            _terminate_extra_runtime_daemon_processes(runtime_paths)
             _cleanup_stale_runtime_state(runtime_paths)
             return metadata
         time.sleep(0.1)
@@ -135,6 +160,7 @@ def stop_daemon(
             break
         time.sleep(0.05)
 
+    _terminate_extra_runtime_daemon_processes(runtime_paths)
     _cleanup_stale_runtime_state(runtime_paths)
     return metadata
 
@@ -202,6 +228,8 @@ def _spawn_daemon_process(
         "-m",
         "src.cli",
         "daemon-internal-run",
+        _RUNTIME_ROOT_OPTION,
+        str(runtime_paths.root),
     ]
 
     repo_root = Path(__file__).resolve().parents[2]
@@ -262,6 +290,152 @@ def _terminate_process(pid: int, *, force: bool) -> None:
         os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
     except ProcessLookupError:
         return
+
+
+def _terminate_extra_runtime_daemon_processes(
+    runtime_paths: RuntimePaths,
+    *,
+    keep_pid: int | None = None,
+) -> list[int]:
+    terminated: list[int] = []
+    current_pid = os.getpid()
+    for pid in _find_runtime_daemon_pids(runtime_paths):
+        if pid == current_pid or pid == keep_pid:
+            continue
+        _terminate_pid_with_timeout(pid)
+        terminated.append(pid)
+    return terminated
+
+
+def _terminate_pid_with_timeout(pid: int, timeout_seconds: float = 1.0) -> None:
+    logger.warning("Terminating stale daemon process pid=%s", pid)
+
+    _terminate_process(pid, force=False)
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not is_process_running(pid):
+            return
+        time.sleep(0.05)
+    _terminate_process(pid, force=True)
+
+
+def _find_runtime_daemon_pids(runtime_paths: RuntimePaths) -> list[int]:
+    runtime_root = runtime_paths.root.resolve()
+    matching_pids: list[int] = []
+    for pid in _iter_proc_pids():
+        cmdline = _read_process_cmdline(pid)
+        if cmdline is None or not _argv_contains_sequence(
+            cmdline, _RUNTIME_DAEMON_COMMAND
+        ):
+            continue
+
+        runtime_root_option = _read_option_path_value(cmdline, _RUNTIME_ROOT_OPTION)
+        if runtime_root_option is not None:
+            if runtime_root_option == runtime_root:
+                matching_pids.append(pid)
+            continue
+
+        if _legacy_runtime_daemon_matches_root(pid, runtime_paths):
+            matching_pids.append(pid)
+
+    return matching_pids
+
+
+def _legacy_runtime_daemon_matches_root(
+    pid: int,
+    runtime_paths: RuntimePaths,
+) -> bool:
+    expected_paths = {
+        runtime_paths.socket_path.resolve(),
+        runtime_paths.index_db_path.resolve(),
+        runtime_paths.queue_db_path.resolve(),
+        _daemon_log_path(runtime_paths).resolve(),
+        _worker_log_path(runtime_paths).resolve(),
+    }
+
+    cwd_target = _read_proc_link(Path("/proc") / str(pid) / "cwd")
+    if cwd_target is not None and _path_within_runtime_root(
+        cwd_target, runtime_paths.root
+    ):
+        return True
+
+    fd_root = Path("/proc") / str(pid) / "fd"
+    try:
+        entries = list(fd_root.iterdir())
+    except OSError:
+        return False
+
+    for entry in entries:
+        target = _read_proc_link(entry)
+        if target is None:
+            continue
+        if target in expected_paths:
+            return True
+
+    return False
+
+
+def _path_within_runtime_root(path: Path, runtime_root: Path) -> bool:
+    try:
+        path.resolve().relative_to(runtime_root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _iter_proc_pids() -> list[int]:
+    proc_root = Path("/proc")
+    if not proc_root.exists():
+        return []
+
+    try:
+        entries = list(proc_root.iterdir())
+    except OSError:
+        return []
+
+    return [int(entry.name) for entry in entries if entry.is_dir() and entry.name.isdigit()]
+
+
+def _read_process_cmdline(pid: int) -> list[str] | None:
+    path = Path("/proc") / str(pid) / "cmdline"
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not data:
+        return []
+    return [part.decode("utf-8", errors="replace") for part in data.split(b"\0") if part]
+
+
+def _argv_contains_sequence(argv: list[str], expected: tuple[str, ...]) -> bool:
+    if not expected or len(argv) < len(expected):
+        return False
+    for index in range(len(argv) - len(expected) + 1):
+        if tuple(argv[index : index + len(expected)]) == expected:
+            return True
+    return False
+
+
+def _read_option_path_value(argv: list[str], option: str) -> Path | None:
+    for index, token in enumerate(argv):
+        if token != option:
+            continue
+        if index + 1 >= len(argv):
+            return None
+        return Path(argv[index + 1]).expanduser().resolve()
+    return None
+
+
+def _read_proc_link(path: Path) -> Path | None:
+    try:
+        raw_target = os.readlink(path)
+    except OSError:
+        return None
+
+    cleaned_target = raw_target.removesuffix(" (deleted)")
+    if not cleaned_target.startswith("/"):
+        return None
+    return Path(cleaned_target).resolve()
 
 
 def _cleanup_stale_runtime_state(paths: RuntimePaths) -> None:
