@@ -335,12 +335,13 @@ class FileWatcher:
             try:
                 if event_type in ("created", "modified"):
                     if self._use_tasks:
-                        from src.indexing.tasks import enqueue_index, is_task_queue_available
+                        from src.indexing.tasks import submit_index_request
 
-                        if enqueue_index(file_path):
+                        submission = submit_index_request(file_path)
+                        if submission.accepted_by_queue:
                             logger.info(f"Enqueued indexing task: {file_path}")
                             continue
-                        if is_task_queue_available():
+                        if submission.should_retry_later:
                             deferred_events[file_path] = event_type
                             continue
                     # Fallback to direct execution
@@ -351,12 +352,13 @@ class FileWatcher:
                 elif event_type == "deleted":
                     doc_id = self._compute_doc_id_for_event(file_path)
                     if self._use_tasks:
-                        from src.indexing.tasks import enqueue_remove, is_task_queue_available
+                        from src.indexing.tasks import submit_remove_request
 
-                        if enqueue_remove(doc_id):
+                        submission = submit_remove_request(doc_id)
+                        if submission.accepted_by_queue:
                             logger.info(f"Enqueued removal task: {doc_id}")
                             continue
-                        if is_task_queue_available():
+                        if submission.should_retry_later:
                             deferred_events[file_path] = event_type
                             continue
                     # Fallback to direct execution

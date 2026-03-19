@@ -23,6 +23,8 @@ from src.indexing.tasks import (
     get_pending_index_document_count,
     enqueue_remove,
     register_tasks,
+    submit_index_batch,
+    submit_refresh_git_request,
 )
 
 
@@ -249,6 +251,22 @@ class TestTaskRegistration:
         task = huey_instance.dequeue()
         assert task.args == ("/repo/.git",)
 
+    def test_submit_refresh_git_request_reports_already_pending_status(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        fake_commit_indexer: FakeCommitIndexer,
+    ) -> None:
+        register_tasks(huey_instance, fake_manager, fake_commit_indexer)
+
+        assert enqueue_refresh_git("/repo/.git") is True
+
+        submission = submit_refresh_git_request("/repo/.git")
+
+        assert submission.status == "already_pending"
+        assert submission.accepted_by_queue is True
+        assert submission.enqueued is False
+
     def test_startup_git_batch_skips_repos_already_pending_in_queue(
         self,
         huey_instance: SqliteHuey,
@@ -293,6 +311,24 @@ class TestTaskRegistration:
 
         assert refreshed == 2
         assert huey_instance.pending_count() == 2
+
+    def test_submit_index_batch_reports_pending_items_as_already_represented(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        assert enqueue_index("/some/file.md") is True
+
+        submission = submit_index_batch([
+            "/some/file.md",
+            "/some/other.md",
+        ])
+
+        assert submission.queue_available is True
+        assert submission.requested_unique_count == 2
+        assert submission.enqueued_count == 1
+        assert submission.already_pending_count == 1
+        assert submission.all_represented is True
 
 
 class TestTaskExecution:

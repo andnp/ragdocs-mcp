@@ -11,6 +11,7 @@ from src.config import (
 )
 from src.git.commit_indexer import CommitIndexer
 from src.git.watcher import GitWatcher
+from src.indexing.tasks import TaskSubmissionResult
 
 
 @pytest.fixture
@@ -185,10 +186,72 @@ async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
     )
 
     monkeypatch.setattr(
-        "src.indexing.tasks.enqueue_refresh_git",
-        lambda git_dir_str: observed.append(git_dir_str) or True,
+        "src.indexing.tasks.submit_refresh_git_request",
+        lambda git_dir_str: observed.append(git_dir_str)
+        or TaskSubmissionResult(status="enqueued"),
     )
 
     await watcher._batch_process({git_dir})
 
     assert observed == [str(git_dir)]
+
+
+@pytest.mark.asyncio
+async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
+    test_config, commit_indexer, tmp_path, monkeypatch
+):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    observed: dict[str, object] = {}
+
+    watcher = GitWatcher(
+        git_repos=[git_dir],
+        commit_indexer=commit_indexer,
+        config=test_config,
+        use_tasks=True,
+    )
+
+    monkeypatch.setattr(
+        "src.indexing.tasks.submit_refresh_git_request",
+        lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
+    )
+    monkeypatch.setattr(
+        commit_indexer,
+        "get_last_indexed_timestamp",
+        lambda repo_path: observed.__setitem__("repo_path", repo_path) or 123,
+    )
+
+    def _fake_get_commits_after_timestamp(repo_path: Path, last_timestamp: int | None):
+        observed["commits_after"] = (repo_path, last_timestamp)
+        return ["abc123"]
+
+    monkeypatch.setattr(
+        "src.git.repository.get_commits_after_timestamp",
+        _fake_get_commits_after_timestamp,
+    )
+
+    async def _fake_index_commits_parallel(
+        commit_hashes,
+        repo_path,
+        commit_indexer_obj,
+        parallel_config,
+        max_delta_lines,
+    ) -> int:
+        observed["indexed"] = (
+            commit_hashes,
+            repo_path,
+            commit_indexer_obj,
+            max_delta_lines,
+        )
+        return 1
+
+    monkeypatch.setattr(
+        "src.git.parallel_indexer.index_commits_parallel",
+        _fake_index_commits_parallel,
+    )
+
+    await watcher._batch_process({git_dir})
+
+    assert observed["repo_path"] == str(git_dir)
+    assert observed["commits_after"] == (git_dir, 123)
+    assert observed["indexed"] == (["abc123"], git_dir, commit_indexer, 200)

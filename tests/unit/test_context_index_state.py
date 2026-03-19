@@ -32,6 +32,7 @@ from src.indexing.manifest import (
     load_manifest,
     save_manifest,
 )
+from src.indexing.tasks import TaskBatchSubmissionResult
 
 
 def _setattr(obj: Any, name: str, value: Any):
@@ -1058,14 +1059,20 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
 
     enqueued: list[str] = []
 
-    def fake_enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
+    def fake_submit_index_batch(
+        file_paths: list[str], force: bool = False
+    ) -> TaskBatchSubmissionResult:
         assert force is False
         enqueued.extend(file_paths)
-        return len(file_paths)
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=len(set(file_paths)),
+            enqueued_count=len(set(file_paths)),
+        )
 
     monkeypatch.setattr(
-        "src.indexing.tasks.enqueue_index_batch",
-        fake_enqueue_index_batch,
+        "src.indexing.tasks.submit_index_batch",
+        fake_submit_index_batch,
     )
 
     original_sleep = asyncio.sleep
@@ -1157,16 +1164,14 @@ async def test_task_bootstrap_keeps_monitoring_when_remaining_work_is_already_pe
     enqueue_checked = asyncio.Event()
 
     monkeypatch.setattr(
-        "src.indexing.tasks.enqueue_index_batch",
-        lambda file_paths, force=False: enqueue_checked.set() or 0,
-    )
-    monkeypatch.setattr(
-        "src.indexing.tasks.is_task_queue_available",
-        lambda: True,
-    )
-    monkeypatch.setattr(
-        "src.indexing.tasks.get_pending_index_document_count",
-        lambda file_paths: len(set(file_paths)),
+        "src.indexing.tasks.submit_index_batch",
+        lambda file_paths, force=False: enqueue_checked.set()
+        or TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=len(set(file_paths)),
+            enqueued_count=0,
+            already_pending_count=len(set(file_paths)),
+        ),
     )
 
     original_sleep = asyncio.sleep
@@ -1304,7 +1309,9 @@ async def test_task_bootstrap_skips_durably_completed_files(
 
     enqueued: list[str] = []
 
-    def fake_enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
+    def fake_submit_index_batch(
+        file_paths: list[str], force: bool = False
+    ) -> TaskBatchSubmissionResult:
         enqueued.extend(file_paths)
         updated_manifest = load_manifest(ctx.index_path)
         assert updated_manifest is not None
@@ -1346,11 +1353,15 @@ async def test_task_bootstrap_skips_durably_completed_files(
                 },
             ),
         )
-        return len(file_paths)
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=len(set(file_paths)),
+            enqueued_count=len(set(file_paths)),
+        )
 
     monkeypatch.setattr(
-        "src.indexing.tasks.enqueue_index_batch",
-        fake_enqueue_index_batch,
+        "src.indexing.tasks.submit_index_batch",
+        fake_submit_index_batch,
     )
 
     await asyncio.wait_for(ctx._bootstrap_via_tasks(), timeout=1.0)

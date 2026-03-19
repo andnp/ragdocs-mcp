@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from src.coordination.task_submission import (
     get_pending_task_count as get_shared_pending_task_count,
@@ -20,6 +21,44 @@ if TYPE_CHECKING:
     from huey import SqliteHuey
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TaskSubmissionResult:
+    status: Literal["enqueued", "already_pending", "backpressured", "unavailable"]
+
+    @property
+    def accepted_by_queue(self) -> bool:
+        return self.status in {"enqueued", "already_pending"}
+
+    @property
+    def should_retry_later(self) -> bool:
+        return self.status == "backpressured"
+
+    @property
+    def queue_available(self) -> bool:
+        return self.status != "unavailable"
+
+    @property
+    def enqueued(self) -> bool:
+        return self.status == "enqueued"
+
+
+@dataclass(frozen=True)
+class TaskBatchSubmissionResult:
+    queue_available: bool
+    requested_unique_count: int
+    enqueued_count: int
+    already_pending_count: int = 0
+
+    @property
+    def all_represented(self) -> bool:
+        if not self.queue_available:
+            return False
+        return (
+            self.enqueued_count + self.already_pending_count
+            >= self.requested_unique_count
+        )
 
 
 class IndexManagerLike(Protocol):
@@ -150,20 +189,27 @@ def register_tasks(
 
 def enqueue_index(file_path: str, force: bool = False) -> bool:
     """Enqueue an index_document task. Returns True if enqueued, False if no Huey."""
+    return submit_index_request(file_path, force=force).enqueued
+
+
+def submit_index_request(file_path: str, force: bool = False) -> TaskSubmissionResult:
     if index_document_task is None or _huey is None:
-        return False
+        return TaskSubmissionResult(status="unavailable")
     if is_backpressured(
         _huey,
         _task_backpressure_limit,
         item=file_path,
         warning_message="Skipping index enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
-        return False
-    return submit_single_task(
+        return TaskSubmissionResult(status="backpressured")
+    enqueued = submit_single_task(
         index_document_task,
         file_path,
         task_kwargs={"force": force},
     )
+    if enqueued:
+        return TaskSubmissionResult(status="enqueued")
+    return TaskSubmissionResult(status="already_pending")
 
 
 def _get_pending_task_first_args(task_name: str) -> set[str]:
@@ -192,16 +238,37 @@ def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
     Intended for cold-start/bootstrap flows where the full corpus needs to be
     materialized durably by the worker.
     """
+    return submit_index_batch(file_paths, force=force).enqueued_count
+
+
+def submit_index_batch(
+    file_paths: list[str],
+    force: bool = False,
+) -> TaskBatchSubmissionResult:
     if index_document_task is None or _huey is None:
-        return 0
+        return TaskBatchSubmissionResult(
+            queue_available=False,
+            requested_unique_count=len(set(file_paths)),
+            enqueued_count=0,
+        )
 
     pending_paths = set() if force else _get_pending_index_document_paths()
-    return submit_task_batch(
+    requested_unique_paths = set(file_paths)
+    enqueued_count = submit_task_batch(
         index_document_task,
         file_paths,
         task_kwargs={"force": force},
         pending_first_args=pending_paths,
         skipped_pending_log_message="Skipped %d startup indexing task(s) already pending in queue",
+    )
+    already_pending_count = sum(
+        1 for file_path in requested_unique_paths if file_path in pending_paths
+    )
+    return TaskBatchSubmissionResult(
+        queue_available=True,
+        requested_unique_count=len(requested_unique_paths),
+        enqueued_count=enqueued_count,
+        already_pending_count=already_pending_count,
     )
 
 
@@ -217,47 +284,80 @@ def get_pending_index_document_count(file_paths: list[str]) -> int:
 
 def enqueue_remove(doc_id: str) -> bool:
     """Enqueue a remove_document task. Returns True if enqueued, False if no Huey."""
+    return submit_remove_request(doc_id).enqueued
+
+
+def submit_remove_request(doc_id: str) -> TaskSubmissionResult:
     if remove_document_task is None or _huey is None:
-        return False
+        return TaskSubmissionResult(status="unavailable")
     if is_backpressured(
         _huey,
         _task_backpressure_limit,
         item=doc_id,
         warning_message="Skipping remove enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
-        return False
-    return submit_single_task(remove_document_task, doc_id)
+        return TaskSubmissionResult(status="backpressured")
+    enqueued = submit_single_task(remove_document_task, doc_id)
+    if enqueued:
+        return TaskSubmissionResult(status="enqueued")
+    return TaskSubmissionResult(status="already_pending")
 
 
 def enqueue_refresh_git(git_dir: str) -> bool:
     """Enqueue a refresh_git_repository task. Returns True if enqueued."""
+    return submit_refresh_git_request(git_dir).enqueued
+
+
+def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
     if refresh_git_repository_task is None or _huey is None:
-        return False
+        return TaskSubmissionResult(status="unavailable")
     if is_backpressured(
         _huey,
         _task_backpressure_limit,
         item=git_dir,
         warning_message="Skipping git refresh enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
-        return False
-    return submit_single_task(
+        return TaskSubmissionResult(status="backpressured")
+    enqueued = submit_single_task(
         refresh_git_repository_task,
         git_dir,
         pending_first_args=_get_pending_refresh_git_dirs(),
         pending_skip_log_message="Skipping git refresh enqueue for %s because a pending task already exists",
     )
+    if enqueued:
+        return TaskSubmissionResult(status="enqueued")
+    return TaskSubmissionResult(status="already_pending")
 
 
 def enqueue_refresh_git_batch(git_dirs: list[str]) -> int:
     """Enqueue many git refresh tasks without watcher backpressure throttling."""
-    if refresh_git_repository_task is None or _huey is None:
-        return 0
+    return submit_refresh_git_batch(git_dirs).enqueued_count
 
-    return submit_task_batch(
+
+def submit_refresh_git_batch(git_dirs: list[str]) -> TaskBatchSubmissionResult:
+    if refresh_git_repository_task is None or _huey is None:
+        return TaskBatchSubmissionResult(
+            queue_available=False,
+            requested_unique_count=len(set(git_dirs)),
+            enqueued_count=0,
+        )
+
+    pending_git_dirs = _get_pending_refresh_git_dirs()
+    requested_unique_dirs = set(git_dirs)
+    enqueued_count = submit_task_batch(
         refresh_git_repository_task,
         git_dirs,
-        pending_first_args=_get_pending_refresh_git_dirs(),
+        pending_first_args=pending_git_dirs,
         skipped_pending_log_message="Skipped %d startup git refresh task(s) already pending in queue",
+    )
+    already_pending_count = sum(
+        1 for git_dir in requested_unique_dirs if git_dir in pending_git_dirs
+    )
+    return TaskBatchSubmissionResult(
+        queue_available=True,
+        requested_unique_count=len(requested_unique_dirs),
+        enqueued_count=enqueued_count,
+        already_pending_count=already_pending_count,
     )
 
 

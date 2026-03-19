@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.indexing.discovery import is_excluded_dir, walk_included_dirs
+from src.indexing.tasks import TaskSubmissionResult
 from src.indexing.watcher import (
     FileWatcher,
     _DocumentEventHandler,
@@ -545,7 +546,10 @@ class TestFileWatcherTaskMode:
             use_tasks=True,
         )
 
-        with patch("src.indexing.tasks.enqueue_index", return_value=True) as enqueue:
+        with patch(
+            "src.indexing.tasks.submit_index_request",
+            return_value=TaskSubmissionResult(status="enqueued"),
+        ) as enqueue:
             await watcher._batch_process({str(docs_path / "note.md"): "created"})
 
         enqueue.assert_called_once_with(str(docs_path / "note.md"))
@@ -565,7 +569,10 @@ class TestFileWatcherTaskMode:
         deleted_file = docs_path / "nested" / "note.md"
         deleted_file.parent.mkdir()
 
-        with patch("src.indexing.tasks.enqueue_remove", return_value=True) as enqueue:
+        with patch(
+            "src.indexing.tasks.submit_remove_request",
+            return_value=TaskSubmissionResult(status="enqueued"),
+        ) as enqueue:
             await watcher._batch_process({str(deleted_file): "deleted"})
 
         enqueue.assert_called_once_with("nested/note")
@@ -583,9 +590,9 @@ class TestFileWatcherTaskMode:
             use_tasks=True,
         )
 
-        with (
-            patch("src.indexing.tasks.is_task_queue_available", return_value=True),
-            patch("src.indexing.tasks.enqueue_index", return_value=False),
+        with patch(
+            "src.indexing.tasks.submit_index_request",
+            return_value=TaskSubmissionResult(status="backpressured"),
         ):
             await watcher._batch_process({str(docs_path / "note.md"): "created"})
 
@@ -594,6 +601,28 @@ class TestFileWatcherTaskMode:
             str(docs_path / "note.md"),
         )
         mock_index_manager.index_document.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_batch_process_falls_back_to_direct_index_when_queue_unavailable(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            use_tasks=True,
+        )
+
+        with patch(
+            "src.indexing.tasks.submit_index_request",
+            return_value=TaskSubmissionResult(status="unavailable"),
+        ):
+            await watcher._batch_process({str(docs_path / "note.md"): "created"})
+
+        mock_index_manager.index_document.assert_called_once_with(
+            str(docs_path / "note.md")
+        )
 
 
 class TestFileWatcherDebounce:
@@ -632,6 +661,7 @@ class TestFileWatcherDebounce:
     ):
         project_a = tmp_path / "project_a"
         project_b = tmp_path / "project_b"
+        project_a.mkdir()
         file_path = project_b / "docs" / "guide.md"
         file_path.parent.mkdir(parents=True)
 
@@ -641,7 +671,7 @@ class TestFileWatcherDebounce:
             index_manager=mock_index_manager,
         )
 
-        assert watcher._compute_doc_id_for_event(str(file_path)) == "docs/guide"
+        assert watcher._compute_doc_id_for_event(str(file_path)) == "project_b/docs/guide"
 
     def test_get_stats_reports_debounce_and_backpressure_counters(
         self, tmp_path, mock_index_manager

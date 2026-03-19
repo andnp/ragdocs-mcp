@@ -80,17 +80,36 @@ class GitWatcher:
     async def _batch_process(self, git_dirs: set[Path]) -> None:
         """Incrementally index any commits added since the last poll."""
         if self._use_tasks:
-            from src.indexing.tasks import enqueue_refresh_git
+            from src.indexing.tasks import submit_refresh_git_request
 
+            direct_refresh_dirs: set[Path] = set()
             for git_dir in git_dirs:
-                if enqueue_refresh_git(str(git_dir)):
+                submission = submit_refresh_git_request(str(git_dir))
+                if submission.enqueued:
                     logger.info("Enqueued git refresh task for %s", git_dir.parent)
-                else:
-                    logger.warning(
-                        "Git watcher task mode enabled but no task was registered for %s",
+                    continue
+                if submission.status == "already_pending":
+                    logger.info(
+                        "Git refresh task already pending for %s",
                         git_dir.parent,
                     )
-            return
+                    continue
+                if submission.should_retry_later:
+                    logger.warning(
+                        "Skipping git refresh enqueue for %s due to task queue backpressure",
+                        git_dir.parent,
+                    )
+                    continue
+
+                logger.info(
+                    "Git task queue unavailable for %s; falling back to direct refresh",
+                    git_dir.parent,
+                )
+                direct_refresh_dirs.add(git_dir)
+
+            if not direct_refresh_dirs:
+                return
+            git_dirs = direct_refresh_dirs
 
         from src.git.parallel_indexer import (
             ParallelIndexingConfig,

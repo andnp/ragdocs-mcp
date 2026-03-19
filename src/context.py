@@ -484,26 +484,23 @@ class ApplicationContext:
         if self.commit_indexer is None:
             return
 
-        from src.indexing.tasks import enqueue_refresh_git_batch
+        from src.indexing.tasks import submit_refresh_git_batch
 
         repos = await asyncio.to_thread(self.discover_git_repositories)
         if not repos:
             logger.info("No git repositories found for task-driven startup refresh")
             return
 
-        enqueued = enqueue_refresh_git_batch([str(repo) for repo in repos])
+        submission = submit_refresh_git_batch([str(repo) for repo in repos])
         logger.info(
-            "Enqueued %d startup git refresh task(s) for %d repositories",
-            enqueued,
+            "Enqueued %d startup git refresh task(s) for %d repositories (%d already pending)",
+            submission.enqueued_count,
             len(repos),
+            submission.already_pending_count,
         )
 
     async def _bootstrap_via_tasks(self) -> None:
-        from src.indexing.tasks import (
-            enqueue_index_batch,
-            get_pending_index_document_count,
-            is_task_queue_available,
-        )
+        from src.indexing.tasks import submit_index_batch
 
         files_to_index = await asyncio.to_thread(self.discover_files)
         target_stamps = await asyncio.to_thread(
@@ -567,23 +564,20 @@ class ApplicationContext:
                     asyncio.create_task(self._build_initial_vocabulary())
             return
 
-        enqueued = enqueue_index_batch(remaining_files)
+        submission = submit_index_batch(remaining_files)
         logger.info(
-            "Enqueued %d startup indexing task(s) for %d remaining documents (%d already durably complete)",
-            enqueued,
+            "Enqueued %d startup indexing task(s) for %d remaining documents (%d already durably complete, %d already pending)",
+            submission.enqueued_count,
             len(remaining_files),
             len(completed_paths),
+            submission.already_pending_count,
         )
 
-        if enqueued == 0:
-            pending_remaining = 0
-            if is_task_queue_available():
-                pending_remaining = get_pending_index_document_count(remaining_files)
-
-            if pending_remaining >= len(remaining_files):
+        if submission.enqueued_count == 0:
+            if submission.all_represented:
                 logger.info(
                     "Startup bootstrap found %d remaining document(s) already pending in queue; continuing to monitor persisted progress",
-                    pending_remaining,
+                    submission.already_pending_count,
                 )
             else:
                 self._index_state = IndexState(
