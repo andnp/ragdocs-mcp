@@ -12,6 +12,7 @@ from src.search.base_orchestrator import BaseSearchOrchestrator
 from src.search.chunk_hydrator import ChunkHydrator
 from src.search.classifier import classify_query, get_adaptive_weights
 from src.search.filters import matches_project_filter, normalize_project_filter
+from src.search.graph_expansion import build_graph_chunk_candidates
 from src.search.path_utils import extract_doc_id_from_chunk_id
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
 from src.search.score_pipeline import ScorePipeline, ScorePipelineConfig
@@ -142,12 +143,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 tag_expansion_count += 1
 
         graph_neighbors = self._get_graph_neighbors(list(all_doc_ids))
-
-        # Convert graph document IDs to chunk IDs
-        graph_chunk_ids = []
-        for doc_id in graph_neighbors:
-            chunk_ids_for_doc = self._vector.get_chunk_ids_for_document(doc_id)
-            graph_chunk_ids.extend(chunk_ids_for_doc)
+        graph_chunk_ids = build_graph_chunk_candidates(
+            graph_neighbors,
+            self._vector,
+            top_k,
+            excluded_chunk_ids=set(chunk_id_to_doc_id),
+        )
 
         # Build strategy stats
         strategy_stats = SearchStrategyStats(

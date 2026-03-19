@@ -6,6 +6,7 @@ strategies (semantic, keyword, graph) with recency boosting and RRF fusion.
 Uses real indices and async query methods.
 """
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -130,8 +131,6 @@ def create_test_corpus(config, manager):
     # Set modified time to 3 days ago for recency boost (1.2x)
     doc4.touch()
     doc4_mtime = now - (3 * 86400)  # 3 days ago
-    import os
-
     os.utime(str(doc4), (doc4_mtime, doc4_mtime))
 
     # Document 5: Hybrid match (keyword + semantic)
@@ -225,6 +224,45 @@ async def test_graph_neighbors_boost_related_docs(config, manager, orchestrator)
     # Either authentication appears directly (keyword/semantic) or via graph boost
     # Since api links to authentication, graph traversal should include it
     assert _doc_in_chunk_ids("authentication", results) or len(results) >= 2
+
+
+@pytest.mark.asyncio
+async def test_graph_expansion_caps_neighbor_chunk_candidates(
+    config, indices, manager, orchestrator
+):
+    docs_path = Path(config.indexing.documents_path)
+
+    seed_doc = docs_path / "seed.md"
+    seed_doc.write_text(
+        "# Seed Document\n\n"
+        "Unique seed lookup phrase for graph expansion regression coverage."
+    )
+    manager.index_document(str(seed_doc))
+
+    neighbor_sections = "\n\n".join(
+        f"## Section {index}\n\nBackground material {index}."
+        for index in range(12)
+    )
+    related_doc = docs_path / "large_related.md"
+    related_doc.write_text(f"# Large Related\n\n{neighbor_sections}\n")
+    manager.index_document(str(related_doc))
+
+    vector, _keyword, graph = indices
+    graph.add_edge("seed", "large_related", "LINKS_TO")
+
+    related_chunk_ids = vector.get_chunk_ids_for_document("large_related")
+    assert len(related_chunk_ids) > 3
+
+    results, _compression_stats, strategy_stats = await orchestrator.query(
+        "Unique seed lookup phrase",
+        top_k=3,
+        top_n=10,
+    )
+
+    assert strategy_stats.graph_count is not None
+    assert strategy_stats.graph_count <= 3
+    assert strategy_stats.graph_count < len(related_chunk_ids)
+    assert _doc_in_chunk_ids("large_related", results)
 
 
 @pytest.mark.asyncio
