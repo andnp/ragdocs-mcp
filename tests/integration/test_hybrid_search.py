@@ -362,6 +362,17 @@ async def test_empty_query_returns_empty_results(config, manager, orchestrator):
 
 
 @pytest.mark.asyncio
+async def test_repeated_query_returns_identical_results(config, manager, orchestrator):
+    """Repeated real-index queries should preserve result parity when the cache is hit."""
+    create_test_corpus(config, manager)
+
+    first = await orchestrator.query("authentication security", top_k=10, top_n=5)
+    second = await orchestrator.query("authentication security", top_k=10, top_n=5)
+
+    assert second == first
+
+
+@pytest.mark.asyncio
 async def test_top_k_limits_results_correctly(config, manager, orchestrator):
     """
     Test that top_k parameter correctly limits the number of results.

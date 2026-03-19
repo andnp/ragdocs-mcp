@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from src.config import Config
@@ -22,6 +22,7 @@ from src.search.graph_expansion import build_graph_chunk_candidates
 from src.search.path_utils import extract_doc_id_from_chunk_id
 from src.search.pipeline import SearchPipeline, SearchPipelineConfig
 from src.search.query_execution import QueryExecutionContext
+from src.search.result_cache import QueryResultCache, QueryResultCacheKey
 from src.search.score_pipeline import ScorePipeline, ScorePipelineConfig
 from src.search.tag_expansion import expand_query_with_tags
 
@@ -30,6 +31,15 @@ logger = logging.getLogger(__name__)
 _ACTIVE_PROJECT_UPLIFT = 1.2
 _FACTUAL_QUERY_CLEAR_CANDIDATE_LIMIT = 6
 _FACTUAL_QUERY_CONSENSUS_DEPTH = 2
+_RESULT_CACHE_MAX_ENTRIES = 64
+
+
+@dataclass
+class CachedQueryResult:
+    chunk_results: list[ChunkResult]
+    compression_stats: CompressionStats
+    strategy_stats: SearchStrategyStats
+    query_execution_stats: dict[str, int] | None
 
 
 class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
@@ -59,6 +69,9 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             keyword_index,
             self._documents_path,
             self._queue_reindex_for_chunks,
+        )
+        self._result_cache: QueryResultCache[CachedQueryResult] = QueryResultCache(
+            max_entries=_RESULT_CACHE_MAX_ENTRIES
         )
         self._last_query_execution_stats: dict[str, int] | None = None
 
@@ -93,6 +106,39 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         if disable_reranking and effective_config.reranking_enabled:
             effective_config = replace(effective_config, reranking_enabled=False)
         return SearchPipeline(effective_config)
+
+    def _get_result_cache_key(
+        self,
+        *,
+        query_text: str,
+        top_k: int,
+        top_n: int,
+        pipeline_config: SearchPipelineConfig | None,
+        excluded_files: set[str] | None,
+        project_filter: list[str] | None,
+        project_context: str | None,
+    ) -> QueryResultCacheKey | None:
+        if self._index_manager is None:
+            return None
+
+        effective_pipeline_config = pipeline_config or self._build_pipeline_config()
+        normalized_project_filter = normalize_project_filter(project_filter)
+        effective_project_context = project_context or self._config.detected_project
+
+        return QueryResultCacheKey(
+            query_text=query_text,
+            top_k=top_k,
+            top_n=top_n,
+            min_confidence=effective_pipeline_config.min_confidence,
+            max_chunks_per_doc=effective_pipeline_config.max_chunks_per_doc,
+            dedup_threshold=effective_pipeline_config.dedup_threshold,
+            reranking_enabled=effective_pipeline_config.reranking_enabled,
+            rerank_top_n=effective_pipeline_config.rerank_top_n,
+            excluded_files=tuple(sorted(excluded_files or set())),
+            project_filter=tuple(sorted(normalized_project_filter or set())),
+            project_context=effective_project_context,
+            index_state_version=self._index_manager.get_state_version(),
+        )
 
     def _should_skip_expensive_factual_enrichments(
         self,
@@ -156,6 +202,25 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 ),
                 SearchStrategyStats(),
             )
+
+        cache_key = self._get_result_cache_key(
+            query_text=query_text,
+            top_k=top_k,
+            top_n=top_n,
+            pipeline_config=pipeline_config,
+            excluded_files=excluded_files,
+            project_filter=project_filter,
+            project_context=project_context,
+        )
+        if cache_key is not None:
+            cached_result = self._result_cache.get(cache_key)
+            if cached_result is not None:
+                self._last_query_execution_stats = cached_result.query_execution_stats
+                return (
+                    cached_result.chunk_results,
+                    cached_result.compression_stats,
+                    cached_result.strategy_stats,
+                )
 
         docs_root = self._documents_path
         query_context = self._create_query_execution_context()
@@ -323,6 +388,17 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         )
 
         self._last_query_execution_stats = query_context.stats.to_dict()
+
+        if cache_key is not None:
+            self._result_cache.set(
+                cache_key,
+                CachedQueryResult(
+                    chunk_results=chunk_results,
+                    compression_stats=compression_stats,
+                    strategy_stats=strategy_stats,
+                    query_execution_stats=self._last_query_execution_stats,
+                ),
+            )
 
         return chunk_results, compression_stats, strategy_stats
 

@@ -62,11 +62,18 @@ class IndexManager:
         self._hash_store = ChunkHashStore(hash_store_path)
         self._manifest_indexed_files: dict[str, str] = {}
         self._manifest_removed_doc_ids: set[str] = set()
+        self._state_version = 0
 
         logger.info(
             f"IndexManager initialized with embedding_workers={config.indexing.embedding_workers} "
             f"(mode: {'parallel' if config.indexing.embedding_workers > 1 else 'sequential'})"
         )
+
+    def _bump_state_version(self) -> None:
+        self._state_version += 1
+
+    def get_state_version(self) -> int:
+        return self._state_version
 
     def _get_parser_suffixes(self) -> list[str]:
         return sorted(get_parser_suffixes())
@@ -178,6 +185,7 @@ class IndexManager:
                 logger.info(
                     "Pruned %s from indices (%d chunks removed)", doc_id, removed_chunks
                 )
+            self._bump_state_version()
             return True
         except Exception as e:
             logger.error("Failed to prune %s: %s", doc_id, e, exc_info=True)
@@ -413,6 +421,7 @@ class IndexManager:
                 f"Successfully moved {moved_count}/{len(new_chunks)} chunks "
                 f"from {old_doc_id} to {new_doc_id}"
             )
+            self._bump_state_version()
             return True
 
         except Exception as e:
@@ -468,10 +477,12 @@ class IndexManager:
 
             # Delta indexing logic
             performed_full_reindex = False
+            mutated = False
             if force:
                 # Force full re-index
                 self._full_reindex_document(document.id, chunks)
                 performed_full_reindex = True
+                mutated = True
             else:
                 # Delta detection
                 changed_chunks, unchanged_chunk_ids = self._detect_changed_chunks(
@@ -488,6 +499,7 @@ class IndexManager:
                         )
                         self._full_reindex_document(document.id, chunks)
                         performed_full_reindex = True
+                        mutated = True
                     else:
                         logger.info(f"No changes in {file_path}, skipping re-index")
                         return
@@ -497,6 +509,7 @@ class IndexManager:
                     pass
                 elif not self._should_use_delta_indexing(changed_chunks, len(chunks)):
                     self._full_reindex_document(document.id, chunks)
+                    mutated = True
                 else:
                     logger.info(
                         f"Delta index {file_path}: "
@@ -505,6 +518,7 @@ class IndexManager:
 
                     # Update only changed chunks
                     self._update_chunks(document.id, changed_chunks)
+                    mutated = True
 
                     # Update hash store for all chunks (even unchanged, to handle ID shifts)
                     for chunk in chunks:
@@ -540,6 +554,8 @@ class IndexManager:
 
             self._failed_files = [f for f in self._failed_files if f.path != file_path]
             self._record_manifest_index(file_path, document.id)
+            if mutated:
+                self._bump_state_version()
 
         except UnicodeDecodeError as e:
             # Try alternative encodings for files with encoding issues
@@ -608,6 +624,7 @@ class IndexManager:
         # Remove from hash store
         self._hash_store.remove_document(doc_id)
         self._record_manifest_removal(doc_id)
+        self._bump_state_version()
 
     def persist(self):
         """Persist all indices with retry logic for transient failures.
@@ -662,6 +679,7 @@ class IndexManager:
         lock.acquire_shared()
         try:
             self._load_indices(index_path)
+            self._bump_state_version()
         finally:
             lock.release()
 
