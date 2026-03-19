@@ -437,6 +437,10 @@ class IndexManager:
         ).resolve()
         return compute_doc_id(resolved_path, root)
 
+    def _document_missing_from_loaded_indices(self, doc_id: str) -> bool:
+        """Return True when delta-skip would trust hashes for a missing vector document."""
+        return doc_id not in self.vector.get_document_ids()
+
     def index_document(self, file_path: str, force: bool = False):
         try:
             parser = dispatch_parser(file_path)
@@ -463,9 +467,11 @@ class IndexManager:
             document.chunks = chunks
 
             # Delta indexing logic
+            performed_full_reindex = False
             if force:
                 # Force full re-index
                 self._full_reindex_document(document.id, chunks)
+                performed_full_reindex = True
             else:
                 # Delta detection
                 changed_chunks, unchanged_chunk_ids = self._detect_changed_chunks(
@@ -473,11 +479,23 @@ class IndexManager:
                 )
 
                 if not changed_chunks:
-                    logger.info(f"No changes in {file_path}, skipping re-index")
-                    return
+                    if self._document_missing_from_loaded_indices(document.id):
+                        logger.warning(
+                            "Hash store reported no changes for %s, but the loaded "
+                            "vector index is missing document %s; forcing full re-index",
+                            file_path,
+                            document.id,
+                        )
+                        self._full_reindex_document(document.id, chunks)
+                        performed_full_reindex = True
+                    else:
+                        logger.info(f"No changes in {file_path}, skipping re-index")
+                        return
 
                 # Decide: delta or full re-index?
-                if not self._should_use_delta_indexing(changed_chunks, len(chunks)):
+                if performed_full_reindex:
+                    pass
+                elif not self._should_use_delta_indexing(changed_chunks, len(chunks)):
                     self._full_reindex_document(document.id, chunks)
                 else:
                     logger.info(

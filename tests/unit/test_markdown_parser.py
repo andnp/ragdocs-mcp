@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 import pytest
@@ -151,6 +152,49 @@ Content.
 
     assert doc.id == "tag"
     assert doc.tags == ["single-tag"]
+
+
+def test_parse_frontmatter_normalizes_yaml_dates_to_json_safe_metadata(tmp_path):
+    """
+    Verify YAML date-like frontmatter values are normalized before indexing.
+
+    Prevents native ``date``/``datetime`` values from reaching downstream
+    persistence layers that require JSON-serializable metadata.
+    """
+
+    md_file = tmp_path / "dated.md"
+    md_file.write_text(
+        """---
+publish_date: 2026-03-19
+published_at: 2026-03-19T14:30:45Z
+draft: false
+build_number: 7
+nested:
+  next_review: 2026-03-20
+  milestones:
+    - 2026-03-21
+    - 2026-03-22T01:02:03Z
+---
+
+# Content
+
+Body text.
+"""
+    )
+
+    parser = MarkdownParser()
+    doc = parser.parse(str(md_file))
+
+    assert doc.metadata["publish_date"] == "2026-03-19"
+    assert doc.metadata["published_at"] == "2026-03-19T14:30:45+00:00"
+    assert doc.metadata["draft"] is False
+    assert doc.metadata["build_number"] == 7
+    assert doc.metadata["nested"] == {
+        "next_review": "2026-03-20",
+        "milestones": ["2026-03-21", "2026-03-22T01:02:03+00:00"],
+    }
+
+    assert json.loads(json.dumps(doc.metadata)) == doc.metadata
 
 
 def test_modified_time_reflects_file_stat(tmp_path):

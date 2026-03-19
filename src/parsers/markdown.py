@@ -2,7 +2,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import yaml
@@ -31,6 +31,35 @@ INDEXED_FRONTMATTER_FIELDS = [
 class LinkWithContext:
     target: str
     header_context: str
+
+
+def _normalize_frontmatter_value(value: object) -> object:
+    """Convert YAML-loaded metadata into JSON-serializable values.
+
+    PyYAML may coerce scalars such as dates and datetimes into native Python
+    objects. Those values later flow into chunk metadata and LlamaIndex's
+    docstore persistence, which expects JSON-serializable metadata.
+    """
+
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    if isinstance(value, date):
+        return value.isoformat()
+
+    if isinstance(value, list | tuple):
+        return [_normalize_frontmatter_value(item) for item in value]
+
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_frontmatter_value(item)
+            for key, item in value.items()
+        }
+
+    return str(value)
 
 
 class MarkdownParser(DocumentParser):
@@ -139,7 +168,10 @@ class MarkdownParser(DocumentParser):
                 return {}
             if not isinstance(metadata, dict):
                 return {}
-            return metadata
+            return {
+                str(key): _normalize_frontmatter_value(value)
+                for key, value in metadata.items()
+            }
         except yaml.YAMLError:
             return {}
 

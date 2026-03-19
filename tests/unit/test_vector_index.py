@@ -1,9 +1,13 @@
+import json
 from datetime import datetime
 
 import pytest
 
+from src.chunking.header_chunker import HeaderBasedChunker
+from src.config import ChunkingConfig
 from src.indices.vector import VectorIndex
 from src.models import Document
+from src.parsers.markdown import MarkdownParser
 
 
 def _extract_chunk_ids(results: list) -> list[str]:
@@ -81,6 +85,60 @@ def test_vector_index_persist_and_load(
 
     results = index2.search("machine learning", top_k=5)
     assert "test-doc" in _extract_chunk_ids(results)
+
+
+def test_vector_index_persist_handles_parser_normalized_frontmatter_dates(
+    tmp_path, shared_embedding_model
+):
+    """
+    Verify parser-derived date metadata no longer breaks vector persistence.
+
+    Exercises the real failing path: markdown frontmatter -> document metadata ->
+    chunk metadata -> LlamaIndex docstore persistence.
+    """
+
+    md_file = tmp_path / "dated.md"
+    md_file.write_text(
+        """---
+title: Release Notes
+publish_date: 2026-03-19
+published_at: 2026-03-19T14:30:45Z
+nested:
+  next_review: 2026-03-20
+---
+
+# Release Notes
+
+Important body text.
+"""
+    )
+
+    parser = MarkdownParser()
+    document = parser.parse(str(md_file))
+
+    chunker = HeaderBasedChunker(
+        ChunkingConfig(
+            min_chunk_chars=1,
+            max_chunk_chars=1000,
+            overlap_chars=0,
+            parent_chunk_min_chars=10_000,
+            parent_chunk_max_chars=20_000,
+        )
+    )
+    chunks = chunker.chunk_document(document)
+
+    index = VectorIndex(embedding_model=shared_embedding_model)
+    index.add_chunks(chunks)
+
+    persist_path = tmp_path / "vector"
+    index.persist(persist_path)
+
+    docstore = json.loads((persist_path / "docstore.json").read_text())
+    docstore_text = json.dumps(docstore)
+
+    assert "2026-03-19" in docstore_text
+    assert "2026-03-19T14:30:45+00:00" in docstore_text
+    assert "2026-03-20" in docstore_text
 
 
 def test_vector_index_multiple_documents(vector_index):

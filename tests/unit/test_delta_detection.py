@@ -85,6 +85,29 @@ def test_detect_changed_chunks_no_changes(manager):
     assert unchanged[0] == "doc1#chunk_0"
 
 
+def test_index_document_reindexes_unchanged_document_missing_from_vector(
+    manager, tmp_path
+):
+    """Verify unchanged documents are fully reindexed when vector state is missing."""
+    docs_dir = tmp_path / "docs"
+    doc_path = create_test_document(docs_dir, "recovery_doc", "# Title\n\nBody")
+
+    manager.index_document(doc_path)
+
+    assert "recovery_doc" in manager.vector.get_document_ids()
+    assert manager.vector.get_chunk_ids_for_document("recovery_doc")
+
+    manager.vector.clear()
+
+    assert manager._document_missing_from_loaded_indices("recovery_doc") is True
+    assert manager._hash_store.get_chunks_by_document("recovery_doc")
+
+    manager.index_document(doc_path, force=False)
+
+    assert "recovery_doc" in manager.vector.get_document_ids()
+    assert manager.vector.get_chunk_ids_for_document("recovery_doc")
+
+
 def test_detect_changed_chunks_partial_changes(manager):
     """Verify _detect_changed_chunks detects partial changes correctly."""
     chunks = [
