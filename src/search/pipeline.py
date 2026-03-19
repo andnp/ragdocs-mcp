@@ -25,6 +25,22 @@ class SearchPipeline:
         self._config = config
         self._reranker: ReRanker | None = None
 
+    def _build_cached_content_provider(
+        self,
+        get_content: Callable[[str], str | None],
+    ) -> Callable[[str], str | None]:
+        content_cache: dict[str, str | None] = {}
+
+        def cached_get_content(chunk_id: str) -> str | None:
+            if chunk_id in content_cache:
+                return content_cache[chunk_id]
+
+            content = get_content(chunk_id)
+            content_cache[chunk_id] = content
+            return content
+
+        return cached_get_content
+
     def process(
         self,
         fused_results: list[tuple[str, float]],
@@ -44,13 +60,7 @@ class SearchPipeline:
                 clusters_merged=0,
             )
 
-        # Pre-populate content cache to avoid repeated docstore lookups
-        content_cache: dict[str, str | None] = {}
-        for chunk_id, _ in fused_results:
-            content_cache[chunk_id] = get_content(chunk_id)
-
-        def cached_get_content(chunk_id: str) -> str | None:
-            return content_cache.get(chunk_id)
+        cached_get_content = self._build_cached_content_provider(get_content)
 
         # Scores are already calibrated by orchestrator
         original_count = len(fused_results)

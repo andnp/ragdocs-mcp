@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 from src.config import Config
@@ -15,7 +16,7 @@ from src.models import (
 )
 from src.search.base_orchestrator import BaseSearchOrchestrator
 from src.search.chunk_hydrator import ChunkHydrator
-from src.search.classifier import classify_query, get_adaptive_weights
+from src.search.classifier import QueryType, classify_query, get_adaptive_weights
 from src.search.filters import matches_project_filter, normalize_project_filter
 from src.search.graph_expansion import build_graph_chunk_candidates
 from src.search.path_utils import extract_doc_id_from_chunk_id
@@ -27,6 +28,8 @@ from src.search.tag_expansion import expand_query_with_tags
 logger = logging.getLogger(__name__)
 
 _ACTIVE_PROJECT_UPLIFT = 1.2
+_FACTUAL_QUERY_CLEAR_CANDIDATE_LIMIT = 6
+_FACTUAL_QUERY_CONSENSUS_DEPTH = 2
 
 
 class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
@@ -65,15 +68,69 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
     def _get_pipeline(self) -> SearchPipeline:
         if self._pipeline is None:
-            pipeline_config = SearchPipelineConfig(
-                min_confidence=self._config.search.min_confidence,
-                max_chunks_per_doc=self._config.search.max_chunks_per_doc,
-                dedup_threshold=self._config.search.dedup_threshold,
-                reranking_enabled=self._config.search.reranking_enabled,
-                rerank_top_n=self._config.search.rerank_top_n,
-            )
-            self._pipeline = SearchPipeline(pipeline_config)
+            self._pipeline = SearchPipeline(self._build_pipeline_config())
         return self._pipeline
+
+    def _build_pipeline_config(self) -> SearchPipelineConfig:
+        return SearchPipelineConfig(
+            min_confidence=self._config.search.min_confidence,
+            max_chunks_per_doc=self._config.search.max_chunks_per_doc,
+            dedup_threshold=self._config.search.dedup_threshold,
+            reranking_enabled=self._config.search.reranking_enabled,
+            rerank_top_n=self._config.search.rerank_top_n,
+        )
+
+    def _resolve_pipeline(
+        self,
+        pipeline_config: SearchPipelineConfig | None,
+        *,
+        disable_reranking: bool = False,
+    ) -> SearchPipeline:
+        if pipeline_config is None and not disable_reranking:
+            return self._get_pipeline()
+
+        effective_config = pipeline_config or self._build_pipeline_config()
+        if disable_reranking and effective_config.reranking_enabled:
+            effective_config = replace(effective_config, reranking_enabled=False)
+        return SearchPipeline(effective_config)
+
+    def _should_skip_expensive_factual_enrichments(
+        self,
+        query_type: QueryType,
+        vector_results: list[dict[str, object]],
+        keyword_results: list[dict[str, object]],
+    ) -> bool:
+        if query_type is not QueryType.FACTUAL:
+            return False
+
+        unique_chunk_ids = {
+            str(result["chunk_id"])
+            for result in vector_results + keyword_results
+            if isinstance(result.get("chunk_id"), str) and result.get("chunk_id")
+        }
+        if len(unique_chunk_ids) <= 1:
+            return True
+        if len(unique_chunk_ids) > _FACTUAL_QUERY_CLEAR_CANDIDATE_LIMIT:
+            return False
+
+        vector_top = [
+            str(result["chunk_id"])
+            for result in vector_results[:_FACTUAL_QUERY_CONSENSUS_DEPTH]
+            if isinstance(result.get("chunk_id"), str) and result.get("chunk_id")
+        ]
+        keyword_top = [
+            str(result["chunk_id"])
+            for result in keyword_results[:_FACTUAL_QUERY_CONSENSUS_DEPTH]
+            if isinstance(result.get("chunk_id"), str) and result.get("chunk_id")
+        ]
+
+        if not vector_top or not keyword_top:
+            return False
+
+        if vector_top[0] == keyword_top[0]:
+            return True
+
+        return bool(set(vector_top) & set(keyword_top))
 
     async def query(
         self,
@@ -112,6 +169,14 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         vector_results = results[0]
         keyword_results = results[1]
+        query_type = classify_query(query_text)
+        skip_expensive_factual_enrichments = (
+            self._should_skip_expensive_factual_enrichments(
+                query_type,
+                vector_results,
+                keyword_results,
+            )
+        )
 
         all_doc_ids = set()
         chunk_id_to_doc_id = {}
@@ -133,14 +198,17 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         # Tag-based query expansion: Find related documents via tag graph traversal
         tag_expansion_count = 0
         combined_initial_results = vector_results + keyword_results
-        tag_expanded_results = expand_query_with_tags(
-            initial_results=combined_initial_results,
-            graph=self._graph,
-            vector=self._vector,
-            top_k=top_k,
-            max_related_tags=5,
-            max_depth=2,
-        )
+        if skip_expensive_factual_enrichments:
+            tag_expanded_results: list[dict[str, object]] = []
+        else:
+            tag_expanded_results = expand_query_with_tags(
+                initial_results=combined_initial_results,
+                graph=self._graph,
+                vector=self._vector,
+                top_k=top_k,
+                max_related_tags=5,
+                max_depth=2,
+            )
         applied_tag_expansion_results: list[dict[str, object]] = []
 
         # Merge tag-expanded results into existing result sets
@@ -178,7 +246,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         base_keyword = self._config.search.keyword_weight
         base_graph = 1.0
 
-        query_type = classify_query(query_text)
         semantic_w, keyword_w, graph_w = get_adaptive_weights(
             query_type, base_semantic, base_keyword, base_graph
         )
@@ -229,10 +296,10 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             project_filter=project_filter,
         )
 
-        if pipeline_config is not None:
-            pipeline = SearchPipeline(pipeline_config)
-        else:
-            pipeline = self._get_pipeline()
+        pipeline = self._resolve_pipeline(
+            pipeline_config,
+            disable_reranking=skip_expensive_factual_enrichments,
+        )
 
         final, compression_stats = pipeline.process(
             fused,

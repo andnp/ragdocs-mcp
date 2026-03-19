@@ -69,6 +69,40 @@ class TestSearchPipelineEmptyInput:
 
 
 class TestSearchPipelineThresholdFilter:
+    def test_content_is_fetched_lazily_after_threshold_pruning(self):
+        config = SearchPipelineConfig(
+            min_confidence=0.75,
+            reranking_enabled=False,
+        )
+        pipeline = SearchPipeline(config)
+
+        fused = [
+            ("chunk_a", 0.95),
+            ("chunk_b", 0.85),
+            ("chunk_c", 0.70),
+            ("chunk_d", 0.40),
+        ]
+        content_calls: list[str] = []
+
+        def get_embedding(chunk_id: str):
+            return None
+
+        def get_content(chunk_id: str):
+            content_calls.append(chunk_id)
+            return _diverse_content(chunk_id)
+
+        results, stats = pipeline.process(
+            fused,
+            get_embedding,
+            get_content,
+            "query",
+            top_n=10,
+        )
+
+        assert len(results) == 2
+        assert stats.after_threshold == 2
+        assert sorted(content_calls) == ["chunk_a", "chunk_b"]
+
     def test_filter_by_confidence_removes_low_scores(self):
         config = SearchPipelineConfig(
             min_confidence=0.5,
@@ -192,6 +226,40 @@ class TestSearchPipelineDocLimit:
 
 
 class TestSearchPipelineDeduplication:
+    def test_embeddings_are_not_fetched_when_content_dedup_leaves_single_candidate(self):
+        config = SearchPipelineConfig(
+            min_confidence=0.0,
+            reranking_enabled=False,
+        )
+        pipeline = SearchPipeline(config)
+
+        embedding_calls: list[str] = []
+
+        def get_embedding(chunk_id: str):
+            embedding_calls.append(chunk_id)
+            return [1.0, 0.0, 0.0]
+
+        def get_content(chunk_id: str):
+            return "same content for dedup"
+
+        fused = [
+            ("chunk_a", 0.9),
+            ("chunk_b", 0.8),
+        ]
+
+        results, stats = pipeline.process(
+            fused,
+            get_embedding,
+            get_content,
+            "query",
+            top_n=10,
+        )
+
+        assert results == [("chunk_a", 0.9)]
+        assert stats.after_content_dedup == 1
+        assert stats.after_dedup == 1
+        assert embedding_calls == []
+
     def test_removes_similar_chunks(self):
         config = SearchPipelineConfig(
             min_confidence=0.0,

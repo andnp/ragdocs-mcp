@@ -7,6 +7,7 @@ from src.indices.graph import GraphStore
 from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.models import CompressionStats
+from src.search.classifier import classify_query
 from src.search.orchestrator import SearchOrchestrator
 
 
@@ -28,6 +29,11 @@ def _orchestrator(*, detected_project: str | None = None) -> SearchOrchestrator:
         None,
         documents_path=Path(config.indexing.documents_path),
     )
+
+
+def _result(chunk_id: str, score: float = 0.5) -> dict[str, object]:
+    doc_id = chunk_id.split("_chunk_", 1)[0]
+    return {"chunk_id": chunk_id, "doc_id": doc_id, "score": score}
 
 
 def test_query_execution_context_reuses_metadata_for_uplift_filter_parent_and_materialize(
@@ -238,7 +244,11 @@ async def test_query_uses_single_execution_context_and_records_stats(monkeypatch
         "src.search.orchestrator.expand_query_with_tags",
         lambda **kwargs: [],
     )
-    monkeypatch.setattr(orchestrator, "_get_ranked_graph_neighbors", lambda seed_scores: [])
+    monkeypatch.setattr(
+        orchestrator,
+        "_get_ranked_graph_neighbors",
+        lambda seed_scores: [],
+    )
     monkeypatch.setattr(
         orchestrator,
         "_apply_community_boost",
@@ -267,3 +277,126 @@ async def test_query_uses_single_execution_context_and_records_stats(monkeypatch
         "parent_lookups": 0,
         "parent_cache_hits": 0,
     }
+
+
+def test_skip_expensive_factual_enrichments_with_single_clear_candidate() -> None:
+    orchestrator = _orchestrator()
+
+    assert orchestrator._should_skip_expensive_factual_enrichments(
+        classify_query("get_user_by_id"),
+        [_result("doc-a_chunk_0", 0.8)],
+        [_result("doc-a_chunk_0", 0.7)],
+    )
+
+
+def test_skip_expensive_factual_enrichments_with_small_consensus_set() -> None:
+    orchestrator = _orchestrator()
+
+    assert orchestrator._should_skip_expensive_factual_enrichments(
+        classify_query("src/mcp_server.py list_tools"),
+        [_result("doc-a_chunk_0", 0.8), _result("doc-b_chunk_0", 0.4)],
+        [_result("doc-b_chunk_0", 0.9), _result("doc-a_chunk_0", 0.6)],
+    )
+
+
+def test_do_not_skip_expensive_factual_enrichments_for_broad_candidate_set() -> None:
+    orchestrator = _orchestrator()
+
+    assert not orchestrator._should_skip_expensive_factual_enrichments(
+        classify_query("src/mcp_server.py list_tools"),
+        [
+            _result("doc-a_chunk_0", 0.9),
+            _result("doc-b_chunk_0", 0.8),
+            _result("doc-c_chunk_0", 0.7),
+            _result("doc-d_chunk_0", 0.6),
+        ],
+        [
+            _result("doc-e_chunk_0", 0.9),
+            _result("doc-f_chunk_0", 0.8),
+            _result("doc-g_chunk_0", 0.7),
+            _result("doc-h_chunk_0", 0.6),
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_skips_tag_expansion_and_reranking_for_clear_factual_query(
+    monkeypatch,
+) -> None:
+    orchestrator = _orchestrator()
+    chunk_id = "doc-a_chunk_0"
+
+    async def fake_search_vector(query_text, top_k, excluded_files, docs_root):
+        return [_result(chunk_id, 0.8)]
+
+    async def fake_search_keyword(query_text, top_k, excluded_files, docs_root):
+        return [_result(chunk_id, 0.9)]
+
+    def fail_if_tag_expansion_called(**kwargs):
+        raise AssertionError("tag expansion should be skipped")
+
+    monkeypatch.setattr(orchestrator, "_search_vector", fake_search_vector)
+    monkeypatch.setattr(orchestrator, "_search_keyword", fake_search_keyword)
+    monkeypatch.setattr(
+        "src.search.orchestrator.expand_query_with_tags",
+        fail_if_tag_expansion_called,
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_get_ranked_graph_neighbors",
+        lambda seed_scores: [],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_apply_community_boost",
+        lambda fused, seed_doc_ids, chunk_id_to_doc_id, result_provenance=None: fused,
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_apply_project_uplift",
+        lambda fused, **kwargs: fused,
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_apply_project_filter",
+        lambda fused, **kwargs: fused,
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_expand_to_parents",
+        lambda results, **kwargs: results,
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_materialize_chunk_results",
+        lambda final, **kwargs: [],
+    )
+
+    observed_reranking: dict[str, bool] = {"enabled": True}
+
+    class FakePipeline:
+        def __init__(self, reranking_enabled: bool) -> None:
+            observed_reranking["enabled"] = reranking_enabled
+
+        def process(self, fused, get_embedding, get_content, query, top_n):
+            return (
+                fused[:top_n],
+                CompressionStats(
+                    original_count=len(fused),
+                    after_threshold=len(fused),
+                    after_content_dedup=len(fused),
+                    after_ngram_dedup=len(fused),
+                    after_dedup=len(fused),
+                    after_doc_limit=len(fused),
+                    clusters_merged=0,
+                ),
+            )
+
+    monkeypatch.setattr(
+        "src.search.orchestrator.SearchPipeline",
+        lambda config: FakePipeline(config.reranking_enabled),
+    )
+
+    await orchestrator.query("get_user_by_id", top_k=5, top_n=1)
+
+    assert observed_reranking["enabled"] is False
