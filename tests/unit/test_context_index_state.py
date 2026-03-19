@@ -9,6 +9,7 @@ Tests cover:
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 import time
@@ -308,6 +309,54 @@ async def test_ensure_fresh_indices_reloads_when_store_version_advances(tmp_path
 
     assert manager.load_calls == 1
     assert ctx._loaded_index_state_version == 2.0
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_indices_keeps_serving_loaded_state_on_lock_timeout(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "index_path", tmp_path)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    ctx._ready_event.set()
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_freshness_lock", asyncio.Lock())
+    _setattr(ctx, "_loaded_index_state_version", 1.0)
+    _setattr(
+        ctx,
+        "_index_state",
+        IndexState(status="partial", indexed_count=3, total_count=5),
+    )
+    _setattr(ctx, "_is_virgin_startup", False)
+
+    class _Manager:
+        def __init__(self):
+            self.load_calls = 0
+
+        def load(self):
+            self.load_calls += 1
+            raise TimeoutError("Failed to acquire shared lock after 5.0s")
+
+        def get_document_count(self) -> int:
+            return 99
+
+    manager = _Manager()
+    _setattr(ctx, "index_manager", manager)
+    _setattr(ctx, "_compute_index_state_version", lambda: 2.0)
+
+    with caplog.at_level(logging.WARNING):
+        await ctx.ensure_fresh_indices()
+
+    assert manager.load_calls == 1
+    assert ctx._loaded_index_state_version == 1.0
+    assert ctx._index_state == IndexState(
+        status="partial",
+        indexed_count=3,
+        total_count=5,
+    )
+    assert (
+        "Freshness reload timed out acquiring shared index lock" in caplog.text
+    )
 
 
 @pytest.mark.asyncio

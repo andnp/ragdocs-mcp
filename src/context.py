@@ -865,7 +865,14 @@ class ApplicationContext:
             if current_version <= self._loaded_index_state_version:
                 return
 
-            await asyncio.to_thread(self.index_manager.load)
+            try:
+                await asyncio.to_thread(self.index_manager.load)
+            except TimeoutError:
+                logger.warning(
+                    "Freshness reload timed out acquiring shared index lock; "
+                    "continuing to serve existing in-memory indices"
+                )
+                return
             self._loaded_index_state_version = current_version
             self._refresh_index_state_from_loaded_indices()
 
