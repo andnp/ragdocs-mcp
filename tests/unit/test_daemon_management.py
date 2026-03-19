@@ -10,6 +10,19 @@ from src.daemon.metadata import DaemonMetadata
 from src.daemon.paths import RuntimePaths
 
 
+@pytest.fixture(autouse=True)
+def disable_auto_registration(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.daemon.management.ensure_runtime_project_registered",
+        lambda cwd=None, project_override=None: __import__(
+            "src.config", fromlist=["AutoRegistrationResult"]
+        ).AutoRegistrationResult(
+            changed=False,
+            reason="test_default",
+        ),
+    )
+
+
 class _FakeProcess:
     def __init__(self, pid: int, polls: list[int | None]):
         self.pid = pid
@@ -85,6 +98,71 @@ def test_start_daemon_waits_for_ready_metadata(monkeypatch, tmp_path: Path) -> N
     result = start_daemon(timeout_seconds=0.5, paths=_paths(tmp_path))
 
     assert result == metadata
+
+
+def test_start_daemon_restarts_running_daemon_after_auto_registration_change(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    stale_metadata = DaemonMetadata(pid=111, started_at=1.0, status="ready")
+    fresh_metadata = DaemonMetadata(pid=222, started_at=2.0, status="ready")
+    inspections = iter(
+        [
+            DaemonInspection(
+                metadata=stale_metadata,
+                running=True,
+                stale=False,
+                responsive=True,
+                ready=True,
+            ),
+            DaemonInspection(
+                metadata=None,
+                running=False,
+                stale=False,
+                responsive=False,
+                ready=False,
+            ),
+        ]
+    )
+    fallback = DaemonInspection(
+        metadata=fresh_metadata,
+        running=True,
+        stale=False,
+        responsive=True,
+        ready=True,
+    )
+
+    monkeypatch.setattr(
+        "src.daemon.management.ensure_runtime_project_registered",
+        lambda cwd=None, project_override=None: __import__(
+            "src.config", fromlist=["AutoRegistrationResult"]
+        ).AutoRegistrationResult(
+            changed=True,
+            project_name="new-project",
+            project_path="/tmp/new-project",
+            reason="registered",
+        ),
+    )
+    monkeypatch.setattr(
+        "src.daemon.management.inspect_daemon",
+        lambda paths=None: next(inspections, fallback),
+    )
+
+    stop_calls: list[float] = []
+    monkeypatch.setattr(
+        "src.daemon.management.stop_daemon",
+        lambda *, timeout_seconds, paths=None: stop_calls.append(timeout_seconds) or stale_metadata,
+    )
+    monkeypatch.setattr(
+        "src.daemon.management._terminate_extra_runtime_daemon_processes",
+        lambda runtime_paths, *, keep_pid=None: [],
+    )
+
+    result = start_daemon(timeout_seconds=0.5, paths=paths)
+
+    assert result == fresh_metadata
+    assert stop_calls == [0.5]
 
 
 def test_spawn_daemon_process_uses_project_agnostic_command(

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 
+from src.config import ensure_runtime_project_registered
 from src.daemon.health import probe_daemon_socket, remove_daemon_socket, request_daemon_socket
 from src.daemon.lock import FilesystemLock
 from src.daemon.metadata import DaemonMetadata, read_daemon_metadata, remove_daemon_metadata
@@ -82,6 +83,8 @@ def inspect_daemon(paths: RuntimePaths | None = None) -> DaemonInspection:
 
 def start_daemon(
     *,
+    cwd: Path | None = None,
+    project_override: str | None = None,
     timeout_seconds: float = 10.0,
     paths: RuntimePaths | None = None,
 ) -> DaemonMetadata:
@@ -89,7 +92,24 @@ def start_daemon(
     runtime_paths.ensure_directories()
     deadline = time.monotonic() + timeout_seconds
 
+    registration = ensure_runtime_project_registered(
+        cwd=cwd,
+        project_override=project_override,
+    )
+
     current = inspect_daemon(runtime_paths)
+    if registration.changed and current.running:
+        logger.info(
+            "Restarting running daemon to load auto-registered project '%s' at %s",
+            registration.project_name,
+            registration.project_path,
+        )
+        stop_daemon(
+            timeout_seconds=min(timeout_seconds, 5.0),
+            paths=runtime_paths,
+        )
+        current = inspect_daemon(runtime_paths)
+
     if current.running and current.ready and current.metadata is not None:
         _terminate_extra_runtime_daemon_processes(
             runtime_paths,
@@ -184,12 +204,16 @@ def _request_internal_shutdown(metadata: DaemonMetadata) -> bool:
 
 def restart_daemon(
     *,
+    cwd: Path | None = None,
+    project_override: str | None = None,
     start_timeout_seconds: float = 10.0,
     stop_timeout_seconds: float = 5.0,
     paths: RuntimePaths | None = None,
 ) -> DaemonMetadata:
     stop_daemon(timeout_seconds=stop_timeout_seconds, paths=paths)
     return start_daemon(
+        cwd=cwd,
+        project_override=project_override,
         timeout_seconds=start_timeout_seconds,
         paths=paths,
     )

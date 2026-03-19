@@ -30,7 +30,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from src.config import load_config
+from src.config import ensure_runtime_project_registered, load_config
 from src.daemon.queue_status import get_queue_stats
 from src.daemon import RuntimePaths, read_daemon_metadata
 from src.daemon.health import (
@@ -101,6 +101,27 @@ def _ignore_daemon_runtime_root_option(runtime_root: Path | None) -> None:
     """Accept runtime-root markers used for daemon process identification."""
 
     _ = runtime_root
+
+
+def _ensure_runtime_auto_registration(project_override: str | None) -> None:
+    registration = ensure_runtime_project_registered(
+        cwd=Path.cwd(),
+        project_override=project_override,
+    )
+    if registration.changed:
+        logger.info(
+            "Auto-registered project '%s' at %s",
+            registration.project_name,
+            registration.project_path,
+        )
+
+        inspection = inspect_daemon()
+        if inspection.running:
+            logger.info("Restarting running daemon to load auto-registered corpus")
+            restart_daemon(
+                cwd=Path.cwd(),
+                project_override=project_override,
+            )
 
 
 def _should_include_file(
@@ -790,6 +811,10 @@ def queue_group():
 def daemon_run(project: str | None):
     """Run the daemon in the foreground."""
     try:
+        ensure_runtime_project_registered(
+            cwd=Path.cwd(),
+            project_override=project,
+        )
         _ignore_daemon_startup_project_option(project)
         asyncio.run(_run_daemon_forever())
     except KeyboardInterrupt:
@@ -837,6 +862,8 @@ def daemon_start(project: str | None, timeout: float):
     try:
         _ignore_daemon_startup_project_option(project)
         metadata = start_daemon(
+            cwd=Path.cwd(),
+            project_override=project,
             timeout_seconds=timeout,
         )
     except Exception as e:
@@ -997,6 +1024,8 @@ def daemon_restart(project: str | None, timeout: float):
     try:
         _ignore_daemon_startup_project_option(project)
         metadata = restart_daemon(
+            cwd=Path.cwd(),
+            project_override=project,
             start_timeout_seconds=timeout,
         )
     except Exception as e:
@@ -1198,9 +1227,17 @@ def _request_daemon_json(
     allow_error: bool = False,
 ) -> dict[str, object] | None:
     runtime_paths = RuntimePaths.resolve()
-    inspection = inspect_daemon(runtime_paths)
-    metadata = inspection.metadata if inspection.running else None
     response: dict[str, object] | None = None
+
+    if auto_start:
+        metadata = start_daemon(
+            cwd=Path.cwd(),
+            project_override=project_override,
+            paths=runtime_paths,
+        )
+    else:
+        inspection = inspect_daemon(runtime_paths)
+        metadata = inspection.metadata if inspection.running else None
 
     if metadata is not None and metadata.socket_path:
         response = request_daemon_socket(
@@ -1213,18 +1250,6 @@ def _request_daemon_json(
             if response.get("status") == "error" and not allow_error:
                 return None
             return response
-
-    if auto_start:
-        metadata = start_daemon(
-            paths=runtime_paths,
-        )
-        if metadata.socket_path:
-            response = request_daemon_socket(
-                Path(metadata.socket_path),
-                path,
-                payload,
-                timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
-            )
 
     if response is None:
         return None
@@ -1423,6 +1448,7 @@ def _render_index_stats_table(payload: dict[str, object]) -> None:
 )
 def run(host: str, port: int, project: str | None):
     try:
+        _ensure_runtime_auto_registration(project)
         config = load_config()
         config = _apply_project_detection(config, project)
 
@@ -1452,6 +1478,8 @@ def rebuild_index_cmd(project: str | None, all_projects: bool):
     try:
         if all_projects and project is not None:
             raise click.UsageError("--all-projects cannot be used with --project")
+
+        _ensure_runtime_auto_registration(project)
 
         effective_project = _resolve_rebuild_project_scope(
             project=project,

@@ -50,6 +50,8 @@ class MCPServer:
 
     def _get_daemon_metadata(self) -> tuple[Path, str]:
         metadata = start_daemon(
+            cwd=Path.cwd(),
+            project_override=self.project_override,
             timeout_seconds=_MCP_DAEMON_START_TIMEOUT_SECONDS,
         )
         if not metadata.socket_path:

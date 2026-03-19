@@ -148,9 +148,9 @@ keyword_weight = 0.5
     assert "projects" not in data
 
 
-def test_e2e_rebuild_index_cwd_does_not_auto_register(temp_home):
+def test_e2e_rebuild_index_cwd_auto_registers_global_project(temp_home):
     """
-    Integration test: rebuild-index no longer auto-registers an unmatched CWD.
+    Integration test: rebuild-index auto-registers an unmatched working directory.
     """
     config_dir = temp_home / ".config" / "mcp-markdown-ragdocs"
     config_dir.mkdir(parents=True)
@@ -181,7 +181,15 @@ documents_path = "{docs_dir}"
 
         assert result.exit_code == 0
         assert "Successfully rebuilt index" in result.output
-        assert not config_path.exists()
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert data["projects"] == [
+            {
+                "name": "auto-registered-project",
+                "path": str(project_dir.resolve()),
+            }
+        ]
 
     finally:
         os.chdir(original_cwd)

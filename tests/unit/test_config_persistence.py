@@ -4,7 +4,9 @@ from pathlib import Path
 import src.config
 from src.config import (
     ProjectConfig,
+    derive_auto_registration_root,
     detect_project,
+    ensure_runtime_project_registered,
     persist_project_to_config,
     _generate_unique_project_name,
 )
@@ -398,3 +400,95 @@ def test_detect_project_cwd_unmatched_does_not_call_persistence(
     result = detect_project(cwd=project_dir, projects=[], project_override=None)
 
     assert result is None
+
+
+def test_derive_auto_registration_root_prefers_project_config_ancestor(tmp_path):
+    root = tmp_path / "repo"
+    nested = root / "docs" / "guides"
+    nested.mkdir(parents=True)
+    config_dir = root / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text("", encoding="utf-8")
+
+    result = derive_auto_registration_root(nested)
+
+    assert result == root.resolve()
+
+
+def test_derive_auto_registration_root_prefers_git_root_when_no_project_config(tmp_path):
+    root = tmp_path / "repo"
+    nested = root / "src" / "pkg"
+    nested.mkdir(parents=True)
+    (root / ".git").mkdir()
+
+    result = derive_auto_registration_root(nested)
+
+    assert result == root.resolve()
+
+
+def test_ensure_runtime_project_registered_persists_git_root(temp_config_home, tmp_path):
+    root = tmp_path / "my project"
+    nested = root / "src"
+    nested.mkdir(parents=True)
+    (root / ".git").mkdir()
+
+    result = ensure_runtime_project_registered(cwd=nested)
+
+    assert result.changed is True
+    assert result.project_name == "my-project"
+    assert result.project_path == str(root.resolve())
+
+    config_path = temp_config_home / "config.toml"
+    with open(config_path, "rb") as f:
+        data = tomllib.load(f)
+
+    assert data["projects"] == [
+        {"name": "my-project", "path": str(root.resolve())}
+    ]
+
+
+def test_ensure_runtime_project_registered_skips_parent_that_contains_registered_child(
+    temp_config_home,
+    tmp_path,
+):
+    root = tmp_path / "monorepo"
+    child = root / "apps" / "docs"
+    child.mkdir(parents=True)
+    (root / ".git").mkdir()
+
+    config_path = temp_config_home / "config.toml"
+    config_path.write_text(
+        f"""
+[[projects]]
+name = "docs"
+path = "{child.resolve()}"
+""",
+        encoding="utf-8",
+    )
+
+    result = ensure_runtime_project_registered(cwd=root / "tools")
+
+    assert result.changed is False
+    assert result.reason == "contains_registered_project"
+
+    with open(config_path, "rb") as f:
+        data = tomllib.load(f)
+
+    assert len(data["projects"]) == 1
+
+
+def test_ensure_runtime_project_registered_skips_explicit_project_override(
+    temp_config_home,
+    tmp_path,
+):
+    project_dir = tmp_path / "override-target"
+    project_dir.mkdir()
+
+    result = ensure_runtime_project_registered(
+        cwd=project_dir,
+        project_override=str(project_dir),
+    )
+
+    assert result.changed is False
+    assert result.reason == "explicit_project_override"
+    assert not (temp_config_home / "config.toml").exists()
