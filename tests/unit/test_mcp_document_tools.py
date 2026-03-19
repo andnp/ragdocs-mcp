@@ -43,11 +43,8 @@ class _ColdStartContext:
         return self._index_state
 
 
-def _extract_query_documents_metadata(response_text: str) -> dict[str, object]:
-    marker = "<!-- query_documents_response_v1\n"
-    start = response_text.index(marker) + len(marker)
-    end = response_text.index("\n-->", start)
-    return json.loads(response_text[start:end])
+def _parse_query_documents_response(response_text: str) -> dict[str, object]:
+    return json.loads(response_text)
 
 
 @pytest.mark.asyncio
@@ -62,11 +59,17 @@ async def test_query_documents_returns_initializing_text_on_true_cold_start() ->
     contents = await handle_query_documents(hctx, {"query": "daemon startup"})
 
     assert len(contents) == 1
-    assert "# Search Results" in contents[0].text
-    assert "**Status:** initializing" in contents[0].text
-    assert "**Query:** daemon startup" in contents[0].text
-    assert "**Index State:** indexing (0/12)" in contents[0].text
-    assert "**Results Returned:** 0" in contents[0].text
+    payload = _parse_query_documents_response(contents[0].text)
+    assert payload["schema_version"] == "query_documents.response.v2"
+    assert payload["status"] == "initializing"
+    assert payload["results"] == []
+    assert payload["meta"]["query"] == "daemon startup"
+    assert payload["meta"]["index_state"] == {
+        "status": "indexing",
+        "indexed_count": 0,
+        "total_count": 12,
+        "last_error": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -79,7 +82,10 @@ async def test_query_documents_preserves_validation_errors_during_cold_start() -
     contents = await handle_query_documents(hctx, {"query": ""})
 
     assert len(contents) == 1
-    assert contents[0].text.startswith("Validation error:")
+    payload = _parse_query_documents_response(contents[0].text)
+    assert payload["status"] == "error"
+    assert payload["meta"]["error"] == "validation_error"
+    assert "cannot be empty" in payload["meta"]["message"]
 
 
 @pytest.mark.asyncio
@@ -143,20 +149,19 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
     contents = await handle_query_documents(hctx, {"query": "daemon startup"})
 
     assert len(contents) == 1
-    assert "docs/plan.md" in contents[0].text
-    assert "**Status:** initializing" not in contents[0].text
-    metadata = _extract_query_documents_metadata(contents[0].text)
-    assert metadata["schema_version"] == "query_documents.response.v1"
-    assert metadata["results_count"] == 1
-    assert metadata["observed_strategies"] == ["semantic", "keyword"]
-    assert metadata["scope"] == {
+    payload = _parse_query_documents_response(contents[0].text)
+    assert payload["status"] == "ok"
+    assert payload["schema_version"] == "query_documents.response.v2"
+    assert payload["meta"]["results_count"] == 1
+    assert payload["meta"]["observed_strategies"] == ["semantic", "keyword"]
+    assert payload["meta"]["scope"] == {
         "mode": "global",
         "projects": [],
         "preferred_project": None,
         "applied_filter_projects": [],
-        "applied_uplift_project": "ambient-project",
+        "applied_uplift_project": None,
     }
-    assert metadata["results"] == [
+    assert payload["results"] == [
         {
             "rank": 1,
             "chunk_id": "plan_chunk_1",
@@ -164,6 +169,7 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
             "file_path": "docs/plan.md",
             "header_path": "Overview",
             "score": 0.91,
+            "content": "Fast cold start contract.",
             "project_id": "docs-project",
             "parent_chunk_id": None,
         }
@@ -172,70 +178,32 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
 
 
 @pytest.mark.asyncio
-async def test_query_documents_normalizes_legacy_scope_aliases() -> None:
-    captured: dict[str, object] = {}
+async def test_query_documents_rejects_legacy_scope_aliases() -> None:
+    hctx = HandlerContext(
+        lambda: _ColdStartContext(IndexState(status="indexing")),
+        _FakeCoordinator(),
+    )
 
-    class _FakeOrchestrator:
-        documents_path = Path("/docs")
-
-        async def query(
-            self,
-            query: str,
-            *,
-            top_k: int,
-            top_n: int,
-            pipeline_config,
-            excluded_files,
-            project_filter,
-            project_context,
-        ):
-            captured["query"] = query
-            captured["top_k"] = top_k
-            captured["project_filter"] = project_filter
-            captured["project_context"] = project_context
-            return (
-                [],
-                CompressionStats(
-                    original_count=0,
-                    after_threshold=0,
-                    after_content_dedup=0,
-                    after_ngram_dedup=0,
-                    after_dedup=0,
-                    after_doc_limit=0,
-                    clusters_merged=0,
-                ),
-                SearchStrategyStats(
-                    vector_count=0,
-                    keyword_count=0,
-                    graph_count=0,
-                    tag_expansion_count=0,
-                ),
-            )
-
-    ready_ctx = _ColdStartContext(IndexState(status="ready"), ready=True)
-    ready_ctx.orchestrator = _FakeOrchestrator()
-    hctx = HandlerContext(lambda: ready_ctx, _FakeCoordinator())
-
-    await handle_query_documents(
+    contents = await handle_query_documents(
         hctx,
         {
             "query": "daemon startup",
-            "top_n": 3,
             "project_filter": ["proj-a", "proj-b"],
             "project_context": "proj-b",
         },
     )
 
-    assert captured == {
-        "query": "daemon startup",
-        "top_k": 30,
-        "project_filter": ["proj-a", "proj-b"],
-        "project_context": "proj-b",
-    }
+    payload = _parse_query_documents_response(contents[0].text)
+    assert payload["status"] == "error"
+    assert payload["meta"]["error"] == "validation_error"
+    assert (
+        payload["meta"]["message"]
+        == "Unexpected parameter(s): project_context, project_filter. query_documents now accepts canonical scope fields only"
+    )
 
 
 @pytest.mark.asyncio
-async def test_query_documents_embeds_explicit_scope_and_stats_metadata() -> None:
+async def test_query_documents_returns_canonical_scope_and_meta() -> None:
     class _FakeOrchestrator:
         documents_path = Path("/docs")
 
@@ -290,7 +258,6 @@ async def test_query_documents_embeds_explicit_scope_and_stats_metadata() -> Non
         hctx,
         {
             "query": "auth tokens",
-            "show_stats": True,
             "scope_mode": "explicit_projects",
             "scope_projects": ["proj-a"],
             "preferred_project": "proj-a",
@@ -299,32 +266,29 @@ async def test_query_documents_embeds_explicit_scope_and_stats_metadata() -> Non
     )
 
     assert len(contents) == 1
-    assert "# Compression Stats" in contents[0].text
-    assert "- After document limit (1 per doc): 1" in contents[0].text
-
-    metadata = _extract_query_documents_metadata(contents[0].text)
-    assert metadata["query"] == "auth tokens"
-    assert metadata["result_header"] == "Search Results (Unique Documents)"
-    assert metadata["strategy_counts"] == {
+    payload = _parse_query_documents_response(contents[0].text)
+    assert payload["meta"]["query"] == "auth tokens"
+    assert payload["meta"]["uniqueness_mode"] == "one_per_document"
+    assert payload["meta"]["strategy_counts"] == {
         "semantic": 4,
         "keyword": 2,
         "graph": 1,
         "tag_expansion": 1,
     }
-    assert metadata["observed_strategies"] == [
+    assert payload["meta"]["observed_strategies"] == [
         "semantic",
         "keyword",
         "graph",
         "tag_expansion",
     ]
-    assert metadata["scope"] == {
+    assert payload["meta"]["scope"] == {
         "mode": "explicit_projects",
         "projects": ["proj-a"],
         "preferred_project": "proj-a",
         "applied_filter_projects": ["proj-a"],
         "applied_uplift_project": "proj-a",
     }
-    assert metadata["compression_stats"] == {
+    assert payload["meta"]["compression"] == {
         "original_count": 5,
         "after_threshold": 4,
         "after_content_dedup": 4,
@@ -335,36 +299,49 @@ async def test_query_documents_embeds_explicit_scope_and_stats_metadata() -> Non
     }
 
 
-def test_normalize_query_documents_request_maps_legacy_scope_aliases() -> None:
+def test_normalize_query_documents_request_rejects_scope_projects_outside_explicit_mode() -> None:
+    with pytest.raises(ValueError, match="scope_projects may only be provided"):
+        normalize_query_documents_request(
+            {
+                "query": "daemon startup",
+                "scope_mode": "global",
+                "scope_projects": ["proj-c"],
+            }
+        )
+
+
+def test_normalize_query_documents_request_rejects_preferred_project_in_global_mode() -> None:
+    with pytest.raises(ValueError, match="preferred_project may only be provided"):
+        normalize_query_documents_request(
+            {
+                "query": "daemon startup",
+                "scope_mode": "global",
+                "preferred_project": "proj-c",
+            }
+        )
+
+
+def test_normalize_query_documents_request_requires_scope_projects_for_explicit_mode() -> None:
+    with pytest.raises(ValueError, match="scope_projects must be provided"):
+        normalize_query_documents_request(
+            {
+                "query": "daemon startup",
+                "scope_mode": "explicit_projects",
+            }
+        )
+
+
+def test_normalize_query_documents_request_accepts_active_project_scope() -> None:
     request = normalize_query_documents_request(
         {
             "query": "daemon startup",
-            "project_filter": ["proj-a", "proj-b"],
-            "project_context": "proj-b",
-        }
-    )
-
-    assert request.scope_mode == "explicit_projects"
-    assert request.scope_projects == ("proj-a", "proj-b")
-    assert request.preferred_project == "proj-b"
-    assert request.project_filter == ["proj-a", "proj-b"]
-    assert request.project_context == "proj-b"
-
-
-def test_normalize_query_documents_request_prefers_canonical_scope_fields() -> None:
-    request = normalize_query_documents_request(
-        {
-            "query": "daemon startup",
-            "scope_mode": "global",
-            "scope_projects": ["proj-c"],
+            "scope_mode": "active_project",
             "preferred_project": "proj-c",
-            "project_filter": ["proj-a"],
-            "project_context": "proj-a",
         }
     )
 
-    assert request.scope_mode == "global"
-    assert request.scope_projects == ("proj-c",)
+    assert request.scope_mode == "active_project"
+    assert request.scope_projects == ()
     assert request.preferred_project == "proj-c"
     assert request.project_filter == []
     assert request.project_context == "proj-c"
@@ -387,7 +364,69 @@ def test_normalize_query_documents_request_accepts_canonical_explicit_scope() ->
     assert request.project_filter == ["proj-a", "proj-b"]
     assert request.project_context == "proj-b"
     assert request.max_chunks_per_doc == 1
-    assert request.result_header == "Search Results (Unique Documents)"
+
+
+@pytest.mark.asyncio
+async def test_query_documents_uses_detected_project_for_active_project_scope() -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeOrchestrator:
+        documents_path = Path("/docs")
+
+        async def query(
+            self,
+            query: str,
+            *,
+            top_k: int,
+            top_n: int,
+            pipeline_config,
+            excluded_files,
+            project_filter,
+            project_context,
+        ):
+            captured["project_filter"] = project_filter
+            captured["project_context"] = project_context
+            return (
+                [],
+                CompressionStats(
+                    original_count=0,
+                    after_threshold=0,
+                    after_content_dedup=0,
+                    after_ngram_dedup=0,
+                    after_dedup=0,
+                    after_doc_limit=0,
+                    clusters_merged=0,
+                ),
+                SearchStrategyStats(
+                    vector_count=0,
+                    keyword_count=0,
+                    graph_count=0,
+                    tag_expansion_count=0,
+                ),
+            )
+
+    ready_ctx = _ColdStartContext(IndexState(status="ready"), ready=True)
+    ready_ctx.orchestrator = _FakeOrchestrator()
+    ready_ctx.config = SimpleNamespace(detected_project="ambient-project")
+    hctx = HandlerContext(lambda: ready_ctx, _FakeCoordinator())
+
+    contents = await handle_query_documents(
+        hctx,
+        {
+            "query": "daemon startup",
+            "scope_mode": "active_project",
+        },
+    )
+
+    payload = _parse_query_documents_response(contents[0].text)
+    assert payload["meta"]["scope"] == {
+        "mode": "active_project",
+        "projects": [],
+        "preferred_project": None,
+        "applied_filter_projects": [],
+        "applied_uplift_project": "ambient-project",
+    }
+    assert captured == {"project_filter": [], "project_context": "ambient-project"}
 
 
 @pytest.mark.asyncio

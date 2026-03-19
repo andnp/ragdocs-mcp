@@ -7,7 +7,7 @@ from typing import Literal
 
 from src.mcp.handlers import MAX_TOP_N, MIN_TOP_N
 from src.mcp.validation import (
-    validate_boolean,
+    ValidationError,
     validate_enum,
     validate_float_range,
     validate_integer_range,
@@ -22,13 +22,12 @@ UniquenessMode = Literal["allow_multiple", "one_per_document"]
 
 @dataclass(frozen=True)
 class NormalizedQueryDocumentsRequest:
-    """Canonical query_documents request after validation and alias normalization."""
+    """Canonical query_documents request after validation."""
 
     query: str
     top_n: int
     min_score: float
     similarity_threshold: float
-    show_stats: bool
     excluded_files_raw: tuple[str, ...]
     uniqueness_mode: UniquenessMode
     scope_mode: ScopeMode
@@ -43,23 +42,38 @@ class NormalizedQueryDocumentsRequest:
 
     @property
     def project_context(self) -> str | None:
+        if self.scope_mode == "global":
+            return None
         return self.preferred_project
 
     @property
     def max_chunks_per_doc(self) -> int:
         return 1 if self.uniqueness_mode == "one_per_document" else 0
 
-    @property
-    def result_header(self) -> str:
-        if self.uniqueness_mode == "one_per_document":
-            return "Search Results (Unique Documents)"
-        return "Search Results"
-
 
 def normalize_query_documents_request(
     arguments: dict,
 ) -> NormalizedQueryDocumentsRequest:
-    """Validate query_documents arguments and map legacy scope aliases."""
+    """Validate canonical query_documents arguments."""
+
+    allowed_keys = {
+        "excluded_files",
+        "min_score",
+        "preferred_project",
+        "query",
+        "scope_mode",
+        "scope_projects",
+        "similarity_threshold",
+        "top_n",
+        "uniqueness_mode",
+    }
+    unexpected_keys = sorted(set(arguments) - allowed_keys)
+    if unexpected_keys:
+        raise ValidationError(
+            "Unexpected parameter(s): "
+            + ", ".join(unexpected_keys)
+            + ". query_documents now accepts canonical scope fields only"
+        )
 
     query = validate_query(arguments, "query")
     top_n = validate_integer_range(
@@ -71,14 +85,13 @@ def normalize_query_documents_request(
     similarity_threshold = validate_float_range(
         arguments, "similarity_threshold", default=0.85, min_val=0.5, max_val=1.0
     )
-    show_stats = validate_boolean(arguments, "show_stats", default=False)
     excluded_files_raw = tuple(
         validate_string_list(arguments, "excluded_files", default=[])
     )
 
     uniqueness_value = arguments.get("uniqueness_mode", "allow_multiple")
     if uniqueness_value not in {"allow_multiple", "one_per_document"}:
-        raise ValueError(
+        raise ValidationError(
             "Invalid uniqueness_mode: "
             f"{uniqueness_value}. Must be 'allow_multiple' or 'one_per_document'"
         )
@@ -95,42 +108,29 @@ def normalize_query_documents_request(
     )
     preferred_project = validate_optional_string(arguments, "preferred_project")
 
-    legacy_project_filter = tuple(
-        validate_string_list(arguments, "project_filter", default=[])
-    )
-    legacy_project_context = validate_optional_string(arguments, "project_context")
-
-    if (
-        scope_mode == "explicit_projects"
-        and not scope_projects
-        and legacy_project_filter
-    ):
-        scope_projects = legacy_project_filter
-
-    if scope_mode == "active_project" and preferred_project is None:
-        preferred_project = legacy_project_context
-
     if scope_mode is None:
-        if scope_projects or legacy_project_filter:
-            scope_mode = "explicit_projects"
-            if not scope_projects:
-                scope_projects = legacy_project_filter
-        elif preferred_project or legacy_project_context:
-            scope_mode = "active_project"
-            if preferred_project is None:
-                preferred_project = legacy_project_context
-        else:
-            scope_mode = "global"
+        scope_mode = "global"
 
-    if scope_mode == "explicit_projects" and preferred_project is None:
-        preferred_project = legacy_project_context
+    if scope_mode == "explicit_projects" and not scope_projects:
+        raise ValidationError(
+            "scope_projects must be provided when scope_mode is 'explicit_projects'"
+        )
+
+    if scope_mode != "explicit_projects" and scope_projects:
+        raise ValidationError(
+            "scope_projects may only be provided when scope_mode is 'explicit_projects'"
+        )
+
+    if scope_mode == "global" and preferred_project is not None:
+        raise ValidationError(
+            "preferred_project may only be provided when scope_mode is not 'global'"
+        )
 
     return NormalizedQueryDocumentsRequest(
         query=query,
         top_n=top_n,
         min_score=min_score,
         similarity_threshold=similarity_threshold,
-        show_stats=show_stats,
         excluded_files_raw=excluded_files_raw,
         uniqueness_mode=uniqueness_mode,
         scope_mode=scope_mode,

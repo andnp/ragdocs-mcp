@@ -26,7 +26,11 @@ from src.mcp.tools.document_request import (
     NormalizedQueryDocumentsRequest,
     normalize_query_documents_request,
 )
-from src.mcp.tools.document_response import build_query_documents_response_envelope
+from src.mcp.tools.document_response import (
+    build_query_documents_response_envelope,
+    build_query_documents_status_envelope,
+    build_query_documents_validation_error,
+)
 from src.search.pipeline import SearchPipelineConfig
 from src.search.utils import classify_query_type
 
@@ -72,11 +76,6 @@ def get_document_tools() -> list[Tool]:
                         "minimum": 0.5,
                         "maximum": 1.0,
                     },
-                    "show_stats": {
-                        "type": "boolean",
-                        "description": "Whether to show compression stats in response (default: false)",
-                        "default": False,
-                    },
                     "excluded_files": {
                         "type": "array",
                         "description": "List of file paths to exclude from results (supports filename, relative path, or absolute path)",
@@ -97,17 +96,7 @@ def get_document_tools() -> list[Tool]:
                     },
                     "preferred_project": {
                         "type": "string",
-                        "description": "Canonical preferred project used for bounded ranking uplift. Legacy alias: project_context.",
-                    },
-                    "project_filter": {
-                        "type": "array",
-                        "description": "Legacy alias for scope_mode='explicit_projects' + scope_projects. Applies a hard filter when provided.",
-                        "items": {"type": "string"},
-                        "default": [],
-                    },
-                    "project_context": {
-                        "type": "string",
-                        "description": "Legacy alias for preferred_project. Applies bounded ranking uplift without hard filtering.",
+                        "description": "Canonical preferred project used for bounded ranking uplift when scope_mode is 'active_project' or 'explicit_projects'.",
                     },
                     "uniqueness_mode": {
                         "type": "string",
@@ -217,10 +206,16 @@ async def _query_documents_impl(
     """Query documents implementation with comprehensive validation."""
     cold_start_payload = hctx.get_nonblocking_search_payload(query=request.query)
     if cold_start_payload is not None:
+        status = str(cold_start_payload.get("status", "initializing"))
+        response = build_query_documents_status_envelope(
+            request,
+            status=status,
+            payload=cold_start_payload,
+        ).render_text()
         return [
             TextContent(
                 type="text",
-                text=format_search_status_text(request.result_header, cold_start_payload),
+                text=response,
             )
         ]
 
@@ -247,6 +242,14 @@ async def _query_documents_impl(
         dedup_threshold=request.similarity_threshold,
     )
 
+    project_context = request.project_context
+    if request.scope_mode == "active_project" and project_context is None:
+        project_context = getattr(
+            getattr(ctx, "config", None),
+            "detected_project",
+            None,
+        )
+
     results, stats, strategy_stats = await ctx.orchestrator.query(
         request.query,
         top_k=top_k,
@@ -254,23 +257,18 @@ async def _query_documents_impl(
         pipeline_config=pipeline_config,
         excluded_files=excluded_files,
         project_filter=request.project_filter,
-        project_context=request.project_context,
+        project_context=project_context,
     )
 
     query_type = classify_query_type(request.query)
-    effective_project_context = request.project_context or getattr(
-        getattr(ctx, "config", None),
-        "detected_project",
-        None,
-    )
     response = build_query_documents_response_envelope(
         request,
         query_type=query_type,
         results=results,
         strategy_stats=strategy_stats,
         compression_stats=stats,
-        effective_project_context=effective_project_context,
-    ).render_text(show_stats=request.show_stats or stats.original_count > stats.after_dedup)
+        effective_project_context=project_context,
+    ).render_text()
 
     return [TextContent(type="text", text=response)]
 
@@ -281,8 +279,12 @@ async def handle_query_documents(
 ) -> list[TextContent]:
     try:
         request = normalize_query_documents_request(arguments)
-    except ValidationError as e:
-        return [TextContent(type="text", text=f"Validation error: {e}")]
+    except (ValidationError, ValueError) as e:
+        response = build_query_documents_validation_error(
+            query=(arguments.get("query") if isinstance(arguments.get("query"), str) else ""),
+            message=str(e),
+        ).render_text()
+        return [TextContent(type="text", text=response)]
 
     return await _query_documents_impl(hctx, request)
 
