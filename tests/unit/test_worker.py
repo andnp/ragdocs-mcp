@@ -263,7 +263,10 @@ class TestWorkerRuntimeStartup:
         monkeypatch.setattr("src.cli.get_huey", lambda _path: object())
         monkeypatch.setattr("src.cli.register_tasks", lambda *args, **kwargs: None)
         monkeypatch.setattr("src.cli.HueyWorker", lambda _huey: fake_worker)
-        monkeypatch.setattr("src.cli._parent_process_alive", lambda _pid: False)
+        monkeypatch.setattr(
+            "src.cli._parent_process_alive",
+            lambda _pid, _parent_start_time=None: False,
+        )
         monkeypatch.setattr(
             RuntimePaths,
             "resolve",
