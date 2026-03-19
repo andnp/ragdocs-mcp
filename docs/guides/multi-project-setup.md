@@ -59,7 +59,7 @@ mcp-markdown-ragdocs rebuild-index
 
 Project membership is preserved as metadata (`project_id`) inside the shared index, which enables ranking uplift and explicit filtering without silently partitioning storage.
 
-If you want to narrow indexing/querying intentionally, use an explicit project/path override.
+If you want to narrow indexing/querying intentionally, use an explicit project/path override. Path overrides are transient convenience only: they do not auto-register new `[[projects]]` entries or expand the daemon's future global corpus membership. To make a corpus part of the shared daemon runtime, add it explicitly to `~/.config/mcp-markdown-ragdocs/config.toml`.
 
 ## Configuration Reference
 
