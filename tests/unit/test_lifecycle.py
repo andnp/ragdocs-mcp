@@ -7,6 +7,8 @@ Commit 2.1: Verifies LifecycleCoordinator is the source of truth for process sta
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, cast
 from unittest.mock import patch
@@ -14,6 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from src.lifecycle import LifecycleCoordinator, LifecycleState
+from src.storage.db import DatabaseManager
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +71,11 @@ def _make_coordinator(**overrides: Any) -> LifecycleCoordinator:
 def _fake_ctx() -> Any:
     """Return a FakeContext cast to Any so it satisfies the ApplicationContext param."""
     return cast(Any, FakeContext())
+
+
+@pytest.fixture()
+def db(tmp_path) -> DatabaseManager:
+    return DatabaseManager(tmp_path / "test.db")
 
 
 # ---------------------------------------------------------------------------
@@ -330,3 +338,76 @@ class TestWorkerSupervision:
                 await coord._supervise_worker_health()
 
         assert worker.restart_calls == 1
+
+
+class TestLeaderFailover:
+    @pytest.mark.asyncio
+    async def test_replica_promotes_to_primary_after_timeout_and_starts_worker(
+        self,
+        db: DatabaseManager,
+    ) -> None:
+        primary = _make_coordinator()
+        primary._leader_monitor_interval = 0.01
+        await primary.start(_fake_ctx(), db_manager=db)
+        assert primary.state == LifecycleState.READY_PRIMARY
+
+        replica = _make_coordinator()
+        replica._leader_monitor_interval = 0.01
+
+        class _FakeWorker:
+            def __init__(self) -> None:
+                self.start_calls = 0
+
+            def start(self) -> None:
+                self.start_calls += 1
+
+            def is_healthy(self) -> bool:
+                return True
+
+            def stop(self, timeout: float = 5.0) -> None:
+                return None
+
+        worker = _FakeWorker()
+        await replica.start(_fake_ctx(), db_manager=db, huey_worker=worker)
+        assert replica.state == LifecycleState.READY_REPLICA
+        assert replica._leader_monitor_task is not None
+
+        if primary._leader_heartbeat_task is not None:
+            primary._leader_heartbeat_task.cancel()
+            await asyncio.gather(
+                primary._leader_heartbeat_task,
+                return_exceptions=True,
+            )
+            primary._leader_heartbeat_task = None
+
+        conn = db.get_connection()
+        stale_data = json.dumps(
+            {
+                "instance_id": primary._leader_election.instance_id,
+                "heartbeat": time.time() - 30.0,
+                "acquired_at": time.time() - 30.0,
+            }
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
+            ("leader_id", stale_data),
+        )
+        conn.commit()
+
+        deadline = time.monotonic() + 1.0
+        while (
+            replica.state != LifecycleState.READY_PRIMARY
+            or worker.start_calls != 1
+            or replica._worker_supervision_task is None
+        ):
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    "Replica did not promote to primary and start worker supervision"
+                )
+            await asyncio.sleep(0.01)
+
+        assert worker.start_calls == 1
+        assert replica._worker_supervision_task is not None
+
+        await replica.shutdown()
+        await primary.shutdown()

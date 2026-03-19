@@ -10,7 +10,6 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.context import ApplicationContext
@@ -156,6 +155,15 @@ class LifecycleCoordinator:
         default=None,
         repr=False,
     )
+    _leader_monitor_task: asyncio.Task[None] | None = field(
+        default=None,
+        repr=False,
+    )
+    _leader_heartbeat_task: asyncio.Task[None] | None = field(
+        default=None,
+        repr=False,
+    )
+    _leader_monitor_interval: float = field(default=5.0, repr=False)
 
     @property
     def state(self) -> LifecycleState:
@@ -188,14 +196,11 @@ class LifecycleCoordinator:
 
             if db_manager is not None:
                 self._leader_election = LeaderElection(db_manager)
+                self._huey_worker = huey_worker
                 if self._leader_election.try_acquire():
                     logger.info("Lifecycle: leader elected")
-                    if huey_worker is not None:
-                        self._huey_worker = huey_worker
-                        await asyncio.to_thread(self._huey_worker.start)
-                        self._worker_supervision_task = asyncio.create_task(
-                            self._supervise_worker_health()
-                        )
+                    self._ensure_leader_heartbeat()
+                    await self._ensure_huey_worker_running()
                 else:
                     logger.info(
                         "Lifecycle: replica mode (another instance is primary)"
@@ -237,6 +242,7 @@ class LifecycleCoordinator:
                 else:
                     self._state = LifecycleState.READY_REPLICA
                     self._write_daemon_metadata()
+                    self._ensure_leader_monitor()
                     logger.info(
                         "Lifecycle: READY_REPLICA (another instance is primary)"
                     )
@@ -427,10 +433,103 @@ class LifecycleCoordinator:
             self._state = LifecycleState.READY
 
         self._write_daemon_metadata()
+        if self._state == LifecycleState.READY_REPLICA:
+            self._ensure_leader_monitor()
         logger.info("Lifecycle: %s (background initialization complete)", self._state)
+
+    def _ensure_leader_monitor(self) -> None:
+        if self._leader_election is None:
+            return
+        if self._state != LifecycleState.READY_REPLICA:
+            return
+        if self._leader_monitor_task is not None and not self._leader_monitor_task.done():
+            return
+        self._leader_monitor_task = asyncio.create_task(self._monitor_leader_failover())
+
+    def _ensure_leader_heartbeat(self) -> None:
+        if self._leader_election is None or not self._leader_election.is_leader:
+            return
+        if (
+            self._leader_heartbeat_task is not None
+            and not self._leader_heartbeat_task.done()
+        ):
+            return
+        self._leader_heartbeat_task = asyncio.create_task(self._heartbeat_leader())
+
+    async def _ensure_huey_worker_running(self) -> None:
+        if self._huey_worker is None:
+            return
+        await asyncio.to_thread(self._huey_worker.start)
+        if (
+            self._worker_supervision_task is not None
+            and not self._worker_supervision_task.done()
+        ):
+            return
+        self._worker_supervision_task = asyncio.create_task(
+            self._supervise_worker_health()
+        )
+
+    async def _monitor_leader_failover(self) -> None:
+        while True:
+            await asyncio.sleep(self._leader_monitor_interval)
+
+            if self._state in (
+                LifecycleState.SHUTTING_DOWN,
+                LifecycleState.TERMINATED,
+            ):
+                return
+
+            leader_election = self._leader_election
+            if leader_election is None:
+                return
+            if self._state != LifecycleState.READY_REPLICA:
+                return
+            if not leader_election.try_acquire():
+                continue
+
+            self._state = LifecycleState.READY_PRIMARY
+            self._write_daemon_metadata()
+            self._ensure_leader_heartbeat()
+            await self._ensure_huey_worker_running()
+            logger.info("Lifecycle: READY_PRIMARY (replica promoted after failover)")
+            return
+
+    async def _heartbeat_leader(self) -> None:
+        leader_election = self._leader_election
+        if leader_election is None:
+            return
+
+        while True:
+            await asyncio.sleep(leader_election._heartbeat_interval)
+
+            if self._state in (
+                LifecycleState.SHUTTING_DOWN,
+                LifecycleState.TERMINATED,
+            ):
+                return
+
+            leader_election = self._leader_election
+            if leader_election is None or not leader_election.is_leader:
+                return
+
+            try:
+                leader_election.heartbeat()
+            except Exception:
+                logger.error("Failed to refresh leader heartbeat", exc_info=True)
+                return
 
     async def _cleanup_resources(self) -> None:
         self._cancel_emergency_timer()
+
+        if self._leader_monitor_task is not None:
+            self._leader_monitor_task.cancel()
+            await asyncio.gather(self._leader_monitor_task, return_exceptions=True)
+            self._leader_monitor_task = None
+
+        if self._leader_heartbeat_task is not None:
+            self._leader_heartbeat_task.cancel()
+            await asyncio.gather(self._leader_heartbeat_task, return_exceptions=True)
+            self._leader_heartbeat_task = None
 
         if self._worker_supervision_task is not None:
             self._worker_supervision_task.cancel()
