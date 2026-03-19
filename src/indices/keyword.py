@@ -21,6 +21,8 @@ _CORRUPTION_PATTERNS = (
     "unable to open database file",
 )
 
+_ARTIFACT_QUERY_RE = re.compile(r"[./\\_-]")
+
 
 def _is_corruption_error(exc: Exception) -> bool:
     msg = str(exc).lower()
@@ -37,6 +39,17 @@ def _sanitize_fts_query(query: str) -> str:
     # Split into tokens and join
     tokens = sanitized.split()
     return " ".join(tokens)
+
+
+def _normalize_artifact_value(value: str) -> str:
+    return value.strip().lower().replace("\\", "/")
+
+
+def _looks_like_artifact_query(query: str) -> bool:
+    normalized = query.strip()
+    if not normalized:
+        return False
+    return _ARTIFACT_QUERY_RE.search(normalized) is not None
 
 
 class KeywordIndex:
@@ -373,6 +386,24 @@ class KeywordIndex:
             return []
 
         with self._lock:
+            artifact_results: list[SearchResultDict] = []
+            if _looks_like_artifact_query(query):
+                try:
+                    artifact_results = self._search_artifact_matches(
+                        query,
+                        top_k * 2 if excluded_files else top_k,
+                    )
+                except sqlite3.DatabaseError as e:
+                    if _is_corruption_error(e):
+                        self._reinitialize_after_corruption()
+                        return []
+                    logger.warning(
+                        "Artifact search lane failed for %r: %s",
+                        query,
+                        e,
+                        exc_info=True,
+                    )
+
             sanitized = _sanitize_fts_query(query)
 
             try:
@@ -401,10 +432,11 @@ class KeywordIndex:
                                 """
                             SELECT chunk_id, doc_id, -1.0 AS score
                             FROM search_index
-                            WHERE content LIKE ? OR title LIKE ?
+                            WHERE content LIKE ? OR title LIKE ? OR source_file LIKE ?
                             LIMIT ?
                             """,
                                 (
+                                    like_query,
                                     like_query,
                                     like_query,
                                     top_k * 2 if excluded_files else top_k,
@@ -422,11 +454,36 @@ class KeywordIndex:
                     return []
 
             results: list[SearchResultDict] = []
+            seen_chunk_ids: set[str] = set()
+
+            for result in artifact_results:
+                chunk_id = result["chunk_id"]
+                doc_id = result["doc_id"]
+
+                if excluded_files and docs_root:
+                    from pathlib import Path as PathLib
+
+                    from src.search.path_utils import normalize_path
+
+                    normalized = normalize_path(doc_id, docs_root)
+                    if normalized in excluded_files:
+                        continue
+                    if PathLib(normalized).name in excluded_files:
+                        continue
+
+                results.append(result)
+                seen_chunk_ids.add(chunk_id)
+                if len(results) >= top_k:
+                    return results
+
             for row in rows:
                 chunk_id = row["chunk_id"]
                 doc_id = row["doc_id"]
                 # bm25() returns negative values; negate so higher = better
                 score = -float(row["score"])
+
+                if chunk_id in seen_chunk_ids:
+                    continue
 
                 if excluded_files and docs_root:
                     from src.search.path_utils import normalize_path
@@ -443,6 +500,98 @@ class KeywordIndex:
                     break
 
             return results
+
+    def _search_artifact_matches(
+        self,
+        query: str,
+        limit: int,
+    ) -> list[SearchResultDict]:
+        normalized_query = _normalize_artifact_value(query)
+        basename_query = Path(normalized_query).name
+        like_query = f"%{query.strip()}%"
+        rows = self._conn().execute(
+            """
+            SELECT chunk_id, doc_id, content, title, headers, source_file
+            FROM search_index
+            WHERE source_file LIKE ? OR title LIKE ? OR headers LIKE ? OR content LIKE ?
+            """,
+            (like_query, like_query, like_query, like_query),
+        ).fetchall()
+
+        scored_rows: list[tuple[float, str, str]] = []
+        for row in rows:
+            content = str(row["content"] or "")
+            title = str(row["title"] or "")
+            headers = str(row["headers"] or "")
+            source_file = str(row["source_file"] or "")
+            score = self._score_artifact_match(
+                normalized_query,
+                basename_query,
+                content,
+                title,
+                headers,
+                source_file,
+            )
+            if score <= 0:
+                continue
+            scored_rows.append((score, row["chunk_id"], row["doc_id"]))
+
+        scored_rows.sort(key=lambda item: (-item[0], item[1]))
+
+        return [
+            {"chunk_id": chunk_id, "doc_id": doc_id, "score": score}
+            for score, chunk_id, doc_id in scored_rows[:limit]
+        ]
+
+    def _score_artifact_match(
+        self,
+        normalized_query: str,
+        basename_query: str,
+        content: str,
+        title: str,
+        headers: str,
+        source_file: str,
+    ) -> float:
+        normalized_content = _normalize_artifact_value(content)
+        normalized_headers = _normalize_artifact_value(headers)
+        normalized_title = _normalize_artifact_value(title)
+        normalized_source = _normalize_artifact_value(source_file)
+        source_basename = Path(normalized_source).name if normalized_source else ""
+
+        score = 0.0
+
+        if normalized_source == normalized_query:
+            score = max(score, 120.0)
+        if source_basename == normalized_query:
+            score = max(score, 115.0)
+        if basename_query and source_basename == basename_query:
+            score = max(score, 112.0)
+        if normalized_source.endswith(f"/{normalized_query}"):
+            score = max(score, 108.0)
+        if basename_query and normalized_source.endswith(f"/{basename_query}"):
+            score = max(score, 104.0)
+        if normalized_title == normalized_query:
+            score = max(score, 102.0)
+        if basename_query and normalized_title == basename_query:
+            score = max(score, 100.0)
+        if normalized_query in normalized_source:
+            score = max(score, 96.0)
+        if basename_query and basename_query in normalized_source:
+            score = max(score, 92.0)
+        if normalized_query in normalized_title:
+            score = max(score, 88.0)
+        if basename_query and basename_query in normalized_title:
+            score = max(score, 84.0)
+        if normalized_query in normalized_headers:
+            score = max(score, 82.0)
+        if basename_query and basename_query in normalized_headers:
+            score = max(score, 78.0)
+        if normalized_query in normalized_content:
+            score = max(score, 74.0)
+        if basename_query and basename_query in normalized_content:
+            score = max(score, 70.0)
+
+        return score
 
     # ------------------------------------------------------------------
     # Persistence no-ops (data lives in SQLite)

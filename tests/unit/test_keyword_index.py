@@ -710,6 +710,145 @@ def test_keyword_index_all_boosted_fields_together():
     )
 
 
+def test_keyword_index_artifact_lane_matches_dotted_source_file():
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    chunk = Chunk(
+        chunk_id="artifact_chunk_0",
+        doc_id="artifact-doc",
+        content="Checkpoint metadata and runtime state.",
+        metadata={
+            "title": "Runtime Checkpoint",
+            "source_file": "state/bootstrap.checkpoint.json",
+            "tags": [],
+        },
+        chunk_index=0,
+        header_path="Runtime > State",
+        start_pos=0,
+        end_pos=37,
+        file_path="/tmp/state/bootstrap.checkpoint.json",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(chunk)
+
+    results = keyword_index.search("bootstrap.checkpoint.json", top_k=5)
+
+    assert _extract_chunk_ids(results)[0] == "artifact_chunk_0"
+
+
+def test_keyword_index_artifact_lane_prefers_path_match_over_content_only_match():
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    path_match = Chunk(
+        chunk_id="path_chunk_0",
+        doc_id="path-doc",
+        content="State persisted after daemon bootstrap.",
+        metadata={
+            "title": "State File",
+            "source_file": "runtime/state/bootstrap.checkpoint.json",
+            "tags": [],
+        },
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=37,
+        file_path="/tmp/runtime/state/bootstrap.checkpoint.json",
+        modified_time=datetime.now(),
+    )
+    content_only = Chunk(
+        chunk_id="content_chunk_1",
+        doc_id="content-doc",
+        content="The file bootstrap.checkpoint.json stores the current runtime checkpoint.",
+        metadata={
+            "title": "Checkpoint Notes",
+            "source_file": "notes/runtime-overview.md",
+            "tags": [],
+        },
+        chunk_index=0,
+        header_path="",
+        start_pos=0,
+        end_pos=72,
+        file_path="/tmp/notes/runtime-overview.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(path_match)
+    keyword_index.add_chunk(content_only)
+
+    results = keyword_index.search("bootstrap.checkpoint.json", top_k=5)
+    chunk_ids = _extract_chunk_ids(results)
+
+    assert "path_chunk_0" in chunk_ids
+    assert "content_chunk_1" in chunk_ids
+    assert chunk_ids.index("path_chunk_0") < chunk_ids.index("content_chunk_1")
+
+
+def test_keyword_index_artifact_lane_matches_exact_title_literal():
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    title_match = Chunk(
+        chunk_id="title_chunk_0",
+        doc_id="title-doc",
+        content="Literal artifact title without filename in content.",
+        metadata={
+            "title": "bootstrap.checkpoint.json",
+            "source_file": "notes/runtime-artifacts.md",
+            "tags": [],
+        },
+        chunk_index=0,
+        header_path="Artifacts",
+        start_pos=0,
+        end_pos=46,
+        file_path="/tmp/notes/runtime-artifacts.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(title_match)
+
+    results = keyword_index.search("bootstrap.checkpoint.json", top_k=5)
+
+    assert "title_chunk_0" in _extract_chunk_ids(results)
+
+
+def test_keyword_index_artifact_lane_matches_literal_in_body_content():
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    content_match = Chunk(
+        chunk_id="content_literal_chunk_0",
+        doc_id="content-literal-doc",
+        content=(
+            "Bootstrap recovery uses bootstrap.checkpoint.json to restore "
+            "runtime state after restart."
+        ),
+        metadata={
+            "title": "Daemon Recovery Notes",
+            "source_file": "notes/restart-behavior.md",
+            "tags": [],
+        },
+        chunk_index=0,
+        header_path="Runtime > Recovery",
+        start_pos=0,
+        end_pos=90,
+        file_path="/tmp/notes/restart-behavior.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(content_match)
+
+    results = keyword_index.search("bootstrap.checkpoint.json", top_k=5)
+
+    assert "content_literal_chunk_0" in _extract_chunk_ids(results)
+
+
 def test_keyword_index_schema_mismatch_triggers_rebuild(tmp_path):
     """
     Loading an index with mismatched schema triggers a rebuild.
