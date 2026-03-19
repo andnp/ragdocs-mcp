@@ -1,4 +1,6 @@
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,6 +65,7 @@ class IndexManager:
         self._manifest_indexed_files: dict[str, str] = {}
         self._manifest_removed_doc_ids: set[str] = set()
         self._state_version = 0
+        self._deferred_persist_depth = 0
 
         logger.info(
             f"IndexManager initialized with embedding_workers={config.indexing.embedding_workers} "
@@ -72,8 +75,56 @@ class IndexManager:
     def _bump_state_version(self) -> None:
         self._state_version += 1
 
+    @contextmanager
+    def _defer_internal_persistence(self) -> Iterator[None]:
+        self._deferred_persist_depth += 1
+        try:
+            yield
+        finally:
+            self._deferred_persist_depth -= 1
+
+    def _internal_persistence_deferred(self) -> bool:
+        return self._deferred_persist_depth > 0
+
+    def _persist_hash_store_if_needed(self) -> None:
+        if self._internal_persistence_deferred():
+            return
+        self._hash_store.persist()
+
     def get_state_version(self) -> int:
         return self._state_version
+
+    def index_documents(
+        self,
+        file_paths: list[str],
+        force: bool = False,
+        persist: bool = False,
+    ) -> None:
+        """Index many documents while optionally persisting once after the batch.
+
+        The batch suppresses per-document hash-store writes so callers can
+        coalesce durability work across bursts without changing single-document
+        behavior.
+        """
+        with self._defer_internal_persistence():
+            for file_path in file_paths:
+                self.index_document(file_path, force=force)
+
+        if persist and file_paths:
+            self.persist()
+
+    def remove_documents(
+        self,
+        doc_ids: list[str],
+        persist: bool = False,
+    ) -> None:
+        """Remove many documents while optionally persisting once after the batch."""
+        with self._defer_internal_persistence():
+            for doc_id in doc_ids:
+                self.remove_document(doc_id)
+
+        if persist and doc_ids:
+            self.persist()
 
     def _get_parser_suffixes(self) -> list[str]:
         return sorted(get_parser_suffixes())
@@ -270,7 +321,7 @@ class IndexManager:
         self._hash_store.remove_document(doc_id)
         for chunk in chunks:
             self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
-        self._hash_store.persist()
+        self._persist_hash_store_if_needed()
 
         logger.debug(f"Full re-indexed {doc_id} with {len(chunks)} chunks")
 
@@ -403,7 +454,7 @@ class IndexManager:
             self._hash_store.remove_document(old_doc_id)
             for chunk in new_chunks:
                 self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
-            self._hash_store.persist()
+            self._persist_hash_store_if_needed()
 
             # If too many chunks failed, fall back to full re-index
             if failed_moves:
