@@ -14,6 +14,7 @@ from huey import SqliteHuey
 
 import src.indexing.tasks as tasks_mod
 from src.daemon.queue_status import get_queue_stats
+from src.indexing.bootstrap_checkpoint import BootstrapCheckpoint, BootstrapFileStamp, load_bootstrap_checkpoint, save_bootstrap_checkpoint
 from src.indexing.tasks import (
     enqueue_index,
     enqueue_index_batch,
@@ -75,6 +76,8 @@ def _reset_tasks():
     tasks_mod._index_manager = None
     tasks_mod._commit_indexer = None
     tasks_mod._task_backpressure_limit = 100
+    tasks_mod._bootstrap_index_path = None
+    tasks_mod._bootstrap_documents_roots = []
     tasks_mod.index_document_task = None
     tasks_mod.remove_document_task = None
     tasks_mod.refresh_git_repository_task = None
@@ -83,6 +86,8 @@ def _reset_tasks():
     tasks_mod._index_manager = None
     tasks_mod._commit_indexer = None
     tasks_mod._task_backpressure_limit = 100
+    tasks_mod._bootstrap_index_path = None
+    tasks_mod._bootstrap_documents_roots = []
     tasks_mod.index_document_task = None
     tasks_mod.remove_document_task = None
     tasks_mod.refresh_git_repository_task = None
@@ -230,6 +235,51 @@ class TestTaskExecution:
         assert len(fake_manager.indexed) == 1
         assert fake_manager.indexed[0] == ("/docs/test.md", True)
         assert fake_manager.persist_calls == 1
+
+    def test_index_task_marks_bootstrap_checkpoint_after_persist(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        docs_root = tmp_path / "docs"
+        docs_root.mkdir()
+        file_path = docs_root / "guide.md"
+        file_path.write_text("# Guide")
+
+        save_bootstrap_checkpoint(
+            tmp_path,
+            BootstrapCheckpoint(
+                schema_version="1.0.0",
+                generation="current",
+                complete=False,
+                targets={
+                    "guide.md": BootstrapFileStamp(
+                        "guide.md",
+                        mtime_ns=0,
+                        size=0,
+                    )
+                },
+                completed={},
+            ),
+        )
+
+        register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=tmp_path,
+            bootstrap_documents_roots=[docs_root],
+        )
+
+        enqueue_index(str(file_path))
+        task = huey_instance.dequeue()
+        huey_instance.execute(task)
+
+        checkpoint = load_bootstrap_checkpoint(tmp_path)
+
+        assert checkpoint is not None
+        assert checkpoint.complete is True
+        assert set(checkpoint.completed) == {"guide.md"}
 
     def test_remove_task_calls_manager(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager

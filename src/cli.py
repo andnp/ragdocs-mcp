@@ -128,6 +128,8 @@ def _create_daemon_runtime(runtime_paths: RuntimePaths):
         ctx.index_manager,
         commit_indexer=ctx.commit_indexer,
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
+        bootstrap_index_path=ctx.index_path,
+        bootstrap_documents_roots=ctx.documents_roots,
     )
     worker = HueyWorkerProcess(
         runtime_paths=runtime_paths,
@@ -168,6 +170,8 @@ async def _run_worker_forever_async(
         ctx.index_manager,
         commit_indexer=ctx.commit_indexer,
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
+        bootstrap_index_path=ctx.index_path,
+        bootstrap_documents_roots=ctx.documents_roots,
     )
     worker = HueyWorker(huey)
 

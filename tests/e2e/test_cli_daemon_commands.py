@@ -535,6 +535,14 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
     tmp_path,
 ):
     observed: dict[str, object] = {}
+    runtime_paths = RuntimePaths(
+        root=tmp_path,
+        index_db_path=tmp_path / "index.db",
+        queue_db_path=tmp_path / "queue.db",
+        metadata_path=tmp_path / "daemon.json",
+        lock_path=tmp_path / "daemon.lock",
+        socket_path=tmp_path / "daemon.sock",
+    )
 
     class _FakeIndexManager:
         pass
@@ -543,6 +551,8 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
         def __init__(self):
             self.index_manager = _FakeIndexManager()
             self.commit_indexer = object()
+            self.index_path = runtime_paths.root
+            self.documents_roots: list[Path] = []
             self.config = type(
                 "_FakeConfig",
                 (),
@@ -561,14 +571,6 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
 
     fake_ctx = _FakeContext()
     fake_huey = object()
-    runtime_paths = RuntimePaths(
-        root=tmp_path,
-        index_db_path=tmp_path / "index.db",
-        queue_db_path=tmp_path / "queue.db",
-        metadata_path=tmp_path / "daemon.json",
-        lock_path=tmp_path / "daemon.lock",
-        socket_path=tmp_path / "daemon.sock",
-    )
 
     def _fake_create(**kwargs):
         observed["create_kwargs"] = kwargs
@@ -583,12 +585,16 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
         index_manager,
         commit_indexer=None,
         task_backpressure_limit=None,
+        bootstrap_index_path=None,
+        bootstrap_documents_roots=None,
     ):
         observed["register"] = (
             huey,
             index_manager,
             commit_indexer,
             task_backpressure_limit,
+            bootstrap_index_path,
+            bootstrap_documents_roots,
         )
 
     monkeypatch.setattr("src.cli.ApplicationContext.create", _fake_create)
@@ -614,6 +620,8 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
         fake_ctx.index_manager,
         fake_ctx.commit_indexer,
         100,
+        runtime_paths.root,
+        [],
     )
     assert observed["worker_runtime_paths"] == runtime_paths
     assert worker is not None

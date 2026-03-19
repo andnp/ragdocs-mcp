@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from src.indexing.bootstrap_checkpoint import mark_bootstrap_file_completed
+
 if TYPE_CHECKING:
     from src.git.commit_indexer import CommitIndexer
     from huey import SqliteHuey
@@ -26,6 +28,8 @@ _huey: SqliteHuey | None = None
 _index_manager: IndexManagerLike | None = None
 _commit_indexer: CommitIndexer | None = None
 _task_backpressure_limit: int = 100
+_bootstrap_index_path: Path | None = None
+_bootstrap_documents_roots: list[Path] = []
 
 # Task references (set after register_tasks is called)
 index_document_task = None
@@ -38,6 +42,8 @@ def register_tasks(
     index_manager: IndexManagerLike,
     commit_indexer: CommitIndexer | None = None,
     task_backpressure_limit: int = 100,
+    bootstrap_index_path: Path | None = None,
+    bootstrap_documents_roots: list[Path] | None = None,
 ) -> None:
     """Register indexing tasks with the given Huey instance.
 
@@ -45,11 +51,14 @@ def register_tasks(
     application startup when the worker is being configured.
     """
     global _huey, _index_manager, _commit_indexer, _task_backpressure_limit
+    global _bootstrap_index_path, _bootstrap_documents_roots
     global index_document_task, remove_document_task, refresh_git_repository_task
     _huey = huey
     _index_manager = index_manager
     _commit_indexer = commit_indexer
     _task_backpressure_limit = max(1, task_backpressure_limit)
+    _bootstrap_index_path = bootstrap_index_path
+    _bootstrap_documents_roots = list(bootstrap_documents_roots or [])
 
     @huey.task()
     def _index_document(file_path: str, force: bool = False) -> bool:
@@ -60,6 +69,12 @@ def register_tasks(
         try:
             _index_manager.index_document(file_path, force=force)
             _index_manager.persist()
+            if _bootstrap_index_path is not None and _bootstrap_documents_roots:
+                mark_bootstrap_file_completed(
+                    _bootstrap_index_path,
+                    _bootstrap_documents_roots,
+                    file_path,
+                )
             logger.info("Task completed: indexed %s", file_path)
             return True
         except Exception:

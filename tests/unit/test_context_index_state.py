@@ -19,9 +19,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.context import ApplicationContext, IndexState
+from src.indexing.bootstrap_checkpoint import (
+    BootstrapCheckpoint,
+    BootstrapFileStamp,
+    compute_bootstrap_generation,
+    load_bootstrap_checkpoint,
+    save_bootstrap_checkpoint,
+)
 from src.indexing.manifest import (
     CURRENT_MANIFEST_SPEC_VERSION,
     IndexManifest,
+    load_manifest,
     save_manifest,
 )
 
@@ -581,11 +589,64 @@ async def test_start_uses_task_bootstrap_for_virgin_background_start(tmp_path: P
     _setattr(ctx, "commit_indexer", None)
     _setattr(ctx, "reconciliation_task", None)
     _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
     _setattr(ctx, "index_manager", MockIndexManager())
     _setattr(ctx, "_ready_event", asyncio.Event())
     _setattr(ctx, "_init_error", None)
     _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
     _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=True))
+
+    bootstrap_calls: list[str] = []
+
+    async def fake_bootstrap_via_tasks() -> None:
+        bootstrap_calls.append("called")
+
+    async def fail_if_called() -> None:
+        raise AssertionError("main-process _background_index should not run")
+
+    _setattr(ctx, "_bootstrap_via_tasks", fake_bootstrap_via_tasks)
+    _setattr(ctx, "_background_index", fail_if_called)
+
+    await ctx.start(background_index=True)
+    await asyncio.wait_for(ctx._background_index_task, timeout=1.0)
+
+    assert bootstrap_calls == ["called"]
+
+
+@pytest.mark.asyncio
+async def test_start_uses_task_bootstrap_when_checkpoint_resume_is_pending(
+    tmp_path: Path,
+):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "reconciliation_task", None)
+    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "index_manager", MockIndexManager())
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=False))
+
+    save_bootstrap_checkpoint(
+        ctx.index_path,
+        BootstrapCheckpoint(
+            schema_version="1.0.0",
+            generation="resume-me",
+            complete=False,
+            targets={
+                "doc.md": BootstrapFileStamp("doc.md", mtime_ns=1, size=1),
+            },
+            completed={},
+        ),
+    )
 
     bootstrap_calls: list[str] = []
 
@@ -616,7 +677,19 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
     _setattr(ctx, "use_tasks", True)
     _setattr(ctx, "watcher", None)
     _setattr(ctx, "commit_indexer", None)
-    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "documents_roots", [tmp_path])
+    _setattr(
+        ctx,
+        "current_manifest",
+        IndexManifest(
+            spec_version=CURRENT_MANIFEST_SPEC_VERSION,
+            embedding_model="local",
+            chunking_config={},
+            indexed_files={},
+        ),
+    )
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
     _setattr(ctx, "_ready_event", asyncio.Event())
     _setattr(ctx, "_init_error", None)
     _setattr(ctx, "_freshness_lock", asyncio.Lock())
@@ -624,8 +697,45 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
     _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
     _setattr(ctx, "_is_virgin_startup", True)
 
+    (tmp_path / "doc1.md").write_text("# Doc 1")
+    (tmp_path / "doc2.md").write_text("# Doc 2")
     files = [str(tmp_path / "doc1.md"), str(tmp_path / "doc2.md")]
     _setattr(ctx, "discover_files", MagicMock(return_value=files))
+
+    checkpoint_targets = {
+        "doc1.md": BootstrapFileStamp(
+            "doc1.md",
+            mtime_ns=(tmp_path / "doc1.md").stat().st_mtime_ns,
+            size=(tmp_path / "doc1.md").stat().st_size,
+        ),
+        "doc2.md": BootstrapFileStamp(
+            "doc2.md",
+            mtime_ns=(tmp_path / "doc2.md").stat().st_mtime_ns,
+            size=(tmp_path / "doc2.md").stat().st_size,
+        ),
+    }
+
+    save_manifest(
+        ctx.index_path,
+        IndexManifest(
+            spec_version=CURRENT_MANIFEST_SPEC_VERSION,
+            embedding_model="local",
+            chunking_config={},
+            indexed_files={"doc1": "doc1.md"},
+        ),
+    )
+    save_bootstrap_checkpoint(
+        ctx.index_path,
+        BootstrapCheckpoint(
+            schema_version="1.0.0",
+            generation=compute_bootstrap_generation(ctx.current_manifest, checkpoint_targets),
+            complete=False,
+            targets=checkpoint_targets,
+            completed={
+                "doc1.md": checkpoint_targets["doc1.md"],
+            },
+        ),
+    )
 
     class BootstrapIndexManager:
         def __init__(self) -> None:
@@ -688,15 +798,184 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
 
     await asyncio.wait_for(ctx._ready_event.wait(), timeout=1.0)
 
-    assert enqueued == files
+    assert enqueued == [str(tmp_path / "doc2.md")]
     assert ctx._index_state.status == "partial"
     assert ctx._index_state.indexed_count == 1
     assert ctx._index_state.total_count == 2
     assert ctx.is_ready() is True
 
-    manager.allow_full_completion = True
-    await asyncio.wait_for(bootstrap_task, timeout=1.0)
+    bootstrap_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await bootstrap_task
 
+
+@pytest.mark.asyncio
+async def test_task_bootstrap_skips_durably_completed_files(
+    tmp_path: Path,
+    monkeypatch,
+):
+    file_one = tmp_path / "doc1.md"
+    file_two = tmp_path / "doc2.md"
+    file_one.write_text("# Doc 1")
+    file_two.write_text("# Doc 2")
+
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "documents_roots", [tmp_path])
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    manifest = IndexManifest(
+        spec_version=CURRENT_MANIFEST_SPEC_VERSION,
+        embedding_model="local",
+        chunking_config={},
+        indexed_files={"doc1": "doc1.md"},
+    )
+    _setattr(ctx, "current_manifest", manifest)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_freshness_lock", asyncio.Lock())
+    _setattr(ctx, "_loaded_index_state_version", 0.0)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_is_virgin_startup", False)
+    _setattr(
+        ctx,
+        "discover_files",
+        MagicMock(return_value=[str(file_one), str(file_two)]),
+    )
+
+    save_manifest(ctx.index_path, manifest)
+    doc_one_stat = file_one.stat()
+    doc_two_stat = file_two.stat()
+    save_bootstrap_checkpoint(
+        ctx.index_path,
+        BootstrapCheckpoint(
+            schema_version="1.0.0",
+            generation=compute_bootstrap_generation(
+                manifest,
+                {
+                    "doc1.md": BootstrapFileStamp(
+                        "doc1.md",
+                        mtime_ns=doc_one_stat.st_mtime_ns,
+                        size=doc_one_stat.st_size,
+                    ),
+                    "doc2.md": BootstrapFileStamp(
+                        "doc2.md",
+                        mtime_ns=doc_two_stat.st_mtime_ns,
+                        size=doc_two_stat.st_size,
+                    ),
+                },
+            ),
+            complete=False,
+            targets={
+                "doc1.md": BootstrapFileStamp(
+                    "doc1.md",
+                    mtime_ns=doc_one_stat.st_mtime_ns,
+                    size=doc_one_stat.st_size,
+                ),
+                "doc2.md": BootstrapFileStamp(
+                    "doc2.md",
+                    mtime_ns=doc_two_stat.st_mtime_ns,
+                    size=doc_two_stat.st_size,
+                ),
+            },
+            completed={
+                "doc1.md": BootstrapFileStamp(
+                    "doc1.md",
+                    mtime_ns=doc_one_stat.st_mtime_ns,
+                    size=doc_one_stat.st_size,
+                ),
+            },
+        ),
+    )
+
+    class BootstrapIndexManager:
+        def __init__(self) -> None:
+            self.load_calls = 0
+            self.vector = type(
+                "VectorStub",
+                (),
+                {
+                    "_concept_vocabulary": {"warm": 1},
+                    "model_ready": lambda self: False,
+                    "warm_up": lambda self: None,
+                },
+            )()
+
+        def load(self) -> None:
+            self.load_calls += 1
+
+        def persist(self) -> None:
+            return None
+
+        def get_document_count(self) -> int:
+            return 2
+
+        def is_ready(self) -> bool:
+            return self.load_calls >= 1
+
+    manager = BootstrapIndexManager()
+    _setattr(ctx, "index_manager", manager)
+    _setattr(ctx, "_compute_index_state_version", lambda: 1.0)
+
+    enqueued: list[str] = []
+
+    def fake_enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
+        enqueued.extend(file_paths)
+        updated_manifest = load_manifest(ctx.index_path)
+        assert updated_manifest is not None
+        updated_manifest.indexed_files = {
+            "doc1": "doc1.md",
+            "doc2": "doc2.md",
+        }
+        save_manifest(ctx.index_path, updated_manifest)
+        doc_two_current = file_two.stat()
+        save_bootstrap_checkpoint(
+            ctx.index_path,
+            BootstrapCheckpoint(
+                schema_version="1.0.0",
+                generation=load_bootstrap_checkpoint(ctx.index_path).generation,
+                complete=True,
+                targets={
+                    "doc1.md": BootstrapFileStamp(
+                        "doc1.md",
+                        mtime_ns=doc_one_stat.st_mtime_ns,
+                        size=doc_one_stat.st_size,
+                    ),
+                    "doc2.md": BootstrapFileStamp(
+                        "doc2.md",
+                        mtime_ns=doc_two_current.st_mtime_ns,
+                        size=doc_two_current.st_size,
+                    ),
+                },
+                completed={
+                    "doc1.md": BootstrapFileStamp(
+                        "doc1.md",
+                        mtime_ns=doc_one_stat.st_mtime_ns,
+                        size=doc_one_stat.st_size,
+                    ),
+                    "doc2.md": BootstrapFileStamp(
+                        "doc2.md",
+                        mtime_ns=doc_two_current.st_mtime_ns,
+                        size=doc_two_current.st_size,
+                    ),
+                },
+            ),
+        )
+        return len(file_paths)
+
+    monkeypatch.setattr(
+        "src.indexing.tasks.enqueue_index_batch",
+        fake_enqueue_index_batch,
+    )
+
+    await asyncio.wait_for(ctx._bootstrap_via_tasks(), timeout=1.0)
+
+    assert enqueued == [str(file_two)]
     assert ctx._index_state.status == "ready"
     assert ctx._index_state.indexed_count == 2
     assert ctx._index_state.total_count == 2
