@@ -227,6 +227,16 @@ def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
     return enqueued
 
 
+def get_pending_index_document_count(file_paths: list[str]) -> int:
+    """Count how many of the given file paths are already pending in Huey."""
+    if not file_paths:
+        return 0
+
+    pending_paths = _get_pending_index_document_paths()
+    unique_paths = set(file_paths)
+    return sum(1 for file_path in unique_paths if file_path in pending_paths)
+
+
 def enqueue_remove(doc_id: str) -> bool:
     """Enqueue a remove_document task. Returns True if enqueued, False if no Huey."""
     if remove_document_task is None or _huey is None:

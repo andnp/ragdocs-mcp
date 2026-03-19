@@ -666,6 +666,287 @@ async def test_start_uses_task_bootstrap_when_checkpoint_resume_is_pending(
 
 
 @pytest.mark.asyncio
+async def test_start_resume_bootstrap_loads_partial_indices_before_background_task(
+    tmp_path: Path,
+):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "reconciliation_task", None)
+    _setattr(ctx, "documents_roots", [tmp_path])
+    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "_background_index_task", None)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_loaded_index_state_version", 0.0)
+    _setattr(ctx, "_is_virgin_startup", False)
+    _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=False))
+
+    file_path = tmp_path / "doc.md"
+    file_path.write_text("# Doc")
+    later_file_path = tmp_path / "later.md"
+    later_file_path.write_text("# Later")
+    file_stat = file_path.stat()
+    later_file_stat = later_file_path.stat()
+    _setattr(
+        ctx,
+        "discover_files",
+        MagicMock(return_value=[str(file_path), str(later_file_path)]),
+    )
+
+    save_manifest(
+        ctx.index_path,
+        IndexManifest(
+            spec_version=CURRENT_MANIFEST_SPEC_VERSION,
+            embedding_model="local",
+            chunking_config={},
+            indexed_files={"doc": "doc.md"},
+        ),
+    )
+    save_bootstrap_checkpoint(
+        ctx.index_path,
+        BootstrapCheckpoint(
+            schema_version="1.0.0",
+            generation="resume-me",
+            complete=False,
+            targets={
+                "doc.md": BootstrapFileStamp(
+                    "doc.md",
+                    mtime_ns=file_stat.st_mtime_ns,
+                    size=file_stat.st_size,
+                ),
+                    "later.md": BootstrapFileStamp(
+                        "later.md",
+                        mtime_ns=later_file_stat.st_mtime_ns,
+                        size=later_file_stat.st_size,
+                    ),
+            },
+            completed={
+                "doc.md": BootstrapFileStamp(
+                    "doc.md",
+                    mtime_ns=file_stat.st_mtime_ns,
+                    size=file_stat.st_size,
+                )
+            },
+        ),
+    )
+
+    class ResumeIndexManager:
+        def __init__(self) -> None:
+            self.load_calls = 0
+            self.vector = type(
+                "VectorStub",
+                (),
+                {
+                    "_concept_vocabulary": {"warm": 1},
+                    "model_ready": lambda self: False,
+                    "warm_up": lambda self: None,
+                },
+            )()
+
+        def load(self) -> None:
+            self.load_calls += 1
+
+        def get_document_count(self) -> int:
+            return 1
+
+        def is_ready(self) -> bool:
+            return self.load_calls > 0
+
+    manager = ResumeIndexManager()
+    _setattr(ctx, "index_manager", manager)
+    _setattr(ctx, "_compute_index_state_version", lambda: 1.0)
+
+    bootstrap_started = asyncio.Event()
+    allow_bootstrap_to_finish = asyncio.Event()
+    scheduled_warmups: list[str] = []
+
+    async def fake_bootstrap_via_tasks() -> None:
+        bootstrap_started.set()
+        await allow_bootstrap_to_finish.wait()
+
+    def fake_schedule_embedding_model_warmup() -> bool:
+        scheduled_warmups.append("called")
+        return True
+
+    _setattr(ctx, "_bootstrap_via_tasks", fake_bootstrap_via_tasks)
+    _setattr(
+        ctx,
+        "schedule_embedding_model_warmup",
+        fake_schedule_embedding_model_warmup,
+    )
+
+    await asyncio.wait_for(ctx.start(background_index=True), timeout=1.0)
+    await asyncio.wait_for(bootstrap_started.wait(), timeout=1.0)
+
+    assert manager.load_calls == 1
+    assert ctx._ready_event.is_set()
+    assert ctx._index_state.status == "partial"
+    assert ctx._index_state.indexed_count == 1
+    assert ctx._index_state.total_count == 2
+    assert scheduled_warmups == ["called"]
+    assert ctx._background_index_task is not None
+    assert ctx._background_index_task.done() is False
+
+    allow_bootstrap_to_finish.set()
+    await asyncio.wait_for(ctx._background_index_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_start_rebuild_preloads_partial_indices_before_background_task(
+    tmp_path: Path,
+):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "reconciliation_task", None)
+    _setattr(ctx, "documents_roots", [tmp_path])
+    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "_background_index_task", None)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_loaded_index_state_version", 0.0)
+    _setattr(ctx, "_is_virgin_startup", False)
+    _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=True))
+
+    file_one = tmp_path / "doc1.md"
+    file_two = tmp_path / "doc2.md"
+    file_one.write_text("# Doc 1")
+    file_two.write_text("# Doc 2")
+    files = [str(file_one), str(file_two)]
+    _setattr(ctx, "discover_files", MagicMock(return_value=files))
+
+    save_manifest(
+        ctx.index_path,
+        IndexManifest(
+            spec_version=CURRENT_MANIFEST_SPEC_VERSION,
+            embedding_model="local",
+            chunking_config={},
+            indexed_files={"doc1": "doc1.md"},
+        ),
+    )
+
+    class RebuildIndexManager:
+        def __init__(self) -> None:
+            self.load_calls = 0
+            self.vector = type(
+                "VectorStub",
+                (),
+                {
+                    "_concept_vocabulary": {"warm": 1},
+                    "model_ready": lambda self: False,
+                    "warm_up": lambda self: None,
+                },
+            )()
+
+        def load(self) -> None:
+            self.load_calls += 1
+
+        def get_document_count(self) -> int:
+            return 1
+
+        def is_ready(self) -> bool:
+            return self.load_calls > 0
+
+    manager = RebuildIndexManager()
+    _setattr(ctx, "index_manager", manager)
+    _setattr(ctx, "_compute_index_state_version", lambda: 1.0)
+
+    bootstrap_started = asyncio.Event()
+    allow_bootstrap_to_finish = asyncio.Event()
+    scheduled_warmups: list[str] = []
+
+    async def fake_bootstrap_via_tasks() -> None:
+        bootstrap_started.set()
+        await allow_bootstrap_to_finish.wait()
+
+    def fake_schedule_embedding_model_warmup() -> bool:
+        scheduled_warmups.append("called")
+        return True
+
+    _setattr(ctx, "_bootstrap_via_tasks", fake_bootstrap_via_tasks)
+    _setattr(
+        ctx,
+        "schedule_embedding_model_warmup",
+        fake_schedule_embedding_model_warmup,
+    )
+
+    await asyncio.wait_for(ctx.start(background_index=True), timeout=1.0)
+    await asyncio.wait_for(bootstrap_started.wait(), timeout=1.0)
+
+    assert manager.load_calls == 1
+    assert ctx._ready_event.is_set()
+    assert ctx._index_state.status == "partial"
+    assert ctx._index_state.indexed_count == 1
+    assert ctx._index_state.total_count == 2
+    assert scheduled_warmups == ["called"]
+    assert ctx._background_index_task is not None
+    assert ctx._background_index_task.done() is False
+
+    allow_bootstrap_to_finish.set()
+    await asyncio.wait_for(ctx._background_index_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_build_preloaded_bootstrap_index_state_marks_complete_rebuild_as_indexing(
+    tmp_path: Path,
+):
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "documents_roots", [tmp_path])
+
+    file_path = tmp_path / "doc.md"
+    file_path.write_text("# Doc")
+    file_stat = file_path.stat()
+
+    class PreloadedIndexManager:
+        def get_document_count(self) -> int:
+            return 1
+
+    _setattr(ctx, "index_manager", PreloadedIndexManager())
+
+    target_stamps = {
+        "doc.md": BootstrapFileStamp(
+            "doc.md",
+            mtime_ns=file_stat.st_mtime_ns,
+            size=file_stat.st_size,
+        )
+    }
+    saved_manifest = IndexManifest(
+        spec_version=CURRENT_MANIFEST_SPEC_VERSION,
+        embedding_model="local",
+        chunking_config={},
+        indexed_files={"doc": "doc.md"},
+    )
+
+    preloaded_state = ctx._build_preloaded_bootstrap_index_state(
+        checkpoint=None,
+        saved_manifest=saved_manifest,
+        target_stamps=target_stamps,
+        rebuild_pending=True,
+    )
+
+    assert preloaded_state == IndexState(
+        status="indexing",
+        indexed_count=1,
+        total_count=1,
+    )
+
+
+@pytest.mark.asyncio
 async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
     tmp_path: Path,
     monkeypatch,
@@ -803,6 +1084,105 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
     assert ctx._index_state.indexed_count == 1
     assert ctx._index_state.total_count == 2
     assert ctx.is_ready() is True
+
+    bootstrap_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await bootstrap_task
+
+
+@pytest.mark.asyncio
+async def test_task_bootstrap_keeps_monitoring_when_remaining_work_is_already_pending(
+    tmp_path: Path,
+    monkeypatch,
+):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "documents_roots", [tmp_path])
+    _setattr(
+        ctx,
+        "current_manifest",
+        IndexManifest(
+            spec_version=CURRENT_MANIFEST_SPEC_VERSION,
+            embedding_model="local",
+            chunking_config={},
+            indexed_files={},
+        ),
+    )
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_freshness_lock", asyncio.Lock())
+    _setattr(ctx, "_loaded_index_state_version", 0.0)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_is_virgin_startup", True)
+
+    (tmp_path / "doc1.md").write_text("# Doc 1")
+    (tmp_path / "doc2.md").write_text("# Doc 2")
+    files = [str(tmp_path / "doc1.md"), str(tmp_path / "doc2.md")]
+    _setattr(ctx, "discover_files", MagicMock(return_value=files))
+
+    class PendingOnlyIndexManager:
+        def __init__(self) -> None:
+            self.vector = type(
+                "VectorStub",
+                (),
+                {
+                    "_concept_vocabulary": {"warm": 1},
+                    "model_ready": lambda self: False,
+                    "warm_up": lambda self: None,
+                },
+            )()
+
+        def persist(self) -> None:
+            return None
+
+        def load(self) -> None:
+            return None
+
+        def get_document_count(self) -> int:
+            return 0
+
+        def is_ready(self) -> bool:
+            return False
+
+    _setattr(ctx, "index_manager", PendingOnlyIndexManager())
+    _setattr(ctx, "_compute_index_state_version", lambda: 0.0)
+
+    enqueue_checked = asyncio.Event()
+
+    monkeypatch.setattr(
+        "src.indexing.tasks.enqueue_index_batch",
+        lambda file_paths, force=False: enqueue_checked.set() or 0,
+    )
+    monkeypatch.setattr(
+        "src.indexing.tasks.is_task_queue_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "src.indexing.tasks.get_pending_index_document_count",
+        lambda file_paths: len(set(file_paths)),
+    )
+
+    original_sleep = asyncio.sleep
+
+    async def fast_sleep(delay: float) -> None:
+        await original_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+    bootstrap_task = asyncio.create_task(ctx._bootstrap_via_tasks())
+    await asyncio.wait_for(enqueue_checked.wait(), timeout=1.0)
+
+    assert ctx._index_state.status == "indexing"
+    assert ctx._index_state.last_error is None
+    assert ctx._init_error is None
+    assert ctx._ready_event.is_set() is False
 
     bootstrap_task.cancel()
     with pytest.raises(asyncio.CancelledError):

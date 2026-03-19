@@ -403,6 +403,83 @@ class ApplicationContext:
             total_count=total_count,
         )
 
+    def _build_preloaded_bootstrap_index_state(
+        self,
+        checkpoint: BootstrapCheckpoint | None,
+        saved_manifest: IndexManifest | None,
+        target_stamps: dict[str, BootstrapFileStamp],
+        *,
+        rebuild_pending: bool,
+    ) -> IndexState | None:
+        total_count = len(target_stamps)
+        completed_paths = self._compute_bootstrap_completed_paths(
+            checkpoint,
+            saved_manifest,
+            target_stamps,
+        )
+        indexed_count = max(
+            self.index_manager.get_document_count(),
+            len(completed_paths),
+        )
+        if total_count > 0:
+            indexed_count = min(indexed_count, total_count)
+
+        if indexed_count == 0 and total_count > 0:
+            return None
+
+        if total_count == 0:
+            status: Literal["partial", "indexing", "ready"] = "ready"
+        elif indexed_count < total_count:
+            status = "partial"
+        elif rebuild_pending:
+            status = "indexing"
+        else:
+            status = "ready"
+
+        return IndexState(
+            status=status,
+            indexed_count=indexed_count,
+            total_count=total_count,
+        )
+
+    async def _preload_existing_indices_for_background_bootstrap(
+        self,
+        *,
+        rebuild_pending: bool,
+    ) -> bool:
+        try:
+            await asyncio.to_thread(self.index_manager.load)
+        except Exception:
+            logger.warning(
+                "Failed to load persisted indices before background startup bootstrap",
+                exc_info=True,
+            )
+            return False
+
+        self._mark_index_state_loaded()
+        files_to_index = await asyncio.to_thread(self.discover_files)
+        target_stamps = await asyncio.to_thread(
+            build_file_stamps,
+            files_to_index,
+            self.documents_roots,
+        )
+        checkpoint = await asyncio.to_thread(load_bootstrap_checkpoint, self.index_path)
+        saved_manifest = await asyncio.to_thread(load_manifest, self.index_path)
+
+        preloaded_state = self._build_preloaded_bootstrap_index_state(
+            checkpoint,
+            saved_manifest,
+            target_stamps,
+            rebuild_pending=rebuild_pending,
+        )
+        if preloaded_state is None:
+            return False
+
+        self._index_state = preloaded_state
+        self._ready_event.set()
+        self.schedule_embedding_model_warmup()
+        return True
+
     async def _enqueue_initial_git_refresh_tasks(self) -> None:
         if self.commit_indexer is None:
             return
@@ -422,7 +499,11 @@ class ApplicationContext:
         )
 
     async def _bootstrap_via_tasks(self) -> None:
-        from src.indexing.tasks import enqueue_index_batch
+        from src.indexing.tasks import (
+            enqueue_index_batch,
+            get_pending_index_document_count,
+            is_task_queue_available,
+        )
 
         files_to_index = await asyncio.to_thread(self.discover_files)
         target_stamps = await asyncio.to_thread(
@@ -451,7 +532,7 @@ class ApplicationContext:
         ]
         self._index_state = IndexState(
             status="indexing",
-            indexed_count=len(completed_paths),
+            indexed_count=max(self._index_state.indexed_count, len(completed_paths)),
             total_count=len(files_to_index),
         )
 
@@ -495,15 +576,25 @@ class ApplicationContext:
         )
 
         if enqueued == 0:
-            self._index_state = IndexState(
-                status="failed",
-                indexed_count=len(completed_paths),
-                total_count=len(files_to_index),
-                last_error="Task queue unavailable during startup bootstrap",
-            )
-            self._init_error = RuntimeError(self._index_state.last_error)
-            self._ready_event.set()
-            return
+            pending_remaining = 0
+            if is_task_queue_available():
+                pending_remaining = get_pending_index_document_count(remaining_files)
+
+            if pending_remaining >= len(remaining_files):
+                logger.info(
+                    "Startup bootstrap found %d remaining document(s) already pending in queue; continuing to monitor persisted progress",
+                    pending_remaining,
+                )
+            else:
+                self._index_state = IndexState(
+                    status="failed",
+                    indexed_count=len(completed_paths),
+                    total_count=len(files_to_index),
+                    last_error="Task queue unavailable during startup bootstrap",
+                )
+                self._init_error = RuntimeError(self._index_state.last_error)
+                self._ready_event.set()
+                return
 
         while True:
             current_version = await asyncio.to_thread(self._compute_index_state_version)
@@ -563,6 +654,9 @@ class ApplicationContext:
                 logger.info("Index rebuild required - indexing all documents")
             if background_index:
                 if self.use_tasks:
+                    await self._preload_existing_indices_for_background_bootstrap(
+                        rebuild_pending=needs_rebuild,
+                    )
                     startup_git_refresh_enqueued = self.commit_indexer is not None
                     self._background_index_task = asyncio.create_task(
                         self._bootstrap_via_tasks()

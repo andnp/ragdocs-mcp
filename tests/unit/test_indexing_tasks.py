@@ -20,6 +20,7 @@ from src.indexing.tasks import (
     enqueue_index_batch,
     enqueue_refresh_git,
     enqueue_refresh_git_batch,
+    get_pending_index_document_count,
     enqueue_remove,
     register_tasks,
 )
@@ -164,6 +165,24 @@ class TestTaskRegistration:
 
         assert first_task.args == ("/some/file.md",)
         assert second_task.args == ("/some/other.md",)
+
+    def test_get_pending_index_document_count_counts_matching_pending_paths(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        assert enqueue_index("/some/file.md") is True
+        assert enqueue_index("/some/other.md") is True
+
+        pending = get_pending_index_document_count(
+            [
+                "/some/file.md",
+                "/some/file.md",
+                "/some/missing.md",
+            ]
+        )
+
+        assert pending == 1
 
     def test_startup_batch_deduplicates_duplicate_paths_within_batch(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
