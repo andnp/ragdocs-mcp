@@ -235,6 +235,10 @@ def test_daemon_start_invokes_management_helper(monkeypatch):
         observed["timeout_seconds"] = timeout_seconds
         return DaemonMetadata(pid=99, started_at=1.0, status="ready")
 
+    monkeypatch.setattr(
+        "src.cli._ignore_daemon_startup_project_option",
+        lambda project: observed.setdefault("ignored_project", project),
+    )
     monkeypatch.setattr("src.cli.start_daemon", _fake_start_daemon)
 
     result = runner.invoke(
@@ -243,8 +247,46 @@ def test_daemon_start_invokes_management_helper(monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert observed == {"timeout_seconds": 3.5}
+    assert observed == {"ignored_project": "docs", "timeout_seconds": 3.5}
     assert "Daemon running (pid=99, status=ready)" in result.output
+
+
+def test_daemon_run_accepts_but_ignores_project_option(monkeypatch):
+    runner = CliRunner()
+    observed: dict[str, object] = {}
+
+    async def _fake_run_daemon_forever():
+        observed["ran"] = True
+
+    monkeypatch.setattr(
+        "src.cli._ignore_daemon_startup_project_option",
+        lambda project: observed.setdefault("ignored_project", project),
+    )
+    monkeypatch.setattr("src.cli._run_daemon_forever", _fake_run_daemon_forever)
+
+    result = runner.invoke(cli, ["daemon", "run", "--project", "docs"])
+
+    assert result.exit_code == 0
+    assert observed == {"ignored_project": "docs", "ran": True}
+
+
+def test_daemon_internal_run_accepts_but_ignores_project_option(monkeypatch):
+    runner = CliRunner()
+    observed: dict[str, object] = {}
+
+    async def _fake_run_daemon_forever():
+        observed["ran"] = True
+
+    monkeypatch.setattr(
+        "src.cli._ignore_daemon_startup_project_option",
+        lambda project: observed.setdefault("ignored_project", project),
+    )
+    monkeypatch.setattr("src.cli._run_daemon_forever", _fake_run_daemon_forever)
+
+    result = runner.invoke(cli, ["daemon-internal-run", "--project", "docs"])
+
+    assert result.exit_code == 0
+    assert observed == {"ignored_project": "docs", "ran": True}
 
 
 @pytest.mark.asyncio
@@ -310,12 +352,12 @@ async def test_run_daemon_forever_releases_boot_lock_after_startup(
     monkeypatch.setattr("src.cli.LifecycleCoordinator", lambda: fake_coordinator)
     monkeypatch.setattr(
         "src.cli._create_daemon_runtime",
-        lambda project, paths: (_FakeContext(), _FakeWorker()),
+        lambda paths: (_FakeContext(), _FakeWorker()),
     )
 
     from src.cli import _run_daemon_forever
 
-    await _run_daemon_forever(None)
+    await _run_daemon_forever()
 
     assert fake_lock.release_calls == 1
 
@@ -468,6 +510,10 @@ def test_daemon_restart_invokes_management_helper(monkeypatch):
         observed["stop_timeout_seconds"] = stop_timeout_seconds
         return DaemonMetadata(pid=123, started_at=1.0, status="ready")
 
+    monkeypatch.setattr(
+        "src.cli._ignore_daemon_startup_project_option",
+        lambda project: observed.setdefault("ignored_project", project),
+    )
     monkeypatch.setattr("src.cli.restart_daemon", _fake_restart_daemon)
 
     result = runner.invoke(
@@ -477,13 +523,17 @@ def test_daemon_restart_invokes_management_helper(monkeypatch):
 
     assert result.exit_code == 0
     assert observed == {
+        "ignored_project": "notes",
         "start_timeout_seconds": 4.0,
         "stop_timeout_seconds": 5.0,
     }
     assert "Daemon restarted (pid=123, status=ready)" in result.output
 
 
-def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
+def test_create_daemon_runtime_builds_global_runtime_without_project_context(
+    monkeypatch,
+    tmp_path,
+):
     observed: dict[str, object] = {}
 
     class _FakeIndexManager:
@@ -548,11 +598,10 @@ def test_create_daemon_runtime_enables_task_mode(monkeypatch, tmp_path):
 
     from src.cli import _create_daemon_runtime
 
-    ctx, worker = _create_daemon_runtime("docs", runtime_paths)
+    ctx, worker = _create_daemon_runtime(runtime_paths)
 
     assert ctx is fake_ctx
     assert observed["create_kwargs"] == {
-        "project_override": "docs",
         "enable_watcher": False,
         "lazy_embeddings": True,
         "use_tasks": True,

@@ -72,6 +72,10 @@ logger = logging.getLogger(__name__)
 MIN_TOP_N = 1
 MAX_TOP_N = 100
 _DAEMON_OVERVIEW_TIMEOUT_SECONDS = 1.0
+_GLOBAL_DAEMON_PROJECT_OPTION_HELP = (
+    "Accepted for backward compatibility but ignored; daemon runtime is global "
+    "and project is request metadata only."
+)
 
 
 def _create_query_context(project: str | None) -> ApplicationContext:
@@ -81,6 +85,12 @@ def _create_query_context(project: str | None) -> ApplicationContext:
         enable_watcher=False,
         lazy_embeddings=False,
     )
+
+
+def _ignore_daemon_startup_project_option(project: str | None) -> None:
+    """Keep legacy daemon --project options as explicit no-ops."""
+
+    _ = project
 
 
 def _should_include_file(
@@ -94,9 +104,8 @@ def _should_include_file(
     )
 
 
-def _create_daemon_runtime(project: str | None, runtime_paths: RuntimePaths):
+def _create_daemon_runtime(runtime_paths: RuntimePaths):
     ctx = ApplicationContext.create(
-        project_override=project,
         enable_watcher=False,
         lazy_embeddings=True,
         use_tasks=True,
@@ -537,7 +546,7 @@ def mcp(project: str | None):
         sys.exit(1)
 
 
-async def _run_daemon_forever(project: str | None) -> None:
+async def _run_daemon_forever() -> None:
     lock = await asyncio.to_thread(acquire_boot_lock, timeout_seconds=5.0)
     lock_released = False
     runtime_paths = RuntimePaths.resolve()
@@ -710,7 +719,6 @@ async def _run_daemon_forever(project: str | None) -> None:
 
     ctx, huey_worker = await asyncio.to_thread(
         _create_daemon_runtime,
-        project,
         runtime_paths,
     )
 
@@ -750,12 +758,15 @@ def queue_group():
 
 @daemon_group.command("run")
 @click.option(
-    "--project", default=None, help="Override project detection (name or path)"
+    "--project",
+    default=None,
+    help=_GLOBAL_DAEMON_PROJECT_OPTION_HELP,
 )
 def daemon_run(project: str | None):
     """Run the daemon in the foreground."""
     try:
-        asyncio.run(_run_daemon_forever(project))
+        _ignore_daemon_startup_project_option(project)
+        asyncio.run(_run_daemon_forever())
     except KeyboardInterrupt:
         pass
     except Exception as e:
@@ -766,16 +777,21 @@ def daemon_run(project: str | None):
 
 @cli.command("daemon-internal-run", hidden=True)
 @click.option(
-    "--project", default=None, help="Override project detection (name or path)"
+    "--project",
+    default=None,
+    help=_GLOBAL_DAEMON_PROJECT_OPTION_HELP,
 )
 def daemon_internal_run(project: str | None):
     """Run the daemon in the foreground for internal start/restart flows."""
-    daemon_run.callback(project)
+    _ignore_daemon_startup_project_option(project)
+    daemon_run.callback(None)
 
 
 @daemon_group.command("start")
 @click.option(
-    "--project", default=None, help="Override project detection (name or path)"
+    "--project",
+    default=None,
+    help=_GLOBAL_DAEMON_PROJECT_OPTION_HELP,
 )
 @click.option(
     "--timeout",
@@ -787,6 +803,7 @@ def daemon_internal_run(project: str | None):
 def daemon_start(project: str | None, timeout: float):
     """Start the daemon in the background."""
     try:
+        _ignore_daemon_startup_project_option(project)
         metadata = start_daemon(
             timeout_seconds=timeout,
         )
@@ -932,7 +949,9 @@ def daemon_stop(timeout: float):
 
 @daemon_group.command("restart")
 @click.option(
-    "--project", default=None, help="Override project detection (name or path)"
+    "--project",
+    default=None,
+    help=_GLOBAL_DAEMON_PROJECT_OPTION_HELP,
 )
 @click.option(
     "--timeout",
@@ -944,6 +963,7 @@ def daemon_stop(timeout: float):
 def daemon_restart(project: str | None, timeout: float):
     """Restart the daemon."""
     try:
+        _ignore_daemon_startup_project_option(project)
         metadata = restart_daemon(
             start_timeout_seconds=timeout,
         )
