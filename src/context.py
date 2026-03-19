@@ -62,6 +62,7 @@ class ApplicationContext:
     config: Config
     index_manager: IndexManager
     orchestrator: SearchOrchestrator
+    use_tasks: bool = False
     watcher: FileWatcher | None = None
     commit_indexer: CommitIndexer | None = None
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
@@ -198,6 +199,7 @@ class ApplicationContext:
             config=config,
             index_manager=manager,
             orchestrator=orchestrator,
+            use_tasks=use_tasks,
             watcher=watcher,
             commit_indexer=commit_indexer,
             index_path=index_path,
@@ -321,15 +323,112 @@ class ApplicationContext:
     def _mark_index_state_loaded(self) -> None:
         self._loaded_index_state_version = self._compute_index_state_version()
 
+    def _refresh_index_state_from_loaded_indices(self) -> None:
+        indexed_count = self.index_manager.get_document_count()
+        total_count = self._index_state.total_count
+        status = "ready"
+        if total_count > 0 and indexed_count < total_count:
+            status = "partial"
+        self._index_state = IndexState(
+            status=status,
+            indexed_count=indexed_count,
+            total_count=total_count,
+        )
+
+    async def _enqueue_initial_git_refresh_tasks(self) -> None:
+        if self.commit_indexer is None:
+            return
+
+        from src.indexing.tasks import enqueue_refresh_git_batch
+
+        repos = await asyncio.to_thread(self.discover_git_repositories)
+        if not repos:
+            logger.info("No git repositories found for task-driven startup refresh")
+            return
+
+        enqueued = enqueue_refresh_git_batch([str(repo) for repo in repos])
+        logger.info(
+            "Enqueued %d startup git refresh task(s) for %d repositories",
+            enqueued,
+            len(repos),
+        )
+
+    async def _bootstrap_via_tasks(self) -> None:
+        from src.indexing.tasks import enqueue_index_batch
+
+        files_to_index = await asyncio.to_thread(self.discover_files)
+        self._index_state = IndexState(
+            status="indexing",
+            indexed_count=0,
+            total_count=len(files_to_index),
+        )
+
+        if self.commit_indexer is not None:
+            await self._enqueue_initial_git_refresh_tasks()
+
+        if not files_to_index:
+            await asyncio.to_thread(self.index_manager.persist)
+            self._mark_index_state_loaded()
+            self._refresh_index_state_from_loaded_indices()
+            self._ready_event.set()
+            return
+
+        enqueued = enqueue_index_batch(files_to_index)
+        logger.info(
+            "Enqueued %d startup indexing task(s) for %d discovered documents",
+            enqueued,
+            len(files_to_index),
+        )
+
+        if enqueued == 0:
+            self._index_state = IndexState(
+                status="failed",
+                indexed_count=0,
+                total_count=len(files_to_index),
+                last_error="Task queue unavailable during startup bootstrap",
+            )
+            self._init_error = RuntimeError(self._index_state.last_error)
+            self._ready_event.set()
+            return
+
+        while True:
+            current_version = await asyncio.to_thread(self._compute_index_state_version)
+            if current_version > self._loaded_index_state_version:
+                try:
+                    await asyncio.to_thread(self.index_manager.load)
+                except Exception:
+                    logger.debug(
+                        "Startup bootstrap monitor could not load persisted state yet",
+                        exc_info=True,
+                    )
+                else:
+                    self._loaded_index_state_version = current_version
+                    self._refresh_index_state_from_loaded_indices()
+                    if self.index_manager.is_ready() and not self._ready_event.is_set():
+                        self._ready_event.set()
+                    if self._index_state.indexed_count >= self._index_state.total_count:
+                        if not self.index_manager.vector._concept_vocabulary:
+                            asyncio.create_task(self._build_initial_vocabulary())
+                        return
+
+            await asyncio.sleep(0.2)
+
     async def start(self, background_index: bool = False) -> None:
         needs_rebuild = await asyncio.to_thread(self._check_and_rebuild_if_needed)
+        startup_git_refresh_enqueued = False
 
         if needs_rebuild:
             logger.info("Index rebuild required - indexing all documents")
             if background_index:
-                self._background_index_task = asyncio.create_task(
-                    self._background_index()
-                )
+                if self.use_tasks:
+                    startup_git_refresh_enqueued = self.commit_indexer is not None
+                    self._background_index_task = asyncio.create_task(
+                        self._bootstrap_via_tasks()
+                    )
+                else:
+                    self._background_index_task = asyncio.create_task(
+                        self._background_index()
+                    )
             else:
                 self._full_index()
                 self._mark_index_state_loaded()
@@ -360,7 +459,11 @@ class ApplicationContext:
         # Index git commits after document indexing
         if self.commit_indexer is not None:
             if background_index:
-                asyncio.create_task(self._index_git_commits_initial_with_timeout())
+                if self.use_tasks:
+                    if not startup_git_refresh_enqueued:
+                        asyncio.create_task(self._enqueue_initial_git_refresh_tasks())
+                else:
+                    asyncio.create_task(self._index_git_commits_initial_with_timeout())
             else:
                 self._index_git_commits_initial_sync()
 
@@ -689,6 +792,7 @@ class ApplicationContext:
 
             await asyncio.to_thread(self.index_manager.load)
             self._loaded_index_state_version = current_version
+            self._refresh_index_state_from_loaded_indices()
 
     async def stop(self) -> None:
         logger.info("Stopping ApplicationContext")

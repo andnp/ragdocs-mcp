@@ -142,6 +142,22 @@ def enqueue_index(file_path: str, force: bool = False) -> bool:
     return True
 
 
+def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
+    """Enqueue many index tasks without watcher backpressure throttling.
+
+    Intended for cold-start/bootstrap flows where the full corpus needs to be
+    materialized durably by the worker.
+    """
+    if index_document_task is None or _huey is None:
+        return 0
+
+    enqueued = 0
+    for file_path in file_paths:
+        index_document_task(file_path, force=force)
+        enqueued += 1
+    return enqueued
+
+
 def enqueue_remove(doc_id: str) -> bool:
     """Enqueue a remove_document task. Returns True if enqueued, False if no Huey."""
     if remove_document_task is None or _huey is None:
@@ -172,6 +188,18 @@ def enqueue_refresh_git(git_dir: str) -> bool:
         return False
     refresh_git_repository_task(git_dir)
     return True
+
+
+def enqueue_refresh_git_batch(git_dirs: list[str]) -> int:
+    """Enqueue many git refresh tasks without watcher backpressure throttling."""
+    if refresh_git_repository_task is None or _huey is None:
+        return 0
+
+    enqueued = 0
+    for git_dir in git_dirs:
+        refresh_git_repository_task(git_dir)
+        enqueued += 1
+    return enqueued
 
 
 def get_pending_task_count() -> int:

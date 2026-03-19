@@ -265,6 +265,7 @@ async def test_ensure_fresh_indices_reloads_when_store_version_advances(tmp_path
     _setattr(ctx, "_init_error", None)
     _setattr(ctx, "_freshness_lock", asyncio.Lock())
     _setattr(ctx, "_loaded_index_state_version", 1.0)
+    _setattr(ctx, "_index_state", IndexState(status="ready"))
     _setattr(ctx, "_is_virgin_startup", False)
 
     class _Manager:
@@ -274,6 +275,9 @@ async def test_ensure_fresh_indices_reloads_when_store_version_advances(tmp_path
         def load(self):
             self.load_calls += 1
 
+        def get_document_count(self) -> int:
+            return 0
+
     manager = _Manager()
     _setattr(ctx, "index_manager", manager)
     _setattr(ctx, "_compute_index_state_version", lambda: 2.0)
@@ -282,6 +286,134 @@ async def test_ensure_fresh_indices_reloads_when_store_version_advances(tmp_path
 
     assert manager.load_calls == 1
     assert ctx._loaded_index_state_version == 2.0
+
+
+@pytest.mark.asyncio
+async def test_start_uses_task_bootstrap_for_virgin_background_start(tmp_path: Path):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "reconciliation_task", None)
+    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "index_manager", MockIndexManager())
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=True))
+
+    bootstrap_calls: list[str] = []
+
+    async def fake_bootstrap_via_tasks() -> None:
+        bootstrap_calls.append("called")
+
+    async def fail_if_called() -> None:
+        raise AssertionError("main-process _background_index should not run")
+
+    _setattr(ctx, "_bootstrap_via_tasks", fake_bootstrap_via_tasks)
+    _setattr(ctx, "_background_index", fail_if_called)
+
+    await ctx.start(background_index=True)
+    await asyncio.wait_for(ctx._background_index_task, timeout=1.0)
+
+    assert bootstrap_calls == ["called"]
+
+
+@pytest.mark.asyncio
+async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
+    tmp_path: Path,
+    monkeypatch,
+):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_freshness_lock", asyncio.Lock())
+    _setattr(ctx, "_loaded_index_state_version", 0.0)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_is_virgin_startup", True)
+
+    files = [str(tmp_path / "doc1.md"), str(tmp_path / "doc2.md")]
+    _setattr(ctx, "discover_files", MagicMock(return_value=files))
+
+    class BootstrapIndexManager:
+        def __init__(self) -> None:
+            self.load_calls = 0
+            self.allow_full_completion = False
+            self.vector = type(
+                "VectorStub",
+                (),
+                {"_concept_vocabulary": {"warm": 1}},
+            )()
+
+        def persist(self) -> None:
+            return None
+
+        def load(self) -> None:
+            self.load_calls += 1
+
+        def get_document_count(self) -> int:
+            return 1 if self.load_calls == 1 else 2
+
+        def is_ready(self) -> bool:
+            return self.load_calls >= 1
+
+    manager = BootstrapIndexManager()
+    _setattr(ctx, "index_manager", manager)
+
+    def compute_version() -> float:
+        if manager.load_calls == 0:
+            return 1.0
+        if manager.allow_full_completion:
+            return 2.0
+        return 1.0
+
+    _setattr(ctx, "_compute_index_state_version", compute_version)
+
+    enqueued: list[str] = []
+
+    def fake_enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
+        assert force is False
+        enqueued.extend(file_paths)
+        return len(file_paths)
+
+    monkeypatch.setattr(
+        "src.indexing.tasks.enqueue_index_batch",
+        fake_enqueue_index_batch,
+    )
+
+    original_sleep = asyncio.sleep
+
+    async def fast_sleep(delay: float) -> None:
+        await original_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+    bootstrap_task = asyncio.create_task(ctx._bootstrap_via_tasks())
+
+    await asyncio.wait_for(ctx._ready_event.wait(), timeout=1.0)
+
+    assert enqueued == files
+    assert ctx._index_state.status == "partial"
+    assert ctx._index_state.indexed_count == 1
+    assert ctx._index_state.total_count == 2
+    assert ctx.is_ready() is True
+
+    manager.allow_full_completion = True
+    await asyncio.wait_for(bootstrap_task, timeout=1.0)
+
+    assert ctx._index_state.status == "ready"
+    assert ctx._index_state.indexed_count == 2
+    assert ctx._index_state.total_count == 2
 
     @pytest.mark.asyncio
     async def test_state_transitions_during_indexing(
