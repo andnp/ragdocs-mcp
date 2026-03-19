@@ -401,19 +401,12 @@ def detect_project(
 
         project_path = Path(project_override).expanduser().resolve()
         if project_path.exists():
-            logger.info(f"Using arbitrary path from --project flag: {project_path}")
-
-            existing_names = [p.name for p in (projects or [])]
-            project_name = _generate_unique_project_name(
-                project_path.name, existing_names
+            logger.info(
+                f"Using transient path from --project flag without persisting: {project_path}"
             )
 
-            try:
-                persist_project_to_config(project_name, str(project_path))
-            except Exception as e:
-                logger.warning(f"Failed to persist project to config: {e}")
-
-            return project_name
+            existing_names = [p.name for p in (projects or [])]
+            return _generate_unique_project_name(project_path.name, existing_names)
 
         logger.warning(
             f"Project override '{project_override}' not found in registry and is not a valid path"
@@ -463,23 +456,6 @@ def detect_project(
             continue
 
     logger.debug(f"No project match for CWD: {cwd_resolved}")
-
-    if cwd_resolved.exists():
-        logger.info(f"Auto-registering CWD as new project: {cwd_resolved}")
-
-        existing_names = [p.name for p in projects]
-        project_name = _generate_unique_project_name(cwd_resolved.name, existing_names)
-
-        try:
-            persist_project_to_config(project_name, str(cwd_resolved))
-            logger.info(
-                f"Successfully persisted CWD project '{project_name}': {cwd_resolved}"
-            )
-            return project_name
-        except Exception as e:
-            logger.warning(f"Failed to persist CWD project to config: {e}")
-            return None
-
     return None
 
 
