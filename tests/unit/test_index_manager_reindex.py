@@ -64,3 +64,41 @@ def test_reindex_document_missing_file_returns_false(manager):
     reindexed = manager.reindex_document("missing_doc", reason="test")
 
     assert reindexed is False
+
+
+class _ReadyVectorStub:
+    def __init__(self, *, index_loaded: bool, model_loaded: bool):
+        self._index_loaded = index_loaded
+        self._model_loaded = model_loaded
+
+    def is_ready(self) -> bool:
+        return self._index_loaded
+
+    def model_ready(self) -> bool:
+        return self._model_loaded
+
+
+def test_is_ready_returns_true_for_loaded_index_without_model_prewarm(manager):
+    """
+    Verify a loaded persisted index is queryable before embedding warm-up.
+
+    Ensures:
+    - readiness depends on loaded index state
+    - lazy embedding model initialization does not block queries
+    """
+    manager.vector = _ReadyVectorStub(index_loaded=True, model_loaded=False)
+
+    assert manager.is_ready() is True
+
+
+def test_is_ready_returns_false_when_no_index_is_loaded(manager):
+    """
+    Verify readiness stays false when no persisted index snapshot is loaded.
+
+    Ensures:
+    - true cold starts remain blocked
+    - model readiness alone cannot make the manager queryable
+    """
+    manager.vector = _ReadyVectorStub(index_loaded=False, model_loaded=True)
+
+    assert manager.is_ready() is False

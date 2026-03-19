@@ -660,8 +660,15 @@ class IndexManager:
         return len(self.vector.get_document_ids())
 
     def is_ready(self) -> bool:
-        """Check if all indices are loaded and ready for queries."""
-        return self.vector.is_ready() and self.vector.model_ready()
+        """Check if persisted search indices are loaded and queryable.
+
+        A loaded vector index is enough to answer queries: semantic search can
+        lazy-load embeddings on demand, and keyword/graph results are already
+        queryable once the persisted snapshot is in memory. Requiring the
+        embedding model to be pre-warmed incorrectly blocks queries during
+        background indexing even when useful persisted results are available.
+        """
+        return self.vector.is_ready()
 
     def get_failed_files(self) -> list[dict[str, str]]:
         return [
