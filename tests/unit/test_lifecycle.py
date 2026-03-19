@@ -411,3 +411,100 @@ class TestLeaderFailover:
 
         await replica.shutdown()
         await primary.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_initializing_replica_acquires_leadership_and_stays_initializing(
+        self,
+        db: DatabaseManager,
+    ) -> None:
+        primary = _make_coordinator()
+        primary._leader_monitor_interval = 0.01
+        await primary.start(_fake_ctx(), db_manager=db)
+        assert primary.state == LifecycleState.READY_PRIMARY
+
+        class _BlockingReadyContext(FakeContext):
+            def __init__(self) -> None:
+                super().__init__()
+                self.ready_event = asyncio.Event()
+
+            async def ensure_ready(self, timeout: float = 60.0) -> None:
+                if timeout < 60.0:
+                    await asyncio.wait_for(self.ready_event.wait(), timeout=timeout)
+                    return
+                await self.ready_event.wait()
+
+        replica = _make_coordinator()
+        replica._leader_monitor_interval = 0.01
+
+        class _FakeWorker:
+            def __init__(self) -> None:
+                self.start_calls = 0
+
+            def start(self) -> None:
+                self.start_calls += 1
+
+            def is_healthy(self) -> bool:
+                return True
+
+            def stop(self, timeout: float = 5.0) -> None:
+                return None
+
+        ctx = cast(Any, _BlockingReadyContext())
+        worker = _FakeWorker()
+        await replica.start(
+            ctx,
+            background_index=True,
+            db_manager=db,
+            huey_worker=worker,
+        )
+        assert replica.state == LifecycleState.INITIALIZING
+        assert replica._leader_monitor_task is not None
+
+        if primary._leader_heartbeat_task is not None:
+            primary._leader_heartbeat_task.cancel()
+            await asyncio.gather(
+                primary._leader_heartbeat_task,
+                return_exceptions=True,
+            )
+            primary._leader_heartbeat_task = None
+
+        conn = db.get_connection()
+        stale_data = json.dumps(
+            {
+                "instance_id": primary._leader_election.instance_id,
+                "heartbeat": time.time() - 30.0,
+                "acquired_at": time.time() - 30.0,
+            }
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
+            ("leader_id", stale_data),
+        )
+        conn.commit()
+
+        deadline = time.monotonic() + 1.0
+        while (
+            worker.start_calls != 1
+            or not replica._leader_election.is_leader
+            or replica._leader_heartbeat_task is None
+            or replica._worker_supervision_task is None
+        ):
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    "Initializing replica did not acquire leadership and start worker"
+                )
+            await asyncio.sleep(0.01)
+
+        assert replica.state == LifecycleState.INITIALIZING
+
+        ctx.ready_event.set()
+        deadline = time.monotonic() + 1.0
+        while replica.state != LifecycleState.READY_PRIMARY:
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    "Initializing leader did not transition to READY_PRIMARY after readiness"
+                )
+            await asyncio.sleep(0.01)
+
+        await replica.shutdown()
+        await primary.shutdown()

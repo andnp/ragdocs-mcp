@@ -233,6 +233,7 @@ class LifecycleCoordinator:
                 self._readiness_task = asyncio.create_task(
                     self._promote_when_ready()
                 )
+                self._ensure_leader_monitor()
                 logger.info("Lifecycle: INITIALIZING (indices loading in background)")
             elif db_manager is not None:
                 if self._leader_election is not None and self._leader_election.is_leader:
@@ -437,10 +438,19 @@ class LifecycleCoordinator:
             self._ensure_leader_monitor()
         logger.info("Lifecycle: %s (background initialization complete)", self._state)
 
+    def _should_monitor_leader_failover(self) -> bool:
+        leader_election = self._leader_election
+        return (
+            leader_election is not None
+            and not leader_election.is_leader
+            and self._state in (
+                LifecycleState.INITIALIZING,
+                LifecycleState.READY_REPLICA,
+            )
+        )
+
     def _ensure_leader_monitor(self) -> None:
-        if self._leader_election is None:
-            return
-        if self._state != LifecycleState.READY_REPLICA:
+        if not self._should_monitor_leader_failover():
             return
         if self._leader_monitor_task is not None and not self._leader_monitor_task.done():
             return
@@ -482,16 +492,25 @@ class LifecycleCoordinator:
             leader_election = self._leader_election
             if leader_election is None:
                 return
-            if self._state != LifecycleState.READY_REPLICA:
+            if not self._should_monitor_leader_failover():
                 return
             if not leader_election.try_acquire():
                 continue
 
-            self._state = LifecycleState.READY_PRIMARY
-            self._write_daemon_metadata()
             self._ensure_leader_heartbeat()
             await self._ensure_huey_worker_running()
-            logger.info("Lifecycle: READY_PRIMARY (replica promoted after failover)")
+
+            if self._state == LifecycleState.READY_REPLICA:
+                self._state = LifecycleState.READY_PRIMARY
+                self._write_daemon_metadata()
+                logger.info(
+                    "Lifecycle: READY_PRIMARY (replica promoted after failover)"
+                )
+            else:
+                self._write_daemon_metadata()
+                logger.info(
+                    "Lifecycle: INITIALIZING (replica acquired leadership after failover)"
+                )
             return
 
     async def _heartbeat_leader(self) -> None:
