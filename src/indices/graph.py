@@ -660,14 +660,18 @@ class GraphStore:
         change_ratio = abs(current_count - last_count) / max(last_count, 1)
         return change_ratio > 0.1
 
+    def refresh_communities(self, *, force: bool = False) -> None:
+        """Refresh derived community assignments when requested."""
+        if force or self._should_recompute_communities():
+            self.detect_communities()
+
     # ------------------------------------------------------------------
     # Persistence (IndexProtocol compatibility)
     # ------------------------------------------------------------------
 
     def persist(self, path: Path) -> None:
         """No-op for data (lives in SQLite). Recomputes communities if needed."""
-        if self._should_recompute_communities():
-            self.detect_communities()
+        self.refresh_communities()
 
     def persist_to(self, snapshot_dir: Path) -> None:
         self.persist(snapshot_dir)

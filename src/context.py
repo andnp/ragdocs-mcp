@@ -845,7 +845,7 @@ class ApplicationContext:
         if total_embedded > 0:
             logger.info(f"Vocabulary update: embedded {total_embedded} new terms")
             # Persist after vocabulary update
-            await asyncio.to_thread(self.index_manager.persist)
+            await asyncio.to_thread(self.index_manager.persist_checkpoint)
             self._mark_index_state_loaded()
 
     async def _build_initial_vocabulary(self) -> None:
@@ -857,7 +857,7 @@ class ApplicationContext:
                 max_terms=2000,
                 min_frequency=3,
             )
-            await asyncio.to_thread(self.index_manager.persist)
+            await asyncio.to_thread(self.index_manager.persist_checkpoint)
             self._mark_index_state_loaded()
             logger.info("Concept vocabulary built and persisted")
         except asyncio.CancelledError:

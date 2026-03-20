@@ -31,7 +31,8 @@ class _FakeVector:
 class _FakeIndexManager:
     def __init__(self):
         self.index_documents_calls: list[dict[str, object]] = []
-        self.persist_calls = 0
+        self.persist_checkpoint_calls = 0
+        self.finalize_derived_graph_state_calls = 0
         self.vector = _FakeVector()
 
     def index_document(self, file_path: str, force: bool = False):
@@ -53,8 +54,11 @@ class _FakeIndexManager:
             }
         )
 
-    def persist(self):
-        self.persist_calls += 1
+    def persist_checkpoint(self):
+        self.persist_checkpoint_calls += 1
+
+    def finalize_derived_graph_state(self):
+        self.finalize_derived_graph_state_calls += 1
 
 
 def _build_fake_context(tmp_path: Path, files_to_index: list[str]):
@@ -134,7 +138,8 @@ def test_rebuild_index_batches_with_force_and_preserves_checkpoint_manifesting(
             "persist": False,
         },
     ]
-    assert ctx.index_manager.persist_calls == 4
+    assert ctx.index_manager.persist_checkpoint_calls == 4
+    assert ctx.index_manager.finalize_derived_graph_state_calls == 1
     assert ctx.index_manager.vector.build_calls == [(2000, 3)]
     assert [len(manifest.indexed_files) for _, manifest in saved_manifests] == [2, 3, 3]
     assert "Checkpoint persisted: 2/3 documents" in result.output

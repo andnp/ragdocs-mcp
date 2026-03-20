@@ -1572,7 +1572,7 @@ def rebuild_index_cmd(project: str | None, all_projects: bool):
                 indexed_files.extend(file_batch)
                 progress.advance(task, len(file_batch))
 
-                ctx.index_manager.persist()
+                ctx.index_manager.persist_checkpoint()
                 save_manifest(
                     ctx.index_path,
                     _build_rebuild_manifest(ctx, indexed_files),
@@ -1581,9 +1581,10 @@ def rebuild_index_cmd(project: str | None, all_projects: bool):
                     f"📍 Checkpoint persisted: {len(indexed_files)}/{total_files} documents"
                 )
 
-        ctx.index_manager.persist()
+        ctx.index_manager.persist_checkpoint()
         current_manifest = _build_rebuild_manifest(ctx, indexed_files)
         save_manifest(ctx.index_path, current_manifest)
+        ctx.index_manager.finalize_derived_graph_state()
 
         click.echo(f"✅ Successfully rebuilt index: {total_files} documents indexed")
 
@@ -1679,7 +1680,7 @@ def rebuild_index_cmd(project: str | None, all_projects: bool):
                 max_terms=2000,
                 min_frequency=3,
             )
-            ctx.index_manager.persist()
+            ctx.index_manager.persist_checkpoint()
             vocab_size = len(ctx.index_manager.vector._concept_vocabulary)
             click.echo(f"✅ Successfully built concept vocabulary: {vocab_size} terms")
         except Exception as e:

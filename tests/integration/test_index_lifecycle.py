@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import src.indexing.manager as manager_module
 from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from src.indexing.manager import IndexManager
 from src.indexing.manifest import (
@@ -218,6 +219,74 @@ def test_persist_removes_manifest_entry_after_document_removal(
     updated_manifest = load_manifest(index_path)
     assert updated_manifest is not None
     assert updated_manifest.indexed_files == {}
+
+
+def test_persist_checkpoint_defers_derived_graph_refresh(config, manager):
+    docs_path = Path(config.indexing.documents_path)
+    index_path = Path(config.indexing.index_path)
+
+    alpha_path = docs_path / "alpha.md"
+    beta_path = docs_path / "beta.md"
+    alpha_path.write_text("# Alpha\n\nCheckpoint boundary test.")
+    beta_path.write_text("# Beta\n\nCheckpoint boundary test.")
+
+    manager.index_document(str(alpha_path))
+    manager.index_document(str(beta_path))
+    manager.persist_checkpoint()
+
+    manifest = load_manifest(index_path)
+    assert manifest is not None
+    assert manifest.indexed_files == {
+        "alpha": "alpha.md",
+        "beta": "beta.md",
+    }
+    assert not any(
+        edge["edge_type"] == "directory_sibling"
+        for edge in manager.graph.get_edges_from("alpha")
+    )
+    assert manager.graph.get_community("alpha") is None
+
+    manager.finalize_derived_graph_state()
+
+    assert any(
+        edge["edge_type"] == "directory_sibling" and edge["target"] == "beta"
+        for edge in manager.graph.get_edges_from("alpha")
+    )
+    assert manager.graph.get_community("alpha") is not None
+
+
+def test_persist_skips_derived_graph_refresh_when_graph_is_clean(
+    config, manager, monkeypatch
+):
+    docs_path = Path(config.indexing.documents_path)
+    doc_path = docs_path / "stable.md"
+    doc_path.write_text("# Stable\n\nNo graph changes after first persist.")
+
+    manager.index_document(str(doc_path))
+
+    counts = {"implicit": 0, "communities": 0}
+    original_build = manager_module.ImplicitGraphBuilder.build_implicit_edges
+    original_refresh = manager.graph.refresh_communities
+
+    def counting_build(builder):
+        counts["implicit"] += 1
+        return original_build(builder)
+
+    def counting_refresh(*, force: bool = False):
+        counts["communities"] += 1
+        return original_refresh(force=force)
+
+    monkeypatch.setattr(
+        manager_module.ImplicitGraphBuilder,
+        "build_implicit_edges",
+        counting_build,
+    )
+    monkeypatch.setattr(manager.graph, "refresh_communities", counting_refresh)
+
+    manager.persist()
+    manager.persist()
+
+    assert counts == {"implicit": 1, "communities": 1}
 
 
 def test_startup_version_mismatch_triggers_rebuild(

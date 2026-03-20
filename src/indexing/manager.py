@@ -66,6 +66,7 @@ class IndexManager:
         self._manifest_removed_doc_ids: set[str] = set()
         self._state_version = 0
         self._deferred_persist_depth = 0
+        self._derived_graph_state_dirty = False
 
         logger.info(
             f"IndexManager initialized with embedding_workers={config.indexing.embedding_workers} "
@@ -90,6 +91,9 @@ class IndexManager:
         if self._internal_persistence_deferred():
             return
         self._hash_store.persist()
+
+    def _mark_derived_graph_state_dirty(self) -> None:
+        self._derived_graph_state_dirty = True
 
     def get_state_version(self) -> int:
         return self._state_version
@@ -236,6 +240,7 @@ class IndexManager:
                 logger.info(
                     "Pruned %s from indices (%d chunks removed)", doc_id, removed_chunks
                 )
+            self._mark_derived_graph_state_dirty()
             self._bump_state_version()
             return True
         except Exception as e:
@@ -472,6 +477,7 @@ class IndexManager:
                 f"Successfully moved {moved_count}/{len(new_chunks)} chunks "
                 f"from {old_doc_id} to {new_doc_id}"
             )
+            self._mark_derived_graph_state_dirty()
             self._bump_state_version()
             return True
 
@@ -606,6 +612,7 @@ class IndexManager:
             self._failed_files = [f for f in self._failed_files if f.path != file_path]
             self._record_manifest_index(file_path, document.id)
             if mutated:
+                self._mark_derived_graph_state_dirty()
                 self._bump_state_version()
 
         except UnicodeDecodeError as e:
@@ -675,7 +682,38 @@ class IndexManager:
         # Remove from hash store
         self._hash_store.remove_document(doc_id)
         self._record_manifest_removal(doc_id)
+        self._mark_derived_graph_state_dirty()
         self._bump_state_version()
+
+    def persist_checkpoint(self):
+        """Persist authoritative checkpoint state with retry logic.
+
+        This durability boundary covers the authoritative search snapshot:
+        vector index, keyword index, hash store, and manifest updates. Derived
+        graph artifacts are intentionally excluded.
+        """
+        index_path = Path(self._config.indexing.index_path)
+
+        lock = IndexLock(index_path, timeout_seconds=5.0)
+        lock.acquire_exclusive()
+        try:
+            self._persist_checkpoint_with_retry(index_path)
+        finally:
+            lock.release()
+
+    def finalize_derived_graph_state(self):
+        """Refresh implicit edges and community assignments explicitly."""
+        if not self._derived_graph_state_dirty:
+            return
+
+        index_path = Path(self._config.indexing.index_path)
+
+        lock = IndexLock(index_path, timeout_seconds=5.0)
+        lock.acquire_exclusive()
+        try:
+            self._finalize_derived_graph_state_with_retry(index_path)
+        finally:
+            lock.release()
 
     def persist(self):
         """Persist all indices with retry logic for transient failures.
@@ -688,7 +726,7 @@ class IndexManager:
         lock = IndexLock(index_path, timeout_seconds=5.0)
         lock.acquire_exclusive()
         try:
-            self._persist_indices_with_retry(index_path)
+            self._persist_with_retry(index_path)
         finally:
             lock.release()
 
@@ -697,30 +735,60 @@ class IndexManager:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
-    def _persist_indices_with_retry(self, index_path: Path):
-        """Execute persistence with automatic retry on failure.
+    def _persist_checkpoint_with_retry(self, index_path: Path):
+        """Persist checkpoint state with automatic retry on failure.
 
         Retries up to 3 times with exponential backoff (1s, 2s, 4s).
         Raises the original exception after all retries are exhausted.
         """
-        self._persist_indices(index_path)
+        self._persist_checkpoint_locked(index_path)
 
-    def _persist_indices(self, index_path: Path):
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    def _finalize_derived_graph_state_with_retry(self, index_path: Path):
+        """Finalize derived graph state with automatic retry on failure."""
+        self._finalize_derived_graph_state_locked(index_path)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    def _persist_with_retry(self, index_path: Path):
+        """Execute full persistence with automatic retry on failure.
+
+        Retries up to 3 times with exponential backoff (1s, 2s, 4s).
+        Raises the original exception after all retries are exhausted.
+        """
+        self._persist_checkpoint_locked(index_path)
+        self._finalize_derived_graph_state_locked(index_path)
+
+    def _persist_checkpoint_locked(self, index_path: Path):
         try:
-            # Build implicit graph edges (directory siblings, shared tags)
-            # to improve community detection density
-            implicit_builder = ImplicitGraphBuilder(self.graph)
-            implicit_builder.build_implicit_edges()
-
             self.vector.persist(index_path / "vector")
             self.keyword.persist(index_path / "keyword")
-            self.graph.persist(index_path / "graph")
 
             # Persist hash store for delta indexing
             self._hash_store.persist()
             self._persist_manifest_updates(index_path)
         except Exception as e:
-            logger.error(f"Failed to persist indices: {e}", exc_info=True)
+            logger.error(f"Failed to persist checkpoint state: {e}", exc_info=True)
+            raise
+
+    def _finalize_derived_graph_state_locked(self, _index_path: Path):
+        if not self._derived_graph_state_dirty:
+            return
+
+        try:
+            implicit_builder = ImplicitGraphBuilder(self.graph)
+            implicit_builder.build_implicit_edges()
+            self.graph.refresh_communities(force=True)
+            self._derived_graph_state_dirty = False
+        except Exception as e:
+            logger.error(f"Failed to finalize derived graph state: {e}", exc_info=True)
             raise
 
     def load(self):
