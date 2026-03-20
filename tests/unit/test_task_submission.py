@@ -6,10 +6,12 @@ import pytest
 from huey import SqliteHuey
 
 from src.coordination.task_submission import (
+    coalesce_pending_first_args,
     get_pending_task_count,
     get_pending_task_first_args,
     get_pending_task_values,
     is_backpressured,
+    submit_coalesced_batch_task,
     submit_single_task,
     submit_task_batch,
 )
@@ -106,6 +108,38 @@ def test_submit_task_batch_coalesces_pending_and_duplicate_first_args() -> None:
         ("/docs/b.md", {"force": False}),
         ("/docs/c.md", {"force": False}),
     ]
+
+
+def test_coalesce_pending_first_args_returns_unique_remaining_and_pending_count() -> None:
+    remaining, already_pending = coalesce_pending_first_args(
+        ["/docs/a.md", "/docs/a.md", "/docs/b.md", "/docs/c.md"],
+        pending_first_args={"/docs/a.md", "/docs/c.md"},
+    )
+
+    assert remaining == ["/docs/b.md"]
+    assert already_pending == 2
+
+
+def test_submit_coalesced_batch_task_submits_remaining_items_once() -> None:
+    observed: list[tuple[list[str], dict[str, object]]] = []
+
+    def _submit(file_paths: list[str], **kwargs: object) -> None:
+        observed.append((file_paths, dict(kwargs)))
+
+    enqueued, already_pending = submit_coalesced_batch_task(
+        _submit,
+        ["/docs/a.md", "/docs/a.md", "/docs/b.md", "/docs/c.md"],
+        task_kwargs={"force": False},
+        pending_first_args={"/docs/a.md"},
+        skipped_pending_log_message="skipped %d",
+    )
+
+    assert enqueued == 2
+    assert already_pending == 1
+    assert observed == [([
+        "/docs/b.md",
+        "/docs/c.md",
+    ], {"force": False})]
 
 
 def test_is_backpressured_uses_pending_task_count(huey_instance: SqliteHuey) -> None:

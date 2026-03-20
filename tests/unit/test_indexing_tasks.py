@@ -18,12 +18,14 @@ from src.indexing.bootstrap_checkpoint import BootstrapCheckpoint, BootstrapFile
 from src.indexing.tasks import (
     enqueue_index,
     enqueue_index_batch,
+    enqueue_remove,
     enqueue_refresh_git,
     enqueue_refresh_git_batch,
     get_pending_index_document_count,
-    enqueue_remove,
     register_tasks,
     submit_index_batch,
+    submit_index_request_batch,
+    submit_remove_request_batch,
     submit_refresh_git_request,
 )
 
@@ -100,6 +102,7 @@ def _reset_tasks():
     tasks_mod.index_document_task = None
     tasks_mod.index_documents_batch_task = None
     tasks_mod.remove_document_task = None
+    tasks_mod.remove_documents_batch_task = None
     tasks_mod.refresh_git_repository_task = None
     yield
     tasks_mod._huey = None
@@ -111,6 +114,7 @@ def _reset_tasks():
     tasks_mod.index_document_task = None
     tasks_mod.index_documents_batch_task = None
     tasks_mod.remove_document_task = None
+    tasks_mod.remove_documents_batch_task = None
     tasks_mod.refresh_git_repository_task = None
 
 
@@ -123,6 +127,7 @@ class TestTaskRegistration:
         assert tasks_mod.index_document_task is not None
         assert tasks_mod.index_documents_batch_task is not None
         assert tasks_mod.remove_document_task is not None
+        assert tasks_mod.remove_documents_batch_task is not None
 
     def test_enqueue_without_registration_returns_false(self) -> None:
         """enqueue_index/remove return False when tasks aren't registered."""
@@ -362,6 +367,91 @@ class TestTaskRegistration:
 
         assert pending == 2
 
+    def test_submit_index_request_batch_deduplicates_against_pending_single_and_batch_tasks(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        assert enqueue_index("/some/file.md") is True
+        assert enqueue_index_batch(["/some/batch.md"]) == 1
+
+        submission = submit_index_request_batch(
+            ["/some/file.md", "/some/batch.md", "/some/new.md"]
+        )
+
+        assert submission.queue_available is True
+        assert submission.enqueued_count == 1
+        assert submission.already_pending_count == 2
+        assert submission.backpressured_items == ()
+
+        assert huey_instance.pending_count() == 3
+        huey_instance.dequeue()
+        huey_instance.dequeue()
+        third_task = huey_instance.dequeue()
+        assert third_task.args == (["/some/new.md"],)
+
+    def test_submit_index_request_batch_reports_only_unrepresented_items_as_backpressured(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
+
+        assert enqueue_index("/some/file.md") is True
+
+        submission = submit_index_request_batch(
+            ["/some/file.md", "/some/new.md", "/some/other.md"]
+        )
+
+        assert submission.queue_available is True
+        assert submission.already_pending_count == 1
+        assert submission.enqueued_count == 0
+        assert submission.backpressured_items == (
+            "/some/new.md",
+            "/some/other.md",
+        )
+
+    def test_submit_remove_request_batch_deduplicates_against_pending_single_and_batch_tasks(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        assert enqueue_remove("docs/existing") is True
+        first_batch = submit_remove_request_batch(["docs/batched"])
+        assert first_batch.enqueued_count == 1
+
+        submission = submit_remove_request_batch(
+            ["docs/existing", "docs/batched", "docs/new"]
+        )
+
+        assert submission.queue_available is True
+        assert submission.enqueued_count == 1
+        assert submission.already_pending_count == 2
+        assert submission.backpressured_items == ()
+
+        assert huey_instance.pending_count() == 3
+        huey_instance.dequeue()
+        huey_instance.dequeue()
+        third_task = huey_instance.dequeue()
+        assert third_task.args == (["docs/new"],)
+
+    def test_submit_remove_request_batch_reports_only_unrepresented_items_as_backpressured(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
+
+        assert enqueue_remove("docs/existing") is True
+
+        submission = submit_remove_request_batch(
+            ["docs/existing", "docs/new", "docs/other"]
+        )
+
+        assert submission.queue_available is True
+        assert submission.already_pending_count == 1
+        assert submission.enqueued_count == 0
+        assert submission.backpressured_items == (
+            "docs/new",
+            "docs/other",
+        )
+
 
 class TestTaskExecution:
     def test_index_task_calls_manager(
@@ -488,6 +578,21 @@ class TestTaskExecution:
 
         assert huey_instance.pending_count() == 0
         assert fake_manager.removed == ["docs/readme"]
+        assert fake_manager.persist_calls == 1
+
+    def test_remove_batch_task_calls_manager_once_for_batch(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        submission = submit_remove_request_batch(["docs/a", "docs/b", "docs/a"])
+
+        assert submission.enqueued_count == 2
+
+        task = huey_instance.dequeue()
+        huey_instance.execute(task)
+
+        assert fake_manager.removed == ["docs/a", "docs/b"]
         assert fake_manager.persist_calls == 1
 
     def test_end_to_end_with_worker(

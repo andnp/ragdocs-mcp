@@ -320,6 +320,9 @@ class FileWatcher:
     async def _batch_process(self, events: dict[str, EventType]):
         deferred_events: dict[str, EventType] = {}
         self._events_processed += len(events)
+        task_index_paths: list[str] = []
+        task_remove_doc_ids: list[str] = []
+        deleted_paths_by_doc_id: dict[str, str] = {}
         direct_index_paths: list[str] = []
         direct_remove_doc_ids: list[str] = []
 
@@ -338,31 +341,52 @@ class FileWatcher:
             try:
                 if event_type in ("created", "modified"):
                     if self._use_tasks:
-                        from src.indexing.tasks import submit_index_request
-
-                        submission = submit_index_request(file_path)
-                        if submission.accepted_by_queue:
-                            logger.info(f"Enqueued indexing task: {file_path}")
-                            continue
-                        if submission.should_retry_later:
-                            deferred_events[file_path] = event_type
-                            continue
+                        task_index_paths.append(file_path)
+                        continue
                     direct_index_paths.append(file_path)
                 elif event_type == "deleted":
                     doc_id = self._compute_doc_id_for_event(file_path)
                     if self._use_tasks:
-                        from src.indexing.tasks import submit_remove_request
-
-                        submission = submit_remove_request(doc_id)
-                        if submission.accepted_by_queue:
-                            logger.info(f"Enqueued removal task: {doc_id}")
-                            continue
-                        if submission.should_retry_later:
-                            deferred_events[file_path] = event_type
-                            continue
+                        task_remove_doc_ids.append(doc_id)
+                        deleted_paths_by_doc_id.setdefault(doc_id, file_path)
+                        continue
                     direct_remove_doc_ids.append(doc_id)
             except Exception as e:
                 logger.error(f"Failed to process {file_path}: {e}")
+
+        if self._use_tasks:
+            from src.indexing.tasks import (
+                submit_index_request_batch,
+                submit_remove_request_batch,
+            )
+
+            if task_index_paths:
+                submission = submit_index_request_batch(task_index_paths)
+                if not submission.queue_available:
+                    direct_index_paths.extend(list(dict.fromkeys(task_index_paths)))
+                else:
+                    if submission.enqueued_count > 0:
+                        logger.info(
+                            "Enqueued watcher indexing batch for %d file(s)",
+                            submission.enqueued_count,
+                        )
+                    for file_path in submission.backpressured_items:
+                        deferred_events[file_path] = events[file_path]
+
+            if task_remove_doc_ids:
+                submission = submit_remove_request_batch(task_remove_doc_ids)
+                if not submission.queue_available:
+                    direct_remove_doc_ids.extend(list(dict.fromkeys(task_remove_doc_ids)))
+                else:
+                    if submission.enqueued_count > 0:
+                        logger.info(
+                            "Enqueued watcher removal batch for %d document(s)",
+                            submission.enqueued_count,
+                        )
+                    for doc_id in submission.backpressured_items:
+                        file_path = deleted_paths_by_doc_id.get(doc_id)
+                        if file_path is not None:
+                            deferred_events[file_path] = "deleted"
 
         await self._process_direct_batch(
             index_paths=direct_index_paths,

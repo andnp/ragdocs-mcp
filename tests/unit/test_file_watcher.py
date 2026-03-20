@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.indexing.discovery import is_excluded_dir, walk_included_dirs
-from src.indexing.tasks import TaskSubmissionResult
+import src.indexing.tasks as tasks_mod
 from src.indexing.watcher import (
     FileWatcher,
     _DocumentEventHandler,
@@ -554,12 +554,16 @@ class TestFileWatcherTaskMode:
         )
 
         with patch(
-            "src.indexing.tasks.submit_index_request",
-            return_value=TaskSubmissionResult(status="enqueued"),
+            "src.indexing.tasks.submit_index_request_batch",
+            return_value=tasks_mod.TaskBatchSubmissionResult(
+                queue_available=True,
+                requested_unique_count=1,
+                enqueued_count=1,
+            ),
         ) as enqueue:
             await watcher._batch_process({str(docs_path / "note.md"): "created"})
 
-        enqueue.assert_called_once_with(str(docs_path / "note.md"))
+        enqueue.assert_called_once_with([str(docs_path / "note.md")])
         mock_index_manager.index_document.assert_not_called()
 
     @pytest.mark.asyncio
@@ -577,16 +581,20 @@ class TestFileWatcherTaskMode:
         deleted_file.parent.mkdir()
 
         with patch(
-            "src.indexing.tasks.submit_remove_request",
-            return_value=TaskSubmissionResult(status="enqueued"),
+            "src.indexing.tasks.submit_remove_request_batch",
+            return_value=tasks_mod.TaskBatchSubmissionResult(
+                queue_available=True,
+                requested_unique_count=1,
+                enqueued_count=1,
+            ),
         ) as enqueue:
             await watcher._batch_process({str(deleted_file): "deleted"})
 
-        enqueue.assert_called_once_with("nested/note")
+        enqueue.assert_called_once_with(["nested/note"])
         mock_index_manager.remove_document.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_batch_process_requeues_when_task_queue_backpressured(
+    async def test_batch_process_requeues_only_backpressured_index_items_from_batch(
         self, tmp_path, mock_index_manager
     ):
         docs_path = tmp_path / "docs"
@@ -598,14 +606,26 @@ class TestFileWatcherTaskMode:
         )
 
         with patch(
-            "src.indexing.tasks.submit_index_request",
-            return_value=TaskSubmissionResult(status="backpressured"),
+            "src.indexing.tasks.submit_index_request_batch",
+            return_value=tasks_mod.TaskBatchSubmissionResult(
+                queue_available=True,
+                requested_unique_count=3,
+                enqueued_count=1,
+                already_pending_count=1,
+                backpressured_items=(str(docs_path / "retry.md"),),
+            ),
         ):
-            await watcher._batch_process({str(docs_path / "note.md"): "created"})
+            await watcher._batch_process(
+                {
+                    str(docs_path / "queued.md"): "created",
+                    str(docs_path / "pending.md"): "created",
+                    str(docs_path / "retry.md"): "created",
+                }
+            )
 
         assert watcher._event_queue.get_nowait() == (
             "created",
-            str(docs_path / "note.md"),
+            str(docs_path / "retry.md"),
         )
         mock_index_manager.index_document.assert_not_called()
 
@@ -622,8 +642,12 @@ class TestFileWatcherTaskMode:
         )
 
         with patch(
-            "src.indexing.tasks.submit_index_request",
-            return_value=TaskSubmissionResult(status="unavailable"),
+            "src.indexing.tasks.submit_index_request_batch",
+            return_value=tasks_mod.TaskBatchSubmissionResult(
+                queue_available=False,
+                requested_unique_count=1,
+                enqueued_count=0,
+            ),
         ):
             await watcher._batch_process({str(docs_path / "note.md"): "created"})
 
@@ -632,6 +656,87 @@ class TestFileWatcherTaskMode:
             force=False,
             persist=False,
         )
+
+    @pytest.mark.asyncio
+    async def test_batch_process_coalesces_mixed_task_submissions_by_operation_type(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            use_tasks=True,
+        )
+        deleted_file = docs_path / "nested" / "old.md"
+        deleted_file.parent.mkdir()
+
+        with (
+            patch(
+                "src.indexing.tasks.submit_index_request_batch",
+                return_value=tasks_mod.TaskBatchSubmissionResult(
+                    queue_available=True,
+                    requested_unique_count=2,
+                    enqueued_count=2,
+                ),
+            ) as submit_index_batch,
+            patch(
+                "src.indexing.tasks.submit_remove_request_batch",
+                return_value=tasks_mod.TaskBatchSubmissionResult(
+                    queue_available=True,
+                    requested_unique_count=1,
+                    enqueued_count=1,
+                ),
+            ) as submit_remove_batch,
+        ):
+            await watcher._batch_process(
+                {
+                    str(docs_path / "a.md"): "created",
+                    str(docs_path / "b.md"): "modified",
+                    str(deleted_file): "deleted",
+                }
+            )
+
+        submit_index_batch.assert_called_once_with(
+            [str(docs_path / "a.md"), str(docs_path / "b.md")]
+        )
+        submit_remove_batch.assert_called_once_with(["nested/old"])
+        mock_index_manager.index_documents.assert_not_called()
+        mock_index_manager.remove_documents.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_batch_process_requeues_only_backpressured_delete_items_from_batch(
+        self, tmp_path, mock_index_manager
+    ):
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            use_tasks=True,
+        )
+        kept = docs_path / "nested" / "kept.md"
+        retry = docs_path / "nested" / "retry.md"
+        kept.parent.mkdir()
+
+        with patch(
+            "src.indexing.tasks.submit_remove_request_batch",
+            return_value=tasks_mod.TaskBatchSubmissionResult(
+                queue_available=True,
+                requested_unique_count=2,
+                enqueued_count=1,
+                backpressured_items=("nested/retry",),
+            ),
+        ):
+            await watcher._batch_process(
+                {
+                    str(kept): "deleted",
+                    str(retry): "deleted",
+                }
+            )
+
+        assert watcher._event_queue.get_nowait() == ("deleted", str(retry))
+        mock_index_manager.remove_document.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_direct_batch_process_coalesces_index_persist_once(

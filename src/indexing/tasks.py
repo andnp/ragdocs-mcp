@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from src.coordination.task_submission import (
+    coalesce_pending_first_args,
     get_pending_task_count as get_shared_pending_task_count,
     get_pending_task_first_args,
     get_pending_task_values,
     is_backpressured,
+    submit_coalesced_batch_task,
     submit_single_task,
     submit_task_batch,
 )
@@ -54,10 +57,21 @@ class TaskBatchSubmissionResult:
     requested_unique_count: int
     enqueued_count: int
     already_pending_count: int = 0
+    backpressured_items: tuple[str, ...] = ()
+
+    @property
+    def backpressured_count(self) -> int:
+        return len(self.backpressured_items)
+
+    @property
+    def should_retry_later(self) -> bool:
+        return bool(self.backpressured_items)
 
     @property
     def all_represented(self) -> bool:
         if not self.queue_available:
+            return False
+        if self.should_retry_later:
             return False
         return (
             self.enqueued_count + self.already_pending_count
@@ -96,6 +110,7 @@ _bootstrap_documents_roots: list[Path] = []
 index_document_task = None
 index_documents_batch_task = None
 remove_document_task = None
+remove_documents_batch_task = None
 refresh_git_repository_task = None
 
 
@@ -114,7 +129,8 @@ def register_tasks(
     """
     global _huey, _index_manager, _commit_indexer, _task_backpressure_limit
     global _bootstrap_index_path, _bootstrap_documents_roots
-    global index_document_task, index_documents_batch_task, remove_document_task, refresh_git_repository_task
+    global index_document_task, index_documents_batch_task, remove_document_task
+    global remove_documents_batch_task, refresh_git_repository_task
     _huey = huey
     _index_manager = index_manager
     _commit_indexer = commit_indexer
@@ -226,6 +242,58 @@ def register_tasks(
             return False
 
     @huey.task()
+    def _remove_documents_batch(doc_ids: list[str]) -> bool:
+        """Remove a burst of documents and persist once after the batch."""
+        if _index_manager is None:
+            logger.error("IndexManager not available for batch task execution")
+            return False
+
+        unique_doc_ids = list(dict.fromkeys(doc_ids))
+        if not unique_doc_ids:
+            return True
+
+        removed_doc_ids: list[str] = []
+        failures: list[str] = []
+
+        try:
+            _index_manager.remove_documents(unique_doc_ids, persist=True)
+            removed_doc_ids = unique_doc_ids
+        except Exception:
+            logger.warning(
+                "Batch remove task failed; retrying documents individually before one final persist",
+                exc_info=True,
+            )
+            for doc_id in unique_doc_ids:
+                try:
+                    _index_manager.remove_document(doc_id)
+                    removed_doc_ids.append(doc_id)
+                except Exception:
+                    failures.append(doc_id)
+                    logger.error(
+                        "Task failed within batch: remove %s",
+                        doc_id,
+                        exc_info=True,
+                    )
+
+            if removed_doc_ids:
+                try:
+                    _index_manager.persist()
+                except Exception:
+                    logger.error(
+                        "Batch fallback persist failed for %d removed document(s)",
+                        len(removed_doc_ids),
+                        exc_info=True,
+                    )
+                    return False
+
+        logger.info(
+            "Task completed: removed %d document(s) in batch%s",
+            len(removed_doc_ids),
+            "" if not failures else f" with {len(failures)} failure(s)",
+        )
+        return not failures
+
+    @huey.task()
     def _refresh_git_repository(git_dir: str) -> bool:
         """Refresh the git index for one repository."""
         if _commit_indexer is None:
@@ -267,6 +335,7 @@ def register_tasks(
     index_document_task = _index_document
     index_documents_batch_task = _index_documents_batch
     remove_document_task = _remove_document
+    remove_documents_batch_task = _remove_documents_batch
     refresh_git_repository_task = _refresh_git_repository
     logger.info("Indexing tasks registered with Huey")
 
@@ -335,6 +404,87 @@ def _get_pending_refresh_git_dirs() -> set[str]:
     return _get_pending_task_first_args("_refresh_git_repository")
 
 
+def _get_pending_remove_doc_ids() -> set[str]:
+    """Return doc IDs already pending in single or batch remove tasks."""
+
+    def _extract_values(task: object) -> set[str]:
+        args = getattr(task, "args", ())
+        if not args:
+            return set()
+
+        first_arg = args[0]
+        if isinstance(first_arg, str):
+            return {first_arg}
+        if isinstance(first_arg, list):
+            return {item for item in first_arg if isinstance(item, str)}
+        return set()
+
+    return get_pending_task_values(
+        _huey,
+        {"_remove_document", "_remove_documents_batch"},
+        value_extractor=_extract_values,
+        inspection_failure_log_message="Failed to inspect pending Huey tasks; steady-state remove dedupe disabled",
+        deserialize_failure_log_message="Failed to deserialize pending Huey task while inspecting remove queue",
+    )
+
+
+def _submit_backpressure_limited_batch_request(
+    *,
+    task_submitter: Callable[..., object],
+    batch_name: str,
+    items: list[str],
+    task_kwargs: dict[str, object] | None = None,
+    pending_items: set[str] | None = None,
+) -> TaskBatchSubmissionResult:
+    if _huey is None:
+        return TaskBatchSubmissionResult(
+            queue_available=False,
+            requested_unique_count=len(set(items)),
+            enqueued_count=0,
+        )
+
+    unique_items = list(dict.fromkeys(items))
+    requested_unique_count = len(unique_items)
+    remaining_items, already_pending_count = coalesce_pending_first_args(
+        unique_items,
+        pending_first_args=pending_items,
+    )
+
+    if not remaining_items:
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=requested_unique_count,
+            enqueued_count=0,
+            already_pending_count=already_pending_count,
+        )
+
+    if is_backpressured(
+        _huey,
+        _task_backpressure_limit,
+        item=f"{len(remaining_items)} {batch_name}(s)",
+        warning_message="Skipping %s batch enqueue due to task queue backpressure (%d pending >= %d limit)",
+    ):
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=requested_unique_count,
+            enqueued_count=0,
+            already_pending_count=already_pending_count,
+            backpressured_items=tuple(remaining_items),
+        )
+
+    enqueued_count, skipped_pending_count = submit_coalesced_batch_task(
+        task_submitter,
+        remaining_items,
+        task_kwargs=task_kwargs,
+    )
+    return TaskBatchSubmissionResult(
+        queue_available=True,
+        requested_unique_count=requested_unique_count,
+        enqueued_count=enqueued_count,
+        already_pending_count=already_pending_count + skipped_pending_count,
+    )
+
+
 def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
     """Enqueue many index tasks without watcher backpressure throttling.
 
@@ -386,6 +536,27 @@ def submit_index_batch(
     )
 
 
+def submit_index_request_batch(
+    file_paths: list[str],
+    force: bool = False,
+) -> TaskBatchSubmissionResult:
+    if index_documents_batch_task is None:
+        return TaskBatchSubmissionResult(
+            queue_available=False,
+            requested_unique_count=len(set(file_paths)),
+            enqueued_count=0,
+        )
+
+    pending_paths = set() if force else _get_pending_index_document_paths()
+    return _submit_backpressure_limited_batch_request(
+        task_submitter=index_documents_batch_task,
+        batch_name="file",
+        items=file_paths,
+        task_kwargs={"force": force},
+        pending_items=pending_paths,
+    )
+
+
 def get_pending_index_document_count(file_paths: list[str]) -> int:
     """Count how many of the given file paths are already pending in Huey."""
     if not file_paths:
@@ -415,6 +586,22 @@ def submit_remove_request(doc_id: str) -> TaskSubmissionResult:
     if enqueued:
         return TaskSubmissionResult(status="enqueued")
     return TaskSubmissionResult(status="already_pending")
+
+
+def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult:
+    if remove_documents_batch_task is None:
+        return TaskBatchSubmissionResult(
+            queue_available=False,
+            requested_unique_count=len(set(doc_ids)),
+            enqueued_count=0,
+        )
+
+    return _submit_backpressure_limited_batch_request(
+        task_submitter=remove_documents_batch_task,
+        batch_name="document",
+        items=doc_ids,
+        pending_items=_get_pending_remove_doc_ids(),
+    )
 
 
 def enqueue_refresh_git(git_dir: str) -> bool:

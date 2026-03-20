@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 type TaskSubmitter = Callable[..., object]
 type TaskValueExtractor = Callable[[object], set[str]]
+type BatchTaskSubmitter = Callable[..., object]
 
 
 def get_pending_task_count(huey: SqliteHuey | None) -> int:
@@ -157,6 +158,44 @@ def submit_task_batch(
     return enqueued
 
 
+def coalesce_pending_first_args(
+    first_args: list[str],
+    *,
+    pending_first_args: set[str] | None = None,
+) -> tuple[list[str], int]:
+    unique_first_args = list(dict.fromkeys(first_args))
+    pending_items = pending_first_args or set()
+    remaining_args = [
+        first_arg for first_arg in unique_first_args if first_arg not in pending_items
+    ]
+    already_pending_count = sum(
+        1 for first_arg in unique_first_args if first_arg in pending_items
+    )
+    return remaining_args, already_pending_count
+
+
+def submit_coalesced_batch_task(
+    task_submitter: BatchTaskSubmitter,
+    first_args: list[str],
+    *,
+    task_kwargs: Mapping[str, object] | None = None,
+    pending_first_args: set[str] | None = None,
+    skipped_pending_log_message: str | None = None,
+) -> tuple[int, int]:
+    remaining_args, already_pending_count = coalesce_pending_first_args(
+        first_args,
+        pending_first_args=pending_first_args,
+    )
+
+    if remaining_args:
+        _submit_batch_task(task_submitter, remaining_args, task_kwargs=task_kwargs)
+
+    if already_pending_count > 0 and skipped_pending_log_message is not None:
+        logger.info(skipped_pending_log_message, already_pending_count)
+
+    return len(remaining_args), already_pending_count
+
+
 def _submit_task(
     task_submitter: TaskSubmitter,
     first_arg: str,
@@ -168,3 +207,16 @@ def _submit_task(
         return
 
     task_submitter(first_arg, **dict(task_kwargs))
+
+
+def _submit_batch_task(
+    task_submitter: BatchTaskSubmitter,
+    first_args: list[str],
+    *,
+    task_kwargs: Mapping[str, object] | None,
+) -> None:
+    if task_kwargs is None:
+        task_submitter(first_args)
+        return
+
+    task_submitter(first_args, **dict(task_kwargs))
