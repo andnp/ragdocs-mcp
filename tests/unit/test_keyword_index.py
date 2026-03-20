@@ -805,6 +805,88 @@ def test_keyword_index_prefers_exact_header_segment_over_content_match():
     assert chunk_ids[:2] == ["header_segment_chunk_0", "content_config_chunk_0"]
 
 
+def test_keyword_index_prefers_exact_title_over_interior_section_match_for_testing_strategy():
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    dedicated_spec = Chunk(
+        chunk_id="spec_testing_strategy_chunk_0",
+        doc_id="spec-testing-strategy-doc",
+        content="Policy, fixtures, and verification guidance for repository tests.",
+        metadata={"title": "Testing Strategy", "tags": []},
+        chunk_index=0,
+        header_path="Testing Strategy",
+        start_pos=0,
+        end_pos=64,
+        file_path="/tmp/specs/04-testing-strategy.md",
+        modified_time=datetime.now(),
+    )
+    broader_doc = Chunk(
+        chunk_id="development_testing_strategy_chunk_0",
+        doc_id="development-doc",
+        content=(
+            "This development guide includes a testing strategy section. "
+            "The testing strategy section summarizes how to run checks."
+        ),
+        metadata={"title": "Development", "tags": []},
+        chunk_index=0,
+        header_path="Development > Testing Strategy",
+        start_pos=0,
+        end_pos=112,
+        file_path="/tmp/docs/development.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(dedicated_spec)
+    keyword_index.add_chunk(broader_doc)
+
+    chunk_ids = _extract_chunk_ids(keyword_index.search("testing strategy", top_k=5))
+
+    assert chunk_ids[:2] == [
+        "spec_testing_strategy_chunk_0",
+        "development_testing_strategy_chunk_0",
+    ]
+
+
+def test_keyword_index_prefers_primary_heading_over_deeper_header_match():
+    from src.models import Chunk
+
+    keyword_index = KeywordIndex()
+
+    primary_heading_match = Chunk(
+        chunk_id="primary_heading_chunk_0",
+        doc_id="primary-heading-doc",
+        content="Repository-level guidance for tests and CI.",
+        metadata={"title": "Quality Notes", "tags": []},
+        chunk_index=0,
+        header_path="Testing Strategy > CI Coverage",
+        start_pos=0,
+        end_pos=42,
+        file_path="/tmp/quality/testing-strategy.md",
+        modified_time=datetime.now(),
+    )
+    deeper_heading_match = Chunk(
+        chunk_id="deeper_heading_chunk_0",
+        doc_id="deeper-heading-doc",
+        content="Development playbook notes for the team.",
+        metadata={"title": "Development", "tags": []},
+        chunk_index=0,
+        header_path="Development > Testing Strategy",
+        start_pos=0,
+        end_pos=39,
+        file_path="/tmp/docs/development.md",
+        modified_time=datetime.now(),
+    )
+
+    keyword_index.add_chunk(primary_heading_match)
+    keyword_index.add_chunk(deeper_heading_match)
+
+    chunk_ids = _extract_chunk_ids(keyword_index.search("testing strategy", top_k=5))
+
+    assert chunk_ids[:2] == ["primary_heading_chunk_0", "deeper_heading_chunk_0"]
+
+
 def test_keyword_index_prefers_exact_config_key_title_over_content_match():
     from src.models import Chunk
 

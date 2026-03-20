@@ -49,6 +49,65 @@ def _normalize_field_text(value: str) -> str:
     return " ".join(value.strip().lower().split())
 
 
+def _has_phrase_boundary_match(text: str, phrase: str) -> bool:
+    if not text or not phrase:
+        return False
+    return (
+        text == phrase
+        or text.startswith(f"{phrase} ")
+        or text.endswith(f" {phrase}")
+        or f" {phrase} " in text
+    )
+
+
+def _split_header_segments(headers: str) -> list[str]:
+    return [
+        normalized
+        for segment in headers.split(">")
+        if (normalized := _normalize_field_text(segment))
+    ]
+
+
+def _score_title_locality(normalized_query: str, normalized_title: str) -> float:
+    if not normalized_title:
+        return 0.0
+    if normalized_title == normalized_query:
+        return 80.0
+    if _has_phrase_boundary_match(normalized_title, normalized_query):
+        return 24.0
+    if normalized_query in normalized_title:
+        return 14.0
+    return 0.0
+
+
+def _score_header_locality(
+    normalized_query: str,
+    normalized_headers: str,
+    header_segments: list[str],
+) -> float:
+    score = 0.0
+
+    if normalized_headers == normalized_query:
+        score = max(score, 34.0)
+    elif _has_phrase_boundary_match(normalized_headers, normalized_query):
+        score = max(score, 14.0)
+    elif normalized_query in normalized_headers:
+        score = max(score, 10.0)
+
+    for depth, segment in enumerate(header_segments):
+        depth_decay = max(0.45, 1.0 - (depth * 0.25))
+        if segment == normalized_query:
+            score = max(score, 44.0 * depth_decay)
+            continue
+        if _has_phrase_boundary_match(segment, normalized_query):
+            score = max(score, 20.0 * depth_decay)
+            continue
+        if normalized_query in segment:
+            score = max(score, 10.0 * depth_decay)
+
+    return score
+
+
 def _looks_like_artifact_query(query: str) -> bool:
     normalized = query.strip()
     if not normalized:
@@ -555,25 +614,16 @@ class KeywordIndex:
         normalized_query_artifact = _normalize_artifact_value(query)
         basename_query = Path(normalized_query_artifact).name
         source_basename = Path(normalized_source).name if normalized_source else ""
-        header_segments = [
-            _normalize_field_text(segment)
-            for segment in headers.split(">")
-            if _normalize_field_text(segment)
-        ]
+        header_segments = _split_header_segments(headers)
 
         score = 0.0
 
-        if normalized_title == normalized_query:
-            score += 40.0
-        elif normalized_query in normalized_title:
-            score += 14.0
-
-        if normalized_query in header_segments:
-            score += 34.0
-        elif normalized_headers == normalized_query:
-            score += 30.0
-        elif normalized_query in normalized_headers:
-            score += 12.0
+        score += _score_title_locality(normalized_query, normalized_title)
+        score += _score_header_locality(
+            normalized_query,
+            normalized_headers,
+            header_segments,
+        )
 
         if normalized_source == normalized_query_artifact:
             score += 60.0

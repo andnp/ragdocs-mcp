@@ -9,6 +9,7 @@ from src.indices.keyword import KeywordIndex
 from src.indices.vector import VectorIndex
 from src.models import ChunkResult
 from src.search.orchestrator import SearchOrchestrator
+from src.search.pipeline import SearchPipelineConfig
 from tests.conftest import create_test_document
 
 
@@ -179,6 +180,58 @@ Connection pooling and query optimization.
         assert "security" in result_doc_ids or any(
             "security" in did for did in result_doc_ids
         )
+
+    @pytest.mark.asyncio
+    async def test_exact_title_outranks_interior_section_for_testing_strategy(
+        self, config_query_expansion, indices
+    ):
+        vector, keyword, graph = indices
+        manager = IndexManager(config_query_expansion, vector, keyword, graph)
+        orchestrator = SearchOrchestrator(
+            vector, keyword, graph, config_query_expansion, manager
+        )
+
+        docs_path = Path(config_query_expansion.indexing.documents_path)
+
+        create_test_document(
+            docs_path,
+            "testing_strategy",
+            """# Testing Strategy
+
+The testing strategy document defines authoritative guidance for repository tests.
+
+## Coverage
+
+Use focused regressions and explicit ranking checks.
+""",
+        )
+        create_test_document(
+            docs_path,
+            "development",
+            """# Development
+
+General development guidance for contributors.
+
+## Testing Strategy
+
+This section briefly mentions the testing strategy inside a broader guide.
+It is not the canonical testing strategy document.
+""",
+        )
+
+        for doc_file in docs_path.glob("*.md"):
+            manager.index_document(str(doc_file))
+
+        results, _stats, _strategy = await orchestrator.query(
+            "testing strategy",
+            top_k=10,
+            top_n=2,
+            pipeline_config=SearchPipelineConfig(reranking_enabled=False),
+        )
+
+        assert len(results) >= 2
+        assert results[0].file_path.endswith("testing_strategy.md")
+        assert results[1].file_path.endswith("development.md")
 
 
 # ============================================================================

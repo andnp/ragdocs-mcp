@@ -357,6 +357,13 @@ SEARCH_EVALUATION_CASES = (
         expected_top1_path="alpha/docs/src-mcp_server-py.md",
     ),
     SearchEvaluationCase(
+        case_id="exact_title_beats_interior_section",
+        query="testing strategy",
+        relevant_paths=("alpha/docs/testing-strategy.md",),
+        expected_top1_path="alpha/docs/testing-strategy.md",
+        required_hits_at_k=((1, 1), (3, 1)),
+    ),
+    SearchEvaluationCase(
         case_id="scoped_project_context",
         query="Project Rollout Checklist",
         relevant_paths=("alpha/docs/project-rollout-checklist.md",),
