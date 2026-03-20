@@ -566,6 +566,15 @@ def _build_rebuild_manifest(
     )
 
 
+def _iter_rebuild_batches(
+    file_paths: list[str],
+    batch_size: int,
+):
+    normalized_batch_size = max(1, batch_size)
+    for start in range(0, len(file_paths), normalized_batch_size):
+        yield file_paths[start : start + normalized_batch_size]
+
+
 @cli.command()
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
@@ -1541,7 +1550,11 @@ def rebuild_index_cmd(project: str | None, all_projects: bool):
         ) as progress:
             task = progress.add_task("Indexing documents...", total=total_files)
 
-            for file_path in files_to_index:
+            for file_batch in _iter_rebuild_batches(
+                files_to_index,
+                checkpoint_interval,
+            ):
+                file_path = file_batch[-1]
                 try:
                     rel_path = Path(file_path).relative_to(docs_path)
                     display_path = str(rel_path)
@@ -1551,22 +1564,22 @@ def rebuild_index_cmd(project: str | None, all_projects: bool):
                 progress.update(
                     task, description=f"[bold blue]Indexing: {display_path}"
                 )
-                ctx.index_manager.index_document(file_path)
-                indexed_files.append(file_path)
-                progress.advance(task)
+                ctx.index_manager.index_documents(
+                    file_batch,
+                    force=True,
+                    persist=False,
+                )
+                indexed_files.extend(file_batch)
+                progress.advance(task, len(file_batch))
 
-                if (
-                    len(indexed_files) % checkpoint_interval == 0
-                    or len(indexed_files) == total_files
-                ):
-                    ctx.index_manager.persist()
-                    save_manifest(
-                        ctx.index_path,
-                        _build_rebuild_manifest(ctx, indexed_files),
-                    )
-                    click.echo(
-                        f"📍 Checkpoint persisted: {len(indexed_files)}/{total_files} documents"
-                    )
+                ctx.index_manager.persist()
+                save_manifest(
+                    ctx.index_path,
+                    _build_rebuild_manifest(ctx, indexed_files),
+                )
+                click.echo(
+                    f"📍 Checkpoint persisted: {len(indexed_files)}/{total_files} documents"
+                )
 
         ctx.index_manager.persist()
         current_manifest = _build_rebuild_manifest(ctx, indexed_files)
