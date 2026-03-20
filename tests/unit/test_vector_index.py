@@ -932,3 +932,139 @@ def test_remove_chunk_before_initialization(vector_index):
 
     # Should log warning but not raise
     vector_index.remove_chunk("any_chunk_id")
+
+
+def test_vocabulary_lifecycle_marks_stale_on_authoritative_mutation(
+    shared_embedding_model,
+):
+    from src.models import Chunk
+
+    vector_index = VectorIndex(embedding_model=shared_embedding_model)
+    chunk = Chunk(
+        chunk_id="doc1_chunk_0",
+        doc_id="doc1",
+        content="Authentication tokens verify user identity.",
+        metadata={},
+        chunk_index=0,
+        header_path="Security",
+        start_pos=0,
+        end_pos=40,
+        file_path="/tmp/doc1.md",
+        modified_time=datetime.now(),
+    )
+
+    vector_index.add_chunk(chunk)
+
+    assert vector_index.get_vocabulary_state()["status"] == "stale"
+    assert vector_index.expand_query("authentication") == "authentication"
+
+
+def test_vocabulary_lifecycle_reports_building_and_finishes_ready(
+    shared_embedding_model,
+):
+    from src.models import Chunk
+
+    vector_index = VectorIndex(embedding_model=shared_embedding_model)
+    chunk = Chunk(
+        chunk_id="doc2_chunk_0",
+        doc_id="doc2",
+        content="Authorization policies protect access after authentication.",
+        metadata={},
+        chunk_index=0,
+        header_path="Security",
+        start_pos=0,
+        end_pos=60,
+        file_path="/tmp/doc2.md",
+        modified_time=datetime.now(),
+    )
+    vector_index.add_chunk(chunk)
+
+    observed_statuses: list[str] = []
+    original_protected_embed = vector_index._protected_embed
+
+    def tracking_embed(text: str) -> list[float]:
+        observed_statuses.append(str(vector_index.get_vocabulary_state()["status"]))
+        return original_protected_embed(text)
+
+    vector_index._protected_embed = tracking_embed
+    vector_index.build_concept_vocabulary(min_frequency=1)
+
+    assert "building" in observed_statuses
+    assert vector_index.get_vocabulary_state()["status"] == "ready"
+
+
+def test_vocabulary_incremental_catch_up_returns_to_ready(shared_embedding_model):
+    from src.models import Chunk
+
+    vector_index = VectorIndex(embedding_model=shared_embedding_model)
+    first_chunk = Chunk(
+        chunk_id="doc3_chunk_0",
+        doc_id="doc3",
+        content="Authentication requires credentials and verification.",
+        metadata={},
+        chunk_index=0,
+        header_path="Security",
+        start_pos=0,
+        end_pos=55,
+        file_path="/tmp/doc3.md",
+        modified_time=datetime.now(),
+    )
+    second_chunk = Chunk(
+        chunk_id="doc4_chunk_0",
+        doc_id="doc4",
+        content="Authorization protects privileged administration endpoints.",
+        metadata={},
+        chunk_index=0,
+        header_path="Security",
+        start_pos=0,
+        end_pos=58,
+        file_path="/tmp/doc4.md",
+        modified_time=datetime.now(),
+    )
+
+    vector_index.add_chunk(first_chunk)
+    vector_index.build_concept_vocabulary(min_frequency=1)
+    assert vector_index.get_vocabulary_state()["status"] == "ready"
+
+    vector_index.add_chunk(second_chunk)
+
+    assert vector_index.get_vocabulary_state()["status"] == "stale"
+    embedded = vector_index.update_vocabulary_incremental(
+        max_terms=100,
+        min_frequency=1,
+        batch_size=100,
+    )
+
+    assert embedded > 0
+    assert vector_index.get_vocabulary_state()["status"] == "ready"
+
+
+def test_vocabulary_lifecycle_persists_stale_state_without_materialized_terms(
+    shared_embedding_model,
+    tmp_path,
+):
+    from src.models import Chunk
+
+    vector_index = VectorIndex(embedding_model=shared_embedding_model)
+    chunk = Chunk(
+        chunk_id="doc5_chunk_0",
+        doc_id="doc5",
+        content="Bootstrap rebuild persists authoritative terms without full vocabulary build.",
+        metadata={},
+        chunk_index=0,
+        header_path="Lifecycle",
+        start_pos=0,
+        end_pos=75,
+        file_path="/tmp/doc5.md",
+        modified_time=datetime.now(),
+    )
+    vector_index.add_chunk(chunk)
+
+    persist_path = tmp_path / "vector_state"
+    vector_index.persist(persist_path)
+
+    loaded = VectorIndex(embedding_model=shared_embedding_model)
+    loaded.load(persist_path)
+
+    assert loaded.get_vocabulary_state()["status"] == "stale"
+    assert loaded._concept_vocabulary == {}

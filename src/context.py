@@ -91,6 +91,7 @@ class ApplicationContext:
     _freshness_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _freshness_task: asyncio.Task | None = field(default=None, repr=False)
     _embedding_warmup_task: asyncio.Task | None = field(default=None, repr=False)
+    _vocabulary_catch_up_task: asyncio.Task | None = field(default=None, repr=False)
     _loaded_index_state_version: float = field(default=0.0, repr=False)
     _is_virgin_startup: bool = field(default=False, repr=False)
     _bootstrap_session: BootstrapSession | None = field(default=None, repr=False)
@@ -476,8 +477,8 @@ class ApplicationContext:
                 self._full_index()
                 self._mark_index_state_loaded()
                 self._ready_event.set()
-                # Build vocabulary after full index (in background)
-                asyncio.create_task(self._build_initial_vocabulary())
+                self.schedule_embedding_model_warmup()
+                self.schedule_vocabulary_catch_up()
         else:
             logger.info("Loading existing indices")
             if background_index:
@@ -502,9 +503,7 @@ class ApplicationContext:
                 self._ready_event.set()
                 self.schedule_embedding_model_warmup()
                 await self._startup_reconciliation()
-                # Build vocabulary if empty (migration from old index)
-                if not self.index_manager.vector._concept_vocabulary:
-                    asyncio.create_task(self._build_initial_vocabulary())
+                self.schedule_vocabulary_catch_up()
 
         if self.watcher:
             self.watcher.start()
@@ -573,7 +572,7 @@ class ApplicationContext:
             publish_public_state=self._publish_bootstrap_public_state,
             mark_ready=self._ready_event.set,
             schedule_embedding_warmup=self.schedule_embedding_model_warmup,
-            schedule_initial_vocabulary_build=self._schedule_initial_vocabulary_build,
+            schedule_vocabulary_catch_up=self.schedule_vocabulary_catch_up,
             report_failure=self._report_bootstrap_failure,
         )
 
@@ -583,10 +582,25 @@ class ApplicationContext:
     ) -> None:
         self._index_state = self._index_state_from_snapshot(snapshot)
 
-    def _schedule_initial_vocabulary_build(self) -> None:
-        if self.index_manager.vector._concept_vocabulary:
-            return
-        asyncio.create_task(self._build_initial_vocabulary())
+    def schedule_vocabulary_catch_up(self) -> bool:
+        if self._init_error is not None:
+            return False
+        if not self.index_manager.is_ready():
+            return False
+
+        vector = self.index_manager.vector
+        needs_catch_up = getattr(vector, "needs_vocabulary_catch_up", None)
+        if not callable(needs_catch_up) or not needs_catch_up():
+            return False
+
+        current_task = getattr(self, "_vocabulary_catch_up_task", None)
+        if current_task is not None and not current_task.done():
+            return False
+
+        task = asyncio.create_task(self._run_vocabulary_catch_up())
+        self._vocabulary_catch_up_task = task
+        task.add_done_callback(self._clear_vocabulary_catch_up_task)
+        return True
 
     def _report_bootstrap_failure(
         self,
@@ -673,6 +687,8 @@ class ApplicationContext:
                     total_count=len(files_to_index),
                 )
                 self._ready_event.set()
+                self.schedule_embedding_model_warmup()
+                self.schedule_vocabulary_catch_up()
                 return  # Success, exit retry loop
 
             except Exception as e:
@@ -709,8 +725,7 @@ class ApplicationContext:
             self.schedule_embedding_model_warmup()
             await self._startup_reconciliation()
 
-            if not self.index_manager.vector._concept_vocabulary:
-                asyncio.create_task(self._build_initial_vocabulary())
+            self.schedule_vocabulary_catch_up()
 
             self._index_state = IndexState(status="ready")
             self._ready_event.set()
@@ -725,9 +740,7 @@ class ApplicationContext:
     async def _reconcile_existing_indices_background(self) -> None:
         try:
             await self._startup_reconciliation()
-
-            if not self.index_manager.vector._concept_vocabulary:
-                asyncio.create_task(self._build_initial_vocabulary())
+            self.schedule_vocabulary_catch_up()
         except Exception as e:
             logger.error(
                 f"Startup reconciliation failed after loading existing indices: {e}",
@@ -810,8 +823,7 @@ class ApplicationContext:
                 if self.watcher:
                     self.watcher.refresh_watches()
 
-                # Incrementally build vocabulary in background
-                await self._update_vocabulary_incremental()
+                self.schedule_vocabulary_catch_up()
 
             except asyncio.CancelledError:
                 logger.info("Periodic reconciliation task cancelled")
@@ -822,31 +834,51 @@ class ApplicationContext:
                 )
 
     async def _update_vocabulary_incremental(self) -> None:
-        """Update concept vocabulary incrementally in background."""
+        """Catch up concept vocabulary without blocking search readiness."""
         vector = self.index_manager.vector
-        pending = vector.get_pending_vocabulary_count()
-        if pending == 0:
+        if not vector.needs_vocabulary_catch_up():
             return
 
-        logger.debug(f"Updating vocabulary: {pending} pending terms")
-        # Process in batches to avoid blocking
+        before_state = vector.get_vocabulary_state()
         total_embedded = 0
-        while True:
+        while vector.needs_vocabulary_catch_up():
             embedded = await asyncio.to_thread(
                 vector.update_vocabulary_incremental,
+                max_terms=2000,
+                min_frequency=3,
                 batch_size=50,
             )
+            if embedded == 0 and not vector.needs_vocabulary_catch_up():
+                break
             if embedded == 0:
                 break
             total_embedded += embedded
-            # Yield to event loop between batches
             await asyncio.sleep(0)
 
-        if total_embedded > 0:
-            logger.info(f"Vocabulary update: embedded {total_embedded} new terms")
-            # Persist after vocabulary update
+        after_state = vector.get_vocabulary_state()
+        if total_embedded > 0 or before_state != after_state:
+            logger.info(
+                "Vocabulary catch-up status=%s embedded=%d",
+                after_state["status"],
+                total_embedded,
+            )
             await asyncio.to_thread(self.index_manager.persist_checkpoint)
             self._mark_index_state_loaded()
+
+    async def _run_vocabulary_catch_up(self) -> None:
+        try:
+            await self._update_vocabulary_incremental()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Background vocabulary catch-up failed; continuing to serve baseline search",
+                exc_info=True,
+            )
+
+    def _clear_vocabulary_catch_up_task(self, task: asyncio.Task) -> None:
+        if getattr(self, "_vocabulary_catch_up_task", None) is task:
+            self._vocabulary_catch_up_task = None
 
     async def _build_initial_vocabulary(self) -> None:
         """Build concept vocabulary from scratch in background."""
@@ -1022,12 +1054,18 @@ class ApplicationContext:
             embedding_warmup_task.cancel()
             tasks_to_cancel.append(embedding_warmup_task)
 
+        vocabulary_catch_up_task = getattr(self, "_vocabulary_catch_up_task", None)
+        if vocabulary_catch_up_task and not vocabulary_catch_up_task.done():
+            vocabulary_catch_up_task.cancel()
+            tasks_to_cancel.append(vocabulary_catch_up_task)
+
         if tasks_to_cancel:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
         self._background_index_task = None
         self.reconciliation_task = None
         self._freshness_task = None
         self._embedding_warmup_task = None
+        self._vocabulary_catch_up_task = None
         self._bootstrap_session = None
 
         if self.watcher:

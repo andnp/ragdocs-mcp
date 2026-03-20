@@ -255,6 +255,42 @@ def test_persist_checkpoint_defers_derived_graph_refresh(config, manager):
     assert manager.graph.get_community("alpha") is not None
 
 
+def test_persist_checkpoint_succeeds_without_materializing_vocabulary(
+    config,
+    manager,
+    shared_embedding_model,
+):
+    docs_path = Path(config.indexing.documents_path)
+    index_path = Path(config.indexing.index_path)
+    doc_path = docs_path / "vocabulary-free-checkpoint.md"
+    doc_path.write_text(
+        "# Lifecycle\n\nCheckpoint should persist without a vocabulary rebuild."
+    )
+
+    manager.index_document(str(doc_path))
+    manager.persist_checkpoint()
+
+    manifest = load_manifest(index_path)
+    assert manifest is not None
+    assert manifest.indexed_files == {
+        "vocabulary-free-checkpoint": "vocabulary-free-checkpoint.md"
+    }
+    assert manager.vector.get_vocabulary_state()["status"] == "stale"
+    assert manager.vector._concept_vocabulary == {}
+
+    reloaded_manager = IndexManager(
+        config,
+        VectorIndex(embedding_model=shared_embedding_model),
+        KeywordIndex(),
+        GraphStore(),
+    )
+    reloaded_manager.load()
+
+    assert reloaded_manager.is_ready() is True
+    assert reloaded_manager.vector.get_vocabulary_state()["status"] == "stale"
+    assert reloaded_manager.vector._concept_vocabulary == {}
+
+
 def test_persist_skips_derived_graph_refresh_when_graph_is_clean(
     config, manager, monkeypatch
 ):

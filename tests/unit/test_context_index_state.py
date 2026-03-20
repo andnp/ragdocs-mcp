@@ -93,6 +93,19 @@ class MockIndexManager:
     persist_called: bool = False
     fail_on_file: str | None = None
     _ready: bool = True
+    vector: Any = field(
+        default_factory=lambda: type(
+            "VectorStub",
+            (),
+            {
+                "model_ready": lambda self: False,
+                "warm_up": lambda self: None,
+                "needs_vocabulary_catch_up": lambda self: False,
+                "get_vocabulary_state": lambda self: {"status": "absent"},
+                "update_vocabulary_incremental": lambda self, **kwargs: 0,
+            },
+        )()
+    )
 
     def index_document(self, path: str):
         if self.fail_on_file and path == self.fail_on_file:
@@ -117,6 +130,7 @@ class SlowLoadIndexManager:
                 "_concept_vocabulary": {"warm": 1},
                 "model_ready": lambda self: False,
                 "warm_up": lambda self: None,
+                "needs_vocabulary_catch_up": lambda self: False,
             },
         )()
 
@@ -139,6 +153,7 @@ class ExistingIndexManager:
                 "_concept_vocabulary": {"warm": 1},
                 "model_ready": lambda self: False,
                 "warm_up": lambda self: None,
+                "needs_vocabulary_catch_up": lambda self: False,
             },
         )()
 
@@ -165,6 +180,9 @@ class WarmupVectorStub:
     def warm_up(self) -> None:
         self.warm_up_calls += 1
         self._ready = True
+
+    def needs_vocabulary_catch_up(self) -> bool:
+        return False
 
 
 class WarmupIndexManager:
@@ -771,6 +789,7 @@ async def test_start_resume_bootstrap_loads_partial_indices_before_background_ta
                     "_concept_vocabulary": {"warm": 1},
                     "model_ready": lambda self: False,
                     "warm_up": lambda self: None,
+                    "needs_vocabulary_catch_up": lambda self: False,
                 },
             )()
 
@@ -873,6 +892,7 @@ async def test_start_rebuild_preloads_partial_indices_before_background_task(
                     "_concept_vocabulary": {"warm": 1},
                     "model_ready": lambda self: False,
                     "warm_up": lambda self: None,
+                    "needs_vocabulary_catch_up": lambda self: False,
                 },
             )()
 
@@ -1080,6 +1100,7 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
                     "_concept_vocabulary": {"warm": 1},
                     "model_ready": lambda self: False,
                     "warm_up": lambda self: None,
+                    "needs_vocabulary_catch_up": lambda self: False,
                 },
             )()
 
@@ -1193,6 +1214,7 @@ async def test_task_bootstrap_keeps_monitoring_when_remaining_work_is_already_pe
                     "_concept_vocabulary": {"warm": 1},
                     "model_ready": lambda self: False,
                     "warm_up": lambda self: None,
+                    "needs_vocabulary_catch_up": lambda self: False,
                 },
             )()
 
@@ -1338,6 +1360,7 @@ async def test_task_bootstrap_skips_durably_completed_files(
                     "_concept_vocabulary": {"warm": 1},
                     "model_ready": lambda self: False,
                     "warm_up": lambda self: None,
+                    "needs_vocabulary_catch_up": lambda self: False,
                 },
             )()
 
@@ -1592,6 +1615,72 @@ async def test_task_mode_existing_index_schedules_embedding_warmup(tmp_path: Pat
 
     assert ctx._ready_event.is_set()
     assert scheduled == ["called"]
+
+
+@pytest.mark.asyncio
+async def test_start_rebuild_marks_ready_without_forcing_full_vocabulary_build(
+    tmp_path: Path,
+):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", False)
+    _setattr(ctx, "watcher", None)
+    _setattr(ctx, "commit_indexer", None)
+    _setattr(ctx, "reconciliation_task", None)
+    _setattr(ctx, "current_manifest", None)
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "_background_index_task", None)
+    _setattr(ctx, "_ready_event", asyncio.Event())
+    _setattr(ctx, "_init_error", None)
+    _setattr(ctx, "_index_state", IndexState(status="uninitialized"))
+    _setattr(ctx, "_is_virgin_startup", True)
+    _setattr(ctx, "_check_and_rebuild_if_needed", MagicMock(return_value=True))
+
+    class _Manager:
+        def __init__(self) -> None:
+            self.vector = type(
+                "VectorStub",
+                (),
+                {
+                    "needs_vocabulary_catch_up": lambda self: True,
+                    "get_vocabulary_state": lambda self: {"status": "stale"},
+                    "update_vocabulary_incremental": lambda self, **kwargs: 0,
+                    "model_ready": lambda self: True,
+                },
+            )()
+
+        def is_ready(self) -> bool:
+            return True
+
+    _setattr(ctx, "index_manager", _Manager())
+    _setattr(ctx, "_mark_index_state_loaded", lambda: None)
+
+    full_index_calls: list[str] = []
+    scheduled_catch_up: list[str] = []
+    forced_full_build_calls: list[str] = []
+
+    _setattr(ctx, "_full_index", lambda: full_index_calls.append("called"))
+    _setattr(ctx, "schedule_embedding_model_warmup", lambda: False)
+    _setattr(
+        ctx,
+        "schedule_vocabulary_catch_up",
+        lambda: scheduled_catch_up.append("called") or True,
+    )
+    _setattr(
+        ctx,
+        "_build_initial_vocabulary",
+        lambda: forced_full_build_calls.append("called"),
+    )
+
+    await ctx.start(background_index=False)
+
+    assert full_index_calls == ["called"]
+    assert ctx._ready_event.is_set()
+    assert forced_full_build_calls == []
+    assert scheduled_catch_up == ["called"]
 
 
 @pytest.mark.asyncio

@@ -689,8 +689,10 @@ class IndexManager:
         """Persist authoritative checkpoint state with retry logic.
 
         This durability boundary covers the authoritative search snapshot:
-        vector index, keyword index, hash store, and manifest updates. Derived
-        graph artifacts are intentionally excluded.
+        vector index, keyword index, hash store, and manifest updates. Any
+        already-materialized vocabulary plus its lifecycle metadata are saved as
+        part of the vector snapshot, but checkpoint does not force vocabulary
+        rebuild. Derived graph artifacts are intentionally excluded.
         """
         index_path = Path(self._config.indexing.index_path)
 
