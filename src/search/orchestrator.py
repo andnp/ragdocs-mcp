@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 _ACTIVE_PROJECT_UPLIFT = 1.2
 _FACTUAL_QUERY_CLEAR_CANDIDATE_LIMIT = 6
 _FACTUAL_QUERY_CONSENSUS_DEPTH = 2
+_FACTUAL_QUERY_CONTRACTED_TOP_K_FLOOR = 8
+_FACTUAL_QUERY_CONTRACTED_TOP_K_MULTIPLIER = 2
+_FACTUAL_QUERY_TOP_N_CONTRACTION_LIMIT = 5
 _RESULT_CACHE_MAX_ENTRIES = 64
 
 
@@ -178,6 +181,32 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         return bool(set(vector_top) & set(keyword_top))
 
+    def _resolve_effective_stage_top_k(
+        self,
+        *,
+        requested_top_k: int,
+        top_n: int,
+        query_type: QueryType,
+        project_filter: list[str] | None,
+    ) -> int:
+        if requested_top_k <= 0:
+            return requested_top_k
+
+        if project_filter:
+            return requested_top_k
+
+        if query_type is not QueryType.FACTUAL:
+            return requested_top_k
+
+        if top_n > _FACTUAL_QUERY_TOP_N_CONTRACTION_LIMIT:
+            return requested_top_k
+
+        contracted_top_k = max(
+            _FACTUAL_QUERY_CONTRACTED_TOP_K_FLOOR,
+            top_n * _FACTUAL_QUERY_CONTRACTED_TOP_K_MULTIPLIER,
+        )
+        return min(requested_top_k, contracted_top_k)
+
     async def query(
         self,
         query_text: str,
@@ -224,17 +253,33 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         docs_root = self._documents_path
         query_context = self._create_query_execution_context()
+        query_type = classify_query(query_text)
+        effective_stage_top_k = self._resolve_effective_stage_top_k(
+            requested_top_k=top_k,
+            top_n=top_n,
+            query_type=query_type,
+            project_filter=project_filter,
+        )
 
         search_tasks = [
-            self._search_vector(query_text, top_k, excluded_files, docs_root),
-            self._search_keyword(query_text, top_k, excluded_files, docs_root),
+            self._search_vector(
+                query_text,
+                effective_stage_top_k,
+                excluded_files,
+                docs_root,
+            ),
+            self._search_keyword(
+                query_text,
+                effective_stage_top_k,
+                excluded_files,
+                docs_root,
+            ),
         ]
 
         results = await asyncio.gather(*search_tasks)
 
         vector_results = results[0]
         keyword_results = results[1]
-        query_type = classify_query(query_text)
         skip_expensive_factual_enrichments = (
             self._should_skip_expensive_factual_enrichments(
                 query_type,
@@ -270,7 +315,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 initial_results=combined_initial_results,
                 graph=self._graph,
                 vector=self._vector,
-                top_k=top_k,
+                top_k=effective_stage_top_k,
                 max_related_tags=5,
                 max_depth=2,
             )
@@ -295,7 +340,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         graph_chunk_ids = build_graph_chunk_candidates(
             graph_neighbor_ids,
             self._vector,
-            top_k,
+            effective_stage_top_k,
             excluded_chunk_ids=set(chunk_id_to_doc_id),
         )
 
