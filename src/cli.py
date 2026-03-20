@@ -1,14 +1,15 @@
 import asyncio
+import concurrent.futures
 import contextlib
 import errno
 import json
 import logging
 import os
-import shutil
 import sys
 import signal
 import time
 from pathlib import Path
+from uuid import uuid4
 
 # Prevent tokenizers parallelism warning when forking worker process.
 # Must be set before any HuggingFace/sentence-transformers imports.
@@ -21,13 +22,6 @@ os.environ.setdefault("TQDM_DISABLE", "1")
 import click
 import uvicorn
 from rich.console import Console
-from rich.progress import (
-    Progress,
-    TextColumn,
-    BarColumn,
-    TaskProgressColumn,
-    TimeRemainingColumn,
-)
 from rich.table import Table
 
 from src.config import ensure_runtime_project_registered, load_config
@@ -47,16 +41,17 @@ from src.daemon.management import (
     stop_daemon,
     wait_for_daemon_ready,
 )
-from src.git.repository import get_commits_after_timestamp, is_git_available
-from src.git.parallel_indexer import (
-    ParallelIndexingConfig,
-    index_commits_parallel_sync,
-)
 from src.context import ApplicationContext
 from src.coordination.queue import get_huey
-from src.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexManifest, save_manifest
-from src.indexing.tasks import register_tasks
-from src.indexing.reconciler import build_indexed_files_map
+from src.indexing.rebuild_service import (
+    REBUILD_ACTIVE_STATUSES,
+    REBUILD_TERMINAL_STATUSES,
+    read_rebuild_status,
+    resolve_rebuild_scope,
+    submit_rebuild_status,
+    write_rebuild_status,
+)
+from src.indexing.tasks import register_tasks, submit_rebuild_request
 from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.utils import should_include_file
 from src.worker.consumer import HueyWorker
@@ -77,6 +72,7 @@ logger = logging.getLogger(__name__)
 MIN_TOP_N = 1
 MAX_TOP_N = 100
 _DAEMON_OVERVIEW_TIMEOUT_SECONDS = 1.0
+_REBUILD_POLL_INTERVAL_SECONDS = 0.2
 _GLOBAL_DAEMON_PROJECT_OPTION_HELP = (
     "Accepted for backward compatibility but ignored; daemon runtime is global "
     "and project is request metadata only."
@@ -153,6 +149,7 @@ def _create_daemon_runtime(runtime_paths: RuntimePaths):
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         bootstrap_index_path=ctx.index_path,
         bootstrap_documents_roots=ctx.documents_roots,
+        schedule_vocabulary_catch_up=ctx.schedule_vocabulary_catch_up,
     )
     worker = HueyWorkerProcess(
         runtime_paths=runtime_paths,
@@ -174,6 +171,20 @@ async def _run_worker_forever_async(
     parent_pid: int,
     parent_start_time: int | None = None,
 ) -> None:
+    worker_loop = asyncio.get_running_loop()
+
+    def _schedule_worker_vocabulary_catch_up() -> bool:
+        result: concurrent.futures.Future[bool] = concurrent.futures.Future()
+
+        def _schedule() -> None:
+            try:
+                result.set_result(ctx.schedule_vocabulary_catch_up())
+            except Exception as exc:  # pragma: no cover - defensive handoff
+                result.set_exception(exc)
+
+        worker_loop.call_soon_threadsafe(_schedule)
+        return result.result(timeout=5.0)
+
     ctx = ApplicationContext.create(
         project_override=project,
         enable_watcher=True,
@@ -195,6 +206,7 @@ async def _run_worker_forever_async(
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         bootstrap_index_path=ctx.index_path,
         bootstrap_documents_roots=ctx.documents_roots,
+        schedule_vocabulary_catch_up=_schedule_worker_vocabulary_catch_up,
     )
     worker = HueyWorker(huey)
 
@@ -529,50 +541,51 @@ def _resolve_rebuild_project_scope(
     return None
 
 
-def _clear_document_index_artifacts(index_path: Path) -> None:
-    for directory_name in ["vector", "keyword", "graph"]:
-        shutil.rmtree(index_path / directory_name, ignore_errors=True)
-
-    for filename in [
-        "index.db",
-        "index.db-wal",
-        "index.db-shm",
-        "index.manifest.json",
-        "chunk_hashes.json",
-    ]:
-        with contextlib.suppress(FileNotFoundError):
-            (index_path / filename).unlink()
-
-
-def _build_rebuild_manifest(
-    ctx: ApplicationContext,
-    indexed_files: list[str],
-) -> IndexManifest:
-    docs_path = Path(ctx.config.indexing.documents_path)
-    return IndexManifest(
-        spec_version=CURRENT_MANIFEST_SPEC_VERSION,
-        embedding_model=ctx.config.llm.embedding_model,
-        chunking_config={
-            "strategy": ctx.config.chunking.strategy,
-            "min_chunk_chars": ctx.config.chunking.min_chunk_chars,
-            "max_chunk_chars": ctx.config.chunking.max_chunk_chars,
-            "overlap_chars": ctx.config.chunking.overlap_chars,
-        },
-        indexed_files=build_indexed_files_map(
-            indexed_files,
-            docs_path,
-            docs_roots=ctx.documents_roots,
-        ),
+def _request_rebuild_submit_payload(
+    *,
+    project_override: str | None,
+) -> dict[str, object]:
+    payload = _request_daemon_json(
+        "/api/admin/rebuild/submit",
+        {"project": project_override},
+        project_override=project_override,
+        auto_start=True,
+        allow_error=True,
     )
+    if payload is None or payload.get("status") == "error":
+        _raise_daemon_request_error(payload)
+    return payload
 
 
-def _iter_rebuild_batches(
-    file_paths: list[str],
-    batch_size: int,
-):
-    normalized_batch_size = max(1, batch_size)
-    for start in range(0, len(file_paths), normalized_batch_size):
-        yield file_paths[start : start + normalized_batch_size]
+def _request_rebuild_status_payload(
+    *,
+    project_override: str | None,
+) -> dict[str, object]:
+    payload = _request_daemon_json(
+        "/api/admin/rebuild/status",
+        {},
+        project_override=project_override,
+        auto_start=False,
+        allow_error=True,
+    )
+    if payload is None or payload.get("status") == "error":
+        _raise_daemon_request_error(payload)
+    return payload
+
+
+def _render_rebuild_messages(
+    payload: dict[str, object],
+    *,
+    printed_count: int,
+) -> int:
+    messages = payload.get("messages", [])
+    if not isinstance(messages, list):
+        return printed_count
+
+    normalized_messages = [item for item in messages if isinstance(item, str)]
+    for message in normalized_messages[printed_count:]:
+        click.echo(message)
+    return len(normalized_messages)
 
 
 @cli.command()
@@ -663,6 +676,60 @@ async def _run_daemon_forever() -> None:
                 worker_running=huey_worker.is_running,
                 backpressure_limit=ctx.config.indexing.task_backpressure_limit,
             )
+        if path == "/api/admin/rebuild/status":
+            return read_rebuild_status(runtime_paths.root)
+        if path == "/api/admin/rebuild/submit":
+            current_status = read_rebuild_status(runtime_paths.root)
+            current_state = str(current_status.get("status", "idle"))
+            if current_state in REBUILD_ACTIVE_STATUSES:
+                return {
+                    "status": "ok",
+                    "accepted": False,
+                    "already_running": True,
+                    "rebuild": current_status,
+                }
+
+            project_override = (
+                str(payload.get("project"))
+                if payload.get("project") is not None
+                else None
+            )
+            scope = resolve_rebuild_scope(
+                ctx.config,
+                ctx.documents_roots,
+                project_override,
+            )
+            request_id = uuid4().hex
+            queued_status = submit_rebuild_status(
+                runtime_paths.root,
+                request_id=request_id,
+                scope=scope,
+            )
+            submission = submit_rebuild_request(
+                project_override,
+                request_id=request_id,
+            )
+            if not submission.queue_available:
+                write_rebuild_status(runtime_paths.root, {"status": "idle"})
+                return {
+                    "status": "error",
+                    "error": "rebuild_queue_unavailable",
+                    "details": "Daemon rebuild queue is unavailable.",
+                }
+            if submission.should_retry_later:
+                write_rebuild_status(runtime_paths.root, {"status": "idle"})
+                return {
+                    "status": "error",
+                    "error": "rebuild_queue_backpressured",
+                    "details": "Daemon rebuild queue is backpressured. Retry shortly.",
+                }
+
+            return {
+                "status": "ok",
+                "accepted": submission.accepted_by_queue,
+                "already_running": False,
+                "rebuild": queued_status,
+            }
         if path == "/internal/shutdown":
             coordinator.request_shutdown()
             return {"status": "ok", "lifecycle": coordinator.state.value}
@@ -1508,184 +1575,36 @@ def rebuild_index_cmd(project: str | None, all_projects: bool):
             project=project,
             all_projects=all_projects,
         )
-
-        ctx = ApplicationContext.create(
+        submit_payload = _request_rebuild_submit_payload(
             project_override=effective_project,
-            enable_watcher=False,
-            lazy_embeddings=False,
-            global_runtime=effective_project is None,
         )
+        if bool(submit_payload.get("already_running")):
+            click.echo("ℹ️  Rebuild already in progress; attaching to daemon-owned status")
 
-        ctx.index_path.mkdir(parents=True, exist_ok=True)
-        if ctx.db_manager is not None:
-            ctx.db_manager.close()
-        _clear_document_index_artifacts(ctx.index_path)
-        if ctx.db_manager is not None:
-            ctx.db_manager.initialize_schema()
-
-        docs_path = Path(ctx.config.indexing.documents_path)
-        files_to_index = ctx.discover_files()
-        total_files = len(files_to_index)
-        checkpoint_interval = max(1, ctx.config.indexing.rebuild_checkpoint_interval)
-
-        if effective_project is not None:
-            click.echo(
-                f"Rebuild scope: project '{effective_project}' across {len(ctx.documents_roots)} root(s)"
+        printed_messages = 0
+        while True:
+            status_payload = _request_rebuild_status_payload(
+                project_override=effective_project,
             )
-        else:
-            click.echo(
-                f"Rebuild scope: global corpus across {len(ctx.documents_roots)} root(s)"
+            printed_messages = _render_rebuild_messages(
+                status_payload,
+                printed_count=printed_messages,
             )
-        click.echo(
-            f"Discovered {total_files} files; persisting checkpoints every {checkpoint_interval} file(s)"
-        )
 
-        indexed_files: list[str] = []
+            rebuild_status = str(status_payload.get("status", "idle"))
+            if rebuild_status in REBUILD_TERMINAL_STATUSES:
+                if rebuild_status != "succeeded":
+                    raise RuntimeError(
+                        str(status_payload.get("error", "Daemon rebuild failed"))
+                    )
+                return
 
-        with Progress(
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
-        ) as progress:
-            task = progress.add_task("Indexing documents...", total=total_files)
-
-            for file_batch in _iter_rebuild_batches(
-                files_to_index,
-                checkpoint_interval,
-            ):
-                file_path = file_batch[-1]
-                try:
-                    rel_path = Path(file_path).relative_to(docs_path)
-                    display_path = str(rel_path)
-                except ValueError:
-                    display_path = file_path
-
-                progress.update(
-                    task, description=f"[bold blue]Indexing: {display_path}"
-                )
-                ctx.index_manager.index_documents(
-                    file_batch,
-                    force=True,
-                    persist=False,
-                )
-                indexed_files.extend(file_batch)
-                progress.advance(task, len(file_batch))
-
-                ctx.index_manager.persist_checkpoint()
-                save_manifest(
-                    ctx.index_path,
-                    _build_rebuild_manifest(ctx, indexed_files),
-                )
-                click.echo(
-                    f"📍 Checkpoint persisted: {len(indexed_files)}/{total_files} documents"
+            if rebuild_status not in REBUILD_ACTIVE_STATUSES:
+                raise RuntimeError(
+                    f"Unexpected daemon rebuild status: {rebuild_status}"
                 )
 
-        ctx.index_manager.persist_checkpoint()
-        current_manifest = _build_rebuild_manifest(ctx, indexed_files)
-        save_manifest(ctx.index_path, current_manifest)
-        ctx.index_manager.finalize_derived_graph_state()
-
-        click.echo(f"✅ Successfully rebuilt index: {total_files} documents indexed")
-
-        # Git commit indexing phase
-        if ctx.config.git_indexing.enabled and ctx.commit_indexer is not None:
-            if not is_git_available():
-                logger.warning("Git binary not available, skipping git commit indexing")
-                click.echo("⚠️  Git binary not available, skipping git commit indexing")
-            else:
-                try:
-                    click.echo("Clearing git commit index...")
-                    ctx.commit_indexer.clear()
-
-                    repos = ctx.discover_git_repositories()
-
-                    if repos:
-                        # Count total commits across all repos
-                        total_commits = 0
-                        repo_commits_map: dict[Path, list[str]] = {}
-                        for repo_path in repos:
-                            try:
-                                last_timestamp = (
-                                    ctx.commit_indexer.get_last_indexed_timestamp(
-                                        str(repo_path.parent)
-                                    )
-                                )
-                                commit_hashes = get_commits_after_timestamp(
-                                    repo_path, last_timestamp
-                                )
-                                repo_commits_map[repo_path] = commit_hashes
-                                total_commits += len(commit_hashes)
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to get commits from {repo_path}: {e}"
-                                )
-                                continue
-
-                        if total_commits > 0:
-                            parallel_config = ParallelIndexingConfig()
-
-                            with Progress(
-                                TextColumn("[bold blue]{task.description}"),
-                                BarColumn(),
-                                TaskProgressColumn(),
-                                TimeRemainingColumn(),
-                            ) as progress:
-                                task = progress.add_task(
-                                    "Indexing git commits...",
-                                    total=len(repo_commits_map),
-                                )
-
-                                indexed_count = 0
-                                for (
-                                    repo_path,
-                                    commit_hashes,
-                                ) in repo_commits_map.items():
-                                    if not commit_hashes:
-                                        progress.advance(task)
-                                        continue
-
-                                    try:
-                                        indexed = index_commits_parallel_sync(
-                                            commit_hashes,
-                                            repo_path,
-                                            ctx.commit_indexer,
-                                            parallel_config,
-                                            200,
-                                        )
-                                        indexed_count += indexed
-                                        progress.advance(task)
-                                    except Exception as e:
-                                        logger.error(
-                                            f"Failed to process repository {repo_path}: {e}"
-                                        )
-                                        progress.advance(task)
-                                        continue
-
-                            click.echo(
-                                f"✅ Successfully indexed {indexed_count} git commits from {len(repos)} repositories"
-                            )
-                        else:
-                            click.echo("ℹ️  No new git commits to index")
-                    else:
-                        click.echo("ℹ️  No git repositories found")
-                except Exception as e:
-                    logger.error(f"Git indexing failed: {e}")
-                    click.echo(f"⚠️  Git indexing failed: {e}", err=True)
-
-        # Concept vocabulary building phase
-        try:
-            click.echo("Building concept vocabulary...")
-            ctx.index_manager.vector.build_concept_vocabulary(
-                max_terms=2000,
-                min_frequency=3,
-            )
-            ctx.index_manager.persist_checkpoint()
-            vocab_size = len(ctx.index_manager.vector._concept_vocabulary)
-            click.echo(f"✅ Successfully built concept vocabulary: {vocab_size} terms")
-        except Exception as e:
-            logger.error(f"Concept vocabulary building failed: {e}")
-            click.echo(f"⚠️  Concept vocabulary building failed: {e}", err=True)
+            time.sleep(_REBUILD_POLL_INTERVAL_SECONDS)
 
     except Exception as e:
         logger.error(f"Failed to rebuild index: {e}")

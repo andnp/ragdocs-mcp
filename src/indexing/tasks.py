@@ -22,6 +22,7 @@ from src.indexing.bootstrap_checkpoint import (
     mark_bootstrap_file_completed,
     mark_bootstrap_files_completed,
 )
+from src.indexing.rebuild_service import run_rebuild
 
 if TYPE_CHECKING:
     from src.git.commit_indexer import CommitIndexer
@@ -105,6 +106,7 @@ _commit_indexer: CommitIndexer | None = None
 _task_backpressure_limit: int = 100
 _bootstrap_index_path: Path | None = None
 _bootstrap_documents_roots: list[Path] = []
+_schedule_vocabulary_catch_up: Callable[[], bool] | None = None
 
 # Task references (set after register_tasks is called)
 index_document_task = None
@@ -112,6 +114,7 @@ index_documents_batch_task = None
 remove_document_task = None
 remove_documents_batch_task = None
 refresh_git_repository_task = None
+rebuild_index_task = None
 
 
 def register_tasks(
@@ -121,6 +124,7 @@ def register_tasks(
     task_backpressure_limit: int = 100,
     bootstrap_index_path: Path | None = None,
     bootstrap_documents_roots: list[Path] | None = None,
+    schedule_vocabulary_catch_up: Callable[[], bool] | None = None,
 ) -> None:
     """Register indexing tasks with the given Huey instance.
 
@@ -129,14 +133,17 @@ def register_tasks(
     """
     global _huey, _index_manager, _commit_indexer, _task_backpressure_limit
     global _bootstrap_index_path, _bootstrap_documents_roots
+    global _schedule_vocabulary_catch_up
     global index_document_task, index_documents_batch_task, remove_document_task
     global remove_documents_batch_task, refresh_git_repository_task
+    global rebuild_index_task
     _huey = huey
     _index_manager = index_manager
     _commit_indexer = commit_indexer
     _task_backpressure_limit = max(1, task_backpressure_limit)
     _bootstrap_index_path = bootstrap_index_path
     _bootstrap_documents_roots = list(bootstrap_documents_roots or [])
+    _schedule_vocabulary_catch_up = schedule_vocabulary_catch_up
 
     @huey.task()
     def _index_document(file_path: str, force: bool = False) -> bool:
@@ -332,11 +339,40 @@ def register_tasks(
             logger.error("Task failed: refresh git %s", git_dir_path, exc_info=True)
             return False
 
+    @huey.task()
+    def _rebuild_index(project_override: str | None, request_id: str) -> bool:
+        """Run a daemon-owned rebuild inside the long-lived worker runtime."""
+        if _index_manager is None:
+            logger.error("IndexManager not available for rebuild task execution")
+            return False
+        if _bootstrap_index_path is None:
+            logger.error("Runtime root not configured for rebuild task execution")
+            return False
+
+        from src.config import load_config
+
+        try:
+            payload = run_rebuild(
+                runtime_root=_bootstrap_index_path,
+                config=load_config(),
+                index_manager=_index_manager,
+                commit_indexer=_commit_indexer,
+                global_documents_roots=_bootstrap_documents_roots,
+                request_id=request_id,
+                project_override=project_override,
+                schedule_vocabulary_catch_up=_schedule_vocabulary_catch_up,
+            )
+            return payload.get("status") == "succeeded"
+        except Exception:
+            logger.error("Task failed: rebuild index", exc_info=True)
+            return False
+
     index_document_task = _index_document
     index_documents_batch_task = _index_documents_batch
     remove_document_task = _remove_document
     remove_documents_batch_task = _remove_documents_batch
     refresh_git_repository_task = _refresh_git_repository
+    rebuild_index_task = _rebuild_index
     logger.info("Indexing tasks registered with Huey")
 
 
@@ -660,6 +696,27 @@ def submit_refresh_git_batch(git_dirs: list[str]) -> TaskBatchSubmissionResult:
         enqueued_count=enqueued_count,
         already_pending_count=already_pending_count,
     )
+
+
+def submit_rebuild_request(
+    project_override: str | None,
+    *,
+    request_id: str,
+) -> TaskSubmissionResult:
+    if rebuild_index_task is None or _huey is None:
+        return TaskSubmissionResult(status="unavailable")
+
+    queue_item = project_override or "__global__"
+    if is_backpressured(
+        _huey,
+        _task_backpressure_limit,
+        item=queue_item,
+        warning_message="Skipping rebuild enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
+    ):
+        return TaskSubmissionResult(status="backpressured")
+
+    rebuild_index_task(project_override, request_id=request_id)
+    return TaskSubmissionResult(status="enqueued")
 
 
 def get_pending_task_count() -> int:

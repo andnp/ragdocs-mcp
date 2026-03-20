@@ -685,6 +685,17 @@ class IndexManager:
         self._mark_derived_graph_state_dirty()
         self._bump_state_version()
 
+    def clear_documents(self) -> None:
+        self.vector.clear()
+        self.keyword.clear()
+        self.graph.clear()
+        self._hash_store.clear()
+        self._failed_files.clear()
+        self._manifest_indexed_files.clear()
+        self._manifest_removed_doc_ids.clear()
+        self._mark_derived_graph_state_dirty()
+        self._bump_state_version()
+
     def persist_checkpoint(self):
         """Persist authoritative checkpoint state with retry logic.
 

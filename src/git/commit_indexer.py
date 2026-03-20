@@ -239,6 +239,21 @@ class CommitIndexer:
         conn.commit()
         logger.info("Cleared all commits from index")
 
+    def clear_repositories(self, repo_paths: list[str]) -> None:
+        """Remove commits for one or more repositories."""
+        if not repo_paths:
+            return
+
+        normalized_paths = [self._normalize_repo_path(path) for path in repo_paths]
+        placeholders = ",".join("?" for _ in normalized_paths)
+        conn = self._get_connection()
+        conn.execute(
+            f"DELETE FROM git_commits WHERE repo_path IN ({placeholders})",
+            normalized_paths,
+        )
+        conn.commit()
+        logger.info("Cleared git commits for %d repositories", len(normalized_paths))
+
     def query_by_embedding(
         self,
         query_embedding: list[float],

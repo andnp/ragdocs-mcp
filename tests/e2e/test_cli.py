@@ -5,6 +5,7 @@ Tests the command-line interface using Click's CliRunner for isolated
 testing. Covers check-config, rebuild-index, run commands, and error handling.
 """
 
+import contextlib
 import os
 from unittest import mock
 
@@ -12,6 +13,8 @@ import pytest
 from click.testing import CliRunner
 
 from src.cli import cli
+from src.daemon.management import stop_daemon
+from src.daemon.paths import RuntimePaths
 
 
 @pytest.fixture
@@ -23,6 +26,13 @@ def runner():
     affecting the actual filesystem or starting real servers.
     """
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def cleanup_background_daemon():
+    yield
+    with contextlib.suppress(Exception):
+        stop_daemon(paths=RuntimePaths.resolve())
 
 
 @pytest.fixture
@@ -505,7 +515,6 @@ def test_rebuild_index_with_git_enabled_indexes_commits(
         assert result.exit_code == 0
         assert "Successfully rebuilt index" in result.output
         assert "4 documents indexed" in result.output  # 3 original + test4.md
-        assert "Indexing git commits" in result.output
         assert "Successfully indexed" in result.output
         assert "git commits" in result.output
         assert "repositories" in result.output
@@ -668,9 +677,7 @@ def test_rebuild_index_builds_vocabulary_when_enabled(
 
         assert result.exit_code == 0
         assert "Successfully rebuilt index" in result.output
-        assert "Building concept vocabulary" in result.output
-        assert "Successfully built concept vocabulary" in result.output
-        assert "terms" in result.output
+        assert "Concept vocabulary catch-up scheduled" in result.output
 
     finally:
         os.chdir(original_cwd)
@@ -688,19 +695,17 @@ def test_rebuild_index_vocabulary_error_handling_non_fatal(
     try:
         os.chdir(tmp_path)
 
-        # Mock build_concept_vocabulary to raise exception
+        # Rebuild should not call the old synchronous vocabulary builder.
         with mock.patch(
             "src.indices.vector.VectorIndex.build_concept_vocabulary",
-            side_effect=Exception("Vocabulary error"),
+            side_effect=AssertionError("synchronous vocabulary build should not run"),
         ):
             result = runner.invoke(cli, ["rebuild-index"])
 
-            # Should still succeed - vocabulary error is non-fatal
             assert result.exit_code == 0
             assert "Successfully rebuilt index" in result.output
             assert "3 documents indexed" in result.output
-            assert "Concept vocabulary building failed" in result.output
-            assert "Vocabulary error" in result.output
+            assert "Concept vocabulary catch-up scheduled" in result.output
 
     finally:
         os.chdir(original_cwd)
@@ -765,9 +770,8 @@ def test_rebuild_index_both_git_and_vocabulary_enabled(
         )
         assert "git commits" in result.output
 
-        # Verify vocabulary building happened
-        assert "Building concept vocabulary" in result.output
-        assert "Successfully built concept vocabulary" in result.output
+        # Verify derived vocabulary catch-up was handed off to the daemon runtime.
+        assert "Concept vocabulary catch-up scheduled" in result.output
 
     finally:
         os.chdir(original_cwd)

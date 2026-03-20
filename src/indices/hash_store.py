@@ -112,6 +112,11 @@ class ChunkHashStore:
         self._hashes.pop(chunk_id, None)
         self._dirty.add(chunk_id)
 
+    def clear(self) -> None:
+        self._hashes.clear()
+        self._reverse_hashes.clear()
+        self._dirty.add("__cleared__")
+
     def has_changed(self, chunk: Chunk) -> bool:
         """Check if chunk content has changed since last index.
 

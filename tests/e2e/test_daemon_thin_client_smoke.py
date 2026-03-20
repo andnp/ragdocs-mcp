@@ -541,3 +541,113 @@ async def test_daemon_started_for_one_project_still_indexes_global_corpus(
                 await asyncio.to_thread(stop_daemon, paths=runtime_paths)
     finally:
         os.chdir(original_cwd)
+
+
+@pytest.mark.asyncio
+async def test_rebuild_index_reuses_running_daemon_runtime(
+    runner: CliRunner,
+    daemon_test_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_cwd = Path.cwd()
+    os.chdir(daemon_test_env)
+    runtime_paths = _configure_shared_runtime_home(daemon_test_env, monkeypatch)
+
+    try:
+        start = await asyncio.to_thread(
+            runner.invoke,
+            cli,
+            ["daemon", "start", "--timeout", "20"],
+        )
+        assert start.exit_code == 0, start.output
+
+        try:
+            before = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["daemon", "status", "--json"],
+            )
+            assert before.exit_code == 0, before.output
+            before_payload = json.loads(before.output)
+
+            rebuild = await asyncio.to_thread(runner.invoke, cli, ["rebuild-index"])
+            assert rebuild.exit_code == 0, rebuild.output
+            assert "Rebuild scope: global corpus across 1 root(s)" in rebuild.output
+            assert "Successfully rebuilt index" in rebuild.output
+
+            after = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["daemon", "status", "--json"],
+            )
+            assert after.exit_code == 0, after.output
+            after_payload = json.loads(after.output)
+
+            assert before_payload["pid"] == after_payload["pid"]
+            assert after_payload["daemon_scope"] == "global"
+        finally:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(stop_daemon, paths=runtime_paths)
+    finally:
+        os.chdir(original_cwd)
+
+
+@pytest.mark.asyncio
+async def test_project_scoped_rebuild_preserves_other_global_documents(
+    runner: CliRunner,
+    multi_project_daemon_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_cwd = Path.cwd()
+    os.chdir(multi_project_daemon_env)
+    runtime_paths = _configure_shared_runtime_home(multi_project_daemon_env, monkeypatch)
+
+    alpha_path = multi_project_daemon_env / "project_a" / "docs" / "auth.md"
+    alpha_marker = "AlphaRebuildMarker-20260320"
+
+    try:
+        initial_rebuild = await asyncio.to_thread(runner.invoke, cli, ["rebuild-index"])
+        assert initial_rebuild.exit_code == 0, initial_rebuild.output
+
+        alpha_path.write_text(
+            (
+                "# Project Alpha\n\n## Authentication\n\n"
+                "AlphaAuthMarker-20260317\n\n## Rebuild\n\n"
+                f"{alpha_marker}\n"
+            ),
+            encoding="utf-8",
+        )
+
+        scoped_rebuild = await asyncio.to_thread(
+            runner.invoke,
+            cli,
+            ["rebuild-index", "--project", "project_a"],
+        )
+        assert scoped_rebuild.exit_code == 0, scoped_rebuild.output
+        assert "Rebuild scope: project 'project_a' across 1 root(s)" in scoped_rebuild.output
+
+        alpha_query = await asyncio.to_thread(
+            runner.invoke,
+            cli,
+            ["query", alpha_marker, "--json"],
+        )
+        assert alpha_query.exit_code == 0, alpha_query.output
+        alpha_payload = json.loads(alpha_query.output)
+        assert any(alpha_marker in item.get("content", "") for item in alpha_payload.get("results", []))
+
+        beta_query = await asyncio.to_thread(
+            runner.invoke,
+            cli,
+            ["query", "BetaSetupMarker-20260317", "--json"],
+        )
+        assert beta_query.exit_code == 0, beta_query.output
+        beta_payload = json.loads(beta_query.output)
+        assert any(
+            "BetaSetupMarker-20260317" in item.get("content", "")
+            for item in beta_payload.get("results", [])
+        )
+        await _wait_for_daemon_socket(runtime_paths.socket_path)
+    finally:
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(stop_daemon, paths=runtime_paths)
+        os.chdir(original_cwd)
