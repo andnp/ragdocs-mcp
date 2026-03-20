@@ -1,10 +1,22 @@
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
-from src.config import Config, ChunkingConfig, IndexingConfig, LLMConfig, SearchConfig
+from src.config import (
+    Config,
+    ChunkingConfig,
+    IndexingConfig,
+    LLMConfig,
+    ProjectConfig,
+    SearchConfig,
+)
 from src.context import ApplicationContext
-from src.indexing.manifest import save_manifest, IndexManifest
+from src.indexing.manifest import (
+    CURRENT_MANIFEST_SPEC_VERSION,
+    IndexManifest,
+    save_manifest,
+)
 
 
 @pytest.fixture
@@ -72,6 +84,55 @@ def test_create_with_index_path_override(test_config, monkeypatch, tmp_path):
 
     assert ctx.index_path == override_path
     assert ctx.config.indexing.index_path == str(override_path)
+
+
+def test_create_global_runtime_ignores_project_override_for_documents_roots(
+    tmp_path,
+    monkeypatch,
+):
+    """Given daemon-style global runtime, project override must not narrow corpus ownership."""
+
+    project_a = tmp_path / "project_a"
+    project_b = tmp_path / "project_b"
+    project_a.mkdir()
+    project_b.mkdir()
+
+    config = Config(
+        indexing=IndexingConfig(
+            documents_path=str(tmp_path),
+            index_path=str(tmp_path / "index"),
+        ),
+        search=SearchConfig(),
+        chunking=ChunkingConfig(),
+        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        projects=[
+            ProjectConfig(name="project_a", path=str(project_a)),
+            ProjectConfig(name="project_b", path=str(project_b)),
+        ],
+    )
+
+    monkeypatch.setattr("src.context.load_config", lambda: deepcopy(config))
+
+    global_ctx = ApplicationContext.create(
+        project_override="project_a",
+        enable_watcher=False,
+        lazy_embeddings=True,
+        global_runtime=True,
+    )
+    project_ctx = ApplicationContext.create(
+        project_override="project_a",
+        enable_watcher=False,
+        lazy_embeddings=True,
+        global_runtime=False,
+    )
+
+    assert sorted(global_ctx.documents_roots) == sorted([project_a.resolve(), project_b.resolve()])
+    assert global_ctx.config.detected_project is None
+    assert Path(global_ctx.config.indexing.documents_path) == tmp_path.resolve()
+
+    assert project_ctx.documents_roots == [project_a.resolve()]
+    assert project_ctx.config.detected_project == "project_a"
+    assert Path(project_ctx.config.indexing.documents_path) == project_a.resolve()
 
 
 def test_discover_files_returns_markdown_files(context_with_config):
@@ -161,7 +222,7 @@ def test_build_manifest_creates_correct_structure(context_with_config):
     ctx = context_with_config
     manifest = ctx._build_manifest()
 
-    assert manifest.spec_version == "1.0.0"
+    assert manifest.spec_version == CURRENT_MANIFEST_SPEC_VERSION
     assert manifest.embedding_model == ctx.config.llm.embedding_model
     assert "strategy" in manifest.chunking_config
 
@@ -179,7 +240,7 @@ def test_check_and_rebuild_if_needed_returns_false_for_existing_index(
     ctx.index_path.mkdir(parents=True, exist_ok=True)
 
     manifest = IndexManifest(
-        spec_version="1.0.0",
+        spec_version=CURRENT_MANIFEST_SPEC_VERSION,
         embedding_model=ctx.config.llm.embedding_model,
         chunking_config={
             "strategy": ctx.config.chunking.strategy,

@@ -495,6 +495,36 @@ async def test_daemon_started_for_one_project_still_indexes_global_corpus(
                 "BetaSetupMarker-20260317",
             )
 
+            project_context_query = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                [
+                    "query",
+                    "BetaSetupMarker-20260317",
+                    "--json",
+                    "--project",
+                    "project_a",
+                ],
+            )
+            assert project_context_query.exit_code == 0, project_context_query.output
+            project_context_payload = json.loads(project_context_query.output)
+            assert any(
+                "BetaSetupMarker-20260317" in item.get("content", "")
+                for item in project_context_payload.get("results", [])
+            )
+
+            daemon_status = await asyncio.to_thread(
+                runner.invoke,
+                cli,
+                ["daemon", "status", "--json"],
+            )
+            assert daemon_status.exit_code == 0, daemon_status.output
+            daemon_status_payload = json.loads(daemon_status.output)
+            assert daemon_status_payload["daemon_scope"] == "global"
+            assert daemon_status_payload["project_context_mode"] == "request_only"
+            assert daemon_status_payload["configured_root_count"] == 2
+            assert len(daemon_status_payload["documents_roots"]) == 2
+
             stats = await asyncio.to_thread(
                 runner.invoke,
                 cli,
