@@ -27,9 +27,13 @@ from src.config import ensure_runtime_project_registered, load_config
 from src.daemon.queue_status import get_queue_stats
 from src.daemon import DaemonMetadata, RuntimePaths, read_daemon_metadata
 from src.daemon.health import (
-    DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
     DaemonHealthServer,
     request_daemon_socket,
+)
+from src.daemon.client import (
+    DAEMON_PENDING_READY_STATUSES,
+    raise_daemon_request_error,
+    request_daemon_json,
 )
 from src.daemon.request_router import (
     DaemonRequestRouterDependencies,
@@ -42,7 +46,6 @@ from src.daemon.management import (
     restart_daemon,
     start_daemon,
     stop_daemon,
-    wait_for_daemon_ready,
 )
 from src.context import ApplicationContext
 from src.coordination.queue import get_huey
@@ -76,7 +79,6 @@ _GLOBAL_DAEMON_PROJECT_OPTION_HELP = (
     "Accepted for backward compatibility but ignored; daemon runtime is global "
     "and project is request metadata only."
 )
-_DAEMON_PENDING_READY_STATUSES = {"starting", "initializing"}
 
 
 def _create_query_context(project: str | None) -> ApplicationContext:
@@ -477,7 +479,7 @@ def _request_rebuild_submit_payload(
     *,
     project_override: str | None,
 ) -> dict[str, object]:
-    payload = _request_daemon_json(
+    payload = request_daemon_json(
         "/api/admin/rebuild/submit",
         {"project": project_override},
         project_override=project_override,
@@ -485,7 +487,7 @@ def _request_rebuild_submit_payload(
         allow_error=True,
     )
     if payload is None or payload.get("status") == "error":
-        _raise_daemon_request_error(payload)
+        raise_daemon_request_error(payload)
     return payload
 
 
@@ -493,7 +495,7 @@ def _request_rebuild_status_payload(
     *,
     project_override: str | None,
 ) -> dict[str, object]:
-    payload = _request_daemon_json(
+    payload = request_daemon_json(
         "/api/admin/rebuild/status",
         {},
         project_override=project_override,
@@ -501,7 +503,7 @@ def _request_rebuild_status_payload(
         allow_error=True,
     )
     if payload is None or payload.get("status") == "error":
-        _raise_daemon_request_error(payload)
+        raise_daemon_request_error(payload)
     return payload
 
 
@@ -860,7 +862,7 @@ def daemon_restart(project: str | None, timeout: float):
 
 
 def _format_daemon_startup_result(action: str, metadata: DaemonMetadata) -> str:
-    if metadata.status in _DAEMON_PENDING_READY_STATUSES:
+    if metadata.status in DAEMON_PENDING_READY_STATUSES:
         return (
             f"Daemon {action} (pid={metadata.pid}, lifecycle={metadata.status}, "
             "socket readiness pending)"
@@ -882,7 +884,7 @@ def index_group():
 def index_stats(project: str | None, output_json: bool):
     """Print document and git index statistics for the active project context."""
     try:
-        payload = _request_daemon_json(
+        payload = request_daemon_json(
             "/api/admin/index",
             {},
             project_override=project,
@@ -890,7 +892,7 @@ def index_stats(project: str | None, output_json: bool):
             allow_error=True,
         )
         if payload is None or payload.get("status") == "error":
-            _raise_daemon_request_error(payload)
+            raise_daemon_request_error(payload)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
@@ -999,7 +1001,7 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
 def queue_status(project: str | None, output_json: bool):
     """Print queue depth and recent task failures."""
     try:
-        payload = _request_daemon_json(
+        payload = request_daemon_json(
             "/api/admin/tasks",
             {},
             project_override=project,
@@ -1007,7 +1009,7 @@ def queue_status(project: str | None, output_json: bool):
             allow_error=True,
         )
         if payload is None or payload.get("status") == "error":
-            _raise_daemon_request_error(payload)
+            raise_daemon_request_error(payload)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
@@ -1049,83 +1051,6 @@ def queue_status(project: str | None, output_json: bool):
         logger.error(f"Failed to inspect queue status: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-
-
-def _request_daemon_json(
-    path: str,
-    payload: dict[str, object],
-    *,
-    project_override: str | None,
-    auto_start: bool,
-    allow_error: bool = False,
-) -> dict[str, object] | None:
-    runtime_paths = RuntimePaths.resolve()
-    response: dict[str, object] | None = None
-
-    if auto_start:
-        metadata = start_daemon(
-            cwd=Path.cwd(),
-            project_override=project_override,
-            paths=runtime_paths,
-        )
-        if metadata.status in _DAEMON_PENDING_READY_STATUSES:
-            metadata = wait_for_daemon_ready(paths=runtime_paths)
-    else:
-        inspection = inspect_daemon(runtime_paths)
-        metadata = inspection.metadata if inspection.running else None
-
-    if metadata is not None and metadata.socket_path:
-        response = request_daemon_socket(
-            Path(metadata.socket_path),
-            path,
-            payload,
-            timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
-        )
-        if not _should_retry_daemon_request(response) or not auto_start:
-            if response.get("status") == "error" and not allow_error:
-                return None
-            return response
-
-    if response is None:
-        return None
-
-    if response.get("status") == "error" and not allow_error:
-        return None
-    return response
-
-
-def _should_retry_daemon_request(response: dict[str, object]) -> bool:
-    return response.get("status") == "error" and response.get("error") in {
-        "daemon_request_timed_out",
-        "daemon_socket_unavailable",
-        "empty_response",
-        "invalid_response",
-    }
-
-
-def _raise_daemon_request_error(response: dict[str, object] | None) -> None:
-    if response is None:
-        raise RuntimeError(
-            "Daemon unavailable. Start it with 'ragdocs daemon start' and retry."
-        )
-
-    error = str(response.get("error", "unknown_error"))
-    details = response.get("details")
-
-    if error == "git_indexing_unavailable":
-        raise RuntimeError(
-            "Git history search is not available (git binary not found or disabled in config)"
-        )
-
-    if error == "daemon_request_timed_out":
-        raise RuntimeError(
-            "Daemon request timed out while waiting for a response. The daemon may still be initializing or performing a long-running operation."
-        )
-
-    if isinstance(details, str) and details:
-        raise RuntimeError(details)
-
-    raise RuntimeError(f"Daemon request failed: {error}")
 
 
 def _resolve_stats_file_path(
@@ -1472,7 +1397,7 @@ def query(
         console = Console()
         validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
 
-        daemon_payload = _request_daemon_json(
+        daemon_payload = request_daemon_json(
             "/api/search/query",
             {
                 "query": query_text,
@@ -1485,7 +1410,7 @@ def query(
             allow_error=True,
         )
         if daemon_payload is None or daemon_payload.get("status") == "error":
-            _raise_daemon_request_error(daemon_payload)
+            raise_daemon_request_error(daemon_payload)
 
         if output_json:
             click.echo(json.dumps(daemon_payload, indent=2))
@@ -1609,7 +1534,7 @@ def search_commits(
         validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
         validate_timestamp_range(after_timestamp, before_timestamp)
 
-        daemon_payload = _request_daemon_json(
+        daemon_payload = request_daemon_json(
             "/api/search/git-history",
             {
                 "query": query_text,
@@ -1625,7 +1550,7 @@ def search_commits(
             allow_error=True,
         )
         if daemon_payload is None or daemon_payload.get("status") == "error":
-            _raise_daemon_request_error(daemon_payload)
+            raise_daemon_request_error(daemon_payload)
 
         if output_json:
             click.echo(json.dumps(daemon_payload, indent=2))
