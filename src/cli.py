@@ -9,7 +9,6 @@ import sys
 import signal
 import time
 from pathlib import Path
-from uuid import uuid4
 
 # Prevent tokenizers parallelism warning when forking worker process.
 # Must be set before any HuggingFace/sentence-transformers imports.
@@ -32,6 +31,10 @@ from src.daemon.health import (
     DaemonHealthServer,
     request_daemon_socket,
 )
+from src.daemon.request_router import (
+    DaemonRequestRouterDependencies,
+    build_daemon_request_handler,
+)
 from src.daemon.management import (
     DaemonInspection,
     acquire_boot_lock,
@@ -46,12 +49,8 @@ from src.coordination.queue import get_huey
 from src.indexing.rebuild_service import (
     REBUILD_ACTIVE_STATUSES,
     REBUILD_TERMINAL_STATUSES,
-    read_rebuild_status,
-    resolve_rebuild_scope,
-    submit_rebuild_status,
-    write_rebuild_status,
 )
-from src.indexing.tasks import register_tasks, submit_rebuild_request
+from src.indexing.tasks import register_tasks
 from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.utils import should_include_file
 from src.worker.consumer import HueyWorker
@@ -342,73 +341,6 @@ def _build_admin_overview_payload(
     }
 
 
-def _build_initializing_search_payload(
-    ctx: ApplicationContext,
-    coordinator: LifecycleCoordinator,
-    *,
-    query: str,
-    include_git_metadata: bool = False,
-) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "status": "initializing",
-        "message": "Search indices are still initializing. Retry shortly.",
-        "query": query,
-        "results": [],
-        "lifecycle": coordinator.state.value,
-        "daemon_scope": "global",
-        "project_context_mode": "request_only",
-        "configured_root_count": len(ctx.documents_roots),
-        "index_state": ctx.get_index_state().to_dict(),
-    }
-    if include_git_metadata:
-        payload["total_commits_indexed"] = (
-            ctx.commit_indexer.get_total_commits() if ctx.commit_indexer is not None else 0
-        )
-    else:
-        payload["compression_stats"] = {}
-        payload["strategy_stats"] = {}
-    return payload
-
-
-def _build_unavailable_search_payload(
-    ctx: ApplicationContext,
-    coordinator: LifecycleCoordinator,
-) -> dict[str, object]:
-    index_state = ctx.get_index_state()
-    return {
-        "status": "error",
-        "error": "index_initialization_failed",
-        "details": index_state.last_error or "Search indices are not queryable.",
-        "lifecycle": coordinator.state.value,
-        "daemon_scope": "global",
-        "project_context_mode": "request_only",
-        "configured_root_count": len(ctx.documents_roots),
-        "index_state": index_state.to_dict(),
-    }
-
-
-def _get_cold_start_search_response(
-    ctx: ApplicationContext,
-    coordinator: LifecycleCoordinator,
-    *,
-    query: str,
-    include_git_metadata: bool = False,
-) -> dict[str, object] | None:
-    if ctx.is_ready():
-        return None
-
-    index_state = ctx.get_index_state()
-    if index_state.status in {"failed", "partial"}:
-        return _build_unavailable_search_payload(ctx, coordinator)
-
-    return _build_initializing_search_payload(
-        ctx,
-        coordinator,
-        query=query,
-        include_git_metadata=include_git_metadata,
-    )
-
-
 def _render_initializing_search_response(
     console: Console,
     payload: dict[str, object],
@@ -615,225 +547,6 @@ async def _run_daemon_forever() -> None:
     lock = await asyncio.to_thread(acquire_boot_lock, timeout_seconds=5.0)
     lock_released = False
     runtime_paths = RuntimePaths.resolve()
-
-    async def _handle_daemon_request(
-        path: str,
-        payload: dict[str, object],
-    ) -> dict[str, object]:
-        if path == "/api/mcp/tools":
-            from src.mcp.tools.document_tools import get_document_tools
-
-            return {
-                "tools": [
-                    {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "inputSchema": tool.inputSchema,
-                    }
-                    for tool in get_document_tools()
-                ]
-            }
-        if path == "/api/mcp/tool":
-            import src.mcp.tools.document_tools  # noqa: F401
-
-            from mcp.types import TextContent
-
-            from src.mcp.handlers import HandlerContext, get_handler
-
-            tool_name = str(payload.get("name", ""))
-            arguments = payload.get("arguments", {})
-            if not isinstance(arguments, dict):
-                return {"status": "error", "error": "tool_arguments_must_be_object"}
-
-            handler = get_handler(tool_name)
-            if handler is None:
-                return {"status": "error", "error": f"unknown_tool:{tool_name}"}
-
-            hctx = HandlerContext(lambda: ctx, coordinator)
-            contents = await handler(hctx, arguments)
-            return {
-                "contents": [
-                    {"type": content.type, "text": content.text}
-                    for content in contents
-                    if isinstance(content, TextContent)
-                ]
-            }
-        if path == "/api/admin/overview":
-            await ctx.ensure_fresh_indices()
-            return _build_admin_overview_payload(
-                ctx,
-                runtime_paths=runtime_paths,
-                worker_running=huey_worker.is_running,
-                worker_pid=huey_worker.pid,
-                lifecycle=coordinator.state.value,
-            )
-        if path in {"/api/admin/index", "/api/admin/index-stats"}:
-            await ctx.ensure_fresh_indices()
-            return _build_index_stats_payload(ctx)
-        if path in {"/api/admin/tasks", "/api/admin/queue-status"}:
-            return _build_queue_status_payload(
-                queue_path=runtime_paths.queue_db_path,
-                worker_running=huey_worker.is_running,
-                backpressure_limit=ctx.config.indexing.task_backpressure_limit,
-            )
-        if path == "/api/admin/rebuild/status":
-            return read_rebuild_status(runtime_paths.root)
-        if path == "/api/admin/rebuild/submit":
-            current_status = read_rebuild_status(runtime_paths.root)
-            current_state = str(current_status.get("status", "idle"))
-            if current_state in REBUILD_ACTIVE_STATUSES:
-                return {
-                    "status": "ok",
-                    "accepted": False,
-                    "already_running": True,
-                    "rebuild": current_status,
-                }
-
-            project_override = (
-                str(payload.get("project"))
-                if payload.get("project") is not None
-                else None
-            )
-            scope = resolve_rebuild_scope(
-                ctx.config,
-                ctx.documents_roots,
-                project_override,
-            )
-            request_id = uuid4().hex
-            queued_status = submit_rebuild_status(
-                runtime_paths.root,
-                request_id=request_id,
-                scope=scope,
-            )
-            submission = submit_rebuild_request(
-                project_override,
-                request_id=request_id,
-            )
-            if not submission.queue_available:
-                write_rebuild_status(runtime_paths.root, {"status": "idle"})
-                return {
-                    "status": "error",
-                    "error": "rebuild_queue_unavailable",
-                    "details": "Daemon rebuild queue is unavailable.",
-                }
-            if submission.should_retry_later:
-                write_rebuild_status(runtime_paths.root, {"status": "idle"})
-                return {
-                    "status": "error",
-                    "error": "rebuild_queue_backpressured",
-                    "details": "Daemon rebuild queue is backpressured. Retry shortly.",
-                }
-
-            return {
-                "status": "ok",
-                "accepted": submission.accepted_by_queue,
-                "already_running": False,
-                "rebuild": queued_status,
-            }
-        if path == "/internal/shutdown":
-            coordinator.request_shutdown()
-            return {"status": "ok", "lifecycle": coordinator.state.value}
-        if path == "/api/search/query":
-            cold_start_response = _get_cold_start_search_response(
-                ctx,
-                coordinator,
-                query=str(payload.get("query", "")),
-            )
-            if cold_start_response is not None:
-                return cold_start_response
-            ctx.schedule_freshness_refresh()
-            query_text = str(payload.get("query", ""))
-            top_n = int(payload.get("top_n", 5))
-            top_k = max(20, top_n * 4)
-            project_filter_payload = payload.get("project_filter", [])
-            project_filter = (
-                [str(item) for item in project_filter_payload if isinstance(item, str)]
-                if isinstance(project_filter_payload, list)
-                else []
-            )
-            if project_filter:
-                top_k = max(top_k, top_n * 10)
-            results, compression_stats, strategy_stats = await ctx.orchestrator.query(
-                query_text,
-                top_k=top_k,
-                top_n=top_n,
-                project_filter=project_filter,
-                project_context=(
-                    str(payload.get("project_context"))
-                    if payload.get("project_context") is not None
-                    else None
-                ),
-            )
-            await ctx.orchestrator.drain_reindex()
-            return {
-                "query": query_text,
-                "results": [result.to_dict() for result in results],
-                "compression_stats": compression_stats.to_dict(),
-                "strategy_stats": strategy_stats.to_dict(),
-            }
-        if path == "/api/search/git-history":
-            if ctx.commit_indexer is None:
-                return {"status": "error", "error": "git_indexing_unavailable"}
-
-            cold_start_response = _get_cold_start_search_response(
-                ctx,
-                coordinator,
-                query=str(payload.get("query", "")),
-                include_git_metadata=True,
-            )
-            if cold_start_response is not None:
-                return cold_start_response
-
-            ctx.schedule_freshness_refresh()
-
-            from src.git.commit_search import search_git_history
-
-            response = search_git_history(
-                commit_indexer=ctx.commit_indexer,
-                query=str(payload.get("query", "")),
-                top_n=int(payload.get("top_n", 5)),
-                files_glob=str(payload["files_glob"]) if payload.get("files_glob") else None,
-                after_timestamp=int(payload["after_timestamp"]) if payload.get("after_timestamp") is not None else None,
-                before_timestamp=int(payload["before_timestamp"]) if payload.get("before_timestamp") is not None else None,
-                project_filter=(
-                    [str(item) for item in payload.get("project_filter", []) if isinstance(item, str)]
-                    if isinstance(payload.get("project_filter", []), list)
-                    else []
-                ),
-                project_context=(
-                    str(payload.get("project_context"))
-                    if payload.get("project_context") is not None
-                    else None
-                ),
-                config=ctx.config,
-            )
-            return {
-                "query": response.query,
-                "total_commits_indexed": response.total_commits_indexed,
-                "results": [
-                    {
-                        "hash": r.hash,
-                        "title": r.title,
-                        "author": r.author,
-                        "committer": r.committer,
-                        "timestamp": r.timestamp,
-                        "message": r.message,
-                        "files_changed": r.files_changed,
-                        "delta_truncated": r.delta_truncated,
-                        "score": r.score,
-                        "repo_path": r.repo_path,
-                        "project_id": r.project_id,
-                    }
-                    for r in response.results
-                ],
-            }
-        return {"status": "error", "error": "unknown_request_path", "path": path}
-
-    health_server = DaemonHealthServer(
-        socket_path=runtime_paths.socket_path,
-        metadata_provider=lambda: read_daemon_metadata(runtime_paths.metadata_path),
-        request_handler=_handle_daemon_request,
-    )
     health_server_started = False
     coordinator = LifecycleCoordinator()
     loop = asyncio.get_running_loop()
@@ -842,6 +555,38 @@ async def _run_daemon_forever() -> None:
     ctx, huey_worker = await asyncio.to_thread(
         _create_daemon_runtime,
         runtime_paths,
+    )
+    health_server = DaemonHealthServer(
+        socket_path=runtime_paths.socket_path,
+        metadata_provider=lambda: read_daemon_metadata(runtime_paths.metadata_path),
+        request_handler=build_daemon_request_handler(
+        DaemonRequestRouterDependencies(
+            ctx=ctx,
+            coordinator=coordinator,
+            runtime_root=runtime_paths.root,
+            queue_db_path=runtime_paths.queue_db_path,
+            socket_path=runtime_paths.socket_path,
+            index_db_path=runtime_paths.index_db_path,
+            get_worker_running=lambda: huey_worker.is_running,
+            get_worker_pid=lambda: huey_worker.pid,
+            build_admin_overview_payload=lambda current_ctx, runtime_root, worker_running, worker_pid, lifecycle: _build_admin_overview_payload(
+                current_ctx,
+                runtime_paths=RuntimePaths(
+                    root=runtime_root,
+                    index_db_path=runtime_paths.index_db_path,
+                    queue_db_path=runtime_paths.queue_db_path,
+                    metadata_path=runtime_paths.metadata_path,
+                    lock_path=runtime_paths.lock_path,
+                    socket_path=runtime_paths.socket_path,
+                ),
+                worker_running=worker_running,
+                worker_pid=worker_pid,
+                lifecycle=lifecycle,
+            ),
+            build_index_stats_payload=_build_index_stats_payload,
+            build_queue_status_payload=_build_queue_status_payload,
+        )
+        ),
     )
 
     try:
