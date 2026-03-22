@@ -34,6 +34,7 @@ from src.daemon.client import (
     raise_daemon_request_error,
     request_daemon_json,
 )
+from src.daemon.rebuild_commands import run_rebuild_command
 from src.daemon.runtime import create_daemon_runtime
 from src.daemon.management import (
     DaemonInspection,
@@ -45,10 +46,6 @@ from src.daemon.management import (
 )
 from src.context import ApplicationContext
 from src.coordination.queue import get_huey
-from src.indexing.rebuild_service import (
-    REBUILD_ACTIVE_STATUSES,
-    REBUILD_TERMINAL_STATUSES,
-)
 from src.indexing.tasks import register_tasks
 from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.utils import should_include_file
@@ -69,7 +66,6 @@ logger = logging.getLogger(__name__)
 MIN_TOP_N = 1
 MAX_TOP_N = 100
 _DAEMON_OVERVIEW_TIMEOUT_SECONDS = 1.0
-_REBUILD_POLL_INTERVAL_SECONDS = 0.2
 _GLOBAL_DAEMON_PROJECT_OPTION_HELP = (
     "Accepted for backward compatibility but ignored; daemon runtime is global "
     "and project is request metadata only."
@@ -433,64 +429,6 @@ def _apply_project_detection(config, project_override: str | None = None):
     config.indexing.documents_path = documents_path
     config.detected_project = detected_project
     return config
-
-
-def _resolve_rebuild_project_scope(
-    *,
-    project: str | None,
-    all_projects: bool,
-) -> str | None:
-    if project is not None:
-        return project
-
-    return None
-
-
-def _request_rebuild_submit_payload(
-    *,
-    project_override: str | None,
-) -> dict[str, object]:
-    payload = request_daemon_json(
-        "/api/admin/rebuild/submit",
-        {"project": project_override},
-        project_override=project_override,
-        auto_start=True,
-        allow_error=True,
-    )
-    if payload is None or payload.get("status") == "error":
-        raise_daemon_request_error(payload)
-    return payload
-
-
-def _request_rebuild_status_payload(
-    *,
-    project_override: str | None,
-) -> dict[str, object]:
-    payload = request_daemon_json(
-        "/api/admin/rebuild/status",
-        {},
-        project_override=project_override,
-        auto_start=False,
-        allow_error=True,
-    )
-    if payload is None or payload.get("status") == "error":
-        raise_daemon_request_error(payload)
-    return payload
-
-
-def _render_rebuild_messages(
-    payload: dict[str, object],
-    *,
-    printed_count: int,
-) -> int:
-    messages = payload.get("messages", [])
-    if not isinstance(messages, list):
-        return printed_count
-
-    normalized_messages = [item for item in messages if isinstance(item, str)]
-    for message in normalized_messages[printed_count:]:
-        click.echo(message)
-    return len(normalized_messages)
 
 
 @cli.command()
@@ -1182,45 +1120,12 @@ def run(host: str, port: int, project: str | None):
 )
 def rebuild_index_cmd(project: str | None, all_projects: bool):
     try:
-        if all_projects and project is not None:
-            raise click.UsageError("--all-projects cannot be used with --project")
-
-        _ensure_runtime_auto_registration(project)
-
-        effective_project = _resolve_rebuild_project_scope(
+        run_rebuild_command(
             project=project,
             all_projects=all_projects,
+            ensure_runtime_auto_registration=_ensure_runtime_auto_registration,
+            emit=click.echo,
         )
-        submit_payload = _request_rebuild_submit_payload(
-            project_override=effective_project,
-        )
-        if bool(submit_payload.get("already_running")):
-            click.echo("ℹ️  Rebuild already in progress; attaching to daemon-owned status")
-
-        printed_messages = 0
-        while True:
-            status_payload = _request_rebuild_status_payload(
-                project_override=effective_project,
-            )
-            printed_messages = _render_rebuild_messages(
-                status_payload,
-                printed_count=printed_messages,
-            )
-
-            rebuild_status = str(status_payload.get("status", "idle"))
-            if rebuild_status in REBUILD_TERMINAL_STATUSES:
-                if rebuild_status != "succeeded":
-                    raise RuntimeError(
-                        str(status_payload.get("error", "Daemon rebuild failed"))
-                    )
-                return
-
-            if rebuild_status not in REBUILD_ACTIVE_STATUSES:
-                raise RuntimeError(
-                    f"Unexpected daemon rebuild status: {rebuild_status}"
-                )
-
-            time.sleep(_REBUILD_POLL_INTERVAL_SECONDS)
 
     except Exception as e:
         logger.error(f"Failed to rebuild index: {e}")
