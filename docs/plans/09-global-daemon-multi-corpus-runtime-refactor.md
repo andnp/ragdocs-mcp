@@ -301,6 +301,136 @@ If executed as code work, the lowest-risk sequence is:
 4. admin/index visibility updates
 5. docs and migration cleanup
 
+## Execution roadmap from the 2026-03-21 architecture review
+
+The broader daemon/corpus convergence plan remains correct, but the architecture review surfaced a second axis of work: reduce bug density in the modules that currently own too many lifecycle and orchestration concerns at once.
+
+The recommended execution order below is intentionally incremental. Each slice should preserve behavior while making one boundary more explicit and easier to test.
+
+### Progress update (2026-03-22)
+
+- ✅ **Slice A completed**
+	- readiness semantics extracted from `src/context.py` into `src/indexing/runtime_readiness.py`
+	- focused coverage added in `tests/unit/test_runtime_readiness.py`
+- ✅ **Slice B partially completed, in safe behavior-preserving sub-slices**
+	- daemon-side MCP request translation extracted to `src/daemon/mcp_requests.py`
+	- broader daemon request branching extracted to `src/daemon/request_router.py`
+	- generic daemon client request/retry/error handling extracted to `src/daemon/client.py`
+	- daemon runtime assembly extracted to `src/daemon/runtime.py`
+	- focused coverage added in:
+		- `tests/unit/test_daemon_mcp_requests.py`
+		- `tests/unit/test_daemon_request_router.py`
+		- `tests/unit/test_daemon_client.py`
+		- `tests/unit/test_daemon_runtime.py`
+
+These changes intentionally stop short of behavior changes to daemon scope or corpus ownership. They reduce `src/cli.py` responsibility first so later global-runtime changes land on clearer seams.
+
+### Slice A — Extract readiness semantics from `ApplicationContext`
+
+**Status:** Completed
+
+**Goal:** make queryability, startup completion, and freshness-refresh eligibility explicit instead of re-derived ad hoc from `_ready_event`, `_init_error`, `_is_virgin_startup`, and `IndexState`.
+
+**Primary files:**
+
+- `src/context.py`
+- `src/indexing/bootstrap_snapshot.py`
+- `tests/unit/test_context_index_state.py`
+
+**Acceptance criteria:**
+
+- the current query-serving behavior remains unchanged
+- readiness decisions are expressed through one small helper boundary
+- unit tests cover virgin startup, loaded snapshot availability, partial state, and failed init state
+
+### Slice B — Extract daemon request routing out of `src/cli.py`
+
+**Status:** In progress
+
+**Completed sub-slices:**
+
+- MCP request translation extracted to `src/daemon/mcp_requests.py`
+- admin/search/shutdown request routing extracted to `src/daemon/request_router.py`
+- generic daemon client request logic extracted to `src/daemon/client.py`
+- daemon runtime assembly extracted to `src/daemon/runtime.py`
+
+**Remaining work:**
+
+- move rebuild command orchestration out of Click command bodies
+- finish trimming startup/status presentation glue in `src/cli.py`
+- decide whether any remaining daemon request presentation helpers belong in shared modules
+
+**Goal:** separate CLI presentation/entrypoints from daemon-owned request dispatch.
+
+**Primary files:**
+
+- `src/cli.py`
+- `src/daemon/` (new dispatch/service module)
+- `tests/unit/test_daemon_health.py`
+- `tests/unit/test_mcp_server_daemon_routing.py`
+
+**Acceptance criteria:**
+
+- daemon request handlers live outside the Click command module
+- MCP, admin, and search request wiring is preserved
+- CLI commands remain thin wrappers over shared dispatch logic
+
+### Slice C — Separate checkpoint persistence from derived-graph finalization in indexing flows
+
+**Goal:** reduce partial-failure ambiguity inside `IndexManager` by making durability boundaries more explicit.
+
+**Primary files:**
+
+- `src/indexing/manager.py`
+- `src/indexing/reconciler.py`
+- `tests/unit/test_index_manager_batching.py`
+- `tests/unit/test_context_index_state.py`
+
+**Acceptance criteria:**
+
+- checkpoint persistence and derived graph refresh are independently testable
+- partial failures leave clearer, documented recovery semantics
+- restart/resume logic continues to prefer durable snapshots over rework
+
+### Slice D — Narrow `LifecycleCoordinator` responsibilities
+
+**Goal:** move worker supervision and readiness promotion policies behind smaller helpers so lifecycle state transitions stop carrying unrelated side effects.
+
+**Primary files:**
+
+- `src/lifecycle.py`
+- `src/worker/process.py`
+- `tests/unit/test_lifecycle.py`
+- `tests/unit/test_lifecycle_wait_ready.py`
+
+**Acceptance criteria:**
+
+- state transitions are easier to audit from tests
+- shutdown, failover, and readiness promotion have explicit ownership boundaries
+- daemon metadata writes remain accurate across the same scenarios
+
+### Slice E — Add failure-mode regression coverage before broader behavioral changes
+
+**Goal:** characterize the bug-prone boundaries before deeper refactors widen scope.
+
+**Primary areas:**
+
+- `tests/unit/`
+- `tests/integration/`
+- `tests/regression/`
+
+**Priority scenarios:**
+
+- shutdown during in-flight request
+- stale metadata plus live socket/process
+- worker heartbeat stale while parent daemon is live
+- partial snapshot preload during rebuild
+- daemon request concurrency under slow query load
+
+### Immediate recommendation
+
+Start with **Slice A**. It is small, high-signal, and lowers the chance of future readiness regressions while preserving the current daemon-backed runtime behavior.
+
 ## Decision
 
 Proceed with this as a **convergence refactor**, not a speculative redesign.

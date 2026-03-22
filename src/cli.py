@@ -25,9 +25,8 @@ from rich.table import Table
 
 from src.config import ensure_runtime_project_registered, load_config
 from src.daemon.queue_status import get_queue_stats
-from src.daemon import DaemonMetadata, RuntimePaths, read_daemon_metadata
+from src.daemon import DaemonMetadata, RuntimePaths
 from src.daemon.health import (
-    DaemonHealthServer,
     request_daemon_socket,
 )
 from src.daemon.client import (
@@ -35,10 +34,7 @@ from src.daemon.client import (
     raise_daemon_request_error,
     request_daemon_json,
 )
-from src.daemon.request_router import (
-    DaemonRequestRouterDependencies,
-    build_daemon_request_handler,
-)
+from src.daemon.runtime import create_daemon_runtime
 from src.daemon.management import (
     DaemonInspection,
     acquire_boot_lock,
@@ -58,7 +54,6 @@ from src.lifecycle import LifecycleCoordinator, LifecycleState
 from src.utils import should_include_file
 from src.worker.consumer import HueyWorker
 from src.worker.process import (
-    HueyWorkerProcess,
     _worker_status_path,
     is_expected_daemon_parent,
 )
@@ -132,30 +127,6 @@ def _should_include_file(
     return should_include_file(
         file_path, include_patterns, exclude_patterns, exclude_hidden_dirs
     )
-
-
-def _create_daemon_runtime(runtime_paths: RuntimePaths):
-    ctx = ApplicationContext.create(
-        enable_watcher=False,
-        lazy_embeddings=True,
-        use_tasks=True,
-        index_path_override=runtime_paths.root,
-        global_runtime=True,
-    )
-    huey = get_huey(runtime_paths.queue_db_path)
-    register_tasks(
-        huey,
-        ctx.index_manager,
-        commit_indexer=ctx.commit_indexer,
-        task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
-        bootstrap_index_path=ctx.index_path,
-        bootstrap_documents_roots=ctx.documents_roots,
-        schedule_vocabulary_catch_up=ctx.schedule_vocabulary_catch_up,
-    )
-    worker = HueyWorkerProcess(
-        runtime_paths=runtime_paths,
-    )
-    return ctx, worker
 
 
 def _parent_process_alive(
@@ -554,42 +525,17 @@ async def _run_daemon_forever() -> None:
     loop = asyncio.get_running_loop()
     coordinator.install_signal_handlers(loop)
 
-    ctx, huey_worker = await asyncio.to_thread(
-        _create_daemon_runtime,
+    runtime = await asyncio.to_thread(
+        create_daemon_runtime,
         runtime_paths,
+        coordinator=coordinator,
+        build_admin_overview_payload=_build_admin_overview_payload,
+        build_index_stats_payload=_build_index_stats_payload,
+        build_queue_status_payload=_build_queue_status_payload,
     )
-    health_server = DaemonHealthServer(
-        socket_path=runtime_paths.socket_path,
-        metadata_provider=lambda: read_daemon_metadata(runtime_paths.metadata_path),
-        request_handler=build_daemon_request_handler(
-        DaemonRequestRouterDependencies(
-            ctx=ctx,
-            coordinator=coordinator,
-            runtime_root=runtime_paths.root,
-            queue_db_path=runtime_paths.queue_db_path,
-            socket_path=runtime_paths.socket_path,
-            index_db_path=runtime_paths.index_db_path,
-            get_worker_running=lambda: huey_worker.is_running,
-            get_worker_pid=lambda: huey_worker.pid,
-            build_admin_overview_payload=lambda current_ctx, runtime_root, worker_running, worker_pid, lifecycle: _build_admin_overview_payload(
-                current_ctx,
-                runtime_paths=RuntimePaths(
-                    root=runtime_root,
-                    index_db_path=runtime_paths.index_db_path,
-                    queue_db_path=runtime_paths.queue_db_path,
-                    metadata_path=runtime_paths.metadata_path,
-                    lock_path=runtime_paths.lock_path,
-                    socket_path=runtime_paths.socket_path,
-                ),
-                worker_running=worker_running,
-                worker_pid=worker_pid,
-                lifecycle=lifecycle,
-            ),
-            build_index_stats_payload=_build_index_stats_payload,
-            build_queue_status_payload=_build_queue_status_payload,
-        )
-        ),
-    )
+    ctx = runtime.ctx
+    huey_worker = runtime.worker
+    health_server = runtime.health_server
 
     try:
         try:
