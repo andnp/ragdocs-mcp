@@ -80,6 +80,8 @@ class ZMQTransportServer:
         self._context: object | None = None
         self._socket: object | None = None
         self._serve_task: asyncio.Task[None] | None = None
+        self._request_tasks: set[asyncio.Task[None]] = set()
+        self._send_lock = asyncio.Lock()
 
     async def start(self) -> None:
         zmq, zmq_asyncio = _require_zmq()
@@ -104,6 +106,11 @@ class ZMQTransportServer:
             except asyncio.CancelledError:
                 pass
             self._serve_task = None
+        if self._request_tasks:
+            for task in list(self._request_tasks):
+                task.cancel()
+            await asyncio.gather(*self._request_tasks, return_exceptions=True)
+            self._request_tasks.clear()
         if self._socket is not None:
             self._socket.close(0)
             self._socket = None
@@ -131,15 +138,32 @@ class ZMQTransportServer:
                 continue
 
             identity = frames[0]
-            payload = await self._dispatch_request(frames[-1])
-            response = json.dumps(payload, sort_keys=True).encode("utf-8")
+            task = asyncio.create_task(
+                self._handle_request(identity, frames[-1])
+            )
+            self._request_tasks.add(task)
+            task.add_done_callback(self._request_tasks.discard)
 
-            try:
+    async def _handle_request(
+        self,
+        identity: bytes,
+        request_line: bytes,
+    ) -> None:
+        payload = await self._dispatch_request(request_line)
+        response = json.dumps(payload, sort_keys=True).encode("utf-8")
+
+        if self._socket is None:
+            return
+
+        try:
+            async with self._send_lock:
+                if self._socket is None:
+                    return
                 await self._socket.send_multipart([identity, response])
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.error("Daemon transport send failed", exc_info=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error("Daemon transport send failed", exc_info=True)
 
     async def _dispatch_request(self, request_line: bytes) -> dict[str, object]:
         request_id: str | None = None

@@ -246,3 +246,59 @@ async def test_request_daemon_socket_reads_large_response(tmp_path: Path) -> Non
     assert response["path"] == "/api/large"
     assert response["content"] == large_text
     assert isinstance(response.get("request_id"), str)
+
+
+@pytest.mark.asyncio
+async def test_health_server_handles_requests_concurrently(tmp_path: Path) -> None:
+    socket_path = tmp_path / "daemon.sock"
+    slow_started = asyncio.Event()
+    release_slow = asyncio.Event()
+
+    async def _handler(path: str, payload: dict[str, object]) -> dict[str, object]:
+        if path == "/api/slow":
+            slow_started.set()
+            await release_slow.wait()
+        return {"path": path, "payload": payload}
+
+    server = DaemonHealthServer(
+        socket_path=socket_path,
+        metadata_provider=lambda: None,
+        request_handler=_handler,
+    )
+
+    await server.start()
+    try:
+        slow_task = asyncio.create_task(
+            asyncio.to_thread(
+                request_daemon_socket,
+                socket_path,
+                "/api/slow",
+                {"hello": "slow"},
+                timeout_seconds=0.5,
+            )
+        )
+        await asyncio.wait_for(slow_started.wait(), timeout=0.2)
+
+        fast_response = await asyncio.to_thread(
+            request_daemon_socket,
+            socket_path,
+            "/api/fast",
+            {"hello": "fast"},
+            timeout_seconds=0.1,
+        )
+
+        release_slow.set()
+        slow_response = await slow_task
+    finally:
+        await server.stop()
+
+    _assert_response_with_request_id(
+        fast_response,
+        path="/api/fast",
+        payload={"hello": "fast"},
+    )
+    _assert_response_with_request_id(
+        slow_response,
+        path="/api/slow",
+        payload={"hello": "slow"},
+    )
