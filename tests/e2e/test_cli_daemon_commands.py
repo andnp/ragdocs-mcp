@@ -130,7 +130,7 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
         ),
     )
     monkeypatch.setattr(
-        "src.cli.request_daemon_socket",
+        "src.daemon.status.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds: {
             "status": "ok",
             "indexed_documents": 9,
@@ -197,7 +197,7 @@ def test_daemon_status_json_fetches_overview_even_if_probe_not_responsive(
         ),
     )
     monkeypatch.setattr(
-        "src.cli.request_daemon_socket",
+        "src.daemon.status.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds: {
             "status": "ok",
             "worker_health": "healthy",
