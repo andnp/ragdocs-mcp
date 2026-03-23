@@ -30,12 +30,18 @@ from src.daemon.health import (
     request_daemon_socket,
 )
 from src.daemon.client import (
-    DAEMON_PENDING_READY_STATUSES,
+    call_with_supported_kwargs,
     raise_daemon_request_error,
     request_daemon_json,
+    request_daemon_json_with_dependencies,
 )
 from src.daemon.rebuild_commands import run_rebuild_command
 from src.daemon.runtime import create_daemon_runtime
+from src.daemon.status import (
+    build_daemon_status_payload,
+    format_daemon_startup_result,
+    request_daemon_overview,
+)
 from src.daemon.management import (
     DaemonInspection,
     acquire_boot_lock,
@@ -43,6 +49,7 @@ from src.daemon.management import (
     restart_daemon,
     start_daemon,
     stop_daemon,
+    wait_for_daemon_ready,
 )
 from src.context import ApplicationContext
 from src.coordination.queue import get_huey
@@ -65,7 +72,6 @@ logger = logging.getLogger(__name__)
 
 MIN_TOP_N = 1
 MAX_TOP_N = 100
-_DAEMON_OVERVIEW_TIMEOUT_SECONDS = 1.0
 _GLOBAL_DAEMON_PROJECT_OPTION_HELP = (
     "Accepted for backward compatibility but ignored; daemon runtime is global "
     "and project is request metadata only."
@@ -341,26 +347,6 @@ def _render_initializing_search_response(
     console.print("[dim]Results will appear once background initialization completes.[/dim]")
 
 
-def _request_daemon_overview(
-    inspection: DaemonInspection,
-    *,
-    runtime_paths: RuntimePaths,
-) -> dict[str, object] | None:
-    metadata = inspection.metadata
-    if metadata is None or not inspection.running or not metadata.socket_path:
-        return None
-
-    response = request_daemon_socket(
-        Path(metadata.socket_path),
-        "/api/admin/overview",
-        {},
-        timeout_seconds=_DAEMON_OVERVIEW_TIMEOUT_SECONDS,
-    )
-    if response.get("status") == "error":
-        return None
-    return response
-
-
 @click.group()
 def cli():
     pass
@@ -429,6 +415,45 @@ def _apply_project_detection(config, project_override: str | None = None):
     config.indexing.documents_path = documents_path
     config.detected_project = detected_project
     return config
+
+
+def _request_daemon_json(
+    path: str,
+    payload: dict[str, object],
+    *,
+    project_override: str | None,
+    auto_start: bool,
+    allow_error: bool = False,
+) -> dict[str, object] | None:
+    return request_daemon_json_with_dependencies(
+        path,
+        payload,
+        project_override=project_override,
+        auto_start=auto_start,
+        allow_error=allow_error,
+        runtime_paths_resolver=RuntimePaths.resolve,
+        start_daemon_fn=start_daemon,
+        wait_for_daemon_ready_fn=wait_for_daemon_ready,
+        inspect_daemon_fn=inspect_daemon,
+        request_daemon_socket_fn=request_daemon_socket,
+        cwd_provider=Path.cwd,
+    )
+
+
+def _raise_daemon_request_error(response: dict[str, object] | None) -> None:
+    raise_daemon_request_error(response)
+
+
+def _request_daemon_overview(
+    inspection: DaemonInspection,
+    *,
+    runtime_paths: RuntimePaths,
+) -> dict[str, object] | None:
+    return request_daemon_overview(inspection, runtime_paths=runtime_paths)
+
+
+def _format_daemon_startup_result(action: str, metadata: DaemonMetadata) -> str:
+    return format_daemon_startup_result(action, metadata)
 
 
 @cli.command()
@@ -570,7 +595,8 @@ def daemon_start(project: str | None, timeout: float):
     """Start the daemon in the background."""
     try:
         _ignore_daemon_startup_project_option(project)
-        metadata = start_daemon(
+        metadata = call_with_supported_kwargs(
+            start_daemon,
             cwd=Path.cwd(),
             project_override=project,
             timeout_seconds=timeout,
@@ -589,19 +615,16 @@ def daemon_status(output_json: bool):
     """Print current daemon status."""
     inspection = inspect_daemon()
     runtime_paths = RuntimePaths.resolve()
-    if inspection.metadata is None:
+    overview = _request_daemon_overview(inspection, runtime_paths=runtime_paths)
+    payload = build_daemon_status_payload(
+        inspection,
+        runtime_paths=runtime_paths,
+        overview=overview,
+    )
+
+    if payload["status"] == "not_running":
         if output_json:
-            click.echo(
-                json.dumps(
-                    {
-                        "status": "not_running",
-                        "metadata_path": str(runtime_paths.metadata_path),
-                        "lock_path": str(runtime_paths.lock_path),
-                        "socket_path": str(runtime_paths.socket_path),
-                    },
-                    indent=2,
-                )
-            )
+            click.echo(json.dumps(payload, indent=2))
             return
 
         click.echo("Daemon status: not running")
@@ -609,76 +632,23 @@ def daemon_status(output_json: bool):
         click.echo(f"Lock path: {runtime_paths.lock_path}")
         return
 
-    metadata_ready = (
-        inspection.metadata is not None
-        and inspection.metadata.status in {"ready", "ready_primary", "ready_replica"}
-    )
-    state = (
-        "running"
-        if inspection.ready or (inspection.running and metadata_ready)
-        else "starting" if inspection.running else "stale"
-    )
-    started_at = time.strftime(
-        "%Y-%m-%d %H:%M:%S", time.localtime(inspection.metadata.started_at)
-    )
-
-    payload = {
-        "status": state,
-        "pid": inspection.metadata.pid,
-        "lifecycle": inspection.metadata.status,
-        "daemon_scope": inspection.metadata.daemon_scope,
-        "started_at": started_at,
-        "metadata_path": str(runtime_paths.metadata_path),
-        "lock_path": str(runtime_paths.lock_path),
-        "socket_path": inspection.metadata.socket_path
-        or str(runtime_paths.socket_path),
-        "index_db_path": inspection.metadata.index_db_path,
-        "queue_db_path": inspection.metadata.queue_db_path,
-        "endpoint": inspection.metadata.transport_endpoint,
-    }
-
-    overview = _request_daemon_overview(inspection, runtime_paths=runtime_paths)
-    if overview is not None:
-        payload.update(
-            {
-                key: overview[key]
-                for key in (
-                    "indexed_documents",
-                    "indexed_chunks",
-                    "git_commits",
-                    "git_repositories",
-                    "worker_health",
-                    "worker_pid",
-                    "pending_count",
-                    "scheduled_count",
-                    "running_count",
-                    "failed_count",
-                    "worker_running",
-                    "configured_root_count",
-                    "documents_roots",
-                    "project_context_mode",
-                )
-                if key in overview
-            }
-        )
-
     if output_json:
         click.echo(json.dumps(payload, indent=2))
         return
 
-    click.echo(f"Daemon status: {state}")
-    click.echo(f"PID: {inspection.metadata.pid}")
-    click.echo(f"Lifecycle: {inspection.metadata.status}")
+    click.echo(f"Daemon status: {payload['status']}")
+    click.echo(f"PID: {payload['pid']}")
+    click.echo(f"Lifecycle: {payload['lifecycle']}")
     click.echo(f"Scope: {payload['daemon_scope']}")
-    click.echo(f"Started: {started_at}")
+    click.echo(f"Started: {payload['started_at']}")
     click.echo(f"Metadata path: {runtime_paths.metadata_path}")
     click.echo(f"Lock path: {runtime_paths.lock_path}")
-    if inspection.metadata.index_db_path:
-        click.echo(f"Index DB: {inspection.metadata.index_db_path}")
-    if inspection.metadata.queue_db_path:
-        click.echo(f"Queue DB: {inspection.metadata.queue_db_path}")
-    if inspection.metadata.transport_endpoint:
-        click.echo(f"Endpoint: {inspection.metadata.transport_endpoint}")
+    if payload.get("index_db_path"):
+        click.echo(f"Index DB: {payload['index_db_path']}")
+    if payload.get("queue_db_path"):
+        click.echo(f"Queue DB: {payload['queue_db_path']}")
+    if payload.get("endpoint"):
+        click.echo(f"Endpoint: {payload['endpoint']}")
     configured_root_count = payload.get("configured_root_count")
     if isinstance(configured_root_count, int):
         click.echo(f"Documents roots: {configured_root_count}")
@@ -732,7 +702,8 @@ def daemon_restart(project: str | None, timeout: float):
     """Restart the daemon."""
     try:
         _ignore_daemon_startup_project_option(project)
-        metadata = restart_daemon(
+        metadata = call_with_supported_kwargs(
+            restart_daemon,
             cwd=Path.cwd(),
             project_override=project,
             start_timeout_seconds=timeout,
@@ -743,16 +714,6 @@ def daemon_restart(project: str | None, timeout: float):
         sys.exit(1)
 
     click.echo(_format_daemon_startup_result("restarted", metadata))
-
-
-def _format_daemon_startup_result(action: str, metadata: DaemonMetadata) -> str:
-    if metadata.status in DAEMON_PENDING_READY_STATUSES:
-        return (
-            f"Daemon {action} (pid={metadata.pid}, lifecycle={metadata.status}, "
-            "socket readiness pending)"
-        )
-
-    return f"Daemon {action} (pid={metadata.pid}, lifecycle={metadata.status})"
 
 
 @cli.group("index")
@@ -768,7 +729,7 @@ def index_group():
 def index_stats(project: str | None, output_json: bool):
     """Print document and git index statistics for the active project context."""
     try:
-        payload = request_daemon_json(
+        payload = _request_daemon_json(
             "/api/admin/index",
             {},
             project_override=project,
@@ -776,7 +737,7 @@ def index_stats(project: str | None, output_json: bool):
             allow_error=True,
         )
         if payload is None or payload.get("status") == "error":
-            raise_daemon_request_error(payload)
+            _raise_daemon_request_error(payload)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
@@ -885,7 +846,7 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
 def queue_status(project: str | None, output_json: bool):
     """Print queue depth and recent task failures."""
     try:
-        payload = request_daemon_json(
+        payload = _request_daemon_json(
             "/api/admin/tasks",
             {},
             project_override=project,
@@ -893,7 +854,7 @@ def queue_status(project: str | None, output_json: bool):
             allow_error=True,
         )
         if payload is None or payload.get("status") == "error":
-            raise_daemon_request_error(payload)
+            _raise_daemon_request_error(payload)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
@@ -1248,7 +1209,7 @@ def query(
         console = Console()
         validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
 
-        daemon_payload = request_daemon_json(
+        daemon_payload = _request_daemon_json(
             "/api/search/query",
             {
                 "query": query_text,
@@ -1261,7 +1222,7 @@ def query(
             allow_error=True,
         )
         if daemon_payload is None or daemon_payload.get("status") == "error":
-            raise_daemon_request_error(daemon_payload)
+            _raise_daemon_request_error(daemon_payload)
 
         if output_json:
             click.echo(json.dumps(daemon_payload, indent=2))
@@ -1385,7 +1346,7 @@ def search_commits(
         validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
         validate_timestamp_range(after_timestamp, before_timestamp)
 
-        daemon_payload = request_daemon_json(
+        daemon_payload = _request_daemon_json(
             "/api/search/git-history",
             {
                 "query": query_text,
@@ -1401,7 +1362,7 @@ def search_commits(
             allow_error=True,
         )
         if daemon_payload is None or daemon_payload.get("status") == "error":
-            raise_daemon_request_error(daemon_payload)
+            _raise_daemon_request_error(daemon_payload)
 
         if output_json:
             click.echo(json.dumps(daemon_payload, indent=2))
