@@ -14,7 +14,7 @@ async def test_mcp_server_prefers_daemon_tool_listing(monkeypatch):
 
     monkeypatch.setattr(
         "src.mcp.server.start_daemon",
-        lambda *, timeout_seconds=10.0, paths=None: DaemonMetadata(
+        lambda *, cwd=None, project_override=None, timeout_seconds=10.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
             status="ready",
@@ -46,7 +46,7 @@ async def test_mcp_server_prefers_daemon_tool_calls(monkeypatch):
 
     monkeypatch.setattr(
         "src.mcp.server.start_daemon",
-        lambda *, timeout_seconds=10.0, paths=None: DaemonMetadata(
+        lambda *, cwd=None, project_override=None, timeout_seconds=10.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
             status="ready",
@@ -73,7 +73,7 @@ async def test_mcp_server_does_not_wait_for_ready_daemon_before_tool_call(monkey
 
     monkeypatch.setattr(
         "src.mcp.server.start_daemon",
-        lambda *, timeout_seconds=30.0, paths=None: DaemonMetadata(
+        lambda *, cwd=None, project_override=None, timeout_seconds=30.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
             status="initializing",
@@ -106,7 +106,7 @@ async def test_mcp_server_retries_tool_call_after_timeout(monkeypatch):
 
     monkeypatch.setattr(
         "src.mcp.server.start_daemon",
-        lambda *, timeout_seconds=30.0, paths=None: DaemonMetadata(
+        lambda *, cwd=None, project_override=None, timeout_seconds=30.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
             status="ready_primary",
@@ -150,9 +150,11 @@ async def test_mcp_server_startup_does_not_forward_project_context(monkeypatch):
     server = MCPServer(project_override="docs")
     observed: dict[str, object] = {}
 
-    def _fake_start_daemon(*, timeout_seconds=30.0, paths=None):
+    def _fake_start_daemon(*, cwd=None, project_override=None, timeout_seconds=30.0, paths=None):
         observed["timeout_seconds"] = timeout_seconds
         observed["paths"] = paths
+        observed["cwd"] = cwd
+        observed["project_override"] = project_override
         return DaemonMetadata(
             pid=1,
             started_at=1.0,
@@ -166,4 +168,9 @@ async def test_mcp_server_startup_does_not_forward_project_context(monkeypatch):
 
     assert socket_path == Path("/tmp/ragdocs.sock")
     assert status == "ready"
-    assert observed == {"timeout_seconds": 30.0, "paths": None}
+    assert observed == {
+        "cwd": Path.cwd(),
+        "project_override": "docs",
+        "timeout_seconds": 30.0,
+        "paths": None,
+    }
