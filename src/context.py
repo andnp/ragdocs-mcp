@@ -38,6 +38,11 @@ from src.indexing.manifest import (
     save_manifest,
     should_rebuild,
 )
+from src.indexing.runtime_readiness import (
+    can_refresh_loaded_indices,
+    can_serve_queries,
+    is_fully_ready as runtime_is_fully_ready,
+)
 from src.indexing.reconciler import build_indexed_files_map
 from src.indexing.watcher import FileWatcher
 from src.indices.graph import GraphStore
@@ -906,15 +911,12 @@ class ApplicationContext:
         finishes. On later background rebuilds, queries are allowed once the
         underlying indices are queryable, even if indexing is still ongoing.
         """
-        if self._init_error is not None:
-            return False
-        if self._ready_event.is_set():
-            return self.index_manager.is_ready()
-        if self._is_virgin_startup:
-            return False
-        if self._index_state.status == "indexing":
-            return self.index_manager.is_ready()
-        return self.index_manager.is_ready()
+        return can_serve_queries(
+            init_error=self._init_error,
+            ready_event_set=self._ready_event.is_set(),
+            is_virgin_startup=self._is_virgin_startup,
+            indices_queryable=self.index_manager.is_ready(),
+        )
 
     def is_fully_ready(self) -> bool:
         """Check if initialization succeeded completely.
@@ -922,11 +924,11 @@ class ApplicationContext:
         Returns True only when all documents were indexed successfully.
         Use is_ready() if partial results are acceptable.
         """
-        return (
-            self._ready_event.is_set()
-            and self._init_error is None
-            and self._index_state.status == "ready"
-            and self.index_manager.is_ready()
+        return runtime_is_fully_ready(
+            init_error=self._init_error,
+            ready_event_set=self._ready_event.is_set(),
+            index_status=self._index_state.status,
+            indices_queryable=self.index_manager.is_ready(),
         )
 
     def get_index_state(self) -> IndexState:
@@ -948,7 +950,10 @@ class ApplicationContext:
             ) from self._init_error
 
     async def ensure_fresh_indices(self) -> None:
-        if not self._ready_event.is_set() or self._init_error is not None:
+        if not can_refresh_loaded_indices(
+            ready_event_set=self._ready_event.is_set(),
+            init_error=self._init_error,
+        ):
             return
 
         current_version = await asyncio.to_thread(self._compute_index_state_version)
@@ -972,7 +977,10 @@ class ApplicationContext:
             self._refresh_index_state_from_loaded_indices()
 
     def schedule_freshness_refresh(self) -> bool:
-        if not self._ready_event.is_set() or self._init_error is not None:
+        if not can_refresh_loaded_indices(
+            ready_event_set=self._ready_event.is_set(),
+            init_error=self._init_error,
+        ):
             return False
 
         current_task = getattr(self, "_freshness_task", None)
