@@ -289,21 +289,21 @@ def _spawn_daemon_process(
 
 def _resolve_daemon_python() -> Path:
     repo_root = Path(__file__).resolve().parents[2]
+    current_python = Path(sys.executable)
 
-    candidates: list[Path] = []
+    candidates: list[Path] = [current_python]
 
     virtual_env = os.environ.get("VIRTUAL_ENV")
     if virtual_env:
         candidates.append(_python_from_env_root(Path(virtual_env)))
 
     candidates.append(_python_from_env_root(repo_root / ".venv"))
-    candidates.append(Path(sys.executable))
 
     for candidate in candidates:
-        if candidate.exists() and os.access(candidate, os.X_OK):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
 
-    return Path(sys.executable)
+    return current_python
 
 
 def _python_from_env_root(env_root: Path) -> Path:

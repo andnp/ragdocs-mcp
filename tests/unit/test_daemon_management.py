@@ -633,7 +633,10 @@ def test_stop_daemon_without_metadata_reaps_matching_runtime_processes(
     assert cleaned == [paths]
 
 
-def test_resolve_daemon_python_prefers_virtual_env(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_daemon_python_falls_back_to_virtual_env_when_current_interpreter_is_unusable(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     env_root = tmp_path / "venv"
     python_path = env_root / "bin" / "python"
     python_path.parent.mkdir(parents=True)
@@ -641,13 +644,67 @@ def test_resolve_daemon_python_prefers_virtual_env(monkeypatch, tmp_path: Path) 
     python_path.chmod(0o755)
 
     monkeypatch.setenv("VIRTUAL_ENV", str(env_root))
+    monkeypatch.setattr(
+        "src.daemon.management.sys.executable",
+        str(tmp_path / "missing-python"),
+    )
 
     from src.daemon.management import _resolve_daemon_python
 
     assert _resolve_daemon_python() == python_path
 
 
-def test_resolve_daemon_python_prefers_repo_venv_when_available(
+def test_resolve_daemon_python_prefers_current_interpreter_over_unrelated_virtual_env(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    env_root = tmp_path / "other-venv"
+    env_python = env_root / "bin" / "python"
+    env_python.parent.mkdir(parents=True)
+    env_python.write_text("", encoding="utf-8")
+    env_python.chmod(0o755)
+
+    current_python = tmp_path / "tool-env" / "bin" / "python"
+    current_python.parent.mkdir(parents=True)
+    current_python.write_text("", encoding="utf-8")
+    current_python.chmod(0o755)
+
+    monkeypatch.setenv("VIRTUAL_ENV", str(env_root))
+    monkeypatch.setattr(
+        "src.daemon.management.sys.executable",
+        str(current_python),
+    )
+
+    from src.daemon.management import _resolve_daemon_python
+
+    assert _resolve_daemon_python() == current_python
+
+
+def test_resolve_daemon_python_skips_directory_like_current_interpreter(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    env_root = tmp_path / "other-venv"
+    env_python = env_root / "bin" / "python"
+    env_python.parent.mkdir(parents=True)
+    env_python.write_text("", encoding="utf-8")
+    env_python.chmod(0o755)
+
+    current_python = tmp_path / "not-a-python"
+    current_python.mkdir()
+
+    monkeypatch.setenv("VIRTUAL_ENV", str(env_root))
+    monkeypatch.setattr(
+        "src.daemon.management.sys.executable",
+        str(current_python),
+    )
+
+    from src.daemon.management import _resolve_daemon_python
+
+    assert _resolve_daemon_python() == env_python
+
+
+def test_resolve_daemon_python_prefers_repo_venv_when_current_interpreter_is_unusable(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -663,6 +720,10 @@ def test_resolve_daemon_python_prefers_repo_venv_when_available(
 
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     monkeypatch.setattr("src.daemon.management.__file__", str(daemon_file))
+    monkeypatch.setattr(
+        "src.daemon.management.sys.executable",
+        str(tmp_path / "missing-python"),
+    )
 
     from src.daemon.management import _resolve_daemon_python
 
