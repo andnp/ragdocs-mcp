@@ -1,6 +1,12 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 import hashlib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from searchkernel.domain import Record
 
 
 @dataclass
@@ -179,6 +185,49 @@ class Document:
     chunks: list[Chunk] | None = None
     project_id: str | None = None
 
+    def to_record(self) -> "Record":
+        """Convert a Document to a domain Record."""
+        from searchkernel.domain import Record, RecordStatus
+
+        return Record(
+            source_kind="note",
+            source_id=f"note:{self.id}",
+            title=self.id,  # Use doc ID as fallback title
+            body=self.content,
+            created_at=self.modified_time,
+            updated_at=self.modified_time,
+            metadata={
+                "links": self.links,
+                "tags": self.tags,
+                "file_path": self.file_path,
+                "project_id": self.project_id,
+                **self.metadata,
+            },
+            uri=f"file://{self.file_path}",
+            status=RecordStatus.ACTIVE,
+        )
+
+    @classmethod
+    def from_record(cls, record: "Record") -> "Document":
+        """Construct a Document from a domain Record."""
+        # Extract metadata that Document expects
+        metadata = dict(record.metadata)
+        links = metadata.pop("links", [])
+        tags = metadata.pop("tags", [])
+        file_path = metadata.pop("file_path", "")
+        project_id = metadata.pop("project_id", None)
+
+        return cls(
+            id=record.source_id.replace("note:", ""),
+            content=record.body,
+            metadata=metadata,
+            links=links,
+            tags=tags,
+            file_path=file_path,
+            modified_time=record.updated_at,
+            project_id=project_id,
+        )
+
 
 @dataclass
 class CommitResult:
@@ -194,6 +243,75 @@ class CommitResult:
     delta_truncated: str
     score: float
     repo_path: str
+
+    def to_record(self) -> Record:
+        """Convert a CommitResult to a domain Record."""
+        from searchkernel.domain import Record, RecordStatus
+        from datetime import datetime, timezone
+
+        # Create timestamp from Unix seconds
+        created_at = datetime.fromtimestamp(self.timestamp, tz=timezone.utc)
+
+        # Combine title and message for body
+        body = f"{self.title}\n\n{self.message}\n\nDelta:\n{self.delta_truncated}"
+
+        return Record(
+            source_kind="git_commit",
+            source_id=f"git:{self.hash}",
+            title=self.title,
+            body=body,
+            created_at=created_at,
+            updated_at=created_at,
+            metadata={
+                "author": self.author,
+                "committer": self.committer,
+                "files_changed": self.files_changed,
+                "repo_path": self.repo_path,
+            },
+            uri=f"{self.repo_path}#commit/{self.hash}",
+            status=RecordStatus.ACTIVE,
+        )
+
+    @classmethod
+    def from_record(cls, record: Record, score: float = 0.0) -> CommitResult:
+        """Construct a CommitResult from a domain Record."""
+        # Extract git-specific metadata
+        metadata = record.metadata
+        author = metadata.get("author", "Unknown")
+        committer = metadata.get("committer", "Unknown")
+        files_changed = metadata.get("files_changed", [])
+        repo_path = metadata.get("repo_path", "")
+
+        # Parse source_id to extract hash
+        hash_val = record.source_id.replace("git:", "")
+
+        # Convert datetime to timestamp
+        timestamp = int(record.created_at.timestamp())
+
+        # Extract message from body (first line is title, rest is message)
+        body_lines = record.body.split("\n")
+        title = record.title
+        message = "\n".join(body_lines[1:]) if len(body_lines) > 1 else record.body
+        delta_truncated = ""
+
+        # If body contains "Delta:" section, extract it
+        if "Delta:" in message:
+            parts = message.split("Delta:")
+            message = parts[0].strip()
+            delta_truncated = parts[1].strip() if len(parts) > 1 else ""
+
+        return cls(
+            hash=hash_val,
+            title=title,
+            author=author,
+            committer=committer,
+            timestamp=timestamp,
+            message=message,
+            files_changed=files_changed,
+            delta_truncated=delta_truncated,
+            score=score,
+            repo_path=repo_path,
+        )
 
 
 @dataclass
