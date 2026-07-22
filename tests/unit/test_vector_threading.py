@@ -1,4 +1,4 @@
-from src.indices.vector import VectorIndex
+from searchkernel.indices.vector import VectorIndex
 
 
 class _FakeTorch:

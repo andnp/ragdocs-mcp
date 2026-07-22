@@ -2,7 +2,7 @@
 Unit tests for search filtering functions.
 """
 
-from src.search.filters import filter_by_confidence, limit_per_document
+from searchkernel.search.filters import filter_by_confidence, limit_per_document
 
 
 class TestFilterByConfidence:

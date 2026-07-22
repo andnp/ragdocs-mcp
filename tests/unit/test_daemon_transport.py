@@ -7,8 +7,8 @@ import pytest
 
 pytest.importorskip("zmq")
 
-from src.daemon.metadata import DaemonMetadata
-from src.daemon.transport import ZMQTransportClient, ZMQTransportServer
+from searchkernel.daemon.metadata import DaemonMetadata
+from searchkernel.daemon.transport import ZMQTransportClient, ZMQTransportServer
 
 
 @pytest.mark.asyncio

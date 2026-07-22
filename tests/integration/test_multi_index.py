@@ -11,12 +11,12 @@ import sqlite3
 
 import pytest
 
-from src.config import Config, IndexingConfig, SearchConfig, LLMConfig
-from src.indexing.manager import IndexManager
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.models import Document
+from searchkernel.config import Config, IndexingConfig, SearchConfig, LLMConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.models import Document
 
 
 @pytest.fixture

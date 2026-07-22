@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from src.git.commit_indexer import CommitIndexer
-from src.git.commit_parser import parse_commit, build_commit_document
-from src.git.commit_search import search_git_history
-from src.git.repository import get_commits_after_timestamp
+from searchkernel.git.commit_indexer import CommitIndexer
+from searchkernel.git.commit_parser import parse_commit, build_commit_document
+from searchkernel.git.commit_search import search_git_history
+from searchkernel.git.repository import get_commits_after_timestamp
 
 
 def _init_git_repo(path: Path) -> None:

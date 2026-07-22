@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.search.fusion import apply_recency_boost, rrf_score
+from searchkernel.search.fusion import apply_recency_boost, rrf_score
 
 
 class TestRRFScore:

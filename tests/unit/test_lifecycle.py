@@ -15,8 +15,8 @@ from unittest.mock import patch
 
 import pytest
 
-from src.lifecycle import LifecycleCoordinator, LifecycleState
-from src.storage.db import DatabaseManager
+from searchkernel.lifecycle import LifecycleCoordinator, LifecycleState
+from searchkernel.storage.db import DatabaseManager
 
 
 # ---------------------------------------------------------------------------
@@ -135,8 +135,8 @@ class TestLifecycleStateMachine:
             to_thread_calls.append(getattr(func, "__name__", repr(func)))
             return func(*args, **kwargs)
 
-        monkeypatch.setattr("src.lifecycle.LeaderElection", _FakeLeaderElection)
-        monkeypatch.setattr("src.lifecycle.asyncio.to_thread", _fake_to_thread)
+        monkeypatch.setattr("searchkernel.lifecycle.LeaderElection", _FakeLeaderElection)
+        monkeypatch.setattr("searchkernel.lifecycle.asyncio.to_thread", _fake_to_thread)
 
         worker = _FakeWorker()
         await coord.start(_fake_ctx(), db_manager=object(), huey_worker=worker)
@@ -189,8 +189,8 @@ class TestLifecycleStateMachine:
         async def _fake_to_thread(func, *args, **kwargs):
             return func(*args, **kwargs)
 
-        monkeypatch.setattr("src.lifecycle.GitWatcher", _FakeGitWatcher)
-        monkeypatch.setattr("src.lifecycle.asyncio.to_thread", _fake_to_thread)
+        monkeypatch.setattr("searchkernel.lifecycle.GitWatcher", _FakeGitWatcher)
+        monkeypatch.setattr("searchkernel.lifecycle.asyncio.to_thread", _fake_to_thread)
 
         ctx = cast(Any, _GitContext())
         await coord.start(ctx)
@@ -333,7 +333,7 @@ class TestWorkerSupervision:
             if sleep_calls > 1:
                 raise asyncio.CancelledError
 
-        with patch("src.lifecycle.asyncio.sleep", _fake_sleep):
+        with patch("searchkernel.lifecycle.asyncio.sleep", _fake_sleep):
             with pytest.raises(asyncio.CancelledError):
                 await coord._supervise_worker_health()
 

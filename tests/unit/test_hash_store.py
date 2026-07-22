@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.indices.hash_store import ChunkHashStore
-from src.models import Chunk
+from searchkernel.indices.hash_store import ChunkHashStore
+from searchkernel.models import Chunk
 
 
 @pytest.fixture

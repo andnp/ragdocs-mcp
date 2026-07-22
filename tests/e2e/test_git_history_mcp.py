@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from src.context import ApplicationContext
-from src.git.commit_search import GitSearchResponse, CommitResult
+from searchkernel.context import ApplicationContext
+from searchkernel.git.commit_search import GitSearchResponse, CommitResult
 
 
 def _init_git_repo(path: Path) -> None:
@@ -146,7 +146,7 @@ async def test_mcp_search_git_history_basic(test_repo_with_history, tmp_path):
         assert total == 5, f"Expected 5 commits indexed, got {total}"
 
         # Simulate MCP tool call: search for bug fix
-        from src.git.commit_search import search_git_history
+        from searchkernel.git.commit_search import search_git_history
 
         response = search_git_history(
             commit_indexer=ctx.commit_indexer,
@@ -199,7 +199,7 @@ async def test_mcp_git_search_with_glob_filter(test_repo_with_history, tmp_path)
     try:
         await ctx.start(background_index=False)
 
-        from src.git.commit_search import search_git_history
+        from searchkernel.git.commit_search import search_git_history
 
         assert ctx.commit_indexer is not None
 
@@ -261,7 +261,7 @@ async def test_mcp_git_search_with_timestamp_filters(test_repo_with_history, tmp
     try:
         await ctx.start(background_index=False)
 
-        from src.git.commit_search import search_git_history
+        from searchkernel.git.commit_search import search_git_history
 
         assert ctx.commit_indexer is not None
 
@@ -338,7 +338,7 @@ async def test_mcp_git_search_real_project_history():
         if total == 0:
             pytest.skip("No commits indexed")
 
-        from src.git.commit_search import search_git_history
+        from searchkernel.git.commit_search import search_git_history
 
         # Search for test-related commits
         response = search_git_history(
@@ -390,7 +390,7 @@ async def test_mcp_git_search_response_format_for_display(
     try:
         await ctx.start(background_index=False)
 
-        from src.git.commit_search import search_git_history
+        from searchkernel.git.commit_search import search_git_history
         from datetime import datetime, timezone
 
         assert ctx.commit_indexer is not None
@@ -489,7 +489,7 @@ async def test_mcp_git_search_no_results(test_repo_with_history, tmp_path):
     try:
         await ctx.start(background_index=False)
 
-        from src.git.commit_search import search_git_history
+        from searchkernel.git.commit_search import search_git_history
 
         assert ctx.commit_indexer is not None
 
@@ -528,7 +528,7 @@ async def test_mcp_git_search_validates_top_n(test_repo_with_history, tmp_path):
     try:
         await ctx.start(background_index=False)
 
-        from src.git.commit_search import search_git_history
+        from searchkernel.git.commit_search import search_git_history
 
         assert ctx.commit_indexer is not None
 
@@ -573,7 +573,7 @@ async def test_mcp_git_search_multiple_file_patterns(test_repo_with_history, tmp
     try:
         await ctx.start(background_index=False)
 
-        from src.git.commit_search import search_git_history
+        from searchkernel.git.commit_search import search_git_history
 
         assert ctx.commit_indexer is not None
 

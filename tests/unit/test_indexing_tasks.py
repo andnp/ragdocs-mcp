@@ -12,10 +12,10 @@ from pathlib import Path
 import pytest
 from huey import SqliteHuey
 
-import src.indexing.tasks as tasks_mod
-from src.daemon.queue_status import get_queue_stats
-from src.indexing.bootstrap_checkpoint import BootstrapCheckpoint, BootstrapFileStamp, load_bootstrap_checkpoint, save_bootstrap_checkpoint
-from src.indexing.tasks import (
+import searchkernel.indexing.tasks as tasks_mod
+from searchkernel.daemon.queue_status import get_queue_stats
+from searchkernel.indexing.bootstrap_checkpoint import BootstrapCheckpoint, BootstrapFileStamp, load_bootstrap_checkpoint, save_bootstrap_checkpoint
+from searchkernel.indexing.tasks import (
     enqueue_index,
     enqueue_index_batch,
     enqueue_remove,
@@ -599,7 +599,7 @@ class TestTaskExecution:
         self, tmp_path: Path, fake_manager: FakeIndexManager
     ) -> None:
         """Full flow: enqueue -> worker processes -> manager called."""
-        from src.worker.consumer import HueyWorker
+        from searchkernel.worker.consumer import HueyWorker
 
         huey = SqliteHuey(
             name="test-e2e", filename=str(tmp_path / "e2e.db"), immediate=False
@@ -628,7 +628,7 @@ class TestTaskExecution:
 
     def test_task_failure_does_not_crash_worker(self, tmp_path: Path) -> None:
         """A failing task doesn't crash the worker."""
-        from src.worker.consumer import HueyWorker
+        from searchkernel.worker.consumer import HueyWorker
 
         class FailingManager:
             def index_document(self, file_path: str, force: bool = False) -> None:
@@ -689,11 +689,11 @@ class TestTaskExecution:
             return 1
 
         monkeypatch.setattr(
-            "src.git.repository.get_commits_after_timestamp",
+            "searchkernel.git.repository.get_commits_after_timestamp",
             _fake_get_commits_after_timestamp,
         )
         monkeypatch.setattr(
-            "src.git.parallel_indexer.index_commits_parallel_sync",
+            "searchkernel.git.parallel_indexer.index_commits_parallel_sync",
             _fake_index_commits_parallel_sync,
         )
 

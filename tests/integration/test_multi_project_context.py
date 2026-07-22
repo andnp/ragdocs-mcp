@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import (
+from searchkernel.config import (
     Config,
     IndexingConfig,
     SearchConfig,
@@ -24,13 +24,13 @@ from src.config import (
     LLMConfig,
     ProjectConfig,
 )
-from src.context import ApplicationContext
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.indices.graph import GraphStore
-from src.indexing.manager import IndexManager
-from src.models import Chunk
-from src.search.orchestrator import SearchOrchestrator
+from searchkernel.context import ApplicationContext
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.models import Chunk
+from searchkernel.search.orchestrator import SearchOrchestrator
 
 
 # ============================================================================
@@ -254,7 +254,7 @@ def test_application_context_creates_orchestrator_with_correct_path(
 
     This verifies the integration between context creation and orchestrator setup.
     """
-    monkeypatch.setattr("src.context.load_config", lambda: config_for_project_a)
+    monkeypatch.setattr("searchkernel.context.load_config", lambda: config_for_project_a)
 
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
@@ -283,7 +283,7 @@ def test_application_context_discovers_files_across_multiple_project_roots(
         ],
     )
 
-    monkeypatch.setattr("src.context.load_config", lambda: config)
+    monkeypatch.setattr("searchkernel.context.load_config", lambda: config)
 
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
@@ -314,8 +314,8 @@ def test_ambient_detected_project_narrows_documents_roots(
         ],
     )
 
-    monkeypatch.setattr("src.context.load_config", lambda: config)
-    monkeypatch.setattr("src.context.detect_project", lambda **kwargs: "project-a")
+    monkeypatch.setattr("searchkernel.context.load_config", lambda: config)
+    monkeypatch.setattr("searchkernel.context.detect_project", lambda **kwargs: "project-a")
 
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
@@ -343,8 +343,8 @@ def test_global_runtime_ignores_project_scope_and_uses_all_documents_roots(
         ],
     )
 
-    monkeypatch.setattr("src.context.load_config", lambda: config)
-    monkeypatch.setattr("src.context.detect_project", lambda **kwargs: "project-a")
+    monkeypatch.setattr("searchkernel.context.load_config", lambda: config)
+    monkeypatch.setattr("searchkernel.context.detect_project", lambda **kwargs: "project-a")
 
     ctx = ApplicationContext.create(
         project_override="project-a",
@@ -382,7 +382,7 @@ def test_global_runtime_ignores_transient_override_outside_registered_projects(
         ],
     )
 
-    monkeypatch.setattr("src.context.load_config", lambda: config)
+    monkeypatch.setattr("searchkernel.context.load_config", lambda: config)
 
     ctx = ApplicationContext.create(
         project_override=str(external_project),
@@ -411,13 +411,13 @@ def test_multiple_contexts_have_isolated_orchestrator_paths(
     orchestrators could share the same path if they read from a shared config.
     """
     # Create context for Project A
-    monkeypatch.setattr("src.context.load_config", lambda: config_for_project_a)
+    monkeypatch.setattr("searchkernel.context.load_config", lambda: config_for_project_a)
     ctx_a = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
     )
 
     # Create context for Project B (need to update monkeypatch)
-    monkeypatch.setattr("src.context.load_config", lambda: config_for_project_b)
+    monkeypatch.setattr("searchkernel.context.load_config", lambda: config_for_project_b)
     ctx_b = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
     )
@@ -446,7 +446,7 @@ def test_config_modification_does_not_affect_existing_context(
 
     This simulates scenarios where config might be modified after initialization.
     """
-    monkeypatch.setattr("src.context.load_config", lambda: config_for_project_a)
+    monkeypatch.setattr("searchkernel.context.load_config", lambda: config_for_project_a)
 
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
@@ -535,7 +535,7 @@ async def test_context_persistence_maintains_path_isolation(
     Test that after persisting and reloading indices, the orchestrator
     still uses the correct documents_path.
     """
-    monkeypatch.setattr("src.context.load_config", lambda: config_for_project_a)
+    monkeypatch.setattr("searchkernel.context.load_config", lambda: config_for_project_a)
 
     # Create and start context
     ctx = ApplicationContext.create(

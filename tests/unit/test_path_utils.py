@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from src.search.path_utils import (
+from searchkernel.search.path_utils import (
     normalize_path,
     matches_any_excluded,
     compute_doc_id,

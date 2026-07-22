@@ -13,8 +13,8 @@ from typing import Any, cast
 
 import pytest
 
-from src.lifecycle import LeaderElection, LifecycleCoordinator, LifecycleState
-from src.storage.db import DatabaseManager
+from searchkernel.lifecycle import LeaderElection, LifecycleCoordinator, LifecycleState
+from searchkernel.storage.db import DatabaseManager
 
 
 # ---------------------------------------------------------------------------

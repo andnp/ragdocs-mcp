@@ -3,11 +3,11 @@ from datetime import datetime
 
 import pytest
 
-from src.chunking.header_chunker import HeaderBasedChunker
-from src.config import ChunkingConfig
-from src.indices.vector import VectorIndex
-from src.models import Document
-from src.parsers.markdown import MarkdownParser
+from searchkernel.chunking.header_chunker import HeaderBasedChunker
+from searchkernel.config import ChunkingConfig
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.models import Document
+from searchkernel.parsers.markdown import MarkdownParser
 
 
 def _extract_chunk_ids(results: list) -> list[str]:
@@ -296,7 +296,7 @@ def test_vector_index_chunk_with_header_path_includes_header_in_embedding(
     Verifies P2: Heading-weighted embeddings prepend header_path to content
     before generating embeddings, improving semantic search relevance.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
@@ -332,7 +332,7 @@ def test_vector_index_chunk_without_header_path_uses_content_only(
 
     Ensures backward compatibility for chunks that don't have header paths.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
@@ -363,7 +363,7 @@ def test_vector_index_header_weighted_improves_relevance(shared_embedding_model)
     Verifies that chunks with relevant headers rank higher than those without
     when searching for terms in the header path.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
@@ -420,7 +420,7 @@ def test_stale_chunk_ref_cleaned_on_lookup(shared_embedding_model):
     When get_chunk_by_id() encounters a chunk ID that exists in mappings
     but not in the docstore, it should remove the stale reference.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
@@ -513,7 +513,7 @@ def test_reconcile_mappings_removes_stale_refs(shared_embedding_model):
     The reconcile_mappings() method should scan all mappings and remove
     any chunk IDs that no longer exist in the docstore.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
@@ -579,7 +579,7 @@ def test_warned_set_cleared_on_load(shared_embedding_model, tmp_path):
     After loading an index from disk, the warned set should be reset
     since the stale state may have changed during persistence.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
@@ -634,7 +634,7 @@ def test_term_counts_and_vocabulary_loaded_as_ordereddict(
     """
     from collections import OrderedDict
 
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
@@ -720,7 +720,7 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(
     """
     from collections import OrderedDict
 
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     # Create index and add initial content
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
@@ -803,7 +803,7 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(
 
 def test_remove_chunk_removes_from_all_mappings(vector_index, shared_embedding_model):
     """Test that remove_chunk() removes chunk from index and all mappings."""
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     # Add chunks
     chunk1 = Chunk(
@@ -859,7 +859,7 @@ def test_remove_chunk_handles_missing_chunk(vector_index):
 
 def test_remove_chunk_removes_last_chunk_cleans_doc_mapping(vector_index):
     """Test that removing last chunk of a doc removes the doc from mappings."""
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     chunk = Chunk(
         chunk_id="doc_single#chunk#0",
@@ -888,7 +888,7 @@ def test_remove_chunk_removes_last_chunk_cleans_doc_mapping(vector_index):
 def test_remove_chunk_thread_safe(vector_index):
     """Test that remove_chunk() is thread-safe with concurrent operations."""
     from concurrent.futures import ThreadPoolExecutor
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     # Add multiple chunks
     chunks = []
@@ -937,7 +937,7 @@ def test_remove_chunk_before_initialization(vector_index):
 def test_vocabulary_lifecycle_marks_stale_on_authoritative_mutation(
     shared_embedding_model,
 ):
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
     chunk = Chunk(
@@ -962,7 +962,7 @@ def test_vocabulary_lifecycle_marks_stale_on_authoritative_mutation(
 def test_vocabulary_lifecycle_reports_building_and_finishes_ready(
     shared_embedding_model,
 ):
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
     chunk = Chunk(
@@ -994,7 +994,7 @@ def test_vocabulary_lifecycle_reports_building_and_finishes_ready(
 
 
 def test_vocabulary_incremental_catch_up_returns_to_ready(shared_embedding_model):
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
     first_chunk = Chunk(
@@ -1043,7 +1043,7 @@ def test_vocabulary_lifecycle_persists_stale_state_without_materialized_terms(
     shared_embedding_model,
     tmp_path,
 ):
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
     chunk = Chunk(

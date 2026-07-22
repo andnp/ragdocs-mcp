@@ -1,5 +1,5 @@
-from src.config import Config, IndexingConfig, ProjectConfig
-from src.git.commit_search import apply_project_semantics
+from searchkernel.config import Config, IndexingConfig, ProjectConfig
+from searchkernel.git.commit_search import apply_project_semantics
 
 
 def _config() -> Config:

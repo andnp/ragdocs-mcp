@@ -2,8 +2,8 @@ from datetime import datetime
 
 import pytest
 
-from src.indices.keyword import KeywordIndex
-from src.models import Chunk
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.models import Chunk
 
 
 @pytest.fixture

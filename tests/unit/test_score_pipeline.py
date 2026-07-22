@@ -12,12 +12,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.search.score_pipeline import (
+from searchkernel.search.score_pipeline import (
     ScorePipeline,
     ScorePipelineConfig,
     rrf_score,
 )
-from src.search.time_scoring import DecayConfig, TierConfig
+from searchkernel.search.time_scoring import DecayConfig, TierConfig
 
 
 # =============================================================================

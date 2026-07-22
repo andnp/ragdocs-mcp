@@ -3,8 +3,8 @@ from datetime import datetime
 
 import pytest
 
-from src.models import Document
-from src.parsers.markdown import MarkdownParser
+from searchkernel.models import Document
+from searchkernel.parsers.markdown import MarkdownParser
 
 
 def test_parse_simple_markdown(tmp_path):

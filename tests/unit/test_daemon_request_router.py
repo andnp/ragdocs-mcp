@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.daemon.request_router import (
+from searchkernel.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
 )
-from src.lifecycle import LifecycleState
+from searchkernel.lifecycle import LifecycleState
 
 
 @dataclass

@@ -4,16 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from src.git.commit_indexer import CommitIndexer
-from src.git.commit_parser import parse_commit, build_commit_document
-from src.git.parallel_indexer import (
+from searchkernel.git.commit_indexer import CommitIndexer
+from searchkernel.git.commit_parser import parse_commit, build_commit_document
+from searchkernel.git.parallel_indexer import (
     ParallelIndexingConfig,
     add_commits_batch,
     batch_embed_texts,
     index_commits_parallel_sync,
     parse_commits_parallel,
 )
-from src.git.repository import get_commits_after_timestamp
+from searchkernel.git.repository import get_commits_after_timestamp
 
 
 def _init_git_repo(path: Path):

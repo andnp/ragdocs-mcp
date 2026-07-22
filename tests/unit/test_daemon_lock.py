@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src.daemon.lock import FilesystemLock
+from searchkernel.daemon.lock import FilesystemLock
 
 
 def test_filesystem_lock_acquire_and_release(tmp_path: Path) -> None:

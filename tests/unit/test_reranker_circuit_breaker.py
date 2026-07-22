@@ -17,8 +17,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from src.search.reranker import ReRanker
-from src.utils.circuit_breaker import CircuitState
+from searchkernel.search.reranker import ReRanker
+from searchkernel.utils.circuit_breaker import CircuitState
 
 
 @dataclass

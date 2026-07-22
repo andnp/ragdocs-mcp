@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from src.indexing.discovery import discover_files
+from searchkernel.indexing.discovery import discover_files
 
 
 @pytest.fixture

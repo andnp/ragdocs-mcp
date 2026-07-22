@@ -1,6 +1,6 @@
 import pytest
 
-from src.indexing.manifest import (
+from searchkernel.indexing.manifest import (
     IndexManifest,
     load_manifest,
     save_manifest,

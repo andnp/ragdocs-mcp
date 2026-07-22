@@ -12,12 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from src.indexing.manager import IndexManager
-from src.indexing.manifest import IndexManifest, save_manifest
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
+from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indexing.manifest import IndexManifest, save_manifest
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 
 
 @pytest.fixture
@@ -99,7 +99,7 @@ def test_reconciliation_removes_newly_blacklisted_venv_files(
     (venv_dir / "orbax" / "README.md").write_text("# Orbax\n\nCheckpointing.")
 
     # Discover files (will not include .venv due to exclude patterns)
-    from src.utils import should_include_file
+    from searchkernel.utils import should_include_file
     import glob
 
     pattern = str(docs_path / "**" / "*.md")
@@ -180,9 +180,9 @@ def test_reconciliation_handles_blacklist_config_change(base_config, manager, tm
     )
 
     # Create new manager with updated config
-    from src.indices.vector import VectorIndex
-    from src.indices.keyword import KeywordIndex
-    from src.indices.graph import GraphStore
+    from searchkernel.indices.vector import VectorIndex
+    from searchkernel.indices.keyword import KeywordIndex
+    from searchkernel.indices.graph import GraphStore
 
     vector_new = VectorIndex()
     keyword_new = KeywordIndex()
@@ -191,7 +191,7 @@ def test_reconciliation_handles_blacklist_config_change(base_config, manager, tm
     manager_new.load()
 
     # Discover files with new config
-    from src.utils import should_include_file
+    from searchkernel.utils import should_include_file
     import glob
 
     pattern = str(docs_path / "**" / "*.md")
@@ -260,7 +260,7 @@ def test_reconciliation_respects_exclude_hidden_dirs_change(
     (cache_dir / "data.md").write_text("# Cache Data\n\nTemporary data.")
 
     # Discover files (hidden dirs excluded by default config)
-    from src.utils import should_include_file
+    from searchkernel.utils import should_include_file
     import glob
 
     pattern = str(docs_path / "**" / "*.md")
@@ -334,7 +334,7 @@ def test_reconciliation_logs_distinct_messages_for_excluded_vs_missing(
     # Note: "deleted.md" doesn't exist - simulates deleted file
 
     # Discover files
-    from src.utils import should_include_file
+    from searchkernel.utils import should_include_file
     import glob
 
     pattern = str(docs_path / "**" / "*.md")

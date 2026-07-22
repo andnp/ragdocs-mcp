@@ -5,13 +5,13 @@ Unit tests for deduplication functions.
 import numpy as np
 import pytest
 
-from src.search.dedup import (
+from searchkernel.search.dedup import (
     deduplicate_by_content_hash,
     deduplicate_by_ngram,
     deduplicate_by_similarity,
     get_ngrams,
 )
-from src.utils.similarity import cosine_similarity
+from searchkernel.utils.similarity import cosine_similarity
 
 
 class TestGetNgrams:

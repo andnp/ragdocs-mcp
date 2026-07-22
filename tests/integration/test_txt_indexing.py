@@ -1,12 +1,12 @@
 import pytest
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ChunkingConfig
-from src.indexing.manager import IndexManager
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.parsers.plaintext import PlainTextParser
-from src.chunking.header_chunker import HeaderBasedChunker
+from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig, ChunkingConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.parsers.plaintext import PlainTextParser
+from searchkernel.chunking.header_chunker import HeaderBasedChunker
 
 
 @pytest.fixture

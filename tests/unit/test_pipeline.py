@@ -1,5 +1,5 @@
-from src.models import CompressionStats
-from src.search.pipeline import SearchPipeline, SearchPipelineConfig
+from searchkernel.models import CompressionStats
+from searchkernel.search.pipeline import SearchPipeline, SearchPipelineConfig
 
 # Diverse content to survive n-gram dedup (default threshold 0.7)
 _DIVERSE_CONTENT = {

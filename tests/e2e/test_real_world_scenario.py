@@ -13,8 +13,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from src.server import create_app
+from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.server import create_app
 
 
 @pytest.fixture
@@ -394,7 +394,7 @@ def app_with_corpus(tmp_path, docs_corpus, monkeypatch):
             llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
-    monkeypatch.setattr("src.context.load_config", mock_load_config)
+    monkeypatch.setattr("searchkernel.context.load_config", mock_load_config)
     app = create_app()
     return app
 

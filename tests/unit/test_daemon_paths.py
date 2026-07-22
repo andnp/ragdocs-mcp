@@ -1,4 +1,4 @@
-from src.daemon.paths import RuntimePaths
+from searchkernel.daemon.paths import RuntimePaths
 
 
 def test_runtime_paths_are_global_and_co_located() -> None:

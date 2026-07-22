@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from src.search.calibration import calibrate_results, calibrate_score
+from searchkernel.search.calibration import calibrate_results, calibrate_score
 
 
 class TestCalibrateScore:

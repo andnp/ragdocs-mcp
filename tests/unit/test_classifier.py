@@ -1,6 +1,6 @@
 import pytest
 
-from src.search.classifier import (
+from searchkernel.search.classifier import (
     QueryType,
     classify_query,
     get_adaptive_weights,

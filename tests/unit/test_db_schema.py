@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.storage.db import DatabaseManager
+from searchkernel.storage.db import DatabaseManager
 
 
 @pytest.fixture

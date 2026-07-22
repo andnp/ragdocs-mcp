@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.utils.atomic_io import (
+from searchkernel.utils.atomic_io import (
     atomic_write_binary,
     atomic_write_json,
     atomic_write_text,
@@ -77,7 +77,7 @@ class TestAtomicWriteJson:
         target.write_text(json.dumps(original_data))
 
         with patch(
-            "src.utils.atomic_io.os.replace", side_effect=OSError("Simulated failure")
+            "searchkernel.utils.atomic_io.os.replace", side_effect=OSError("Simulated failure")
         ):
             with pytest.raises(OSError):
                 atomic_write_json(target, {"new": "data"})
@@ -172,7 +172,7 @@ class TestFsyncParameter:
         """
         target = tmp_path / "test.json"
 
-        with patch("src.utils.atomic_io.os.fsync") as mock_fsync:
+        with patch("searchkernel.utils.atomic_io.os.fsync") as mock_fsync:
             atomic_write_json(target, {"data": True}, fsync=False)
             mock_fsync.assert_not_called()
 
@@ -182,6 +182,6 @@ class TestFsyncParameter:
         """
         target = tmp_path / "test.json"
 
-        with patch("src.utils.atomic_io.os.fsync") as mock_fsync:
+        with patch("searchkernel.utils.atomic_io.os.fsync") as mock_fsync:
             atomic_write_json(target, {"data": True}, fsync=True)
             mock_fsync.assert_called_once()

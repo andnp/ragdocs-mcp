@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-from src.indexing.manifest import IndexManifest, load_manifest, save_manifest
-from src.indexing.reconciler import reconcile_indices, build_indexed_files_map
+from searchkernel.indexing.manifest import IndexManifest, load_manifest, save_manifest
+from searchkernel.indexing.reconciler import reconcile_indices, build_indexed_files_map
 
 
 @pytest.fixture

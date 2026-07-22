@@ -11,13 +11,13 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from src.indexing.manager import IndexManager
-from src.indexing.manifest import IndexManifest, save_manifest
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.server import create_app
+from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indexing.manifest import IndexManifest, save_manifest
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.server import create_app
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ def app_with_config(tmp_path, test_docs_dir, monkeypatch):
             llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
-    monkeypatch.setattr("src.context.load_config", mock_load_config)
+    monkeypatch.setattr("searchkernel.context.load_config", mock_load_config)
     app = create_app()
     return app
 
@@ -332,7 +332,7 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
             llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
-    monkeypatch.setattr("src.context.load_config", mock_load_config)
+    monkeypatch.setattr("searchkernel.context.load_config", mock_load_config)
 
     # Start server - should detect version mismatch and rebuild
     app = create_app()

@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 
-from src.indices.vector import VectorIndex
-from src.models import Chunk
-from src.search.graph_expansion import build_graph_chunk_candidates
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.models import Chunk
+from searchkernel.search.graph_expansion import build_graph_chunk_candidates
 
 
 def _make_chunk(doc_id: str, chunk_index: int) -> Chunk:

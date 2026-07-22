@@ -3,16 +3,16 @@ from pathlib import Path
 
 import pytest
 
-from src.config import (
+from searchkernel.config import (
     Config,
     IndexingConfig,
     GitIndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from src.git.commit_indexer import CommitIndexer
-from src.git.watcher import GitWatcher
-from src.git.repository import is_git_available
+from searchkernel.git.commit_indexer import CommitIndexer
+from searchkernel.git.watcher import GitWatcher
+from searchkernel.git.repository import is_git_available
 
 
 def _init_git_repo(path: Path):

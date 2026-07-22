@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from src.config import Config, ProjectConfig, detect_project, resolve_project_id_for_path
+from searchkernel.config import Config, ProjectConfig, detect_project, resolve_project_id_for_path
 
 
 @pytest.fixture

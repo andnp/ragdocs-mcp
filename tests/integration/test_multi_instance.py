@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig
-from src.context import ApplicationContext
+from searchkernel.config import Config, IndexingConfig
+from searchkernel.context import ApplicationContext
 
 
 def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
@@ -17,11 +17,11 @@ def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
         index_path=index_path,
     )
 
-    from src.indices.vector import VectorIndex
-    from src.indices.keyword import KeywordIndex
-    from src.indices.graph import GraphStore
-    from src.indexing.manager import IndexManager
-    from src.search.orchestrator import SearchOrchestrator
+    from searchkernel.indices.vector import VectorIndex
+    from searchkernel.indices.keyword import KeywordIndex
+    from searchkernel.indices.graph import GraphStore
+    from searchkernel.indexing.manager import IndexManager
+    from searchkernel.search.orchestrator import SearchOrchestrator
 
     vector = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
     keyword = KeywordIndex()

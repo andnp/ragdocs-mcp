@@ -1,11 +1,11 @@
 import pytest
 
-from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
-from src.indexing.manager import IndexManager
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.search.orchestrator import SearchOrchestrator
+from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.search.orchestrator import SearchOrchestrator
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ async def _capture_stage_top_k(
     monkeypatch.setattr(orchestrator, "_search_vector", fake_search_vector)
     monkeypatch.setattr(orchestrator, "_search_keyword", fake_search_keyword)
     monkeypatch.setattr(
-        "src.search.orchestrator.build_graph_chunk_candidates",
+        "searchkernel.search.orchestrator.build_graph_chunk_candidates",
         fake_build_graph_chunk_candidates,
     )
 

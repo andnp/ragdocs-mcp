@@ -1,6 +1,6 @@
 import sqlite3
 
-from src.indices._corruption import is_corruption_error, is_transient_error
+from searchkernel.indices._corruption import is_corruption_error, is_transient_error
 
 
 def test_database_locked_is_transient_not_corruption():

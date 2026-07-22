@@ -36,7 +36,7 @@ Repository = "https://github.com/yourusername/mcp-markdown-ragdocs.git"
 Issues = "https://github.com/yourusername/mcp-markdown-ragdocs/issues"
 
 [project.scripts]
-mcp-markdown-ragdocs = "src.cli:main"
+mcp-markdown-ragdocs = "searchkernel.cli:main"
 
 [dependency-groups]
 dev = [
@@ -54,7 +54,7 @@ dev = [
 package = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["searchkernel"]
 
 [tool.pytest.ini_options]
 pythonpath = "."

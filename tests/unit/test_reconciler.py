@@ -4,8 +4,8 @@ Unit tests for reconciliation logic.
 
 import pytest
 
-from src.indexing.manifest import IndexManifest
-from src.indexing.reconciler import (
+from searchkernel.indexing.manifest import IndexManifest
+from searchkernel.indexing.reconciler import (
     reconcile_indices,
     build_indexed_files_map,
     find_excluded_indexed_files,

@@ -5,7 +5,7 @@ Tests cover:
 - Community membership lookup
 """
 
-from src.search.community import (
+from searchkernel.search.community import (
     compute_community_boost,
     get_community_members,
 )

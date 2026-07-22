@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.search.time_scoring import (
+from searchkernel.search.time_scoring import (
     DecayConfig,
     TierConfig,
     TimeScoreMode,

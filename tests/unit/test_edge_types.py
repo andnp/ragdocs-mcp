@@ -8,7 +8,7 @@ Tests cover:
 - Fallback to LINKS_TO for unknown contexts
 """
 
-from src.search.edge_types import (
+from searchkernel.search.edge_types import (
     EDGE_TYPE_WEIGHTS,
     EdgeType,
     HEADER_TO_EDGE_TYPE,

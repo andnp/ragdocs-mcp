@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from src.daemon import read_daemon_metadata
-from src.lifecycle import LifecycleCoordinator, LifecycleState
+from searchkernel.daemon import read_daemon_metadata
+from searchkernel.lifecycle import LifecycleCoordinator, LifecycleState
 
 
 @dataclass
@@ -42,7 +42,7 @@ class _FakeContext:
 async def test_lifecycle_writes_and_removes_initializing_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("src.daemon.paths._state_home", lambda: tmp_path)
+    monkeypatch.setattr("searchkernel.daemon.paths._state_home", lambda: tmp_path)
 
     coordinator = LifecycleCoordinator()
     ctx = _FakeContext()
@@ -64,7 +64,7 @@ async def test_lifecycle_writes_and_removes_initializing_metadata(
 async def test_lifecycle_updates_metadata_when_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("src.daemon.paths._state_home", lambda: tmp_path)
+    monkeypatch.setattr("searchkernel.daemon.paths._state_home", lambda: tmp_path)
 
     coordinator = LifecycleCoordinator()
     ctx = _FakeContext()
@@ -85,7 +85,7 @@ async def test_lifecycle_updates_metadata_when_ready(
 async def test_lifecycle_can_skip_daemon_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("src.daemon.paths._state_home", lambda: tmp_path)
+    monkeypatch.setattr("searchkernel.daemon.paths._state_home", lambda: tmp_path)
 
     coordinator = LifecycleCoordinator(_manage_daemon_metadata=False)
     ctx = _FakeContext()

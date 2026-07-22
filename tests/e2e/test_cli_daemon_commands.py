@@ -4,17 +4,17 @@ from click.testing import CliRunner
 from pathlib import Path
 import pytest
 
-from src.cli import cli
-from src.lifecycle import LifecycleState
-from src.daemon import RuntimePaths
-from src.daemon.management import DaemonInspection
-from src.daemon.metadata import DaemonMetadata
+from searchkernel.cli import cli
+from searchkernel.lifecycle import LifecycleState
+from searchkernel.daemon import RuntimePaths
+from searchkernel.daemon.management import DaemonInspection
+from searchkernel.daemon.metadata import DaemonMetadata
 
 
 def test_daemon_status_reports_not_running(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(metadata=None, running=False, stale=False),
     )
 
@@ -33,7 +33,7 @@ def test_daemon_status_reports_running(monkeypatch):
         socket_path="/tmp/ragdocs.sock",
     )
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(metadata=metadata, running=True, stale=False),
     )
 
@@ -55,7 +55,7 @@ def test_daemon_status_reports_starting_when_not_ready(monkeypatch):
         socket_path="/tmp/ragdocs.sock",
     )
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=metadata,
             running=True,
@@ -82,7 +82,7 @@ def test_daemon_status_json_includes_runtime_paths(monkeypatch, tmp_path):
         queue_db_path="/tmp/queue.db",
     )
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda: DaemonInspection(metadata=metadata, running=True, stale=False),
     )
     monkeypatch.setattr(
@@ -120,7 +120,7 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
         queue_db_path="/tmp/queue.db",
     )
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=metadata,
             running=True,
@@ -130,7 +130,7 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
         ),
     )
     monkeypatch.setattr(
-        "src.daemon.status.request_daemon_socket",
+        "searchkernel.daemon.status.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds: {
             "status": "ok",
             "indexed_documents": 9,
@@ -187,7 +187,7 @@ def test_daemon_status_json_fetches_overview_even_if_probe_not_responsive(
         queue_db_path="/tmp/queue.db",
     )
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=metadata,
             running=True,
@@ -197,7 +197,7 @@ def test_daemon_status_json_fetches_overview_even_if_probe_not_responsive(
         ),
     )
     monkeypatch.setattr(
-        "src.daemon.status.request_daemon_socket",
+        "searchkernel.daemon.status.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds: {
             "status": "ok",
             "worker_health": "healthy",
@@ -236,10 +236,10 @@ def test_daemon_start_invokes_management_helper(monkeypatch):
         return DaemonMetadata(pid=99, started_at=1.0, status="ready")
 
     monkeypatch.setattr(
-        "src.cli._ignore_daemon_startup_project_option",
+        "searchkernel.cli._ignore_daemon_startup_project_option",
         lambda project: observed.setdefault("ignored_project", project),
     )
-    monkeypatch.setattr("src.cli.start_daemon", _fake_start_daemon)
+    monkeypatch.setattr("searchkernel.cli.start_daemon", _fake_start_daemon)
 
     result = runner.invoke(
         cli,
@@ -259,10 +259,10 @@ def test_daemon_run_accepts_but_ignores_project_option(monkeypatch):
         observed["ran"] = True
 
     monkeypatch.setattr(
-        "src.cli._ignore_daemon_startup_project_option",
+        "searchkernel.cli._ignore_daemon_startup_project_option",
         lambda project: observed.setdefault("ignored_project", project),
     )
-    monkeypatch.setattr("src.cli._run_daemon_forever", _fake_run_daemon_forever)
+    monkeypatch.setattr("searchkernel.cli._run_daemon_forever", _fake_run_daemon_forever)
 
     result = runner.invoke(cli, ["daemon", "run", "--project", "docs"])
 
@@ -278,10 +278,10 @@ def test_daemon_internal_run_accepts_but_ignores_project_option(monkeypatch):
         observed["ran"] = True
 
     monkeypatch.setattr(
-        "src.cli._ignore_daemon_startup_project_option",
+        "searchkernel.cli._ignore_daemon_startup_project_option",
         lambda project: observed.setdefault("ignored_project", project),
     )
-    monkeypatch.setattr("src.cli._run_daemon_forever", _fake_run_daemon_forever)
+    monkeypatch.setattr("searchkernel.cli._run_daemon_forever", _fake_run_daemon_forever)
 
     result = runner.invoke(cli, ["daemon-internal-run", "--project", "docs"])
 
@@ -342,20 +342,20 @@ async def test_run_daemon_forever_releases_boot_lock_after_startup(
     class _FakeContext:
         db_manager = None
 
-    monkeypatch.setattr("src.cli.acquire_boot_lock", lambda timeout_seconds=5.0: fake_lock)
+    monkeypatch.setattr("searchkernel.cli.acquire_boot_lock", lambda timeout_seconds=5.0: fake_lock)
     monkeypatch.setattr(
         RuntimePaths,
         "resolve",
         classmethod(lambda cls: runtime_paths),
     )
-    monkeypatch.setattr("src.cli.DaemonHealthServer", _FakeHealthServer)
-    monkeypatch.setattr("src.cli.LifecycleCoordinator", lambda: fake_coordinator)
+    monkeypatch.setattr("searchkernel.cli.DaemonHealthServer", _FakeHealthServer)
+    monkeypatch.setattr("searchkernel.cli.LifecycleCoordinator", lambda: fake_coordinator)
     monkeypatch.setattr(
-        "src.cli._create_daemon_runtime",
+        "searchkernel.cli._create_daemon_runtime",
         lambda paths: (_FakeContext(), _FakeWorker()),
     )
 
-    from src.cli import _run_daemon_forever
+    from searchkernel.cli import _run_daemon_forever
 
     await _run_daemon_forever()
 
@@ -383,7 +383,7 @@ def test_request_daemon_json_does_not_wait_for_ready_before_query(monkeypatch, t
         classmethod(lambda cls: runtime_paths),
     )
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=initializing,
             running=True,
@@ -396,7 +396,7 @@ def test_request_daemon_json_does_not_wait_for_ready_before_query(monkeypatch, t
     def _fail_wait_for_daemon_ready(*, timeout_seconds, paths=None):
         raise AssertionError("wait_for_daemon_ready should not be called")
 
-    monkeypatch.setattr("src.cli.wait_for_daemon_ready", _fail_wait_for_daemon_ready, raising=False)
+    monkeypatch.setattr("searchkernel.cli.wait_for_daemon_ready", _fail_wait_for_daemon_ready, raising=False)
 
     observed: dict[str, object] = {}
 
@@ -407,9 +407,9 @@ def test_request_daemon_json_does_not_wait_for_ready_before_query(monkeypatch, t
         observed["timeout_seconds"] = timeout_seconds
         return {"status": "ok", "value": 1}
 
-    monkeypatch.setattr("src.cli.request_daemon_socket", _fake_request_daemon_socket)
+    monkeypatch.setattr("searchkernel.cli.request_daemon_socket", _fake_request_daemon_socket)
 
-    from src.cli import _request_daemon_json
+    from searchkernel.cli import _request_daemon_json
 
     response = _request_daemon_json(
         "/api/search/query",
@@ -448,7 +448,7 @@ def test_request_daemon_json_does_not_wait_for_ready_for_git_history(
         classmethod(lambda cls: runtime_paths),
     )
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=initializing,
             running=True,
@@ -461,7 +461,7 @@ def test_request_daemon_json_does_not_wait_for_ready_for_git_history(
     def _fail_wait_for_daemon_ready(*, timeout_seconds, paths=None):
         raise AssertionError("wait_for_daemon_ready should not be called")
 
-    monkeypatch.setattr("src.cli.wait_for_daemon_ready", _fail_wait_for_daemon_ready, raising=False)
+    monkeypatch.setattr("searchkernel.cli.wait_for_daemon_ready", _fail_wait_for_daemon_ready, raising=False)
 
     observed: dict[str, object] = {}
 
@@ -472,9 +472,9 @@ def test_request_daemon_json_does_not_wait_for_ready_for_git_history(
         observed["timeout_seconds"] = timeout_seconds
         return {"status": "ok", "value": 1}
 
-    monkeypatch.setattr("src.cli.request_daemon_socket", _fake_request_daemon_socket)
+    monkeypatch.setattr("searchkernel.cli.request_daemon_socket", _fake_request_daemon_socket)
 
-    from src.cli import _request_daemon_json
+    from searchkernel.cli import _request_daemon_json
 
     response = _request_daemon_json(
         "/api/search/git-history",
@@ -491,7 +491,7 @@ def test_request_daemon_json_does_not_wait_for_ready_for_git_history(
 def test_daemon_stop_reports_stopped(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
-        "src.cli.stop_daemon",
+        "searchkernel.cli.stop_daemon",
         lambda *, timeout_seconds: DaemonMetadata(pid=77, started_at=1.0, status="ready"),
     )
 
@@ -511,10 +511,10 @@ def test_daemon_restart_invokes_management_helper(monkeypatch):
         return DaemonMetadata(pid=123, started_at=1.0, status="ready")
 
     monkeypatch.setattr(
-        "src.cli._ignore_daemon_startup_project_option",
+        "searchkernel.cli._ignore_daemon_startup_project_option",
         lambda project: observed.setdefault("ignored_project", project),
     )
-    monkeypatch.setattr("src.cli.restart_daemon", _fake_restart_daemon)
+    monkeypatch.setattr("searchkernel.cli.restart_daemon", _fake_restart_daemon)
 
     result = runner.invoke(
         cli,
@@ -597,12 +597,12 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
             bootstrap_documents_roots,
         )
 
-    monkeypatch.setattr("src.cli.ApplicationContext.create", _fake_create)
-    monkeypatch.setattr("src.cli.get_huey", _fake_get_huey)
-    monkeypatch.setattr("src.cli.register_tasks", _fake_register_tasks)
-    monkeypatch.setattr("src.cli.HueyWorkerProcess", _FakeWorker)
+    monkeypatch.setattr("searchkernel.cli.ApplicationContext.create", _fake_create)
+    monkeypatch.setattr("searchkernel.cli.get_huey", _fake_get_huey)
+    monkeypatch.setattr("searchkernel.cli.register_tasks", _fake_register_tasks)
+    monkeypatch.setattr("searchkernel.cli.HueyWorkerProcess", _FakeWorker)
 
-    from src.cli import _create_daemon_runtime
+    from searchkernel.cli import _create_daemon_runtime
 
     ctx, worker = _create_daemon_runtime(runtime_paths)
 
@@ -644,7 +644,7 @@ def test_request_daemon_json_auto_start_ignores_project_context_for_startup(monk
         classmethod(lambda cls: runtime_paths),
     )
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=None,
             running=False,
@@ -671,10 +671,10 @@ def test_request_daemon_json_auto_start_ignores_project_context_for_startup(monk
         observed["request_timeout_seconds"] = timeout_seconds
         return {"status": "ok", "value": 1}
 
-    monkeypatch.setattr("src.cli.start_daemon", _fake_start_daemon)
-    monkeypatch.setattr("src.cli.request_daemon_socket", _fake_request_daemon_socket)
+    monkeypatch.setattr("searchkernel.cli.start_daemon", _fake_start_daemon)
+    monkeypatch.setattr("searchkernel.cli.request_daemon_socket", _fake_request_daemon_socket)
 
-    from src.cli import _request_daemon_json
+    from searchkernel.cli import _request_daemon_json
 
     response = _request_daemon_json(
         "/api/search/query",
@@ -767,7 +767,7 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
 
     fake_ctx = _FakeContext()
 
-    from src.cli import _build_index_stats_payload
+    from searchkernel.cli import _build_index_stats_payload
 
     payload = _build_index_stats_payload(fake_ctx)
 
@@ -855,7 +855,7 @@ def test_index_stats_reports_per_root_breakdown(tmp_path):
                 {"to_dict": lambda self: {"status": "ready"}},
             )()
 
-    from src.cli import _build_index_stats_payload
+    from searchkernel.cli import _build_index_stats_payload
 
     payload = _build_index_stats_payload(_FakeContext())
 
@@ -950,7 +950,7 @@ def test_index_stats_uses_loaded_snapshot_when_refresh_lock_times_out(
                 {"to_dict": lambda self: {"status": "ready"}},
             )()
 
-    from src.cli import _build_index_stats_payload
+    from searchkernel.cli import _build_index_stats_payload
 
     with caplog.at_level("WARNING"):
         payload = _build_index_stats_payload(_FakeContext())
@@ -964,7 +964,7 @@ def test_index_stats_uses_loaded_snapshot_when_refresh_lock_times_out(
 def test_index_stats_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
-        "src.cli._request_daemon_json",
+        "searchkernel.cli._request_daemon_json",
         lambda path, payload, project_override, auto_start, allow_error=False: {
             "documents_path": "/docs",
             "documents_common_root": "/docs",
@@ -1017,7 +1017,7 @@ def test_index_stats_prefers_daemon_transport(monkeypatch):
 def test_index_stats_human_output_renders_per_root_table(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
-        "src.cli._request_daemon_json",
+        "searchkernel.cli._request_daemon_json",
         lambda path, payload, project_override, auto_start, allow_error=False: {
             "documents_path": "/home/andy",
             "documents_common_root": "/home/andy",
@@ -1071,7 +1071,7 @@ def test_index_stats_human_output_renders_per_root_table(monkeypatch):
 def test_queue_status_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
-        "src.cli._request_daemon_json",
+        "searchkernel.cli._request_daemon_json",
         lambda path, payload, project_override, auto_start, allow_error=False: {
             "queue_db_path": "/queue.db",
             "pending_count": 2,
@@ -1105,7 +1105,7 @@ def test_queue_status_prefers_daemon_transport(monkeypatch):
 
 def test_queue_status_requires_daemon_when_unavailable(monkeypatch):
     runner = CliRunner()
-    monkeypatch.setattr("src.cli._request_daemon_json", lambda *args, **kwargs: None)
+    monkeypatch.setattr("searchkernel.cli._request_daemon_json", lambda *args, **kwargs: None)
 
     result = runner.invoke(cli, ["queue", "status", "--json"])
 
@@ -1116,7 +1116,7 @@ def test_queue_status_requires_daemon_when_unavailable(monkeypatch):
 def test_queue_status_reports_explicit_daemon_timeout(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
-        "src.cli._request_daemon_json",
+        "searchkernel.cli._request_daemon_json",
         lambda *args, **kwargs: {"status": "error", "error": "daemon_request_timed_out"},
     )
 
@@ -1134,7 +1134,7 @@ def test_request_daemon_json_uses_running_daemon(monkeypatch):
         socket_path="/tmp/ragdocs.sock",
     )
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=metadata,
             running=True,
@@ -1144,11 +1144,11 @@ def test_request_daemon_json_uses_running_daemon(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "src.cli.request_daemon_socket",
+        "searchkernel.cli.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds: {"status": "ok", "path": path},
     )
 
-    from src.cli import _request_daemon_json
+    from searchkernel.cli import _request_daemon_json
 
     payload = _request_daemon_json(
         "/api/admin/tasks",
@@ -1172,7 +1172,7 @@ def test_request_daemon_json_uses_running_nonresponsive_daemon_before_auto_start
     observed: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=metadata,
             running=True,
@@ -1182,7 +1182,7 @@ def test_request_daemon_json_uses_running_nonresponsive_daemon_before_auto_start
         ),
     )
     monkeypatch.setattr(
-        "src.cli.start_daemon",
+        "searchkernel.cli.start_daemon",
         lambda **kwargs: (_ for _ in ()).throw(
             AssertionError("start_daemon should not be called")
         ),
@@ -1195,9 +1195,9 @@ def test_request_daemon_json_uses_running_nonresponsive_daemon_before_auto_start
         observed["timeout_seconds"] = timeout_seconds
         return {"status": "ok", "value": 1}
 
-    monkeypatch.setattr("src.cli.request_daemon_socket", _fake_request_daemon_socket)
+    monkeypatch.setattr("searchkernel.cli.request_daemon_socket", _fake_request_daemon_socket)
 
-    from src.cli import _request_daemon_json
+    from searchkernel.cli import _request_daemon_json
 
     response = _request_daemon_json(
         "/api/search/query",
@@ -1247,7 +1247,7 @@ def test_request_daemon_json_falls_back_to_start_after_transport_failure(
         classmethod(lambda cls: runtime_paths),
     )
     monkeypatch.setattr(
-        "src.cli.inspect_daemon",
+        "searchkernel.cli.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=initial_metadata,
             running=True,
@@ -1268,10 +1268,10 @@ def test_request_daemon_json_falls_back_to_start_after_transport_failure(
             return {"status": "error", "error": "daemon_socket_unavailable"}
         return {"status": "ok", "value": 2}
 
-    monkeypatch.setattr("src.cli.start_daemon", _fake_start_daemon)
-    monkeypatch.setattr("src.cli.request_daemon_socket", _fake_request_daemon_socket)
+    monkeypatch.setattr("searchkernel.cli.start_daemon", _fake_start_daemon)
+    monkeypatch.setattr("searchkernel.cli.request_daemon_socket", _fake_request_daemon_socket)
 
-    from src.cli import _request_daemon_json
+    from searchkernel.cli import _request_daemon_json
 
     response = _request_daemon_json(
         "/api/search/query",
@@ -1302,7 +1302,7 @@ def test_request_daemon_json_falls_back_to_start_after_transport_failure(
 def test_query_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
-        "src.cli._request_daemon_json",
+        "searchkernel.cli._request_daemon_json",
         lambda path, payload, project_override, auto_start, allow_error=False: {
             "query": payload["query"],
             "results": [{"doc_id": "doc-1", "score": 0.9, "content": "daemon result"}],
@@ -1338,7 +1338,7 @@ def test_build_initializing_search_payload_for_query_includes_machine_readable_f
     class _FakeCoordinator:
         state = LifecycleState.INITIALIZING
 
-    from src.cli import _build_initializing_search_payload
+    from searchkernel.cli import _build_initializing_search_payload
 
     payload = _build_initializing_search_payload(
         _FakeContext(),
@@ -1390,7 +1390,7 @@ def test_build_initializing_search_payload_for_git_history_includes_commit_count
     class _FakeCoordinator:
         state = LifecycleState.INITIALIZING
 
-    from src.cli import _build_initializing_search_payload
+    from searchkernel.cli import _build_initializing_search_payload
 
     payload = _build_initializing_search_payload(
         _FakeContext(),
@@ -1409,7 +1409,7 @@ def test_build_initializing_search_payload_for_git_history_includes_commit_count
 def test_query_surfaces_initializing_response_in_human_output(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
-        "src.cli._request_daemon_json",
+        "searchkernel.cli._request_daemon_json",
         lambda path, payload, project_override, auto_start, allow_error=False: {
             "status": "initializing",
             "message": "Search indices are still initializing. Retry shortly.",
@@ -1440,7 +1440,7 @@ def test_query_surfaces_initializing_response_in_human_output(monkeypatch):
 def test_search_commits_surfaces_initializing_response_in_human_output(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
-        "src.cli._request_daemon_json",
+        "searchkernel.cli._request_daemon_json",
         lambda path, payload, project_override, auto_start, allow_error=False: {
             "status": "initializing",
             "message": "Search indices are still initializing. Retry shortly.",
@@ -1481,7 +1481,7 @@ def test_query_passes_project_context_and_filter(monkeypatch):
             "strategy_stats": {},
         }
 
-    monkeypatch.setattr("src.cli._request_daemon_json", _fake_request)
+    monkeypatch.setattr("searchkernel.cli._request_daemon_json", _fake_request)
 
     result = runner.invoke(
         cli,
@@ -1512,7 +1512,7 @@ def test_query_passes_project_context_and_filter(monkeypatch):
 def test_search_commits_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
-        "src.cli._request_daemon_json",
+        "searchkernel.cli._request_daemon_json",
         lambda path, payload, project_override, auto_start, allow_error=False: {
             "query": payload["query"],
             "total_commits_indexed": 5,
@@ -1554,7 +1554,7 @@ def test_search_commits_passes_project_context_and_filter(monkeypatch):
             "results": [],
         }
 
-    monkeypatch.setattr("src.cli._request_daemon_json", _fake_request)
+    monkeypatch.setattr("searchkernel.cli._request_daemon_json", _fake_request)
 
     result = runner.invoke(
         cli,

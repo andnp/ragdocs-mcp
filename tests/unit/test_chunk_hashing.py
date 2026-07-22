@@ -3,7 +3,7 @@
 import hashlib
 from datetime import datetime, timezone
 
-from src.models import Chunk
+from searchkernel.models import Chunk
 
 
 def test_chunk_hash_computed_on_init():

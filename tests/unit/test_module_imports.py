@@ -44,17 +44,17 @@ def test_all_src_modules_importable(src_modules):
 
 def test_critical_modules_import_without_error():
     critical_modules = [
-        "src.config",
-        "src.context",
-        "src.mcp.server",
-        "src.server",
-        "src.git.watcher",
-        "src.git.commit_indexer",
-        "src.indexing.manager",
-        "src.indices.vector",
-        "src.indices.keyword",
-        "src.indices.graph",
-        "src.search.orchestrator",
+        "searchkernel.config",
+        "searchkernel.context",
+        "searchkernel.mcp.server",
+        "searchkernel.server",
+        "searchkernel.git.watcher",
+        "searchkernel.git.commit_indexer",
+        "searchkernel.indexing.manager",
+        "searchkernel.indices.vector",
+        "searchkernel.indices.keyword",
+        "searchkernel.indices.graph",
+        "searchkernel.search.orchestrator",
     ]
 
     failed = []

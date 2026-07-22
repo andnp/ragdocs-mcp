@@ -2,8 +2,8 @@ import sqlite3
 
 import pytest
 
-from src.indices.graph import GraphStore
-from src.storage.db import DatabaseManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.storage.db import DatabaseManager
 
 
 @pytest.fixture

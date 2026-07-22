@@ -1,8 +1,8 @@
 import time
 from datetime import datetime, timezone
 
-from src.indices.vector import VectorIndex
-from src.models import Chunk
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.models import Chunk
 
 
 def _create_test_chunk(index: int, doc_id: str = "test-doc") -> Chunk:

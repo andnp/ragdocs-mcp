@@ -12,11 +12,11 @@ from click.testing import CliRunner
 
 pytest.importorskip("zmq")
 
-from src.cli import cli
-from src.daemon.health import probe_daemon_socket
-from src.daemon.management import stop_daemon
-from src.daemon.paths import RuntimePaths
-from src.mcp.server import MCPServer
+from searchkernel.cli import cli
+from searchkernel.daemon.health import probe_daemon_socket
+from searchkernel.daemon.management import stop_daemon
+from searchkernel.daemon.paths import RuntimePaths
+from searchkernel.mcp.server import MCPServer
 
 
 def _write_test_config(tmp_path: Path, docs_path: Path) -> None:
@@ -321,7 +321,7 @@ async def test_mcp_run_stays_daemon_idle_on_startup(monkeypatch: pytest.MonkeyPa
         return None
 
     monkeypatch.setattr(
-        "src.mcp.server.stdio_server",
+        "searchkernel.mcp.server.stdio_server",
         _fake_stdio_server,
     )
     monkeypatch.setattr(
@@ -330,7 +330,7 @@ async def test_mcp_run_stays_daemon_idle_on_startup(monkeypatch: pytest.MonkeyPa
         _fake_server_run,
     )
     monkeypatch.setattr(
-        "src.mcp.server.start_daemon",
+        "searchkernel.mcp.server.start_daemon",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("daemon should not be contacted during stdio startup")),
     )
 

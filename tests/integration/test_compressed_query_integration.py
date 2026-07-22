@@ -17,15 +17,15 @@ from typing import Generator
 import numpy as np
 import pytest
 
-from src.compression.thresholding import filter_by_score
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig, ChunkingConfig
-from src.indexing.manager import IndexManager
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.models import CompressionStats
-from src.search.orchestrator import SearchOrchestrator
-from src.search.pipeline import SearchPipelineConfig
+from searchkernel.compression.thresholding import filter_by_score
+from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig, ChunkingConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.models import CompressionStats
+from searchkernel.search.orchestrator import SearchOrchestrator
+from searchkernel.search.pipeline import SearchPipelineConfig
 
 
 # ============================================================================

@@ -5,8 +5,8 @@ from datetime import datetime
 
 import pytest
 
-from src.indices.vector import VectorIndex
-from src.utils.circuit_breaker import CircuitState
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.utils.circuit_breaker import CircuitState
 
 
 class TestCircuitBreakerState:
@@ -271,7 +271,7 @@ class TestProtectedEmbed:
 
     def test_protected_embed_raises_when_circuit_open(self, shared_embedding_model):
         """_protected_embed raises CircuitBreakerOpen when circuit is open."""
-        from src.utils.circuit_breaker import CircuitBreakerOpen
+        from searchkernel.utils.circuit_breaker import CircuitBreakerOpen
 
         vector_index = VectorIndex(embedding_model=shared_embedding_model)
         breaker = vector_index._embedding_circuit_breaker
@@ -286,7 +286,7 @@ class TestProtectedEmbed:
     def test_repeated_failures_trip_circuit(self, shared_embedding_model):
         """Repeated embedding failures trip the circuit breaker."""
         from unittest.mock import MagicMock
-        from src.utils.circuit_breaker import CircuitBreakerOpen
+        from searchkernel.utils.circuit_breaker import CircuitBreakerOpen
 
         vector_index = VectorIndex(embedding_model=shared_embedding_model)
         breaker = vector_index._embedding_circuit_breaker
@@ -320,7 +320,7 @@ class TestProtectedEmbed:
 
     def test_get_text_embedding_uses_protected_embed(self, shared_embedding_model):
         """Public get_text_embedding uses _protected_embed internally."""
-        from src.utils.circuit_breaker import CircuitBreakerOpen
+        from searchkernel.utils.circuit_breaker import CircuitBreakerOpen
 
         vector_index = VectorIndex(embedding_model=shared_embedding_model)
         breaker = vector_index._embedding_circuit_breaker
@@ -355,7 +355,7 @@ class TestSearchCircuitBreaker:
 
     def test_search_works_after_circuit_reset(self, shared_embedding_model):
         """Search works normally after circuit breaker is reset."""
-        from src.models import Chunk
+        from searchkernel.models import Chunk
 
         vector_index = VectorIndex(embedding_model=shared_embedding_model)
         vector_index._initialize_index()
@@ -401,7 +401,7 @@ class TestVocabularyCircuitBreaker:
         vector_index._initialize_index()
 
         # Add some content
-        from src.models import Chunk
+        from searchkernel.models import Chunk
 
         chunk = Chunk(
             chunk_id="doc1_chunk_0",
@@ -490,7 +490,7 @@ class TestCircuitBreakerIntegration:
         assert vector_index.circuit_state == CircuitState.OPEN
 
         # Subsequent call should fail fast
-        from src.utils.circuit_breaker import CircuitBreakerOpen
+        from searchkernel.utils.circuit_breaker import CircuitBreakerOpen
 
         with pytest.raises(CircuitBreakerOpen):
             breaker.call(lambda: "should not execute")

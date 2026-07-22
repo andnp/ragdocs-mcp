@@ -1,4 +1,4 @@
-from src.indexing.runtime_readiness import (
+from searchkernel.indexing.runtime_readiness import (
     can_refresh_loaded_indices,
     can_serve_queries,
     is_fully_ready,

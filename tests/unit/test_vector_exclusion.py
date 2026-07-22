@@ -2,8 +2,8 @@ from datetime import datetime
 
 import pytest
 
-from src.indices.vector import VectorIndex
-from src.models import Chunk
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.models import Chunk
 
 
 @pytest.fixture

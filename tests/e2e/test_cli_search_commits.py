@@ -10,7 +10,7 @@ import subprocess
 import pytest
 from click.testing import CliRunner
 
-from src.cli import cli
+from searchkernel.cli import cli
 
 
 @pytest.fixture

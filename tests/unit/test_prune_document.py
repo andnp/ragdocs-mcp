@@ -10,13 +10,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.config import Config, IndexingConfig
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.indexing.manager import IndexManager
-from src.indexing.manifest import IndexManifest, save_manifest
-from src.models import Chunk
+from searchkernel.config import Config, IndexingConfig
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indexing.manifest import IndexManifest, save_manifest
+from searchkernel.models import Chunk
 
 
 def make_chunk(chunk_id: str, doc_id: str, content: str, index: int) -> Chunk:
@@ -140,7 +140,7 @@ class TestPruneDocumentSuccess:
         assert result is True
 
         # Reload manifest and verify removal
-        from src.indexing.manifest import load_manifest
+        from searchkernel.indexing.manifest import load_manifest
 
         updated = load_manifest(tmp_index_path)
         assert updated is not None
@@ -164,7 +164,7 @@ class TestPruneDocumentSuccess:
         doc_id = "reason_test"
         reason = "file_deleted"
 
-        with caplog.at_level(logging.INFO, logger="src.indexing.manager"):
+        with caplog.at_level(logging.INFO, logger="searchkernel.indexing.manager"):
             manager.prune_document(doc_id, reason=reason)
 
         # Check logs contain reason
@@ -201,7 +201,7 @@ class TestPruneDocumentEdgeCases:
         assert result is True
 
         # Verify manifest unchanged
-        from src.indexing.manifest import load_manifest
+        from searchkernel.indexing.manifest import load_manifest
 
         updated = load_manifest(tmp_index_path)
         assert updated is not None

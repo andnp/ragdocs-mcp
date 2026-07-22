@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from math import log2
 from pathlib import Path
 
-from src.config import (
+from searchkernel.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
@@ -12,13 +12,13 @@ from src.config import (
     ProjectConfig,
     SearchConfig,
 )
-from src.indexing.manager import IndexManager
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import EmbeddingModel, VectorIndex
-from src.search.orchestrator import SearchOrchestrator
-from src.search.path_utils import compute_doc_id
-from src.storage.db import DatabaseManager
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import EmbeddingModel, VectorIndex
+from searchkernel.search.orchestrator import SearchOrchestrator
+from searchkernel.search.path_utils import compute_doc_id
+from searchkernel.storage.db import DatabaseManager
 
 FIXTURE_CORPUS_ROOT = Path(__file__).resolve().parent.parent / "fixtures" / "search_eval"
 

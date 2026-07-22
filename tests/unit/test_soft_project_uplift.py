@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from src.config import ChunkingConfig, Config, IndexingConfig, SearchConfig
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.search.orchestrator import SearchOrchestrator
+from searchkernel.config import ChunkingConfig, Config, IndexingConfig, SearchConfig
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.search.orchestrator import SearchOrchestrator
 
 
 def _orchestrator(*, detected_project: str | None) -> SearchOrchestrator:

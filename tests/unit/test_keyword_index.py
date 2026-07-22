@@ -2,8 +2,8 @@ from datetime import datetime
 
 import pytest
 
-from src.indices.keyword import KeywordIndex
-from src.models import Document
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.models import Document
 
 
 def _extract_chunk_ids(results: list) -> list[str]:
@@ -280,7 +280,7 @@ def test_keyword_index_no_results(keyword_index, sample_document):
 
 
 def test_keyword_index_get_chunk_by_id_returns_row_metadata(keyword_index):
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     chunk = Chunk(
         chunk_id="lookup_chunk_0",
@@ -450,7 +450,7 @@ def test_keyword_index_title_field_boosted():
 
     Verifies P4: Title field has highest boost and matches rank higher.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -500,7 +500,7 @@ def test_keyword_index_headers_field_indexed():
 
     Verifies header_path is searchable in keyword index.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -533,7 +533,7 @@ def test_keyword_index_keywords_field_indexed():
 
     Verifies frontmatter keywords are searchable.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -569,7 +569,7 @@ def test_keyword_index_description_field_indexed():
 
     Verifies frontmatter description is searchable.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -602,7 +602,7 @@ def test_keyword_index_author_field_indexed():
 
     Verifies documents can be found by author name.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -632,7 +632,7 @@ def test_keyword_index_category_field_indexed():
 
     Verifies documents can be filtered/searched by category.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -662,7 +662,7 @@ def test_keyword_index_all_boosted_fields_together():
 
     Verifies multiple frontmatter fields are indexed and searchable.
     """
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -711,7 +711,7 @@ def test_keyword_index_all_boosted_fields_together():
 
 
 def test_keyword_index_prefers_exact_title_over_header_and_content_matches():
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -768,7 +768,7 @@ def test_keyword_index_prefers_exact_title_over_header_and_content_matches():
 
 
 def test_keyword_index_prefers_exact_header_segment_over_content_match():
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -806,7 +806,7 @@ def test_keyword_index_prefers_exact_header_segment_over_content_match():
 
 
 def test_keyword_index_prefers_exact_title_over_interior_section_match_for_testing_strategy():
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -850,7 +850,7 @@ def test_keyword_index_prefers_exact_title_over_interior_section_match_for_testi
 
 
 def test_keyword_index_prefers_primary_heading_over_deeper_header_match():
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -888,7 +888,7 @@ def test_keyword_index_prefers_primary_heading_over_deeper_header_match():
 
 
 def test_keyword_index_prefers_exact_config_key_title_over_content_match():
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -926,7 +926,7 @@ def test_keyword_index_prefers_exact_config_key_title_over_content_match():
 
 
 def test_keyword_index_artifact_lane_matches_dotted_source_file():
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -955,7 +955,7 @@ def test_keyword_index_artifact_lane_matches_dotted_source_file():
 
 
 def test_keyword_index_artifact_lane_prefers_path_match_over_content_only_match():
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -1004,7 +1004,7 @@ def test_keyword_index_artifact_lane_prefers_path_match_over_content_only_match(
 
 
 def test_keyword_index_artifact_lane_matches_exact_title_literal():
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -1033,7 +1033,7 @@ def test_keyword_index_artifact_lane_matches_exact_title_literal():
 
 
 def test_keyword_index_artifact_lane_matches_literal_in_body_content():
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -1090,7 +1090,7 @@ def test_keyword_index_schema_mismatch_triggers_rebuild(tmp_path):
     keyword_index = KeywordIndex()
     keyword_index.load(index_path)
 
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     chunk = Chunk(
         chunk_id="new_chunk_0",
@@ -1118,7 +1118,7 @@ def test_keyword_index_remove_handles_corrupted_db(tmp_path):
     the index should detect the corruption, reinitialize, and not crash.
     """
 
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -1160,7 +1160,7 @@ def test_keyword_index_search_handles_corrupted_db(tmp_path):
     than crashing.
     """
 
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -1204,7 +1204,7 @@ def test_keyword_index_recovery_allows_reindexing(tmp_path):
     import glob
     from pathlib import Path
 
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -1257,7 +1257,7 @@ def test_keyword_index_recovery_allows_reindexing(tmp_path):
 
 def test_remove_chunk_removes_from_index():
     """Test that remove_chunk() removes specific chunk from keyword index."""
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -1320,7 +1320,7 @@ def test_remove_chunk_handles_missing_chunk():
 def test_remove_chunk_handles_corruption(tmp_path):
     """Test that remove_chunk() handles index corruption gracefully."""
     pytest.importorskip("whoosh")
-    from src.models import Chunk
+    from searchkernel.models import Chunk
     import glob
     from pathlib import Path
 
@@ -1384,7 +1384,7 @@ def test_remove_chunk_before_initialization():
 def test_remove_chunk_thread_safe():
     """Test that remove_chunk() is thread-safe with concurrent operations."""
     from concurrent.futures import ThreadPoolExecutor
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 

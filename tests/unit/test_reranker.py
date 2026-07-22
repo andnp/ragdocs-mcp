@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from src.search.reranker import ReRanker
+from searchkernel.search.reranker import ReRanker
 
 
 @dataclass

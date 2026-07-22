@@ -5,7 +5,7 @@ Tests the sigmoid calibration function that converts raw RRF+recency
 scores into absolute confidence scores [0, 1].
 """
 
-from src.search.calibration import calibrate_results as normalize_scores
+from searchkernel.search.calibration import calibrate_results as normalize_scores
 
 
 class TestNormalizeScores:

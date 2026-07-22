@@ -2,7 +2,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from src.git.commit_parser import (
+from searchkernel.git.commit_parser import (
     CommitData,
     parse_commit,
     build_commit_document,

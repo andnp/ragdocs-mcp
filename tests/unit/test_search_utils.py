@@ -1,4 +1,4 @@
-from src.search.utils import classify_query_type, truncate_content
+from searchkernel.search.utils import classify_query_type, truncate_content
 
 
 class TestQueryClassification:

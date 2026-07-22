@@ -6,12 +6,12 @@ Tests end-to-end move detection workflow with real indices and files.
 import pytest
 from pathlib import Path
 
-from src.config import Config, IndexingConfig, ChunkingConfig
-from src.indexing.manager import IndexManager
-from src.indices.vector import VectorIndex
-from src.indices.keyword import KeywordIndex
-from src.indices.graph import GraphStore
-from src.search.orchestrator import SearchOrchestrator
+from searchkernel.config import Config, IndexingConfig, ChunkingConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.graph import GraphStore
+from searchkernel.search.orchestrator import SearchOrchestrator
 
 
 @pytest.fixture

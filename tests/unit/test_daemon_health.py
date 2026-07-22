@@ -7,8 +7,8 @@ import pytest
 
 pytest.importorskip("zmq")
 
-from src.daemon.health import DaemonHealthServer, probe_daemon_socket, request_daemon_socket
-from src.daemon.metadata import DaemonMetadata
+from searchkernel.daemon.health import DaemonHealthServer, probe_daemon_socket, request_daemon_socket
+from searchkernel.daemon.metadata import DaemonMetadata
 
 
 def _assert_response_with_request_id(

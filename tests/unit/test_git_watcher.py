@@ -2,16 +2,16 @@ from pathlib import Path
 
 import pytest
 
-from src.config import (
+from searchkernel.config import (
     Config,
     IndexingConfig,
     GitIndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from src.git.commit_indexer import CommitIndexer
-from src.git.watcher import GitWatcher
-from src.indexing.tasks import TaskSubmissionResult
+from searchkernel.git.commit_indexer import CommitIndexer
+from searchkernel.git.watcher import GitWatcher
+from searchkernel.indexing.tasks import TaskSubmissionResult
 
 
 @pytest.fixture
@@ -63,8 +63,8 @@ def test_git_watcher_constructor_types(test_config, commit_indexer, tmp_path):
         poll_interval=1.0,
     )
 
-    from src.git.commit_indexer import CommitIndexer
-    from src.config import Config
+    from searchkernel.git.commit_indexer import CommitIndexer
+    from searchkernel.config import Config
 
     assert isinstance(watcher._commit_indexer, CommitIndexer)
     assert isinstance(watcher._config, Config)
@@ -186,7 +186,7 @@ async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
     )
 
     monkeypatch.setattr(
-        "src.indexing.tasks.submit_refresh_git_request",
+        "searchkernel.indexing.tasks.submit_refresh_git_request",
         lambda git_dir_str: observed.append(git_dir_str)
         or TaskSubmissionResult(status="enqueued"),
     )
@@ -212,7 +212,7 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
     )
 
     monkeypatch.setattr(
-        "src.indexing.tasks.submit_refresh_git_request",
+        "searchkernel.indexing.tasks.submit_refresh_git_request",
         lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
     )
     monkeypatch.setattr(
@@ -226,7 +226,7 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
         return ["abc123"]
 
     monkeypatch.setattr(
-        "src.git.repository.get_commits_after_timestamp",
+        "searchkernel.git.repository.get_commits_after_timestamp",
         _fake_get_commits_after_timestamp,
     )
 
@@ -246,7 +246,7 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
         return 1
 
     monkeypatch.setattr(
-        "src.git.parallel_indexer.index_commits_parallel",
+        "searchkernel.git.parallel_indexer.index_commits_parallel",
         _fake_index_commits_parallel,
     )
 

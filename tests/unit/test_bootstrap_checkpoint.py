@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src.indexing.bootstrap_checkpoint import (
+from searchkernel.indexing.bootstrap_checkpoint import (
     BootstrapCheckpoint,
     BootstrapFileStamp,
     compute_bootstrap_generation,
@@ -9,7 +9,7 @@ from src.indexing.bootstrap_checkpoint import (
     prepare_bootstrap_checkpoint,
     save_bootstrap_checkpoint,
 )
-from src.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexManifest
+from searchkernel.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexManifest
 
 
 def _manifest() -> IndexManifest:

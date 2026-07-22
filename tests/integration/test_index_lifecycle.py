@@ -11,18 +11,18 @@ from pathlib import Path
 
 import pytest
 
-import src.indexing.manager as manager_module
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from src.indexing.manager import IndexManager
-from src.indexing.manifest import (
+import searchkernel.indexing.manager as manager_module
+from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indexing.manifest import (
     IndexManifest,
     load_manifest,
     save_manifest,
     should_rebuild,
 )
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 
 
 @pytest.fixture

@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 
-from src.indexing.migration import detect_and_migrate_legacy_index, _is_whoosh_directory
-from src.indexing.manifest import IndexManifest, save_manifest, load_manifest
+from searchkernel.indexing.migration import detect_and_migrate_legacy_index, _is_whoosh_directory
+from searchkernel.indexing.manifest import IndexManifest, save_manifest, load_manifest
 
 
 # ---------------------------------------------------------------------------

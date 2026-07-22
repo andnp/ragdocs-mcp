@@ -1,6 +1,6 @@
 import pytest
 
-from src.parsers.plaintext import PlainTextParser
+from searchkernel.parsers.plaintext import PlainTextParser
 
 
 def test_parse_simple_text(tmp_path):

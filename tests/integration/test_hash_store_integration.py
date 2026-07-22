@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from src.config import ChunkingConfig, Config, IndexingConfig
-from src.indexing.manager import IndexManager
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
+from searchkernel.config import ChunkingConfig, Config, IndexingConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ def test_hash_store_persisted_with_indices(tmp_path, manager):
     chunk_id = chunks[0].id_
 
     # Manually store hash (simulating delta indexing flow)
-    from src.models import Chunk
+    from searchkernel.models import Chunk
 
     test_chunk = Chunk(
         chunk_id=chunk_id,
@@ -94,7 +94,7 @@ def test_hash_store_persisted_with_indices(tmp_path, manager):
     assert hash_store_path.exists()
 
     # Load into new manager and verify hash persisted
-    from src.indices.hash_store import ChunkHashStore
+    from searchkernel.indices.hash_store import ChunkHashStore
 
     new_hash_store = ChunkHashStore(hash_store_path)
     assert new_hash_store.get_hash(chunk_id) is not None

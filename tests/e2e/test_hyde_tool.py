@@ -14,15 +14,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
-from src.context import ApplicationContext
-from src.indexing.manager import IndexManager
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.mcp.handlers import HandlerContext, get_handler
-from src.mcp import MCPServer
-from src.search.orchestrator import SearchOrchestrator
+from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.context import ApplicationContext
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.mcp.handlers import HandlerContext, get_handler
+from searchkernel.mcp import MCPServer
+from searchkernel.search.orchestrator import SearchOrchestrator
 
 
 # ============================================================================

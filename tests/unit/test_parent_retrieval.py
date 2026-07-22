@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from src.chunking.header_chunker import HeaderBasedChunker
-from src.config import ChunkingConfig
-from src.models import Document
+from searchkernel.chunking.header_chunker import HeaderBasedChunker
+from searchkernel.config import ChunkingConfig
+from searchkernel.models import Document
 
 
 class TestParentChildChunking:

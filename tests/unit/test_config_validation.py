@@ -1,5 +1,5 @@
 import pytest
-from src.config import ProjectConfig, _validate_projects, get_project_root_warnings
+from searchkernel.config import ProjectConfig, _validate_projects, get_project_root_warnings
 
 
 def test_validate_projects_duplicate_names():

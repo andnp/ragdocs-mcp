@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.indexing.discovery import is_excluded_dir, walk_included_dirs
-import src.indexing.tasks as tasks_mod
-from src.indexing.watcher import (
+from searchkernel.indexing.discovery import is_excluded_dir, walk_included_dirs
+import searchkernel.indexing.tasks as tasks_mod
+from searchkernel.indexing.watcher import (
     FileWatcher,
     _DocumentEventHandler,
     MAX_QUEUE_SIZE,
@@ -554,7 +554,7 @@ class TestFileWatcherTaskMode:
         )
 
         with patch(
-            "src.indexing.tasks.submit_index_request_batch",
+            "searchkernel.indexing.tasks.submit_index_request_batch",
             return_value=tasks_mod.TaskBatchSubmissionResult(
                 queue_available=True,
                 requested_unique_count=1,
@@ -581,7 +581,7 @@ class TestFileWatcherTaskMode:
         deleted_file.parent.mkdir()
 
         with patch(
-            "src.indexing.tasks.submit_remove_request_batch",
+            "searchkernel.indexing.tasks.submit_remove_request_batch",
             return_value=tasks_mod.TaskBatchSubmissionResult(
                 queue_available=True,
                 requested_unique_count=1,
@@ -606,7 +606,7 @@ class TestFileWatcherTaskMode:
         )
 
         with patch(
-            "src.indexing.tasks.submit_index_request_batch",
+            "searchkernel.indexing.tasks.submit_index_request_batch",
             return_value=tasks_mod.TaskBatchSubmissionResult(
                 queue_available=True,
                 requested_unique_count=3,
@@ -642,7 +642,7 @@ class TestFileWatcherTaskMode:
         )
 
         with patch(
-            "src.indexing.tasks.submit_index_request_batch",
+            "searchkernel.indexing.tasks.submit_index_request_batch",
             return_value=tasks_mod.TaskBatchSubmissionResult(
                 queue_available=False,
                 requested_unique_count=1,
@@ -673,7 +673,7 @@ class TestFileWatcherTaskMode:
 
         with (
             patch(
-                "src.indexing.tasks.submit_index_request_batch",
+                "searchkernel.indexing.tasks.submit_index_request_batch",
                 return_value=tasks_mod.TaskBatchSubmissionResult(
                     queue_available=True,
                     requested_unique_count=2,
@@ -681,7 +681,7 @@ class TestFileWatcherTaskMode:
                 ),
             ) as submit_index_batch,
             patch(
-                "src.indexing.tasks.submit_remove_request_batch",
+                "searchkernel.indexing.tasks.submit_remove_request_batch",
                 return_value=tasks_mod.TaskBatchSubmissionResult(
                     queue_available=True,
                     requested_unique_count=1,
@@ -720,7 +720,7 @@ class TestFileWatcherTaskMode:
         kept.parent.mkdir()
 
         with patch(
-            "src.indexing.tasks.submit_remove_request_batch",
+            "searchkernel.indexing.tasks.submit_remove_request_batch",
             return_value=tasks_mod.TaskBatchSubmissionResult(
                 queue_available=True,
                 requested_unique_count=2,

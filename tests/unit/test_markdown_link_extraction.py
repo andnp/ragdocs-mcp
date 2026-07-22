@@ -1,4 +1,4 @@
-from src.parsers.markdown import MarkdownParser
+from searchkernel.parsers.markdown import MarkdownParser
 
 
 def test_extract_wikilinks_basic(tmp_path):

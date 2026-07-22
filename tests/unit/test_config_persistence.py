@@ -1,8 +1,8 @@
 import pytest
 import tomllib
 from pathlib import Path
-import src.config
-from src.config import (
+import searchkernel.config
+from searchkernel.config import (
     ProjectConfig,
     derive_auto_registration_root,
     detect_project,
@@ -330,7 +330,7 @@ def test_detect_project_arbitrary_path_does_not_call_persistence(
     def failing_persist(name, path):
         raise AssertionError("persist_project_to_config should not be called")
 
-    monkeypatch.setattr(src.config, "persist_project_to_config", failing_persist)
+    monkeypatch.setattr(searchkernel.config, "persist_project_to_config", failing_persist)
 
     result = detect_project(
         cwd=Path("/somewhere/else"), projects=[], project_override=str(arbitrary_dir)
@@ -395,7 +395,7 @@ def test_detect_project_cwd_unmatched_does_not_call_persistence(
     def failing_persist(name, path):
         raise AssertionError("persist_project_to_config should not be called")
 
-    monkeypatch.setattr(src.config, "persist_project_to_config", failing_persist)
+    monkeypatch.setattr(searchkernel.config, "persist_project_to_config", failing_persist)
 
     result = detect_project(cwd=project_dir, projects=[], project_override=None)
 

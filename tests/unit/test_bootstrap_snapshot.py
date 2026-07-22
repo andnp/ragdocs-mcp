@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.indexing.bootstrap_checkpoint import BootstrapCheckpoint, BootstrapFileStamp
-from src.indexing.bootstrap_snapshot import (
+from searchkernel.indexing.bootstrap_checkpoint import BootstrapCheckpoint, BootstrapFileStamp
+from searchkernel.indexing.bootstrap_snapshot import (
     BootstrapReadinessSnapshot,
     PublicIndexStateSnapshot,
     compute_bootstrap_completed_paths,
     derive_bootstrap_readiness_snapshot,
     derive_loaded_index_state_snapshot,
 )
-from src.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexManifest
+from searchkernel.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexManifest
 
 
 def _stamp(file_path: Path) -> BootstrapFileStamp:

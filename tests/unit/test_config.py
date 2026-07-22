@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import cast
 
 
-from src.config import load_config, Config, LLMConfig, resolve_embedding_model
+from searchkernel.config import load_config, Config, LLMConfig, resolve_embedding_model
 
 
 def test_load_from_project_local_config(tmp_path):

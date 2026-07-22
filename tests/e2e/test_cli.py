@@ -12,9 +12,9 @@ from unittest import mock
 import pytest
 from click.testing import CliRunner
 
-from src.cli import cli
-from src.daemon.management import stop_daemon
-from src.daemon.paths import RuntimePaths
+from searchkernel.cli import cli
+from searchkernel.daemon.management import stop_daemon
+from searchkernel.daemon.paths import RuntimePaths
 
 
 @pytest.fixture
@@ -314,7 +314,7 @@ def test_run_command_starts_server(runner, tmp_path, config_file):
         os.chdir(tmp_path)
 
         # Mock uvicorn.run to avoid actually starting server
-        with mock.patch("src.cli.uvicorn.run") as mock_uvicorn:
+        with mock.patch("searchkernel.cli.uvicorn.run") as mock_uvicorn:
             result = runner.invoke(cli, ["run"])
 
             # Verify successful exit (before uvicorn would start)
@@ -328,7 +328,7 @@ def test_run_command_starts_server(runner, tmp_path, config_file):
             assert call_kwargs["host"] == "127.0.0.1"
             assert call_kwargs["port"] == 8000
             assert call_kwargs["factory"] is True
-            assert "src.server:create_app" in mock_uvicorn.call_args.args
+            assert "searchkernel.server:create_app" in mock_uvicorn.call_args.args
 
     finally:
         os.chdir(original_cwd)
@@ -344,7 +344,7 @@ def test_run_command_with_host_port_overrides(runner, tmp_path, config_file):
     try:
         os.chdir(tmp_path)
 
-        with mock.patch("src.cli.uvicorn.run") as mock_uvicorn:
+        with mock.patch("searchkernel.cli.uvicorn.run") as mock_uvicorn:
             result = runner.invoke(cli, ["run", "--host", "0.0.0.0", "--port", "9000"])
 
             assert result.exit_code == 0
@@ -421,7 +421,7 @@ def test_run_command_error_handling_config_failure(runner, tmp_path):
         os.chdir(tmp_path)
 
         # Mock load_config to raise exception
-        with mock.patch("src.cli.load_config", side_effect=Exception("Config error")):
+        with mock.patch("searchkernel.cli.load_config", side_effect=Exception("Config error")):
             result = runner.invoke(cli, ["run"])
 
             # Verify error exit code (sys.exit(1) in exception handler)
@@ -697,7 +697,7 @@ def test_rebuild_index_vocabulary_error_handling_non_fatal(
 
         # Rebuild should not call the old synchronous vocabulary builder.
         with mock.patch(
-            "src.indices.vector.VectorIndex.build_concept_vocabulary",
+            "searchkernel.indices.vector.VectorIndex.build_concept_vocabulary",
             side_effect=AssertionError("synchronous vocabulary build should not run"),
         ):
             result = runner.invoke(cli, ["rebuild-index"])

@@ -3,13 +3,13 @@
 import pytest
 from datetime import datetime
 
-from src.config import Config, IndexingConfig, ChunkingConfig
-from src.indices.hash_store import ChunkHashStore
-from src.indices.vector import VectorIndex
-from src.indices.keyword import KeywordIndex
-from src.indices.graph import GraphStore
-from src.indexing.manager import IndexManager
-from src.models import Chunk
+from searchkernel.config import Config, IndexingConfig, ChunkingConfig
+from searchkernel.indices.hash_store import ChunkHashStore
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.models import Chunk
 
 
 @pytest.fixture

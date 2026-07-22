@@ -4,7 +4,7 @@ Unit tests for ChunkResult dataclass.
 Tests the ChunkResult model serialization, validation, and data integrity.
 """
 
-from src.models import ChunkResult, SearchResultProvenance
+from searchkernel.models import ChunkResult, SearchResultProvenance
 
 
 def test_chunk_result_creation():

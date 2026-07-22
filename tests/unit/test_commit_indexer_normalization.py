@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.git.commit_indexer import CommitIndexer
+from searchkernel.git.commit_indexer import CommitIndexer
 
 
 class MockEmbeddingModel:

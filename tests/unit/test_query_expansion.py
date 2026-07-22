@@ -18,8 +18,8 @@ from datetime import datetime
 
 import pytest
 
-from src.indices.vector import VectorIndex, STOPWORDS
-from src.models import Chunk
+from searchkernel.indices.vector import VectorIndex, STOPWORDS
+from searchkernel.models import Chunk
 
 
 # ============================================================================

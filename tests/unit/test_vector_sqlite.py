@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from src.indices.vector import VectorIndex
-from src.models import Chunk
-from src.storage.db import DatabaseManager
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.models import Chunk
+from searchkernel.storage.db import DatabaseManager
 
 
 def _make_chunk(doc_id: str, index: int, content: str) -> Chunk:

@@ -18,21 +18,21 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.context import ApplicationContext, IndexState
-from src.indexing.bootstrap_checkpoint import (
+from searchkernel.context import ApplicationContext, IndexState
+from searchkernel.indexing.bootstrap_checkpoint import (
     BootstrapCheckpoint,
     BootstrapFileStamp,
     compute_bootstrap_generation,
     load_bootstrap_checkpoint,
     save_bootstrap_checkpoint,
 )
-from src.indexing.manifest import (
+from searchkernel.indexing.manifest import (
     CURRENT_MANIFEST_SPEC_VERSION,
     IndexManifest,
     load_manifest,
     save_manifest,
 )
-from src.indexing.tasks import TaskBatchSubmissionResult
+from searchkernel.indexing.tasks import TaskBatchSubmissionResult
 
 
 def _setattr(obj: Any, name: str, value: Any):
@@ -1142,7 +1142,7 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
         )
 
     monkeypatch.setattr(
-        "src.indexing.tasks.submit_index_batch",
+        "searchkernel.indexing.tasks.submit_index_batch",
         fake_submit_index_batch,
     )
 
@@ -1236,7 +1236,7 @@ async def test_task_bootstrap_keeps_monitoring_when_remaining_work_is_already_pe
     enqueue_checked = asyncio.Event()
 
     monkeypatch.setattr(
-        "src.indexing.tasks.submit_index_batch",
+        "searchkernel.indexing.tasks.submit_index_batch",
         lambda file_paths, force=False: enqueue_checked.set()
         or TaskBatchSubmissionResult(
             queue_available=True,
@@ -1433,7 +1433,7 @@ async def test_task_bootstrap_skips_durably_completed_files(
         )
 
     monkeypatch.setattr(
-        "src.indexing.tasks.submit_index_batch",
+        "searchkernel.indexing.tasks.submit_index_batch",
         fake_submit_index_batch,
     )
 

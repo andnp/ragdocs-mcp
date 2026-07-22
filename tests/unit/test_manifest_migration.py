@@ -4,7 +4,7 @@ Unit tests for manifest version migration.
 GAP #8: Manifest version migration (Medium/Low, Score 3.33)
 """
 
-from src.indexing.manifest import (
+from searchkernel.indexing.manifest import (
     IndexManifest,
     load_manifest,
     save_manifest,

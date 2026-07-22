@@ -7,14 +7,14 @@ and works end-to-end with real indices and filesystem operations.
 import pytest
 from pathlib import Path
 
-from src.config import Config, IndexingConfig, ChunkingConfig
-from src.indexing.manager import IndexManager
-from src.indexing.manifest import save_manifest, IndexManifest
-from src.indexing.reconciler import build_indexed_files_map
-from src.indices.vector import VectorIndex
-from src.indices.keyword import KeywordIndex
-from src.indices.graph import GraphStore
-from src.search.orchestrator import SearchOrchestrator
+from searchkernel.config import Config, IndexingConfig, ChunkingConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indexing.manifest import save_manifest, IndexManifest
+from searchkernel.indexing.reconciler import build_indexed_files_map
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.graph import GraphStore
+from searchkernel.search.orchestrator import SearchOrchestrator
 
 
 def _save_manifest_for_files(manager, config, files: list[Path], docs_roots: list[Path] | None = None):

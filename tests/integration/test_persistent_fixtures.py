@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from src.indexing.manifest import IndexManifest, load_manifest, save_manifest
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
+from searchkernel.indexing.manifest import IndexManifest, load_manifest, save_manifest
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 
 
 def test_persistent_config_has_correct_paths(
@@ -59,7 +59,7 @@ def test_persistent_manager_can_persist_and_load(
     vector2 = VectorIndex()
     keyword2 = KeywordIndex()
     graph2 = GraphStore()
-    from src.indexing.manager import IndexManager
+    from searchkernel.indexing.manager import IndexManager
 
     manager2 = IndexManager(persistent_config, vector2, keyword2, graph2)
     manager2.load()

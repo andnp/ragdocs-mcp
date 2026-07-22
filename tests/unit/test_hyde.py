@@ -9,8 +9,8 @@ Tests cover:
 
 from pathlib import Path
 
-from src.search.hyde import search_with_hypothesis
-from src.search.types import SearchResultDict
+from searchkernel.search.hyde import search_with_hypothesis
+from searchkernel.search.types import SearchResultDict
 
 
 class MockVectorIndex:

@@ -7,7 +7,7 @@ Tests the --debug flag on query and search-commits commands.
 import pytest
 from click.testing import CliRunner
 
-from src.cli import cli
+from searchkernel.cli import cli
 
 
 @pytest.fixture

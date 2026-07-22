@@ -2,13 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from src.config import ChunkingConfig, Config, IndexingConfig, SearchConfig
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.models import CompressionStats
-from src.search.classifier import classify_query
-from src.search.orchestrator import SearchOrchestrator
+from searchkernel.config import ChunkingConfig, Config, IndexingConfig, SearchConfig
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.models import CompressionStats
+from searchkernel.search.classifier import classify_query
+from searchkernel.search.orchestrator import SearchOrchestrator
 
 
 def _orchestrator(*, detected_project: str | None = None) -> SearchOrchestrator:
@@ -241,7 +241,7 @@ async def test_query_uses_single_execution_context_and_records_stats(monkeypatch
     )
     monkeypatch.setattr(orchestrator, "_get_pipeline", lambda: FakePipeline())
     monkeypatch.setattr(
-        "src.search.orchestrator.expand_query_with_tags",
+        "searchkernel.search.orchestrator.expand_query_with_tags",
         lambda **kwargs: [],
     )
     monkeypatch.setattr(
@@ -338,7 +338,7 @@ async def test_query_skips_tag_expansion_and_reranking_for_clear_factual_query(
     monkeypatch.setattr(orchestrator, "_search_vector", fake_search_vector)
     monkeypatch.setattr(orchestrator, "_search_keyword", fake_search_keyword)
     monkeypatch.setattr(
-        "src.search.orchestrator.expand_query_with_tags",
+        "searchkernel.search.orchestrator.expand_query_with_tags",
         fail_if_tag_expansion_called,
     )
     monkeypatch.setattr(
@@ -393,7 +393,7 @@ async def test_query_skips_tag_expansion_and_reranking_for_clear_factual_query(
             )
 
     monkeypatch.setattr(
-        "src.search.orchestrator.SearchPipeline",
+        "searchkernel.search.orchestrator.SearchPipeline",
         lambda config: FakePipeline(config.reranking_enabled),
     )
 

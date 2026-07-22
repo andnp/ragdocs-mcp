@@ -1,7 +1,7 @@
 import pytest
 
-from src.config import SearchConfig
-from src.search.calibration import calibrate_score
+from searchkernel.config import SearchConfig
+from searchkernel.search.calibration import calibrate_score
 
 
 class TestSearchDefaults:

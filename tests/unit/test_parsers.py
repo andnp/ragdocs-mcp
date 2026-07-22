@@ -2,8 +2,8 @@ from datetime import datetime
 
 import pytest
 
-from src.models import Document
-from src.parsers.base import DocumentParser
+from searchkernel.models import Document
+from searchkernel.parsers.base import DocumentParser
 
 
 class ConcreteTestParser(DocumentParser):

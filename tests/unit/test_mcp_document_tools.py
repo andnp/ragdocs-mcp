@@ -6,15 +6,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.context import IndexState
-from src.lifecycle import LifecycleState
-from src.mcp.handlers import HandlerContext
-from src.mcp.tools.document_request import normalize_query_documents_request
-from src.mcp.tools.document_tools import (
+from searchkernel.context import IndexState
+from searchkernel.lifecycle import LifecycleState
+from searchkernel.mcp.handlers import HandlerContext
+from searchkernel.mcp.tools.document_request import normalize_query_documents_request
+from searchkernel.mcp.tools.document_tools import (
     handle_query_documents,
     handle_search_git_history,
 )
-from src.models import CompressionStats, SearchResultProvenance, SearchStrategyStats
+from searchkernel.models import CompressionStats, SearchResultProvenance, SearchStrategyStats
 
 
 class _FakeCoordinator:

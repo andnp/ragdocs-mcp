@@ -10,7 +10,7 @@ Tests cover:
 
 import pytest
 
-from src.search.variance import (
+from searchkernel.search.variance import (
     calculate_variance,
     compute_dynamic_weights,
 )

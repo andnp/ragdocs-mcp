@@ -2,14 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from src.indexing.manager import IndexManager
-from src.indices.graph import GraphStore
-from src.indices.keyword import KeywordIndex
-from src.indices.vector import VectorIndex
-from src.models import ChunkResult
-from src.search.orchestrator import SearchOrchestrator
-from src.search.pipeline import SearchPipelineConfig
+from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.models import ChunkResult
+from searchkernel.search.orchestrator import SearchOrchestrator
+from searchkernel.search.pipeline import SearchPipelineConfig
 from tests.conftest import create_test_document
 
 

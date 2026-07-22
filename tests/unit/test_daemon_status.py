@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.daemon import DaemonMetadata, RuntimePaths
-from src.daemon.management import DaemonInspection
-from src.daemon.status import (
+from searchkernel.daemon import DaemonMetadata, RuntimePaths
+from searchkernel.daemon.management import DaemonInspection
+from searchkernel.daemon.status import (
     build_daemon_status_payload,
     format_daemon_startup_result,
     request_daemon_overview,

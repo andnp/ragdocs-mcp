@@ -11,8 +11,8 @@ Tests cover:
 
 import pytest
 
-from src.compression.thresholding import filter_by_score
-from src.models import ChunkResult
+from searchkernel.compression.thresholding import filter_by_score
+from searchkernel.models import ChunkResult
 
 
 # ============================================================================
