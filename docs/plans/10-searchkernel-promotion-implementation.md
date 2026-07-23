@@ -62,13 +62,13 @@ dependency.
 | WS | State | Detail |
 |----|-------|--------|
 | **W1** — packaging, ports, Record, pgvector, composition root | ✅ | rename `2ef01c1`; domain types + `Record` `ffa46f8`; ports `981165b`; inward-dependency test + import-linter `c5a4db2`; pgvector store (per-`(model,dim)` typed `vector(dim)` tables + HNSW cosine) `e02627c`; store-backend config `07aafb1`; pgvector recall/index tests `208cc99`; runtime-thread extraction out of library path `e212280`; composition root `dd54bfa`; composition test `cbd1687`. Real Postgres 17.9 / pgvector 0.8.2 substrate (docker) verified via `EXPLAIN ANALYZE` HNSW index scan. |
-| **W2** — git as first `ContentSource` | ◐ | **W2a** (additive port proof) done: `GitContentSource` adapter `500a812`, tests `ae7e0a1` — git commits map to `Record`s through the port with **zero core edits**. **W2b deferred** (delete duplicated `git/commit_indexer.py` + `git/commit_search.py`, add `source_filter` to `SearchOrchestrator`, reroute the `search_git_history` MCP tool) — high blast radius, wants a human in the loop. |
+| **W2** — git as first `ContentSource` | ✅ | **W2a** port proof `500a812`/`ae7e0a1`. **W2b done (workflow 1, 2026-07-23, sonnet):** `source_filter` on `SearchOrchestrator.query` `a28d6a5`(+test `09918fd`); git commits ingested into the live `IndexManager` `e95eb54`(+test `a2697a0`); source metadata on `ChunkResult` `811bc17`(+test `5d84c36`); reroute the single `search_git_history` MCP caller (`daemon/request_router.py`) through the orchestrator `5d4baef`; delete the duplicated stack — `commit_indexer.py`/`commit_search.py`/`parallel_indexer.py` + 6 obsolete test files `8972338`. Live git search now flows through the unified pipeline on FAISS. |
 | **WP** — caching, ANN, batching | ✅ | Additive net-new pieces: in-memory LRU CacheStore `480109f` + sqlite CacheStore `95dc8f1` (+ tests `4f9a9da`); epoch-aware `@cached` decorator `dc5ca70` (+ tests `48ef4bc`); per-source-timeout fan-out helper `7a6f79c` (+ tests `c3341bd`) — the fan-out primitive W4 federation will build on. Embedding-skip already existed (hash-gated in `indexing/manager.py`); locked in by tests `3d851f8`. ANN/batching already satisfied by the W1 pgvector HNSW store. |
 | **WE** — eval + observability | ✅ | metrics (recall/nDCG/MRR/AP) `e1df576`; golden-set schema + seed `338230b`; `QueryTrace`/spans `14ca19a`; eval + a/b runner with p50/p95/p99 `9c348d5`; 64 eval tests `06854df`. |
-| **W3** — embedding + LLM provider registries | ◐ | **In-process HF `EmbeddingProvider` done** (no Ollama): `HuggingFaceEmbeddingProvider` (Qwen3-Embedding-0.6B, native dim 1024, query-instruction-aware `embed_query`, MRL `truncate_dim`) — adapter `173d9be`, config `45dcad4`, unit tests `c7e8bff`, integration `218388b`; verified 5+1 tests pass on real model + pgvector, recall@1 correct. **Remaining:** Qwen3-Reranker adapter (+ `Reranker` port), LLM provider registry (copilot first, model `gpt-5.6-luna`), Ollama adapter. Correction to earlier note: the HF embedding path is fully autonomous/verifiable; only the LLM + Ollama adapters need external setup. |
+| **W3** — embedding + LLM provider registries | ◐ | **In-process HF `EmbeddingProvider` done** (no Ollama): `HuggingFaceEmbeddingProvider` (Qwen3-Embedding-0.6B, native dim 1024, query-instruction-aware `embed_query`, MRL `truncate_dim`) — adapter `173d9be`, config `45dcad4`, unit tests `c7e8bff`, integration `218388b`; verified 5+1 tests pass on real model + pgvector, recall@1 correct. **Reranker done (workflow 1, haiku):** `Reranker` port `e8f1873`; `HuggingFaceReranker` (Qwen3-Reranker-0.6B, P(yes)-logit scoring) `b9d24d8`(+tests `5006f40`). **Copilot LLM done (workflow 1, haiku):** `CopilotLLMProvider` (shells the `copilot` CLI, model `gpt-5.6-luna`, import-safe when CLI absent) `2b7f6fe`(+mocked tests `a6fb8ad`). **Remaining:** Ollama adapter + a provider registry (deferred; copilot chosen as the first LLM per Andy). |
 | **W4a** — query + ingestion toolkit extraction | ☐ | Not started. Largest core refactor (~30 search modules → composable stages); highest risk — do with a human in the loop. |
 | **W4** — federation | ⛔ | Blocked on W3 + W4a. Open concern: async DB driver (current pgvector adapter is sync psycopg2); the WP fan-out helper is ready. |
-| **WM** — `reindex --model` migration | ⛔ | Blocked on W3. |
+| **WM** — `reindex --model` migration | ✅ | **Done (workflow 1, haiku):** build-then-swap reindex routine against the `VectorStore` port (old vectors survive until the flip, mixed-dim guards, rollback-before-flip) `8898884`; `reindex --model [--truncate-dim N]` CLI subcommand `4126b1d`; 18 state-machine tests `d476872`. Implemented against the port, so it works once the live store is cut over. |
 
 **Open design items surfaced during implementation:**
 - **pgvector is built but DARK (major gap).** W1 added the store adapter (`PGVectorStore`/`PGKeywordStore`/`PGGraphStore`/`PGCacheStore`) + a `StoreConfig.backend` flag + full tests, but **nothing in the live path consumes it**: `store.backend` is never read, and `PGVectorStore` is imported only by `adapters/stores/__init__` and tests. The live index/search path hardcodes FAISS (`context.py` → `faiss_index.bin`). Cutting the live `IndexManager.vector` over to the `VectorStore` port is unfinished work entangled with **W4a** (the live index exposes a richer interface than the narrow port). **Decision 2026-07-23:** proceed with W2b + corpus indexing on the current FAISS+sqlite store; treat the pgvector live-cutover as its own workstream done with/after W4a (re-indexing is cheap — the corpus is a throwaway).
@@ -76,8 +76,18 @@ dependency.
   which is not concurrency-safe. The composition root / W4a must resolve this (thread `(model,dim)`
   through the call, not instance state) before federation runs multi-model queries.
 - Federation fan-out (W4) needs an **async DB driver**; today's pgvector adapter is sync.
-- Pre-existing pyrefly error unrelated to these workstreams:
-  `tests/e2e/test_hyde_tool.py:145` passes `ctx=` to `MCPServer.__init__`, which no longer accepts it.
+- ~~Pre-existing pyrefly error: `tests/e2e/test_hyde_tool.py:145` passes `ctx=` to
+  `MCPServer.__init__`.~~ **Resolved `363ea7c`** — `MCPServer()` (context flows via `HandlerContext`);
+  the whole hyde module was red (TypeError) and is now green.
+- **Workflow-1 gate findings (2026-07-23):** the haiku verifiers reported PASS but ran only their
+  workstream's test *subset*, so two regressions slipped through, caught by an independent full-suite
+  run in the repo's real xdist mode (`-n --dist worksteal`): (1) the W2b conftest daemon-leak
+  teardown killed the pytest-xdist worker on the 8 in-process lifecycle tests (it stopped the
+  runner's own PID) — fixed by a PID guard, amended into `44eea6e`; (2) W2b's `test_worker.py`
+  rewrite exercised `register_tasks` against a `_FakeContext` missing `index_path`/`documents_roots`
+  — fixed, amended into `8972338`. **Lesson: subset-scoped verification cannot catch
+  cross-test/parallel regressions; the orchestrator must run the full suite in the repo's xdist mode
+  at the gate** (but see the tmpfs warning below — run targeted files, not the whole suite at once).
 
 **Verification methodology used throughout:** verify-don't-trust — inspect code / `EXPLAIN` output
 rather than trust agent self-reports; diff failing tests against the parent commit to separate
