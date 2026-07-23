@@ -29,7 +29,13 @@ class VectorStore(Protocol):
         ...
 
     def search(
-        self, query_vector: Vector, k: int, filters: dict[str, Any] | None = None
+        self,
+        query_vector: Vector,
+        k: int,
+        *,
+        model_name: str,
+        dim: int,
+        filters: dict[str, Any] | None = None,
     ) -> list[tuple[str, float]]:
         """
         Search for the k nearest neighbors to a query vector.
@@ -37,6 +43,10 @@ class VectorStore(Protocol):
         Args:
             query_vector: Embedding vector (must match stored dim).
             k: Number of results to return.
+            model_name: Embedding model the query_vector was produced with.
+                Selects which per-model table to search; not instance state,
+                so concurrent callers can query different models safely.
+            dim: Dimensionality of query_vector (must match the model's stored dim).
             filters: Optional filters (source-specific, opaque to core).
 
         Returns:

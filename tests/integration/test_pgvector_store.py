@@ -121,7 +121,7 @@ class TestVectorStore:
         query_vec: Vector = [0.95, 0.05, 0.0, 0.0]
 
         # Get results from pgvector
-        pgvector_results = store.search(query_vec, k=3)
+        pgvector_results = store.search(query_vec, k=3, model_name="test-model", dim=4)
 
         # Compute brute-force reference using numpy
         embeddings = np.array([r.embedding for r in fixture_records])
@@ -178,7 +178,7 @@ class TestVectorStore:
 
         # Search should only return third record
         query_vec = [0.0, 0.0, 1.0, 0.0]
-        results = store.search(query_vec, k=10)
+        results = store.search(query_vec, k=10, model_name="test-model", dim=4)
 
         result_ids = [r[0] for r in results]
         assert fixture_records[0].source_id not in result_ids
@@ -209,7 +209,9 @@ class TestVectorStore:
         store.upsert(fixture_records, model_name="model-v2", dim=4)
 
         # Search in model-v1; should work
-        results = store.search([1.0, 0.0, 0.0, 0.0], k=3)
+        results = store.search(
+            [1.0, 0.0, 0.0, 0.0], k=3, model_name="model-v1", dim=4
+        )
         assert len(results) == 3
 
     def test_hnsw_index_exists_per_model_table(self, pg_conn, fixture_records):
@@ -271,7 +273,9 @@ class TestVectorStore:
         query_vec = query_vec / np.linalg.norm(query_vec)
 
         k = 10
-        pgvector_results = store.search(query_vec.tolist(), k=k)
+        pgvector_results = store.search(
+            query_vec.tolist(), k=k, model_name="recall-model", dim=dim
+        )
         pgvector_ids = {r[0] for r in pgvector_results}
 
         # Brute-force cosine similarity reference (vectors are unit-norm).
@@ -441,7 +445,9 @@ class TestRoundTrip:
         cache_store.set("search:1", {"results": ["test:1"]}, epoch=epoch_before)
 
         # Search
-        results = vector_store.search([1.0, 0.0, 0.0, 0.0], k=2)
+        results = vector_store.search(
+            [1.0, 0.0, 0.0, 0.0], k=2, model_name="test-model", dim=4
+        )
         assert len(results) > 0
 
         # Delete a record

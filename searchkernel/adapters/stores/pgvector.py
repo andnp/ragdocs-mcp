@@ -214,11 +214,9 @@ class PGVectorStore:
     cannot provide. Multiple models can coexist (e.g. during a model
     migration); each lives in its own table.
 
-    `search()` operates against a single "active" model, since the
-    VectorStore port's search signature carries no model identifier.
-    The active model defaults to whichever (model_name, dim) was most
-    recently upserted through this instance, or -- if this instance has
-    never upserted -- the sole registered model, if exactly one exists.
+    `search()` takes `model_name`/`dim` explicitly (rather than relying on
+    instance "active model" state) so concurrent callers can query
+    different models safely.
     """
 
     def __init__(
@@ -234,7 +232,6 @@ class PGVectorStore:
         """
         self.conn_pool = conn_pool
         self.hnsw_ef_search = hnsw_ef_search
-        self._active_model: tuple[str, int] | None = None
 
     def _ensure_vector_table(self, cursor, model_name: str, dim: int) -> str:
         """Return the table name for (model_name, dim), creating it (+ HNSW index) if needed.
@@ -364,20 +361,28 @@ class PGVectorStore:
             cursor.execute("UPDATE index_epoch SET epoch = epoch + 1;")
 
             conn.commit()
-            self._active_model = (model_name, dim)
             logger.debug(f"Upserted {len(records)} records for model {model_name}")
         finally:
             cursor.close()
             self.conn_pool.put_connection(conn)
 
     def search(
-        self, query_vector: Vector, k: int, filters: dict[str, Any] | None = None
+        self,
+        query_vector: Vector,
+        k: int,
+        *,
+        model_name: str,
+        dim: int,
+        filters: dict[str, Any] | None = None,
     ) -> list[tuple[str, float]]:
         """Search for nearest neighbors using cosine similarity (ANN via HNSW).
 
         Args:
             query_vector: Query embedding vector
             k: Number of results to return
+            model_name: Embedding model query_vector was produced with;
+                selects which per-model table to search.
+            dim: Dimensionality of query_vector.
             filters: Optional filters (source-kind filtering, etc.)
 
         Returns:
@@ -387,16 +392,13 @@ class PGVectorStore:
         try:
             cursor = conn.cursor()
 
-            active = self._active_model
-            if active is None:
-                cursor.execute("SELECT model_name, dim FROM vector_tables;")
-                rows = cursor.fetchall()
-                if len(rows) == 1:
-                    active = (rows[0][0], rows[0][1])
-            if active is None:
+            cursor.execute(
+                "SELECT 1 FROM vector_tables WHERE model_name = %s AND dim = %s;",
+                (model_name, dim),
+            )
+            if cursor.fetchone() is None:
                 return []
 
-            model_name, dim = active
             table_name = _vector_table_name(model_name, dim)
 
             # hnsw.ef_search cannot be a bind parameter (SET does not accept

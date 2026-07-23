@@ -99,7 +99,9 @@ def test_hf_embed_query_ranks_correct_doc_first(provider, pg_conn):
     store.upsert(docs, model_name=provider.model_name, dim=provider.dim)
 
     query_vec = provider.embed_query("How do plants make food from sunlight?")
-    results = store.search(query_vec, k=3)
+    results = store.search(
+        query_vec, k=3, model_name=provider.model_name, dim=provider.dim
+    )
 
     assert len(results) == 3
     assert results[0][0] == "doc:photosynthesis"
