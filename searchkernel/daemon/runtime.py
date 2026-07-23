@@ -50,7 +50,6 @@ def create_daemon_runtime(
     register_tasks(
         huey,
         ctx.index_manager,
-        commit_indexer=ctx.commit_indexer,
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         bootstrap_index_path=ctx.index_path,
         bootstrap_documents_roots=ctx.documents_roots,

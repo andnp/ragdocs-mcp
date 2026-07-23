@@ -7,14 +7,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from searchkernel.adapters.sources.git import GitContentSource
 from searchkernel.config import Config, detect_project, resolve_documents_path
-from searchkernel.git.parallel_indexer import ParallelIndexingConfig, index_commits_parallel_sync
 from searchkernel.git.repository import (
     discover_git_repositories,
     discover_git_repositories_multi_root,
-    get_commits_after_timestamp,
     is_git_available,
 )
+from searchkernel.indexing.git_ingestion import ingest_git_source
 from searchkernel.indexing.discovery import discover_files as discover_files_single_root
 from searchkernel.indexing.discovery import discover_files_multi_root
 from searchkernel.utils.atomic_io import atomic_write_json
@@ -270,7 +270,6 @@ def run_rebuild(
     runtime_root: Path,
     config: Config,
     index_manager,
-    commit_indexer,
     global_documents_roots: list[Path],
     request_id: str,
     project_override: str | None,
@@ -359,7 +358,7 @@ def run_rebuild(
         _update_rebuild_progress(runtime_root, phase="finalizing")
         index_manager.finalize_derived_graph_state()
 
-        if config.git_indexing.enabled and commit_indexer is not None:
+        if config.git_indexing.enabled:
             if not is_git_available():
                 _append_message(
                     runtime_root,
@@ -373,24 +372,10 @@ def run_rebuild(
                     phase="indexing_git",
                     git_repositories=git_repositories,
                 )
-                if scope.is_global:
-                    commit_indexer.clear()
-                elif repos:
-                    commit_indexer.clear_repositories(
-                        [str(repo.parent) for repo in repos]
-                    )
 
                 for repo_path in repos:
-                    commit_hashes = get_commits_after_timestamp(repo_path, None)
-                    if not commit_hashes:
-                        continue
-                    git_commits_indexed += index_commits_parallel_sync(
-                        commit_hashes,
-                        repo_path,
-                        commit_indexer,
-                        ParallelIndexingConfig(),
-                        200,
-                    )
+                    source = GitContentSource(repo_path)
+                    git_commits_indexed += ingest_git_source(index_manager, source)
 
                 if repos:
                     _append_message(

@@ -379,7 +379,7 @@ async def handle_search_git_history(
     await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
-    if ctx.commit_indexer is None:
+    if not ctx.git_indexing_enabled:
         return [
             TextContent(
                 type="text",
@@ -407,7 +407,7 @@ async def handle_search_git_history(
         "# Git History Search Results",
         "",
         f"**Query:** {query}",
-        f"**Total Commits Indexed:** {ctx.commit_indexer.get_total_commits()}",
+        f"**Total Commits Indexed:** {ctx.get_total_git_commits_indexed()}",
         f"**Results Returned:** {len(commits)}",
         "",
     ]

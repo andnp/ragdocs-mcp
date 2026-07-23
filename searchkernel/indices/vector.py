@@ -855,6 +855,34 @@ class VectorIndex:
 
         return descriptions
 
+    def count_documents_by_source_kind(self, source_kind: str) -> int:
+        """Count indexed documents/records tagged with the given source_kind."""
+        if self._index is None:
+            return 0
+
+        with self._index_lock:
+            document_chunks = [
+                (doc_id, list(chunk_ids))
+                for doc_id, chunk_ids in self._doc_id_to_node_ids.items()
+            ]
+
+        docstore = self._index.docstore
+        count = 0
+        for _doc_id, chunk_ids in document_chunks:
+            for chunk_id in chunk_ids:
+                try:
+                    node = docstore.get_document(chunk_id)
+                except Exception:
+                    continue
+                if node is None:
+                    continue
+                metadata = getattr(node, "metadata", {})
+                if isinstance(metadata, dict) and metadata.get("source_kind") == source_kind:
+                    count += 1
+                    break
+
+        return count
+
     def get_parent_content(self, parent_chunk_id: str) -> str | None:
         chunk_data = self.get_chunk_by_id(parent_chunk_id)
         if chunk_data:

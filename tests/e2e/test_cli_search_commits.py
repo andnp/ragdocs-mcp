@@ -515,7 +515,7 @@ embedding_model = "local"
     try:
         os.chdir(tmp_path)
 
-        # Without rebuild-index, commit_indexer is still created (empty DB)
+        # Without rebuild-index, git indexing is enabled but nothing has been ingested yet
         result = runner.invoke(cli, ["search-commits", "test"])
 
         # Should succeed with empty results (not error)

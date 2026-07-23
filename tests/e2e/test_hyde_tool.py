@@ -135,7 +135,7 @@ def _create_mcp_server(config: Config, docs_dir) -> tuple[MCPServer, HandlerCont
             self.config = config
             self.orchestrator = orchestrator
             self.index_manager = manager
-            self.commit_indexer = None
+            self.git_indexing_enabled = False
 
         def is_ready(self):
             return True

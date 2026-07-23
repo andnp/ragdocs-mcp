@@ -106,7 +106,7 @@ class TestWorkerWithLifecycle:
         @dataclass
         class FakeContext:
             config: FakeConfig = field(default_factory=FakeConfig)
-            commit_indexer: None = None
+            git_indexing_enabled: bool = False
 
             async def start(self, background_index: bool = False) -> None:
                 pass
@@ -162,7 +162,7 @@ class TestWorkerWithLifecycle:
         @dataclass
         class FakeContext:
             config: FakeConfig = field(default_factory=FakeConfig)
-            commit_indexer: None = None
+            git_indexing_enabled: bool = False
 
             async def start(self, background_index: bool = False) -> None:
                 pass
@@ -232,8 +232,10 @@ class TestWorkerRuntimeStartup:
             def __init__(self) -> None:
                 self.index_manager = _FakeIndexManager()
                 self.watcher = _FakeWatcher()
-                self.commit_indexer = None
+                self.git_indexing_enabled = False
                 self.config = _FakeConfig()
+                self.index_path = tmp_path / "index_data"
+                self.documents_roots: list[Path] = []
 
         class _FakeHueyWorker:
             def __init__(self, _huey: object) -> None:

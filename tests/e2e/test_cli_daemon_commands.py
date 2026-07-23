@@ -550,7 +550,7 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
     class _FakeContext:
         def __init__(self):
             self.index_manager = _FakeIndexManager()
-            self.commit_indexer = object()
+            self.git_indexing_enabled = True
             self.index_path = runtime_paths.root
             self.documents_roots: list[Path] = []
             self.config = type(
@@ -583,7 +583,6 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
     def _fake_register_tasks(
         huey,
         index_manager,
-        commit_indexer=None,
         task_backpressure_limit=None,
         bootstrap_index_path=None,
         bootstrap_documents_roots=None,
@@ -591,7 +590,6 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
         observed["register"] = (
             huey,
             index_manager,
-            commit_indexer,
             task_backpressure_limit,
             bootstrap_index_path,
             bootstrap_documents_roots,
@@ -618,7 +616,6 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
     assert observed["register"] == (
         fake_huey,
         fake_ctx.index_manager,
-        fake_ctx.commit_indexer,
         100,
         runtime_paths.root,
         [],
@@ -723,10 +720,6 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
         def get_document_count(self):
             return 7
 
-    class _FakeCommitIndexer:
-        def get_total_commits(self):
-            return 11
-
     class _FakeIndexingConfig:
         documents_path = str(docs_dir)
         index_path = str(index_dir)
@@ -741,9 +734,11 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
             self.config = _FakeConfig()
             self.index_path = index_dir
             self.index_manager = _FakeIndexManager()
-            self.commit_indexer = _FakeCommitIndexer()
             self.documents_roots = [docs_dir]
             self.watcher = None
+
+        def get_total_git_commits_indexed(self):
+            return 11
 
         def discover_files(self):
             return [str(docs_dir / "a.md"), str(docs_dir / "b.md")]
@@ -834,9 +829,11 @@ def test_index_stats_reports_per_root_breakdown(tmp_path):
             self.config = _FakeConfig()
             self.index_path = index_dir
             self.index_manager = _FakeIndexManager()
-            self.commit_indexer = None
             self.documents_roots = [root_a, root_b]
             self.watcher = None
+
+        def get_total_git_commits_indexed(self):
+            return 0
 
         def discover_files(self):
             return [
@@ -933,9 +930,11 @@ def test_index_stats_uses_loaded_snapshot_when_refresh_lock_times_out(
             self.config = _FakeConfig()
             self.index_path = index_dir
             self.index_manager = _FakeIndexManager()
-            self.commit_indexer = None
             self.documents_roots = [docs_dir]
             self.watcher = None
+
+        def get_total_git_commits_indexed(self):
+            return 0
 
         def discover_files(self):
             return [str(docs_dir / "doc-1.md"), str(docs_dir / "doc-2.md")]
@@ -1330,7 +1329,9 @@ def test_build_initializing_search_payload_for_query_includes_machine_readable_f
 
     class _FakeContext:
         documents_roots = [Path("/docs/a"), Path("/docs/b")]
-        commit_indexer = None
+
+        def get_total_git_commits_indexed(self):
+            return 0
 
         def get_index_state(self):
             return _FakeIndexState()
@@ -1376,13 +1377,11 @@ def test_build_initializing_search_payload_for_git_history_includes_commit_count
                 "last_error": None,
             }
 
-    class _FakeCommitIndexer:
-        def get_total_commits(self):
-            return 17
-
     class _FakeContext:
         documents_roots = [Path("/docs")]
-        commit_indexer = _FakeCommitIndexer()
+
+        def get_total_git_commits_indexed(self):
+            return 17
 
         def get_index_state(self):
             return _FakeIndexState()

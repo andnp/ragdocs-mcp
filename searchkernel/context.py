@@ -15,7 +15,6 @@ from searchkernel.config import (
     resolve_index_path,
     resolve_documents_path,
 )
-from searchkernel.git.commit_indexer import CommitIndexer
 from searchkernel.indexing.bootstrap_checkpoint import (
     has_incomplete_bootstrap_checkpoint,
     build_file_stamps,
@@ -79,7 +78,7 @@ class ApplicationContext:
     orchestrator: SearchOrchestrator
     use_tasks: bool = False
     watcher: FileWatcher | None = None
-    commit_indexer: CommitIndexer | None = None
+    git_indexing_enabled: bool = False
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
     fallback_index_path: Path | None = None
     documents_roots: list[Path] = field(default_factory=list)
@@ -199,20 +198,14 @@ class ApplicationContext:
                 task_backpressure_limit=config.indexing.task_backpressure_limit,
             )
 
-        # Initialize commit indexer if enabled and git available
-        commit_indexer = None
+        # Enable git commit indexing if configured and git is available
+        git_indexing_enabled = False
         if config.git_indexing.enabled:
             from searchkernel.git.repository import is_git_available
 
             if is_git_available():
-                from searchkernel.git.commit_indexer import CommitIndexer
-
-                db_path = index_path / "git_commits.db"
-                commit_indexer = CommitIndexer(
-                    db_path=db_path,
-                    embedding_model=vector,
-                )
-                logger.info(f"Git commit indexer initialized: {db_path}")
+                git_indexing_enabled = True
+                logger.info("Git commit indexing enabled")
             else:
                 logger.warning("Git binary not found - git history search disabled")
 
@@ -222,7 +215,7 @@ class ApplicationContext:
             orchestrator=orchestrator,
             use_tasks=use_tasks,
             watcher=watcher,
-            commit_indexer=commit_indexer,
+            git_indexing_enabled=git_indexing_enabled,
             index_path=index_path,
             fallback_index_path=fallback_index_path,
             documents_roots=documents_roots,
@@ -367,7 +360,6 @@ class ApplicationContext:
             "index.db-shm",
             "index.db-wal",
             "chunk_hashes.json",
-            "git_commits.db",
         ]:
             source_file = self.fallback_index_path / file_name
             if source_file.exists():
@@ -421,7 +413,7 @@ class ApplicationContext:
         return await session.preload_persisted_state(rebuild_pending=rebuild_pending)
 
     async def _enqueue_initial_git_refresh_tasks(self) -> None:
-        if self.commit_indexer is None:
+        if not self.git_indexing_enabled:
             return
 
         from searchkernel.indexing.tasks import submit_refresh_git_batch
@@ -467,7 +459,7 @@ class ApplicationContext:
                     await self._preload_existing_indices_for_background_bootstrap(
                         rebuild_pending=needs_rebuild,
                     )
-                    startup_git_refresh_enqueued = self.commit_indexer is not None
+                    startup_git_refresh_enqueued = self.git_indexing_enabled
                     self._background_index_task = asyncio.create_task(
                         self._bootstrap_via_tasks()
                     )
@@ -512,7 +504,7 @@ class ApplicationContext:
             logger.info("File watcher started")
 
         # Index git commits after document indexing
-        if self.commit_indexer is not None:
+        if self.git_indexing_enabled:
             if background_index:
                 if self.use_tasks:
                     if not startup_git_refresh_enqueued:
@@ -561,7 +553,7 @@ class ApplicationContext:
         return BootstrapSession(
             index_path=self.index_path,
             documents_roots=self.documents_roots,
-            git_refresh_enabled=self.commit_indexer is not None,
+            git_refresh_enabled=self.git_indexing_enabled,
             discover_files=self.discover_files,
             discover_git_repositories=self.discover_git_repositories,
             get_bootstrap_manifest=lambda: self.current_manifest or self._build_manifest(),
@@ -1085,79 +1077,29 @@ class ApplicationContext:
         except Exception as e:
             logger.error(f"Failed to persist indices during stop: {e}")
 
-        if self.commit_indexer:
-            try:
-                await asyncio.to_thread(self.commit_indexer.close)
-            except Exception as e:
-                logger.error(f"Failed to close commit indexer: {e}")
-
         logger.info("ApplicationContext stopped")
 
     def _index_git_commits_initial_sync(self) -> None:
         """Index all commits in discovered repositories (synchronous)."""
-        if self.commit_indexer is None:
+        if not self.git_indexing_enabled:
             return
 
-        from searchkernel.git.parallel_indexer import (
-            ParallelIndexingConfig,
-            index_commits_parallel_sync,
-        )
-        from searchkernel.git.repository import get_commits_after_timestamp
-
-        logger.info("Starting initial git commit indexing (parallel)")
-
+        logger.info("Starting initial git commit indexing")
         repos = self.discover_git_repositories()
-
-        parallel_config = ParallelIndexingConfig()
-
-        total_indexed = 0
-        for repo_path in repos:
-            try:
-                last_timestamp = self.commit_indexer.get_last_indexed_timestamp(
-                    str(repo_path.parent)
-                )
-                commit_hashes = get_commits_after_timestamp(repo_path, last_timestamp)
-
-                if last_timestamp is not None:
-                    from datetime import datetime
-
-                    last_indexed_dt = datetime.fromtimestamp(last_timestamp).isoformat()
-                    logger.info(
-                        f"Repository {repo_path.parent}: Last indexed at {last_indexed_dt}, found {len(commit_hashes)} new commits"
-                    )
-                else:
-                    logger.info(
-                        f"Repository {repo_path.parent}: First-time indexing, found {len(commit_hashes)} commits"
-                    )
-
-                if len(commit_hashes) == 0:
-                    logger.debug(f"No new commits to index for {repo_path.parent}")
-                    continue
-
-                indexed = index_commits_parallel_sync(
-                    commit_hashes,
-                    repo_path,
-                    self.commit_indexer,
-                    parallel_config,
-                    200,
-                )
-                total_indexed += indexed
-
-            except Exception as e:
-                logger.error(
-                    f"Failed to index repository {repo_path}: {e}", exc_info=True
-                )
-
-        logger.info(f"Initial git commit indexing complete: {total_indexed} commits")
-
         self._ingest_git_records_into_kernel_index(repos)
+        logger.info("Initial git commit indexing complete")
+
+    def get_total_git_commits_indexed(self) -> int:
+        """Count git commits discoverable in the live index (for status/stats display)."""
+        if not self.git_indexing_enabled:
+            return 0
+        return self.index_manager.vector.count_documents_by_source_kind("git_commit")
 
     def _ingest_git_records_into_kernel_index(self, repos: list[Path]) -> None:
-        """Additively mirror discovered commits into the live IndexManager as Records.
+        """Ingest discovered git commits into the live IndexManager as Records.
 
-        Runs alongside the legacy CommitIndexer flow above so git commits also
-        land in the shared vector/keyword/graph store and become discoverable
-        via SearchOrchestrator.query(source_filter=["git_commit"]).
+        Commits land in the same vector/keyword/graph store as documents and
+        become discoverable via SearchOrchestrator.query(source_filter=["git_commit"]).
         """
         from searchkernel.adapters.sources.git import GitContentSource
         from searchkernel.indexing.git_ingestion import ingest_git_source

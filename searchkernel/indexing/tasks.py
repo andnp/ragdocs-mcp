@@ -25,7 +25,7 @@ from searchkernel.indexing.bootstrap_checkpoint import (
 from searchkernel.indexing.rebuild_service import run_rebuild
 
 if TYPE_CHECKING:
-    from searchkernel.git.commit_indexer import CommitIndexer
+    from searchkernel.domain import Record
     from huey import SqliteHuey
 
 logger = logging.getLogger(__name__)
@@ -97,12 +97,12 @@ class IndexManagerLike(Protocol):
         persist: bool = False,
     ) -> None: ...
     def persist(self) -> None: ...
+    def index_record(self, record: "Record") -> None: ...
 
 
 # Module-level references set during initialization
 _huey: SqliteHuey | None = None
 _index_manager: IndexManagerLike | None = None
-_commit_indexer: CommitIndexer | None = None
 _task_backpressure_limit: int = 100
 _bootstrap_index_path: Path | None = None
 _bootstrap_documents_roots: list[Path] = []
@@ -120,7 +120,6 @@ rebuild_index_task = None
 def register_tasks(
     huey: SqliteHuey,
     index_manager: IndexManagerLike,
-    commit_indexer: CommitIndexer | None = None,
     task_backpressure_limit: int = 100,
     bootstrap_index_path: Path | None = None,
     bootstrap_documents_roots: list[Path] | None = None,
@@ -131,7 +130,7 @@ def register_tasks(
     Must be called before enqueuing tasks. Typically called during
     application startup when the worker is being configured.
     """
-    global _huey, _index_manager, _commit_indexer, _task_backpressure_limit
+    global _huey, _index_manager, _task_backpressure_limit
     global _bootstrap_index_path, _bootstrap_documents_roots
     global _schedule_vocabulary_catch_up
     global index_document_task, index_documents_batch_task, remove_document_task
@@ -139,7 +138,6 @@ def register_tasks(
     global rebuild_index_task
     _huey = huey
     _index_manager = index_manager
-    _commit_indexer = commit_indexer
     _task_backpressure_limit = max(1, task_backpressure_limit)
     _bootstrap_index_path = bootstrap_index_path
     _bootstrap_documents_roots = list(bootstrap_documents_roots or [])
@@ -303,32 +301,18 @@ def register_tasks(
     @huey.task()
     def _refresh_git_repository(git_dir: str) -> bool:
         """Refresh the git index for one repository."""
-        if _commit_indexer is None:
-            logger.error("CommitIndexer not available for git refresh task")
+        if _index_manager is None:
+            logger.error("IndexManager not available for git refresh task")
             return False
 
-        from searchkernel.git.parallel_indexer import (
-            ParallelIndexingConfig,
-            index_commits_parallel_sync,
-        )
-        from searchkernel.git.repository import get_commits_after_timestamp
+        from searchkernel.adapters.sources.git import GitContentSource
+        from searchkernel.indexing.git_ingestion import ingest_git_source
 
         git_dir_path = Path(git_dir)
 
         try:
-            last_timestamp = _commit_indexer.get_last_indexed_timestamp(str(git_dir_path))
-            commit_hashes = get_commits_after_timestamp(git_dir_path, last_timestamp)
-            if not commit_hashes:
-                logger.info("Task completed: no new git commits for %s", git_dir_path)
-                return True
-
-            indexed = index_commits_parallel_sync(
-                commit_hashes,
-                git_dir_path,
-                _commit_indexer,
-                ParallelIndexingConfig(),
-                200,
-            )
+            source = GitContentSource(git_dir_path)
+            indexed = ingest_git_source(_index_manager, source)
             logger.info(
                 "Task completed: refreshed git repository %s (%d commits)",
                 git_dir_path,
@@ -356,7 +340,6 @@ def register_tasks(
                 runtime_root=_bootstrap_index_path,
                 config=load_config(),
                 index_manager=_index_manager,
-                commit_indexer=_commit_indexer,
                 global_documents_roots=_bootstrap_documents_roots,
                 request_id=request_id,
                 project_override=project_override,

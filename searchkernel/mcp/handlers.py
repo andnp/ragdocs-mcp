@@ -117,13 +117,7 @@ class HandlerContext:
                 "configured_root_count": len(ctx.documents_roots),
                 "index_state": index_state.to_dict(),
                 **(
-                    {
-                        "total_commits_indexed": (
-                            ctx.commit_indexer.get_total_commits()
-                            if ctx.commit_indexer is not None
-                            else 0
-                        )
-                    }
+                    {"total_commits_indexed": ctx.get_total_git_commits_indexed()}
                     if include_git_metadata
                     else {
                         "compression_stats": {},
@@ -144,13 +138,7 @@ class HandlerContext:
             "configured_root_count": len(ctx.documents_roots),
             "index_state": index_state.to_dict(),
             **(
-                {
-                    "total_commits_indexed": (
-                        ctx.commit_indexer.get_total_commits()
-                        if ctx.commit_indexer is not None
-                        else 0
-                    )
-                }
+                {"total_commits_indexed": ctx.get_total_git_commits_indexed()}
                 if include_git_metadata
                 else {
                     "compression_stats": {},

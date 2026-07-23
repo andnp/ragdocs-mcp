@@ -179,7 +179,6 @@ async def _run_worker_forever_async(
     register_tasks(
         huey,
         ctx.index_manager,
-        commit_indexer=ctx.commit_indexer,
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         bootstrap_index_path=ctx.index_path,
         bootstrap_documents_roots=ctx.documents_roots,
@@ -210,14 +209,14 @@ async def _run_worker_forever_async(
             )
             await ctx.watcher.stop()
 
-    if ctx.commit_indexer is not None and ctx.config.git_indexing.watch_enabled:
+    if ctx.git_indexing_enabled and ctx.config.git_indexing.watch_enabled:
         from searchkernel.git.watcher import GitWatcher
 
         repos = await asyncio.to_thread(ctx.discover_git_repositories)
         if repos:
             git_watcher = GitWatcher(
                 git_repos=repos,
-                commit_indexer=ctx.commit_indexer,
+                index_manager=ctx.index_manager,
                 config=ctx.config,
                 poll_interval=ctx.config.git_indexing.poll_interval_seconds,
                 use_tasks=True,
@@ -793,9 +792,7 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
     docs_root = Path(ctx.config.indexing.documents_path).resolve()
     discovered_files = ctx.discover_files() if docs_root.exists() else []
     repo_count = len(ctx.discover_git_repositories())
-    git_commit_count = (
-        ctx.commit_indexer.get_total_commits() if ctx.commit_indexer is not None else 0
-    )
+    git_commit_count = ctx.get_total_git_commits_indexed()
 
     indexed_documents = 0
     indexed_chunks = 0

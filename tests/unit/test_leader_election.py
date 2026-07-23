@@ -57,7 +57,7 @@ class FakeContext:
     """Minimal stub to satisfy LifecycleCoordinator.start()."""
 
     config: FakeConfig = field(default_factory=FakeConfig)
-    commit_indexer: None = None
+    git_indexing_enabled: bool = False
 
     async def start(self, background_index: bool = False) -> None:
         pass

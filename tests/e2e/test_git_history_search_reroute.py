@@ -58,23 +58,17 @@ def repo(tmp_path):
     return repo_path
 
 
-class _FakeCommitIndexer:
-    def __init__(self, total_commits: int) -> None:
-        self._total_commits = total_commits
-
-    def get_total_commits(self) -> int:
-        return self._total_commits
-
-
 class _ReadyContext:
     def __init__(self, orchestrator, git_indexing_enabled: bool, total_commits: int) -> None:
         self.orchestrator = orchestrator
-        self.commit_indexer = (
-            _FakeCommitIndexer(total_commits) if git_indexing_enabled else None
-        )
+        self.git_indexing_enabled = git_indexing_enabled
+        self._total_commits = total_commits
 
     def is_ready(self) -> bool:
         return True
+
+    def get_total_git_commits_indexed(self) -> int:
+        return self._total_commits
 
     def get_nonblocking_search_payload(self, *, query, include_git_metadata=False):
         return None

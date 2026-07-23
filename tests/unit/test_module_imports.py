@@ -49,7 +49,6 @@ def test_critical_modules_import_without_error():
         "searchkernel.mcp.server",
         "searchkernel.server",
         "searchkernel.git.watcher",
-        "searchkernel.git.commit_indexer",
         "searchkernel.indexing.manager",
         "searchkernel.indices.vector",
         "searchkernel.indices.keyword",

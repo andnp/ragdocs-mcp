@@ -10,9 +10,12 @@ from searchkernel.config import (
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.git.commit_indexer import CommitIndexer
 from searchkernel.git.watcher import GitWatcher
 from searchkernel.git.repository import is_git_available
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 
 
 def _init_git_repo(path: Path):
@@ -56,9 +59,11 @@ def test_config(tmp_path):
 
 
 @pytest.fixture
-def commit_indexer(tmp_path, shared_embedding_model):
-    db_path = tmp_path / "commits.db"
-    return CommitIndexer(db_path=db_path, embedding_model=shared_embedding_model)
+def index_manager(test_config, shared_embedding_model):
+    vector = VectorIndex(embedding_model=shared_embedding_model)
+    keyword = KeywordIndex()
+    graph = GraphStore()
+    return IndexManager(test_config, vector, keyword, graph)
 
 
 @pytest.fixture
@@ -72,12 +77,12 @@ def git_repo(tmp_path):
 
 @pytest.mark.skipif(not is_git_available(), reason="git not available")
 @pytest.mark.asyncio
-async def test_git_watcher_start_stop(test_config, commit_indexer, git_repo):
+async def test_git_watcher_start_stop(test_config, index_manager, git_repo):
     git_dir = git_repo / ".git"
 
     watcher = GitWatcher(
         git_repos=[git_dir],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=100.0,  # long interval so it never fires during test
     )
@@ -93,12 +98,12 @@ async def test_git_watcher_start_stop(test_config, commit_indexer, git_repo):
 
 @pytest.mark.skipif(not is_git_available(), reason="git not available")
 @pytest.mark.asyncio
-async def test_git_watcher_idempotent_start(test_config, commit_indexer, git_repo):
+async def test_git_watcher_idempotent_start(test_config, index_manager, git_repo):
     git_dir = git_repo / ".git"
 
     watcher = GitWatcher(
         git_repos=[git_dir],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=100.0,
     )
@@ -114,12 +119,12 @@ async def test_git_watcher_idempotent_start(test_config, commit_indexer, git_rep
 
 @pytest.mark.skipif(not is_git_available(), reason="git not available")
 @pytest.mark.asyncio
-async def test_git_watcher_idempotent_stop(test_config, commit_indexer, git_repo):
+async def test_git_watcher_idempotent_stop(test_config, index_manager, git_repo):
     git_dir = git_repo / ".git"
 
     watcher = GitWatcher(
         git_repos=[git_dir],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=100.0,
     )
@@ -133,7 +138,7 @@ async def test_git_watcher_idempotent_stop(test_config, commit_indexer, git_repo
 
 @pytest.mark.skipif(not is_git_available(), reason="git not available")
 @pytest.mark.asyncio
-async def test_git_watcher_multiple_repos(test_config, commit_indexer, tmp_path):
+async def test_git_watcher_multiple_repos(test_config, index_manager, tmp_path):
     repo1 = tmp_path / "repo1"
     repo2 = tmp_path / "repo2"
 
@@ -151,7 +156,7 @@ async def test_git_watcher_multiple_repos(test_config, commit_indexer, tmp_path)
 
     watcher = GitWatcher(
         git_repos=[git_dir1, git_dir2],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=100.0,
     )
@@ -165,7 +170,7 @@ async def test_git_watcher_multiple_repos(test_config, commit_indexer, tmp_path)
 @pytest.mark.skipif(not is_git_available(), reason="git not available")
 @pytest.mark.asyncio
 async def test_git_watcher_nonexistent_paths_skipped(
-    test_config, commit_indexer, tmp_path
+    test_config, index_manager, tmp_path
 ):
     git_dir_exists = tmp_path / "exists" / ".git"
     git_dir_exists.parent.mkdir()
@@ -175,7 +180,7 @@ async def test_git_watcher_nonexistent_paths_skipped(
 
     watcher = GitWatcher(
         git_repos=[git_dir_exists, git_dir_missing],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=100.0,
     )

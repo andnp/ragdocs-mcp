@@ -14,7 +14,7 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
     calls: dict[str, object] = {}
     fake_ctx = SimpleNamespace(
         index_manager=object(),
-        commit_indexer=None,
+        git_indexing_enabled=False,
         config=SimpleNamespace(indexing=SimpleNamespace(task_backpressure_limit=7)),
         index_path=Path("/runtime/index"),
         documents_roots=[Path("/docs")],
@@ -91,7 +91,6 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
     assert calls["register_tasks"] == {
         "huey": "huey",
         "index_manager": fake_ctx.index_manager,
-        "commit_indexer": None,
         "task_backpressure_limit": 7,
         "bootstrap_index_path": fake_ctx.index_path,
         "bootstrap_documents_roots": fake_ctx.documents_roots,

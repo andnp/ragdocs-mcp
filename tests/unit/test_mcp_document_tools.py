@@ -32,9 +32,10 @@ class _ColdStartContext:
         self._index_state = index_state
         self._ready = ready
         self.documents_roots = [Path("/docs")]
-        self.commit_indexer = SimpleNamespace(
-            get_total_commits=lambda: commit_count,
-        )
+        self._commit_count = commit_count
+
+    def get_total_git_commits_indexed(self) -> int:
+        return self._commit_count
 
     def is_ready(self) -> bool:
         return self._ready

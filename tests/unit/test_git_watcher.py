@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -9,8 +10,8 @@ from searchkernel.config import (
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.git.commit_indexer import CommitIndexer
 from searchkernel.git.watcher import GitWatcher
+from searchkernel.indexing.manager import IndexManager
 from searchkernel.indexing.tasks import TaskSubmissionResult
 
 
@@ -30,52 +31,47 @@ def test_config(tmp_path):
 
 
 @pytest.fixture
-def commit_indexer(tmp_path, shared_embedding_model):
-    db_path = tmp_path / "commits.db"
-    return CommitIndexer(db_path=db_path, embedding_model=shared_embedding_model)
+def index_manager() -> MagicMock:
+    return MagicMock(spec=IndexManager)
 
 
-def test_git_watcher_instantiation(test_config, commit_indexer, tmp_path):
+def test_git_watcher_instantiation(test_config, index_manager, tmp_path):
     git_repos = [tmp_path / ".git"]
 
     watcher = GitWatcher(
         git_repos=git_repos,
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=0.5,
     )
 
     assert watcher is not None
     assert watcher._git_repos == git_repos
-    assert watcher._commit_indexer is commit_indexer
+    assert watcher._index_manager is index_manager
     assert watcher._config is test_config
     assert watcher._poll_interval == 0.5
     assert watcher._running is False
 
 
-def test_git_watcher_constructor_types(test_config, commit_indexer, tmp_path):
+def test_git_watcher_constructor_types(test_config, index_manager, tmp_path):
     git_repos = [tmp_path / ".git"]
 
     watcher = GitWatcher(
         git_repos=git_repos,
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=1.0,
     )
 
-    from searchkernel.git.commit_indexer import CommitIndexer
-    from searchkernel.config import Config
-
-    assert isinstance(watcher._commit_indexer, CommitIndexer)
     assert isinstance(watcher._config, Config)
     assert isinstance(watcher._git_repos, list)
     assert all(isinstance(p, Path) for p in watcher._git_repos)
 
 
-def test_git_watcher_empty_repos_list(test_config, commit_indexer):
+def test_git_watcher_empty_repos_list(test_config, index_manager):
     watcher = GitWatcher(
         git_repos=[],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=0.5,
     )
@@ -84,23 +80,23 @@ def test_git_watcher_empty_repos_list(test_config, commit_indexer):
     assert watcher._running is False
 
 
-def test_git_watcher_default_poll_interval(test_config, commit_indexer, tmp_path):
+def test_git_watcher_default_poll_interval(test_config, index_manager, tmp_path):
     git_repos = [tmp_path / ".git"]
 
     watcher = GitWatcher(
-        git_repos=git_repos, commit_indexer=commit_indexer, config=test_config
+        git_repos=git_repos, index_manager=index_manager, config=test_config
     )
 
     assert watcher._poll_interval == 30.0
     assert watcher._use_tasks is False
 
 
-def test_git_watcher_config_access(test_config, commit_indexer, tmp_path):
+def test_git_watcher_config_access(test_config, index_manager, tmp_path):
     git_repos = [tmp_path / ".git"]
 
     watcher = GitWatcher(
         git_repos=git_repos,
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=0.5,
     )
@@ -109,13 +105,13 @@ def test_git_watcher_config_access(test_config, commit_indexer, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_git_watcher_lifecycle(test_config, commit_indexer, tmp_path):
+async def test_git_watcher_lifecycle(test_config, index_manager, tmp_path):
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
 
     watcher = GitWatcher(
         git_repos=[git_dir],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=100.0,  # long interval so it never fires during test
     )
@@ -132,13 +128,13 @@ async def test_git_watcher_lifecycle(test_config, commit_indexer, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_git_watcher_idempotent_start(test_config, commit_indexer, tmp_path):
+async def test_git_watcher_idempotent_start(test_config, index_manager, tmp_path):
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
 
     watcher = GitWatcher(
         git_repos=[git_dir],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=100.0,
     )
@@ -153,13 +149,13 @@ async def test_git_watcher_idempotent_start(test_config, commit_indexer, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_git_watcher_idempotent_stop(test_config, commit_indexer, tmp_path):
+async def test_git_watcher_idempotent_stop(test_config, index_manager, tmp_path):
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
 
     watcher = GitWatcher(
         git_repos=[git_dir],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         poll_interval=100.0,
     )
@@ -172,7 +168,7 @@ async def test_git_watcher_idempotent_stop(test_config, commit_indexer, tmp_path
 
 @pytest.mark.asyncio
 async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
-    test_config, commit_indexer, tmp_path, monkeypatch
+    test_config, index_manager, tmp_path, monkeypatch
 ):
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
@@ -180,7 +176,7 @@ async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
 
     watcher = GitWatcher(
         git_repos=[git_dir],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         use_tasks=True,
     )
@@ -198,7 +194,7 @@ async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
 
 @pytest.mark.asyncio
 async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
-    test_config, commit_indexer, tmp_path, monkeypatch
+    test_config, index_manager, tmp_path, monkeypatch
 ):
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
@@ -206,7 +202,7 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
 
     watcher = GitWatcher(
         git_repos=[git_dir],
-        commit_indexer=commit_indexer,
+        index_manager=index_manager,
         config=test_config,
         use_tasks=True,
     )
@@ -215,43 +211,20 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
         "searchkernel.indexing.tasks.submit_refresh_git_request",
         lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
     )
-    monkeypatch.setattr(
-        commit_indexer,
-        "get_last_indexed_timestamp",
-        lambda repo_path: observed.__setitem__("repo_path", repo_path) or 123,
-    )
 
-    def _fake_get_commits_after_timestamp(repo_path: Path, last_timestamp: int | None):
-        observed["commits_after"] = (repo_path, last_timestamp)
-        return ["abc123"]
-
-    monkeypatch.setattr(
-        "searchkernel.git.repository.get_commits_after_timestamp",
-        _fake_get_commits_after_timestamp,
-    )
-
-    async def _fake_index_commits_parallel(
-        commit_hashes,
-        repo_path,
-        commit_indexer_obj,
-        parallel_config,
-        max_delta_lines,
-    ) -> int:
-        observed["indexed"] = (
-            commit_hashes,
-            repo_path,
-            commit_indexer_obj,
-            max_delta_lines,
-        )
+    def _fake_ingest_git_source(index_manager_arg, source, since=None):
+        observed["index_manager"] = index_manager_arg
+        observed["repo_path"] = source.repo_path
+        observed["since"] = since
         return 1
 
     monkeypatch.setattr(
-        "searchkernel.git.parallel_indexer.index_commits_parallel",
-        _fake_index_commits_parallel,
+        "searchkernel.indexing.git_ingestion.ingest_git_source",
+        _fake_ingest_git_source,
     )
 
     await watcher._batch_process({git_dir})
 
-    assert observed["repo_path"] == str(git_dir)
-    assert observed["commits_after"] == (git_dir, 123)
-    assert observed["indexed"] == (["abc123"], git_dir, commit_indexer, 200)
+    assert observed["index_manager"] is index_manager
+    assert observed["repo_path"] == git_dir.parent
+    assert observed["since"] is None

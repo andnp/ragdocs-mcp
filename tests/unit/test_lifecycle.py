@@ -49,7 +49,7 @@ class FakeContext:
     """Minimal stub to satisfy LifecycleCoordinator.start()."""
 
     config: FakeConfig = field(default_factory=FakeConfig)
-    commit_indexer: None = None
+    git_indexing_enabled: bool = False
 
     async def start(self, background_index: bool = False) -> None:
         pass
@@ -160,7 +160,8 @@ class TestLifecycleStateMachine:
                     git_indexing=FakeGitConfig(enabled=True, watch_enabled=True),
                 )
             )
-            commit_indexer: object | None = field(default_factory=object)
+            git_indexing_enabled: bool = True
+            index_manager: object | None = field(default_factory=object)
 
             def discover_git_repositories(self) -> list[str]:
                 observed["discover_calls"] = observed["discover_calls"] + 1
@@ -171,13 +172,13 @@ class TestLifecycleStateMachine:
                 self,
                 *,
                 git_repos,
-                commit_indexer,
+                index_manager,
                 config,
                 poll_interval,
                 use_tasks,
             ) -> None:
                 observed["git_repos"] = git_repos
-                observed["commit_indexer"] = commit_indexer
+                observed["index_manager"] = index_manager
                 observed["use_tasks"] = use_tasks
 
             def start(self) -> None:

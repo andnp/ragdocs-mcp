@@ -41,7 +41,7 @@ class _FakeContext:
         self.config = SimpleNamespace(
             indexing=SimpleNamespace(task_backpressure_limit=5),
         )
-        self.commit_indexer = None
+        self.git_indexing_enabled = False
         self.orchestrator = SimpleNamespace(
             query=self._query,
             drain_reindex=self._drain_reindex,

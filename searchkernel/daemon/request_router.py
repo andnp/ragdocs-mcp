@@ -101,9 +101,7 @@ def _build_initializing_search_payload(
         "index_state": ctx.get_index_state().to_dict(),
     }
     if include_git_metadata:
-        payload["total_commits_indexed"] = (
-            ctx.commit_indexer.get_total_commits() if ctx.commit_indexer is not None else 0
-        )
+        payload["total_commits_indexed"] = ctx.get_total_git_commits_indexed()
     else:
         payload["compression_stats"] = {}
         payload["strategy_stats"] = {}
@@ -281,7 +279,7 @@ def build_daemon_request_handler(
                 "strategy_stats": strategy_stats.to_dict(),
             }
         if path == "/api/search/git-history":
-            if ctx.commit_indexer is None:
+            if not ctx.git_indexing_enabled:
                 return {"status": "error", "error": "git_indexing_unavailable"}
 
             cold_start_response = _get_cold_start_search_response(
@@ -330,7 +328,7 @@ def build_daemon_request_handler(
 
             return {
                 "query": query_text,
-                "total_commits_indexed": ctx.commit_indexer.get_total_commits(),
+                "total_commits_indexed": ctx.get_total_git_commits_indexed(),
                 "results": [_git_history_result_to_dict(result) for result in commits],
             }
         return {"status": "error", "error": "unknown_request_path", "path": path}

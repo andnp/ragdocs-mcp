@@ -211,13 +211,13 @@ class LifecycleCoordinator:
                 and ctx.config.git_indexing.watch_enabled
                 and huey_worker is None
             ):
-                if ctx.commit_indexer is not None:
+                if ctx.git_indexing_enabled:
                     repos = await asyncio.to_thread(ctx.discover_git_repositories)
 
                     if repos:
                         self._git_watcher = GitWatcher(
                             git_repos=repos,
-                            commit_indexer=ctx.commit_indexer,
+                            index_manager=ctx.index_manager,
                             config=ctx.config,
                             poll_interval=ctx.config.git_indexing.poll_interval_seconds,
                             use_tasks=huey_worker is not None,
