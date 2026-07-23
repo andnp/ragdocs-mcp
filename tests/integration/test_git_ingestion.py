@@ -102,6 +102,8 @@ async def test_commit_appears_in_search_via_source_filter(repo, kernel):
     assert results
     assert all(result.doc_id.startswith("git:") for result in results)
     assert any("authentication" in result.content.lower() for result in results)
+    assert all(result.metadata.get("source_kind") == "git_commit" for result in results)
+    assert all(result.metadata.get("author") for result in results)
 
 
 @pytest.mark.asyncio
