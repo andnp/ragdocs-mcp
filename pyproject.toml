@@ -69,11 +69,11 @@ markers = [
     "slow: marks slow tests (>5s, load models or process large datasets)",
 ]
 
-[tool.import-linter]
+[tool.importlinter]
 root_packages = ["searchkernel"]
 default_mapping = "searchkernel"
 
-[[tool.import-linter.contracts]]
+[[tool.importlinter.contracts]]
 name = "domain and ports are inward-only"
 type = "forbidden"
 source_modules = ["searchkernel.domain", "searchkernel.ports"]
