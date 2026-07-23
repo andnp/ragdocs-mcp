@@ -21,8 +21,9 @@ from searchkernel.search.filters import matches_project_filter, normalize_projec
 from searchkernel.search.graph_expansion import build_graph_chunk_candidates
 from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
 from searchkernel.pipeline.stage import SearchContext
+from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.fusion import FusionStage
-from searchkernel.search.pipeline import SearchPipeline, SearchPipelineConfig
+from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
 from searchkernel.search.result_cache import QueryResultCache, QueryResultCacheKey
 from searchkernel.search.score_pipeline import ScorePipelineConfig
@@ -66,7 +67,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             else Path(config.indexing.documents_path)
         )
         self._index_manager = index_manager
-        self._pipeline: SearchPipeline | None = None
+        self._pipeline: DedupRerankStage | None = None
         self._pending_reindex: set[str] = set()
         self._reindex_tasks: set[asyncio.Task] = set()
         self._chunk_hydrator = ChunkHydrator(
@@ -84,9 +85,9 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
     def documents_path(self) -> Path:
         return self._documents_path
 
-    def _get_pipeline(self) -> SearchPipeline:
+    def _get_pipeline(self) -> DedupRerankStage:
         if self._pipeline is None:
-            self._pipeline = SearchPipeline(self._build_pipeline_config())
+            self._pipeline = DedupRerankStage(self._build_pipeline_config())
         return self._pipeline
 
     def _build_pipeline_config(self) -> SearchPipelineConfig:
@@ -103,14 +104,14 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         pipeline_config: SearchPipelineConfig | None,
         *,
         disable_reranking: bool = False,
-    ) -> SearchPipeline:
+    ) -> DedupRerankStage:
         if pipeline_config is None and not disable_reranking:
             return self._get_pipeline()
 
         effective_config = pipeline_config or self._build_pipeline_config()
         if disable_reranking and effective_config.reranking_enabled:
             effective_config = replace(effective_config, reranking_enabled=False)
-        return SearchPipeline(effective_config)
+        return DedupRerankStage(effective_config)
 
     def _get_result_cache_key(
         self,
@@ -422,13 +423,19 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             disable_reranking=skip_expensive_factual_enrichments,
         )
 
-        final, compression_stats = pipeline.process(
-            fused,
-            query_context.get_chunk_embedding,
-            query_context.get_chunk_content,
-            query_text,
-            top_n,
+        dedup_context = pipeline.run(
+            SearchContext(
+                query=query_text,
+                candidates=fused,
+                metadata={
+                    "get_embedding": query_context.get_chunk_embedding,
+                    "get_content": query_context.get_chunk_content,
+                    "top_n": top_n,
+                },
+            )
         )
+        final = dedup_context.candidates
+        compression_stats = dedup_context.metadata["compression_stats"]
 
         # Parent expansion: always expand child chunks to parent chunks
         final = self._expand_to_parents(
@@ -885,13 +892,19 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         pipeline = self._get_pipeline()
 
-        final, compression_stats = pipeline.process(
-            fused,
-            query_context.get_chunk_embedding,
-            query_context.get_chunk_content,
-            hypothesis,
-            top_n,
+        dedup_context = pipeline.run(
+            SearchContext(
+                query=hypothesis,
+                candidates=fused,
+                metadata={
+                    "get_embedding": query_context.get_chunk_embedding,
+                    "get_content": query_context.get_chunk_content,
+                    "top_n": top_n,
+                },
+            )
         )
+        final = dedup_context.candidates
+        compression_stats = dedup_context.metadata["compression_stats"]
 
         # Build strategy stats (HyDE only uses semantic search)
         strategy_stats = SearchStrategyStats(

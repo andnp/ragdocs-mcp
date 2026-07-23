@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -213,22 +214,27 @@ async def test_query_uses_single_execution_context_and_records_stats(monkeypatch
         return [{"chunk_id": chunk_id, "doc_id": "doc-a", "score": 0.6}]
 
     class FakePipeline:
-        def process(self, fused, get_embedding, get_content, query, top_n):
+        def run(self, context):
+            fused = context.candidates
+            get_embedding = context.metadata["get_embedding"]
+            get_content = context.metadata["get_content"]
             assert get_content(chunk_id) == "Alpha content"
             assert get_content(chunk_id) == "Alpha content"
             assert get_embedding(chunk_id) == [1.0, 0.0]
             assert get_embedding(chunk_id) == [1.0, 0.0]
-            return (
-                [(chunk_id, fused[0][1])],
-                CompressionStats(
-                    original_count=len(fused),
-                    after_threshold=len(fused),
-                    after_content_dedup=len(fused),
-                    after_ngram_dedup=len(fused),
-                    after_dedup=len(fused),
-                    after_doc_limit=len(fused),
-                    clusters_merged=0,
-                ),
+            stats = CompressionStats(
+                original_count=len(fused),
+                after_threshold=len(fused),
+                after_content_dedup=len(fused),
+                after_ngram_dedup=len(fused),
+                after_dedup=len(fused),
+                after_doc_limit=len(fused),
+                clusters_merged=0,
+            )
+            return replace(
+                context,
+                candidates=[(chunk_id, fused[0][1])],
+                metadata={**context.metadata, "compression_stats": stats},
             )
 
     monkeypatch.setattr(orchestrator, "_search_vector", fake_search_vector)
@@ -378,22 +384,26 @@ async def test_query_skips_tag_expansion_and_reranking_for_clear_factual_query(
         def __init__(self, reranking_enabled: bool) -> None:
             observed_reranking["enabled"] = reranking_enabled
 
-        def process(self, fused, get_embedding, get_content, query, top_n):
-            return (
-                fused[:top_n],
-                CompressionStats(
-                    original_count=len(fused),
-                    after_threshold=len(fused),
-                    after_content_dedup=len(fused),
-                    after_ngram_dedup=len(fused),
-                    after_dedup=len(fused),
-                    after_doc_limit=len(fused),
-                    clusters_merged=0,
-                ),
+        def run(self, context):
+            fused = context.candidates
+            top_n = context.metadata["top_n"]
+            stats = CompressionStats(
+                original_count=len(fused),
+                after_threshold=len(fused),
+                after_content_dedup=len(fused),
+                after_ngram_dedup=len(fused),
+                after_dedup=len(fused),
+                after_doc_limit=len(fused),
+                clusters_merged=0,
+            )
+            return replace(
+                context,
+                candidates=fused[:top_n],
+                metadata={**context.metadata, "compression_stats": stats},
             )
 
     monkeypatch.setattr(
-        "searchkernel.search.orchestrator.SearchPipeline",
+        "searchkernel.search.orchestrator.DedupRerankStage",
         lambda config: FakePipeline(config.reranking_enabled),
     )
 
