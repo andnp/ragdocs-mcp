@@ -1,0 +1,24 @@
+{
+  "entries": [
+    {
+      "query": "how to set up authentication",
+      "relevant_ids": ["doc1", "doc5"]
+    },
+    {
+      "query": "performance optimization tips",
+      "relevant_ids": ["doc3", "doc7", "doc9"]
+    },
+    {
+      "query": "error handling best practices",
+      "relevant_ids": ["doc2", "doc4"]
+    },
+    {
+      "query": "api endpoint reference",
+      "relevant_ids": ["doc6", "doc8"]
+    },
+    {
+      "query": "database configuration",
+      "relevant_ids": ["doc10"]
+    }
+  ]
+}
