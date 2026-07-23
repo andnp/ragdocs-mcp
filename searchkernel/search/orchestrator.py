@@ -120,6 +120,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         excluded_files: set[str] | None,
         project_filter: list[str] | None,
         project_context: str | None,
+        source_filter: list[str] | None,
     ) -> QueryResultCacheKey | None:
         if self._index_manager is None:
             return None
@@ -141,6 +142,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             project_filter=tuple(sorted(normalized_project_filter or set())),
             project_context=effective_project_context,
             index_state_version=self._index_manager.get_state_version(),
+            source_filter=tuple(sorted(source_filter or ())),
         )
 
     def _should_skip_expensive_factual_enrichments(
@@ -216,6 +218,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         excluded_files: set[str] | None = None,
         project_filter: list[str] | None = None,
         project_context: str | None = None,
+        source_filter: list[str] | None = None,
     ) -> tuple[list[ChunkResult], CompressionStats, SearchStrategyStats]:
         if not query_text or not query_text.strip():
             return (
@@ -240,6 +243,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             excluded_files=excluded_files,
             project_filter=project_filter,
             project_context=project_context,
+            source_filter=source_filter,
         )
         if cache_key is not None:
             cached_result = self._result_cache.get(cache_key)
@@ -404,6 +408,11 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             fused,
             query_context=query_context,
             project_filter=project_filter,
+        )
+        fused = self._apply_source_filter(
+            fused,
+            query_context=query_context,
+            source_filter=source_filter,
         )
 
         pipeline = self._resolve_pipeline(
@@ -704,6 +713,33 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 str(project_id) if project_id is not None else None,
                 normalized_filter,
             ):
+                filtered.append((chunk_id, score))
+
+        return filtered
+
+    def _apply_source_filter(
+        self,
+        fused: list[tuple[str, float]],
+        *,
+        query_context: QueryExecutionContext | None = None,
+        source_filter: list[str] | None = None,
+    ) -> list[tuple[str, float]]:
+        if not source_filter:
+            return fused
+
+        allowed_kinds = set(source_filter)
+        filtered: list[tuple[str, float]] = []
+        for chunk_id, score in fused:
+            chunk_data = (
+                query_context.get_vector_chunk(chunk_id)
+                if query_context is not None
+                else self._vector.get_chunk_by_id(chunk_id)
+            )
+            metadata = chunk_data.get("metadata", {}) if chunk_data else {}
+            source_kind = (
+                metadata.get("source_kind") if isinstance(metadata, dict) else None
+            )
+            if source_kind in allowed_kinds:
                 filtered.append((chunk_id, score))
 
         return filtered

@@ -20,6 +20,7 @@ class QueryResultCacheKey:
     project_filter: tuple[str, ...]
     project_context: str | None
     index_state_version: int
+    source_filter: tuple[str, ...] = ()
 
 
 ValueT = TypeVar("ValueT")
