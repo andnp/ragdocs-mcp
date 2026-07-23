@@ -110,6 +110,7 @@ class ChunkResult:
     parent_chunk_id: str | None = None
     parent_content: str | None = None
     provenance: SearchResultProvenance | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self):
         result = {

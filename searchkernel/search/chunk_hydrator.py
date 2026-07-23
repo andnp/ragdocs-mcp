@@ -74,6 +74,7 @@ class ChunkHydrator:
             content=hydrated.content,
             parent_chunk_id=(str(parent_chunk_id) if parent_chunk_id is not None else None),
             parent_content=(str(parent_content) if parent_content is not None else None),
+            metadata=metadata if isinstance(metadata, dict) else {},
         )
 
     def get_content(
