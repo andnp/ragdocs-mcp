@@ -36,6 +36,52 @@ class DaemonRequestRouterDependencies:
     build_queue_status_payload: BuildQueueStatusPayload
 
 
+def _filter_git_history_results(
+    results: list,
+    files_glob: str | None,
+    after_timestamp: int | None,
+    before_timestamp: int | None,
+) -> list:
+    """Post-filter git_commit ChunkResults by files_glob/timestamp bounds.
+
+    SearchOrchestrator.query's source_filter narrows by source_kind only; the
+    files_glob/after/before filters git history search has always exposed are
+    applied here against the same commit metadata GitContentSource attaches.
+    """
+    if not (files_glob or after_timestamp is not None or before_timestamp is not None):
+        return results
+
+    filtered = []
+    for result in results:
+        metadata = result.metadata
+        timestamp = metadata.get("timestamp")
+        if after_timestamp is not None and (timestamp is None or timestamp <= after_timestamp):
+            continue
+        if before_timestamp is not None and (timestamp is None or timestamp >= before_timestamp):
+            continue
+        if files_glob:
+            files_changed = metadata.get("files_changed") or []
+            if not any(Path(f).match(files_glob) for f in files_changed):
+                continue
+        filtered.append(result)
+    return filtered
+
+
+def _git_history_result_to_dict(result) -> dict[str, object]:
+    metadata = result.metadata
+    return {
+        "hash": result.doc_id.removeprefix("git:"),
+        "title": metadata.get("title", ""),
+        "author": metadata.get("author", "Unknown"),
+        "committer": metadata.get("committer", "Unknown"),
+        "timestamp": metadata.get("timestamp"),
+        "message": result.content,
+        "files_changed": metadata.get("files_changed") or [],
+        "score": result.score,
+        "project_id": result.project_id,
+    }
+
+
 def _build_initializing_search_payload(
     ctx,
     coordinator,
@@ -249,46 +295,43 @@ def build_daemon_request_handler(
 
             ctx.schedule_freshness_refresh()
 
-            from searchkernel.git.commit_search import search_git_history
-
-            response = search_git_history(
-                commit_indexer=ctx.commit_indexer,
-                query=str(payload.get("query", "")),
-                top_n=int(payload.get("top_n", 5)),
-                files_glob=str(payload["files_glob"]) if payload.get("files_glob") else None,
-                after_timestamp=int(payload["after_timestamp"]) if payload.get("after_timestamp") is not None else None,
-                before_timestamp=int(payload["before_timestamp"]) if payload.get("before_timestamp") is not None else None,
-                project_filter=(
-                    [str(item) for item in payload.get("project_filter", []) if isinstance(item, str)]
-                    if isinstance(payload.get("project_filter", []), list)
-                    else []
-                ),
-                project_context=(
-                    str(payload.get("project_context"))
-                    if payload.get("project_context") is not None
-                    else None
-                ),
-                config=ctx.config,
+            query_text = str(payload.get("query", ""))
+            top_n = int(payload.get("top_n", 5))
+            project_filter = (
+                [str(item) for item in payload.get("project_filter", []) if isinstance(item, str)]
+                if isinstance(payload.get("project_filter", []), list)
+                else []
             )
+            project_context = (
+                str(payload.get("project_context"))
+                if payload.get("project_context") is not None
+                else None
+            )
+            after_timestamp = (
+                int(payload["after_timestamp"]) if payload.get("after_timestamp") is not None else None
+            )
+            before_timestamp = (
+                int(payload["before_timestamp"]) if payload.get("before_timestamp") is not None else None
+            )
+            files_glob = str(payload["files_glob"]) if payload.get("files_glob") else None
+
+            overfetch_multiplier = 10 if (files_glob or after_timestamp or before_timestamp) else 4
+            results, _, _ = await ctx.orchestrator.query(
+                query_text,
+                top_k=max(20, top_n * overfetch_multiplier),
+                top_n=top_n * overfetch_multiplier,
+                project_filter=project_filter,
+                project_context=project_context,
+                source_filter=["git_commit"],
+            )
+            commits = _filter_git_history_results(
+                results, files_glob, after_timestamp, before_timestamp
+            )[:top_n]
+
             return {
-                "query": response.query,
-                "total_commits_indexed": response.total_commits_indexed,
-                "results": [
-                    {
-                        "hash": result.hash,
-                        "title": result.title,
-                        "author": result.author,
-                        "committer": result.committer,
-                        "timestamp": result.timestamp,
-                        "message": result.message,
-                        "files_changed": result.files_changed,
-                        "delta_truncated": result.delta_truncated,
-                        "score": result.score,
-                        "repo_path": result.repo_path,
-                        "project_id": result.project_id,
-                    }
-                    for result in response.results
-                ],
+                "query": query_text,
+                "total_commits_indexed": ctx.commit_indexer.get_total_commits(),
+                "results": [_git_history_result_to_dict(result) for result in commits],
             }
         return {"status": "error", "error": "unknown_request_path", "path": path}
 

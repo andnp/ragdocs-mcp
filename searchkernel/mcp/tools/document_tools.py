@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 from mcp.types import Tool, TextContent
 
@@ -387,91 +387,113 @@ async def handle_search_git_history(
             )
         ]
 
-    from searchkernel.git.commit_search import search_git_history
-
-    response = await asyncio.to_thread(
-        search_git_history,
-        ctx.commit_indexer,
+    # Over-fetch: a downstream files_glob/timestamp filter narrows the pool,
+    # and each commit may span multiple chunks under source_filter=["git_commit"].
+    overfetch_multiplier = 10 if (files_glob or after_timestamp or before_timestamp) else 4
+    results, _, _ = await ctx.orchestrator.query(
         query,
-        top_n,
-        files_glob,
-        after_timestamp,
-        before_timestamp,
-        project_filter,
-        project_context,
-        ctx.config,
+        top_k=max(20, top_n * overfetch_multiplier),
+        top_n=top_n * overfetch_multiplier,
+        project_filter=project_filter,
+        project_context=project_context,
+        source_filter=["git_commit"],
     )
+
+    commits = _filter_commit_results(results, files_glob, after_timestamp, before_timestamp)[
+        :top_n
+    ]
 
     output_lines = [
         "# Git History Search Results",
         "",
-        f"**Query:** {response.query}",
-        f"**Total Commits Indexed:** {response.total_commits_indexed}",
-        f"**Results Returned:** {len(response.results)}",
+        f"**Query:** {query}",
+        f"**Total Commits Indexed:** {ctx.commit_indexer.get_total_commits()}",
+        f"**Results Returned:** {len(commits)}",
         "",
     ]
 
-    for i, commit in enumerate(response.results, 1):
-        commit_date = datetime.fromtimestamp(commit.timestamp, timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S UTC"
+    for i, result in enumerate(commits, 1):
+        metadata = result.metadata
+        commit_hash = result.doc_id.removeprefix("git:")
+        timestamp = metadata.get("timestamp")
+        commit_date = (
+            datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            if isinstance(timestamp, (int, float))
+            else "unknown"
         )
+        files_changed = metadata.get("files_changed") or []
 
         output_lines.extend(
             [
-                f"## {i}. {commit.title}",
+                f"## {i}. {metadata.get('title', '(no commit message)')}",
                 "",
-                f"**Commit:** `{commit.hash[:8]}`",
-                f"**Author:** {commit.author}",
+                f"**Commit:** `{commit_hash[:8]}`",
+                f"**Author:** {metadata.get('author', 'Unknown')}",
                 f"**Date:** {commit_date}",
-                f"**Score:** {commit.score:.3f}",
+                f"**Score:** {result.score:.3f}",
                 "",
             ]
         )
 
-        if commit.message:
+        if result.content:
             output_lines.extend(
                 [
                     "### Message",
                     "",
-                    commit.message,
+                    result.content,
                     "",
                 ]
             )
 
-        if commit.files_changed:
+        if files_changed:
             output_lines.extend(
                 [
-                    f"### Files Changed ({len(commit.files_changed)})",
+                    f"### Files Changed ({len(files_changed)})",
                     "",
                 ]
             )
 
-            for file_path in commit.files_changed[:10]:
+            for file_path in files_changed[:10]:
                 output_lines.append(f"- `{file_path}`")
 
-            if len(commit.files_changed) > 10:
-                output_lines.append(f"- ... and {len(commit.files_changed) - 10} more")
+            if len(files_changed) > 10:
+                output_lines.append(f"- ... and {len(files_changed) - 10} more")
 
             output_lines.append("")
-
-        if commit.delta_truncated:
-            delta_display = commit.delta_truncated[:1000]
-            if len(commit.delta_truncated) > 1000:
-                delta_display += "\n... (truncated for display)"
-
-            output_lines.extend(
-                [
-                    "### Delta (truncated)",
-                    "",
-                    "```diff",
-                    delta_display,
-                    "```",
-                    "",
-                ]
-            )
 
         output_lines.extend(["---", ""])
 
     return [TextContent(type="text", text="\n".join(output_lines))]
+
+
+def _filter_commit_results(
+    results: list,
+    files_glob: str | None,
+    after_timestamp: int | None,
+    before_timestamp: int | None,
+) -> list:
+    """Post-filter git_commit ChunkResults by files_glob/timestamp bounds.
+
+    SearchOrchestrator.query's source_filter narrows by source_kind only; the
+    files_glob/after/before filters git history search has always exposed are
+    applied here against the same commit metadata GitContentSource attaches.
+    """
+    if not (files_glob or after_timestamp is not None or before_timestamp is not None):
+        return results
+
+    filtered = []
+    for result in results:
+        metadata = result.metadata
+        timestamp = metadata.get("timestamp")
+        if after_timestamp is not None and (timestamp is None or timestamp <= after_timestamp):
+            continue
+        if before_timestamp is not None and (timestamp is None or timestamp >= before_timestamp):
+            continue
+        if files_glob:
+            files_changed = metadata.get("files_changed") or []
+            if not any(Path(f).match(files_glob) for f in files_changed):
+                continue
+        filtered.append(result)
+    return filtered
 
 
