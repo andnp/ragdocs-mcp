@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+from searchkernel.app.runtime import configure_runtime_threads
 from searchkernel.context import ApplicationContext
 from searchkernel.indexing.manifest import load_manifest
 from searchkernel.search.pipeline import SearchPipelineConfig
@@ -47,6 +48,7 @@ class StatusResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_runtime_threads()
     ctx = ApplicationContext.create(
         project_override=None,
         enable_watcher=True,

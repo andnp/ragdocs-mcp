@@ -143,9 +143,6 @@ class ApplicationContext:
         config.indexing.index_path = str(index_path)
         config.indexing.documents_path = documents_path
         config.detected_project = None if global_runtime else detected_project
-        os.environ["OMP_NUM_THREADS"] = str(config.indexing.torch_num_threads)
-        os.environ["MKL_NUM_THREADS"] = str(config.indexing.torch_num_threads)
-        os.environ["TORCH_NUM_THREADS"] = str(config.indexing.torch_num_threads)
 
         embedding_model_name = config.llm.resolved_embedding_model
 

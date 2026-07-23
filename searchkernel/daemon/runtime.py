@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from searchkernel.app.runtime import configure_runtime_threads
 from searchkernel.context import ApplicationContext
 from searchkernel.coordination.queue import get_huey
 from searchkernel.daemon import RuntimePaths, read_daemon_metadata
@@ -37,6 +38,7 @@ def create_daemon_runtime(
     build_index_stats_payload: BuildIndexStatsPayload,
     build_queue_status_payload: BuildQueueStatusPayload,
 ) -> DaemonRuntime:
+    configure_runtime_threads()
     ctx = ApplicationContext.create(
         enable_watcher=False,
         lazy_embeddings=True,

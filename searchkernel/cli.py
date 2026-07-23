@@ -23,6 +23,7 @@ import uvicorn
 from rich.console import Console
 from rich.table import Table
 
+from searchkernel.app.runtime import configure_runtime_threads
 from searchkernel.config import ensure_runtime_project_registered, load_config
 from searchkernel.daemon.queue_status import get_queue_stats
 from searchkernel.daemon import DaemonMetadata, RuntimePaths
@@ -32,7 +33,6 @@ from searchkernel.daemon.health import (
 from searchkernel.daemon.client import (
     call_with_supported_kwargs,
     raise_daemon_request_error,
-    request_daemon_json,
     request_daemon_json_with_dependencies,
 )
 from searchkernel.daemon.rebuild_commands import run_rebuild_command
@@ -80,11 +80,13 @@ _GLOBAL_DAEMON_PROJECT_OPTION_HELP = (
 
 def _create_query_context(project: str | None) -> ApplicationContext:
     logging.getLogger().setLevel(logging.WARNING)
-    return ApplicationContext.create(
+    configure_runtime_threads()
+    ctx = ApplicationContext.create(
         project_override=project,
         enable_watcher=False,
         lazy_embeddings=False,
     )
+    return ctx
 
 
 def _ignore_daemon_startup_project_option(project: str | None) -> None:
@@ -159,6 +161,7 @@ async def _run_worker_forever_async(
         worker_loop.call_soon_threadsafe(_schedule)
         return result.result(timeout=5.0)
 
+    configure_runtime_threads()
     ctx = ApplicationContext.create(
         project_override=project,
         enable_watcher=True,
