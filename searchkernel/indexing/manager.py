@@ -10,6 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from searchkernel.chunking.factory import get_chunker
 from searchkernel.config import Config, resolve_project_id_for_path
 from searchkernel.coordination import IndexLock
+from searchkernel.domain import Record
 from searchkernel.indexing.discovery import get_parser_suffixes
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.hash_store import ChunkHashStore
@@ -17,7 +18,7 @@ from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.indexing.implicit_graph import ImplicitGraphBuilder
 from searchkernel.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexManifest, load_manifest, save_manifest
-from searchkernel.models import Chunk
+from searchkernel.models import Chunk, Document
 from searchkernel.parsers.dispatcher import dispatch_parser
 from searchkernel.search.edge_types import infer_edge_type
 from searchkernel.search.path_utils import (
@@ -657,6 +658,45 @@ class IndexManager:
                 f for f in self._failed_files if f.path != file_path
             ] + [failed]
             raise
+
+    def index_record(self, record: Record) -> None:
+        """Ingest a source-agnostic Record (e.g. a git commit) into the live indices.
+
+        Unlike index_document, this chunks in-memory content (record.body)
+        rather than reading a file from disk. Every chunk is tagged with
+        source_kind/source_id metadata so SearchOrchestrator.query's
+        source_filter can scope a query to this source.
+        """
+        document = Document(
+            id=record.source_id,
+            content=record.body,
+            metadata={**record.metadata, "title": record.title},
+            links=[],
+            tags=[],
+            file_path=record.uri or "",
+            modified_time=record.updated_at,
+        )
+
+        chunks = self._chunker.chunk_document(document)
+        for chunk in chunks:
+            chunk.metadata = {
+                **chunk.metadata,
+                "source_kind": record.source_kind,
+                "source_id": record.source_id,
+            }
+
+        changed_chunks, _unchanged_chunk_ids = self._detect_changed_chunks(chunks)
+        if not changed_chunks and document.id in self.vector.get_document_ids():
+            logger.debug("No changes in record %s, skipping re-index", record.source_id)
+            return
+
+        self._full_reindex_document(document.id, chunks)
+
+        graph_metadata = {**document.metadata, "source_kind": record.source_kind}
+        self.graph.add_node(document.id, graph_metadata)
+
+        self._mark_derived_graph_state_dirty()
+        self._bump_state_version()
 
     def remove_document(self, doc_id: str):
         errors: list[tuple[str, Exception]] = []

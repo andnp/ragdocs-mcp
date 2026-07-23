@@ -1150,6 +1150,28 @@ class ApplicationContext:
 
         logger.info(f"Initial git commit indexing complete: {total_indexed} commits")
 
+        self._ingest_git_records_into_kernel_index(repos)
+
+    def _ingest_git_records_into_kernel_index(self, repos: list[Path]) -> None:
+        """Additively mirror discovered commits into the live IndexManager as Records.
+
+        Runs alongside the legacy CommitIndexer flow above so git commits also
+        land in the shared vector/keyword/graph store and become discoverable
+        via SearchOrchestrator.query(source_filter=["git_commit"]).
+        """
+        from searchkernel.adapters.sources.git import GitContentSource
+        from searchkernel.indexing.git_ingestion import ingest_git_source
+
+        for repo_path in repos:
+            try:
+                source = GitContentSource(repo_path)
+                ingest_git_source(self.index_manager, source)
+            except Exception as e:
+                logger.error(
+                    f"Failed to ingest git records for {repo_path} into kernel index: {e}",
+                    exc_info=True,
+                )
+
     async def _index_git_commits_initial(self) -> None:
         """Index all commits in discovered repositories (async wrapper)."""
         await asyncio.to_thread(self._index_git_commits_initial_sync)
