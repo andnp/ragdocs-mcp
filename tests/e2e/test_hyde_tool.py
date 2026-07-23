@@ -142,7 +142,7 @@ def _create_mcp_server(config: Config, docs_dir) -> tuple[MCPServer, HandlerCont
 
     mock_ctx = MockContext()
     cast_ctx = cast(ApplicationContext, mock_ctx)
-    server = MCPServer(ctx=cast_ctx)
+    server = MCPServer()
 
     # Create HandlerContext for direct handler testing
     mock_coordinator = MagicMock()
