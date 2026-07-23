@@ -1,6 +1,6 @@
 # Plan: Promote ragdocs In-Place into the Search Kernel — Implementation Tranches
 
-**Status:** Proposed — 2026-07-22
+**Status:** In progress — 2026-07-23 (see §Implementation progress)
 **Governing design:** `devkit/specs/07-unified-search-architecture.md` (read it for *why*; this doc is *how*)
 **Repo scope:** `mcp-markdown-ragdocs` (becomes the `searchkernel` library + daemon)
 **Related:** `docs/plans/00-ragdocs-v2-refactor-overview.md`, `.../09-global-daemon-multi-corpus-runtime-refactor.md`
@@ -50,6 +50,41 @@ W1 (packaging + ports + Record + pgvector store + composition root)
 ```
 Parallelizable after W1: **WP, WE, W3, W4a** can run concurrently (mostly disjoint files). W2 is
 best done right after W1 as the port proof. W4 and WM are the join points.
+
+---
+
+## Implementation progress
+
+Snapshot **2026-07-23**. Commits are on `mcp-markdown-ragdocs` `main` (Andy reviews commits, so SHAs
+are listed for traceability). Legend: ✅ complete · ◐ partial · ☐ not started · ⛔ blocked on a
+dependency.
+
+| WS | State | Detail |
+|----|-------|--------|
+| **W1** — packaging, ports, Record, pgvector, composition root | ✅ | rename `2ef01c1`; domain types + `Record` `ffa46f8`; ports `981165b`; inward-dependency test + import-linter `c5a4db2`; pgvector store (per-`(model,dim)` typed `vector(dim)` tables + HNSW cosine) `e02627c`; store-backend config `07aafb1`; pgvector recall/index tests `208cc99`; runtime-thread extraction out of library path `e212280`; composition root `dd54bfa`; composition test `cbd1687`. Real Postgres 17.9 / pgvector 0.8.2 substrate (docker) verified via `EXPLAIN ANALYZE` HNSW index scan. |
+| **W2** — git as first `ContentSource` | ◐ | **W2a** (additive port proof) done: `GitContentSource` adapter `500a812`, tests `ae7e0a1` — git commits map to `Record`s through the port with **zero core edits**. **W2b deferred** (delete duplicated `git/commit_indexer.py` + `git/commit_search.py`, add `source_filter` to `SearchOrchestrator`, reroute the `search_git_history` MCP tool) — high blast radius, wants a human in the loop. |
+| **WP** — caching, ANN, batching | ✅ | Additive net-new pieces: in-memory LRU CacheStore `480109f` + sqlite CacheStore `95dc8f1` (+ tests `4f9a9da`); epoch-aware `@cached` decorator `dc5ca70` (+ tests `48ef4bc`); per-source-timeout fan-out helper `7a6f79c` (+ tests `c3341bd`) — the fan-out primitive W4 federation will build on. Embedding-skip already existed (hash-gated in `indexing/manager.py`); locked in by tests `3d851f8`. ANN/batching already satisfied by the W1 pgvector HNSW store. |
+| **WE** — eval + observability | ✅ | metrics (recall/nDCG/MRR/AP) `e1df576`; golden-set schema + seed `338230b`; `QueryTrace`/spans `14ca19a`; eval + a/b runner with p50/p95/p99 `9c348d5`; 64 eval tests `06854df`. |
+| **W3** — embedding + LLM provider registries | ☐ | Not started. Needs Ollama (Qwen3-Embedding-0.6B default + Qwen3-Reranker) and the LLM CLIs configured — **not autonomously verifiable**; wants Andy present. |
+| **W4a** — query + ingestion toolkit extraction | ☐ | Not started. Largest core refactor (~30 search modules → composable stages); highest risk — do with a human in the loop. |
+| **W4** — federation | ⛔ | Blocked on W3 + W4a. Open concern: async DB driver (current pgvector adapter is sync psycopg2); the WP fan-out helper is ready. |
+| **WM** — `reindex --model` migration | ⛔ | Blocked on W3. |
+
+**Open design items surfaced during implementation:**
+- `VectorStore.search()` has **no `model_name` param** — it relies on instance "active model" state,
+  which is not concurrency-safe. The composition root / W4a must resolve this (thread `(model,dim)`
+  through the call, not instance state) before federation runs multi-model queries.
+- Federation fan-out (W4) needs an **async DB driver**; today's pgvector adapter is sync.
+- Pre-existing pyrefly error unrelated to these workstreams:
+  `tests/e2e/test_hyde_tool.py:145` passes `ctx=` to `MCPServer.__init__`, which no longer accepts it.
+
+**Verification methodology used throughout:** verify-don't-trust — inspect code / `EXPLAIN` output
+rather than trust agent self-reports; diff failing tests against the parent commit to separate
+regressions from pre-existing failures; reset + re-commit for clean atomic history. This caught real
+defects agents had self-reported as successes (pgvector brute-force punt, composition-root ordering
+regression, rename `src.config` stragglers, and a WP `adapters/cache/__init__.py` that declared
+`__all__` without importing the names). **Do not run the full pytest suite** — it filled `/tmp` with
+~16G of fixtures; use `pytest --co` for collection + run targeted files.
 
 ---
 
