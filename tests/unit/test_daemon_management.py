@@ -192,6 +192,10 @@ def test_start_daemon_restarts_running_daemon_after_auto_registration_change(
         "searchkernel.daemon.management._terminate_extra_runtime_daemon_processes",
         lambda runtime_paths, *, keep_pid=None: [],
     )
+    monkeypatch.setattr(
+        "searchkernel.daemon.management._spawn_daemon_process",
+        lambda runtime_paths: _FakeProcess(222, [None]),
+    )
 
     result = start_daemon(timeout_seconds=0.5, paths=paths)
 
@@ -223,6 +227,7 @@ def test_spawn_daemon_process_uses_project_agnostic_command(
     _spawn_daemon_process(_paths(tmp_path))
 
     command = observed["command"]
+    assert isinstance(command, list)
     assert command[:4] == ["/repo/.venv/bin/python", "-m", "searchkernel.cli", "daemon-internal-run"]
     assert "--project" not in command
     assert command[4:] == ["--runtime-root", str(tmp_path)]
@@ -439,6 +444,14 @@ def test_start_daemon_waits_for_responsive_existing_ready_daemon(
     monkeypatch.setattr(
         "searchkernel.daemon.management.inspect_daemon",
         lambda paths=None: next(inspections),
+    )
+    monkeypatch.setattr(
+        "searchkernel.daemon.management._metadata_has_exceeded_grace_period",
+        lambda metadata: False,
+    )
+    monkeypatch.setattr(
+        "searchkernel.daemon.management._spawn_daemon_process",
+        lambda runtime_paths: pytest.fail("responsive daemon must not be replaced"),
     )
     monkeypatch.setattr("searchkernel.daemon.management.time.sleep", lambda _: None)
 
