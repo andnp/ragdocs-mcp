@@ -20,10 +20,12 @@ from searchkernel.search.classifier import QueryType, classify_query, get_adapti
 from searchkernel.search.filters import matches_project_filter, normalize_project_filter
 from searchkernel.search.graph_expansion import build_graph_chunk_candidates
 from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
+from searchkernel.pipeline.stage import SearchContext
+from searchkernel.pipeline.stages.fusion import FusionStage
 from searchkernel.search.pipeline import SearchPipeline, SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
 from searchkernel.search.result_cache import QueryResultCache, QueryResultCacheKey
-from searchkernel.search.score_pipeline import ScorePipeline, ScorePipelineConfig
+from searchkernel.search.score_pipeline import ScorePipelineConfig
 from searchkernel.search.tag_expansion import expand_query_with_tags
 
 logger = logging.getLogger(__name__)
@@ -542,8 +544,9 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         weights: dict[str, float],
     ) -> list[tuple[str, float]]:
         config = self._build_score_pipeline_config(weights)
-        pipeline = ScorePipeline(config)
-        return pipeline.run(strategy_results)
+        stage = FusionStage(config)
+        context = SearchContext(query="", strategy_results=strategy_results)
+        return stage.run(context).candidates
 
     def _get_chunk_embedding(self, chunk_id: str) -> list[float] | None:
         return self._vector.get_embedding_for_chunk(chunk_id)
