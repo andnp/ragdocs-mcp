@@ -21,6 +21,7 @@ Use ephemeral fixtures (tmp_path) when:
 
 # MUST be set before any HuggingFace/sentence-transformers imports to suppress
 # progress bars that would pollute JSON output in E2E tests.
+import contextlib
 import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -34,6 +35,8 @@ import pytest
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.daemon.management import inspect_daemon, stop_daemon
+from searchkernel.daemon.paths import RuntimePaths
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
@@ -42,7 +45,7 @@ from searchkernel.storage.db import DatabaseManager
 
 
 @pytest.fixture(autouse=True)
-def isolate_xdg_data_home(tmp_path_factory, monkeypatch):
+def isolate_xdg_data_home(tmp_path_factory):
     """Isolate application data while preserving HuggingFace model cache.
 
     Creates temp directories for XDG_DATA_HOME and HOME to isolate test data,
@@ -60,11 +63,29 @@ def isolate_xdg_data_home(tmp_path_factory, monkeypatch):
     data_home = tmp_path_factory.mktemp("xdg-data-home")
     home_dir = tmp_path_factory.mktemp("home")
 
-    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
-    monkeypatch.setenv("HOME", str(home_dir))
+    environment = pytest.MonkeyPatch()
+    environment.setenv("XDG_DATA_HOME", str(data_home))
+    environment.setenv("HOME", str(home_dir))
 
     # Restore HuggingFace cache to original location (shared across workers)
-    monkeypatch.setenv("HF_HOME", original_hf_home)
+    environment.setenv("HF_HOME", original_hf_home)
+
+    try:
+        yield
+    finally:
+        # Production daemons intentionally detach. Stop any daemon created
+        # inside this test's isolated HOME before restoring the environment,
+        # or user systemd will adopt both the daemon and its worker.
+        runtime_paths = RuntimePaths.resolve()
+        if runtime_paths.root.exists():
+            with contextlib.suppress(Exception):
+                metadata = inspect_daemon(runtime_paths).metadata
+                # In-process lifecycle tests register the runner's own PID as
+                # the daemon; stopping that would signal (and kill) the current
+                # pytest-xdist worker. Only stop genuinely detached daemons.
+                if metadata is None or metadata.pid != os.getpid():
+                    stop_daemon(paths=runtime_paths)
+        environment.undo()
 
 
 # ============================================================================

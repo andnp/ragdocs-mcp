@@ -74,6 +74,8 @@ def request_daemon_json_with_dependencies(
             payload,
             timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
         )
+        if response is None:
+            return None
         if not should_retry_daemon_request(response) or not auto_start:
             if response.get("status") == "error" and not allow_error:
                 return None
@@ -101,6 +103,11 @@ def request_daemon_json(
         project_override=project_override,
         auto_start=auto_start,
         allow_error=allow_error,
+        runtime_paths_resolver=RuntimePaths.resolve,
+        start_daemon_fn=start_daemon,
+        wait_for_daemon_ready_fn=wait_for_daemon_ready,
+        inspect_daemon_fn=inspect_daemon,
+        request_daemon_socket_fn=request_daemon_socket,
     )
 
 
