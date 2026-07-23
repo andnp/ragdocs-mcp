@@ -141,6 +141,16 @@ class StoreConfig:
 
 
 @dataclass
+class EmbeddingConfig:
+    # Selects a pluggable EmbeddingProvider adapter. INERT for now: nothing
+    # consumes this yet; the live embedding path (indices/vector.py, bge-small)
+    # is unchanged. Wiring into the live path is a later W4a concern.
+    provider: str = "hf"
+    model_name: str = "Qwen/Qwen3-Embedding-0.6B"
+    truncate_dim: int | None = None
+
+
+@dataclass
 class Config:
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
@@ -148,6 +158,7 @@ class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     store: StoreConfig = field(default_factory=StoreConfig)
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     projects: list[ProjectConfig] = field(default_factory=list)
     detected_project: str | None = None
     config_warnings: list[str] = field(default_factory=list)
@@ -437,6 +448,10 @@ def load_config():
     if not store.pg_dsn:
         store.pg_dsn = os.environ.get("SEARCHKERNEL_PG_DSN", "")
 
+    embedding = _load_dataclass_from_dict(
+        EmbeddingConfig, config_data.get("embedding", {})
+    )
+
     projects_data = config_data.get("projects", [])
     projects = []
     if isinstance(projects_data, list) and projects_data:
@@ -454,6 +469,7 @@ def load_config():
         llm=llm,
         chunking=chunking,
         store=store,
+        embedding=embedding,
         projects=projects,
         config_warnings=config_warnings,
     )
