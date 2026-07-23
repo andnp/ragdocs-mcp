@@ -135,12 +135,19 @@ class GitIndexingConfig:
 
 
 @dataclass
+class StoreConfig:
+    backend: str = "faiss+sqlite"  # "pgvector" or "faiss+sqlite"
+    pg_dsn: str = ""  # PostgreSQL DSN (read from SEARCHKERNEL_PG_DSN env if not set)
+
+
+@dataclass
 class Config:
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
+    store: StoreConfig = field(default_factory=StoreConfig)
     projects: list[ProjectConfig] = field(default_factory=list)
     detected_project: str | None = None
     config_warnings: list[str] = field(default_factory=list)
@@ -424,6 +431,12 @@ def load_config():
     )
     chunking = _load_dataclass_from_dict(ChunkingConfig, chunking_data)
 
+    # Load store config; pg_dsn defaults to env var if not in config
+    store_data = config_data.get("store", {})
+    store = _load_dataclass_from_dict(StoreConfig, store_data)
+    if not store.pg_dsn:
+        store.pg_dsn = os.environ.get("SEARCHKERNEL_PG_DSN", "")
+
     projects_data = config_data.get("projects", [])
     projects = []
     if isinstance(projects_data, list) and projects_data:
@@ -440,6 +453,7 @@ def load_config():
         search=search,
         llm=llm,
         chunking=chunking,
+        store=store,
         projects=projects,
         config_warnings=config_warnings,
     )
