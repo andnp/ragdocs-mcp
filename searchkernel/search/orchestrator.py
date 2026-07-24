@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from searchkernel.config import Config
@@ -20,12 +20,10 @@ from searchkernel.search.classifier import QueryType
 from searchkernel.search.filters import matches_project_filter, normalize_project_filter
 from searchkernel.search.graph_expansion import build_graph_chunk_candidates
 from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
+from searchkernel.pipeline.executor import PipelineExecutor
+from searchkernel.pipeline.registry import DEFAULT_QUERY_STAGE_REGISTRY, StageDeps
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
-from searchkernel.pipeline.stages.fusion import FusionStage
-from searchkernel.pipeline.stages.graph_expand import GraphExpandStage
-from searchkernel.pipeline.stages.retrieve import RetrieveStage
-from searchkernel.pipeline.stages.routing import RoutingStage
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
 from searchkernel.search.result_cache import QueryResultCache, QueryResultCacheKey
@@ -83,14 +81,22 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             max_entries=_RESULT_CACHE_MAX_ENTRIES
         )
         self._last_query_execution_stats: dict[str, int] | None = None
+        self._executor = PipelineExecutor(DEFAULT_QUERY_STAGE_REGISTRY)
 
     @property
     def documents_path(self) -> Path:
         return self._documents_path
 
+    def _build_dedup_rerank_stage(
+        self, config: SearchPipelineConfig
+    ) -> DedupRerankStage:
+        return DEFAULT_QUERY_STAGE_REGISTRY["dedup_rerank"](asdict(config), StageDeps())
+
     def _get_pipeline(self) -> DedupRerankStage:
         if self._pipeline is None:
-            self._pipeline = DedupRerankStage(self._build_pipeline_config())
+            self._pipeline = self._build_dedup_rerank_stage(
+                self._build_pipeline_config()
+            )
         return self._pipeline
 
     def _build_pipeline_config(self) -> SearchPipelineConfig:
@@ -114,7 +120,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         effective_config = pipeline_config or self._build_pipeline_config()
         if disable_reranking and effective_config.reranking_enabled:
             effective_config = replace(effective_config, reranking_enabled=False)
-        return DedupRerankStage(effective_config)
+        return self._build_dedup_rerank_stage(effective_config)
 
     def _get_result_cache_key(
         self,
@@ -266,7 +272,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         base_semantic = self._config.search.semantic_weight
         base_keyword = self._config.search.keyword_weight
         base_graph = 1.0
-        routing_context = self._route(
+        routing_context = await self._route(
             query_text, base_semantic, base_keyword, base_graph
         )
         query_type = routing_context.metadata["query_type"]
@@ -306,7 +312,9 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             all_doc_ids.add(doc_id)
             chunk_id_to_doc_id[chunk_id] = doc_id
 
-        graph_seed_scores = self._build_graph_seed_scores(vector_results, keyword_results)
+        graph_seed_scores = self._build_graph_seed_scores(
+            vector_results, keyword_results
+        )
 
         # Tag-based query expansion: Find related documents via tag graph traversal
         tag_expansion_count = 0
@@ -335,7 +343,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 applied_tag_expansion_results.append(result)
                 tag_expansion_count += 1
 
-        graph_context = self._graph_expand(
+        graph_context = await self._graph_expand(
             graph_seed_scores,
             effective_stage_top_k,
             excluded_chunk_ids=set(chunk_id_to_doc_id),
@@ -371,7 +379,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             ]
         result_provenance = self._build_result_provenance(provenance_results)
 
-        fused = self._apply_score_pipeline(strategy_results, weights)
+        fused = await self._apply_score_pipeline(strategy_results, weights)
 
         fused = self._apply_community_boost(
             fused,
@@ -487,7 +495,9 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                             if source_provenance is not None:
                                 parent_provenance = source_provenance.clone()
                                 parent_provenance.parent_expanded_from = chunk_id
-                                result_provenance[parent_chunk_id_str] = parent_provenance
+                                result_provenance[parent_chunk_id_str] = (
+                                    parent_provenance
+                                )
                         expanded.append((parent_chunk_id_str, score))
                 else:
                     self._queue_reindex_for_chunks(
@@ -523,15 +533,17 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             strategy_weights=weights,
         )
 
-    def _apply_score_pipeline(
+    async def _apply_score_pipeline(
         self,
         strategy_results: dict[str, list[tuple[str, float]]],
         weights: dict[str, float],
     ) -> list[tuple[str, float]]:
         config = self._build_score_pipeline_config(weights)
-        stage = FusionStage(config)
         context = SearchContext(query="", strategy_results=strategy_results)
-        return stage.run(context).candidates
+        result = await self._executor.run_stage(
+            "fusion", {"strategy_weights": config.strategy_weights}, context
+        )
+        return result.candidates
 
     def _get_chunk_embedding(self, chunk_id: str) -> list[float] | None:
         return self._vector.get_embedding_for_chunk(chunk_id)
@@ -539,15 +551,16 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
     def _get_chunk_content(self, chunk_id: str) -> str | None:
         return self._chunk_hydrator.get_content(chunk_id)
 
-    def _route(
+    async def _route(
         self,
         query_text: str,
         base_semantic: float,
         base_keyword: float,
         base_graph: float,
     ) -> SearchContext:
-        stage = RoutingStage()
-        return stage.run(
+        return await self._executor.run_stage(
+            "routing",
+            {},
             SearchContext(
                 query=query_text,
                 metadata={
@@ -555,20 +568,23 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                     "base_keyword_weight": base_keyword,
                     "base_graph_weight": base_graph,
                 },
-            )
+            ),
         )
 
-    def _graph_expand(
+    async def _graph_expand(
         self,
         seed_scores: dict[str, float],
         top_k: int,
         *,
         excluded_chunk_ids: set[str] | None,
     ) -> SearchContext:
-        stage = GraphExpandStage(
-            self._get_ranked_graph_neighbors, self._build_graph_chunk_candidates
+        deps = StageDeps(
+            rank_neighbors=self._get_ranked_graph_neighbors,
+            build_chunk_candidates=self._build_graph_chunk_candidates,
         )
-        return stage.run(
+        return await self._executor.run_stage(
+            "graph_expand",
+            {},
             SearchContext(
                 query="",
                 metadata={
@@ -576,7 +592,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                     "top_k": top_k,
                     "excluded_chunk_ids": excluded_chunk_ids,
                 },
-            )
+            ),
+            deps,
         )
 
     def _build_graph_chunk_candidates(
@@ -599,8 +616,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         excluded_files: set[str] | None,
         docs_root: Path,
     ) -> SearchContext:
-        stage = RetrieveStage(self._search_vector, self._search_keyword)
-        return await stage.run(
+        deps = StageDeps(
+            search_vector=self._search_vector, search_keyword=self._search_keyword
+        )
+        return await self._executor.run_stage(
+            "retrieve",
+            {},
             SearchContext(
                 query=query_text,
                 metadata={
@@ -608,7 +629,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                     "excluded_files": excluded_files,
                     "docs_root": docs_root,
                 },
-            )
+            ),
+            deps,
         )
 
     async def _search_vector(
@@ -927,7 +949,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         weights: dict[str, float] = {"semantic": 1.0}
 
-        fused = self._apply_score_pipeline(strategy_results, weights)
+        fused = await self._apply_score_pipeline(strategy_results, weights)
         fused = self._apply_project_uplift(
             fused,
             query_context=query_context,

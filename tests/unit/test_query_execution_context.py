@@ -403,7 +403,7 @@ async def test_query_skips_tag_expansion_and_reranking_for_clear_factual_query(
             )
 
     monkeypatch.setattr(
-        "searchkernel.search.orchestrator.DedupRerankStage",
+        "searchkernel.pipeline.registry.DedupRerankStage",
         lambda config: FakePipeline(config.reranking_enabled),
     )
 
