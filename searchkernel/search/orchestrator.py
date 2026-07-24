@@ -749,32 +749,21 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[tuple[str, float]]:
         active_project = project_context or self._config.detected_project
-        if not active_project:
-            return fused
-
-        boosted: list[tuple[str, float]] = []
-        for chunk_id, score in fused:
-            chunk_data = (
-                query_context.get_vector_chunk(chunk_id)
-                if query_context is not None
-                else self._vector.get_chunk_by_id(chunk_id)
-            )
-            metadata = chunk_data.get("metadata", {}) if chunk_data else {}
-            project_id = (
-                metadata.get("project_id") if isinstance(metadata, dict) else None
-            )
-            if project_id == active_project:
-                if result_provenance is not None:
-                    provenance = result_provenance.setdefault(
-                        chunk_id,
-                        SearchResultProvenance(),
-                    )
-                    provenance.project_uplift = _ACTIVE_PROJECT_UPLIFT
-                boosted.append((chunk_id, score * _ACTIVE_PROJECT_UPLIFT))
-            else:
-                boosted.append((chunk_id, score))
-
-        return sorted(boosted, key=lambda x: x[1], reverse=True)
+        get_chunk = (
+            query_context.get_vector_chunk
+            if query_context is not None
+            else self._vector.get_chunk_by_id
+        )
+        stage = DEFAULT_QUERY_STAGE_REGISTRY["project_uplift"](
+            {"uplift": _ACTIVE_PROJECT_UPLIFT}, StageDeps(get_chunk=get_chunk)
+        )
+        metadata: dict[str, object] = {"active_project": active_project}
+        if result_provenance is not None:
+            metadata["result_provenance"] = result_provenance
+        context = stage.run(
+            SearchContext(query="", candidates=fused, metadata=metadata)
+        )
+        return context.candidates
 
     def _apply_project_filter(
         self,
