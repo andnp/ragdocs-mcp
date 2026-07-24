@@ -3,17 +3,19 @@ from searchkernel.pipeline.stage import AsyncSearchStage, SearchStage
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.fusion import FusionStage
 from searchkernel.pipeline.stages.graph_expand import GraphExpandStage
+from searchkernel.pipeline.stages.rag_fusion import RAGFusionStage
 from searchkernel.pipeline.stages.retrieve import RetrieveStage
 from searchkernel.pipeline.stages.routing import RoutingStage
 
 
-def test_registry_has_the_five_default_query_stages():
+def test_registry_has_the_five_default_query_stages_plus_rag_fusion():
     assert set(DEFAULT_QUERY_STAGE_REGISTRY) == {
         "routing",
         "retrieve",
         "graph_expand",
         "fusion",
         "dedup_rerank",
+        "rag_fusion",
     }
 
 
@@ -72,3 +74,23 @@ def test_dedup_rerank_factory_builds_config_from_dict():
     )
 
     assert isinstance(stage, DedupRerankStage)
+
+
+def test_rag_fusion_factory_injects_callables_and_config_from_deps():
+    async def generate_query_variants(_query, _num_variants):
+        return []
+
+    async def rag_fusion_retrieve(*_args):
+        return []
+
+    deps = StageDeps(
+        generate_query_variants=generate_query_variants,
+        rag_fusion_retrieve=rag_fusion_retrieve,
+    )
+    stage = DEFAULT_QUERY_STAGE_REGISTRY["rag_fusion"]({"enabled": True}, deps)
+
+    assert isinstance(stage, RAGFusionStage)
+    assert isinstance(stage, AsyncSearchStage)
+    assert stage._generate_query_variants is generate_query_variants
+    assert stage._retrieve is rag_fusion_retrieve
+    assert stage._config.enabled is True

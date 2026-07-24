@@ -24,6 +24,11 @@ from searchkernel.pipeline.stages.graph_expand import (
     GraphExpandStage,
     RankNeighbors,
 )
+from searchkernel.pipeline.stages.rag_fusion import (
+    GenerateQueryVariants,
+    RAGFusionConfig,
+    RAGFusionStage,
+)
 from searchkernel.pipeline.stages.retrieve import RetrieveStage, Searcher
 from searchkernel.pipeline.stages.routing import RoutingStage
 from searchkernel.search.pipeline import SearchPipelineConfig
@@ -38,6 +43,8 @@ class StageDeps:
     search_keyword: Searcher | None = None
     rank_neighbors: RankNeighbors | None = None
     build_chunk_candidates: BuildChunkCandidates | None = None
+    generate_query_variants: GenerateQueryVariants | None = None
+    rag_fusion_retrieve: Searcher | None = None
 
 
 StageFactory = Callable[[dict[str, Any], StageDeps], "SearchStage | AsyncSearchStage"]
@@ -63,10 +70,19 @@ def _make_dedup_rerank(config: dict[str, Any], deps: StageDeps) -> SearchStage:
     return DedupRerankStage(SearchPipelineConfig(**config))
 
 
+def _make_rag_fusion(config: dict[str, Any], deps: StageDeps) -> AsyncSearchStage:
+    return RAGFusionStage(
+        deps.generate_query_variants,
+        deps.rag_fusion_retrieve,
+        RAGFusionConfig(**config),
+    )
+
+
 DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "routing": _make_routing,
     "retrieve": _make_retrieve,
     "graph_expand": _make_graph_expand,
     "fusion": _make_fusion,
     "dedup_rerank": _make_dedup_rerank,
+    "rag_fusion": _make_rag_fusion,
 }
