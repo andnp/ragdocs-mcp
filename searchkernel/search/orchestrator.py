@@ -449,55 +449,38 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         query_context: QueryExecutionContext | None = None,
         result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[tuple[str, float]]:
-        seen_parents: set[str] = set()
-        expanded: list[tuple[str, float]] = []
+        get_chunk = (
+            query_context.get_vector_chunk
+            if query_context is not None
+            else self._vector.get_chunk_by_id
+        )
+        get_parent_chunk = (
+            query_context.get_parent_chunk
+            if query_context is not None
+            else self._vector.get_chunk_by_id
+        )
+        stage = DEFAULT_QUERY_STAGE_REGISTRY["parent_expansion"](
+            {},
+            StageDeps(get_chunk=get_chunk, get_parent_chunk=get_parent_chunk),
+        )
+        metadata: dict[str, object] = {}
+        if result_provenance is not None:
+            metadata["result_provenance"] = result_provenance
+        context = stage.run(
+            SearchContext(query="", candidates=results, metadata=metadata)
+        )
 
-        for chunk_id, score in results:
-            chunk_data = (
-                query_context.get_vector_chunk(chunk_id)
-                if query_context is not None
-                else self._vector.get_chunk_by_id(chunk_id)
+        for chunk_id in context.metadata["missing_chunk_ids"]:
+            self._queue_reindex_for_chunks(
+                [chunk_id], "docstore lookup failed during parent expansion"
             )
-            if not chunk_data:
-                self._queue_reindex_for_chunks(
-                    [chunk_id], "docstore lookup failed during parent expansion"
-                )
-                expanded.append((chunk_id, score))
-                continue
-
-            metadata = chunk_data.get("metadata", {})
-            parent_chunk_id = (
-                metadata.get("parent_chunk_id") if isinstance(metadata, dict) else None
+        for parent_chunk_id in context.metadata["missing_parent_chunk_ids"]:
+            self._queue_reindex_for_chunks(
+                [parent_chunk_id],
+                "parent chunk lookup failed during parent expansion",
             )
-            if parent_chunk_id:
-                parent_chunk_id_str = str(parent_chunk_id)
-                parent_chunk = (
-                    query_context.get_parent_chunk(parent_chunk_id_str)
-                    if query_context is not None
-                    else self._vector.get_chunk_by_id(parent_chunk_id_str)
-                )
-                if parent_chunk is not None:
-                    if parent_chunk_id_str not in seen_parents:
-                        seen_parents.add(parent_chunk_id_str)
-                        if result_provenance is not None:
-                            source_provenance = result_provenance.get(chunk_id)
-                            if source_provenance is not None:
-                                parent_provenance = source_provenance.clone()
-                                parent_provenance.parent_expanded_from = chunk_id
-                                result_provenance[parent_chunk_id_str] = (
-                                    parent_provenance
-                                )
-                        expanded.append((parent_chunk_id_str, score))
-                else:
-                    self._queue_reindex_for_chunks(
-                        [parent_chunk_id_str],
-                        "parent chunk lookup failed during parent expansion",
-                    )
-                    expanded.append((chunk_id, score))
-            else:
-                expanded.append((chunk_id, score))
 
-        return expanded
+        return context.candidates
 
     def _build_result_provenance(
         self,
