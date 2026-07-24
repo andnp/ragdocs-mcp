@@ -13,19 +13,18 @@ would each be missing required `context.metadata` keys on the first
 generic run.
 
 Per-query config (weights, top_k, min_confidence, ...) is resolved by the
-orchestrator at call time and passed as each `StageSpec.config`; this
-spec only pins stage *names* and their *order*. `SearchOrchestrator.query`
-does not (yet) walk this spec via a single `PipelineExecutor.run` call --
-it invokes each slot through its own helper method, all of which resolve
-the concrete stage from `DEFAULT_QUERY_STAGE_REGISTRY` exactly as this
-spec pins -- so the spec and the orchestrator's actual call order are two
-independently-verified descriptions of the same order (see
-`tests/unit/pipeline/test_default_query_spec.py`), the same relationship
-that already held for the original five-stage core chain before this
-spec grew to cover the whole pipeline. `dedup_rerank` is included for
-completeness of the pinned order even though the orchestrator invokes it
-via a cached stage instance rather than a fresh `run_stage` call, to
-preserve the reranker model cache across queries.
+orchestrator at call time and threaded through `context.metadata`/
+per-stage `run_stage` config rather than baked into this spec's (static)
+`StageSpec.config`, since some of it (e.g. `fusion`'s `strategy_weights`)
+is itself the output of an earlier stage (`routing`) in the same walk.
+`SearchOrchestrator.query` walks this spec directly -- a `for stage_spec
+in DEFAULT_QUERY_SPEC.stages` loop driving `PipelineExecutor.run_stage`
+-- so adding, removing or reordering a stage here is a spec edit, not an
+orchestrator edit. `dedup_rerank` is the one documented exception: the
+orchestrator special-cases it to call a cached `DedupRerankStage`
+instance directly instead of `run_stage`, so the reranker's lazily-loaded
+cross-encoder model is reused across queries instead of rebuilt (and
+reloaded) on every one.
 """
 
 from __future__ import annotations

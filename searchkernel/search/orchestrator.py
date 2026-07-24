@@ -20,10 +20,14 @@ from searchkernel.search.classifier import QueryType
 from searchkernel.search.filters import normalize_project_filter
 from searchkernel.search.graph_expansion import build_graph_chunk_candidates
 from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
+from searchkernel.pipeline.default_query_spec import DEFAULT_QUERY_SPEC
 from searchkernel.pipeline.executor import PipelineExecutor
 from searchkernel.pipeline.registry import DEFAULT_QUERY_STAGE_REGISTRY, StageDeps
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
+from searchkernel.pipeline.stages.seed_bookkeeping import (
+    should_skip_expensive_factual_enrichments,
+)
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
 from searchkernel.search.result_cache import QueryResultCache, QueryResultCacheKey
@@ -33,11 +37,6 @@ from searchkernel.search.tag_expansion import expand_query_with_tags
 logger = logging.getLogger(__name__)
 
 _ACTIVE_PROJECT_UPLIFT = 1.2
-_FACTUAL_QUERY_CLEAR_CANDIDATE_LIMIT = 6
-_FACTUAL_QUERY_CONSENSUS_DEPTH = 2
-_FACTUAL_QUERY_CONTRACTED_TOP_K_FLOOR = 8
-_FACTUAL_QUERY_CONTRACTED_TOP_K_MULTIPLIER = 2
-_FACTUAL_QUERY_TOP_N_CONTRACTION_LIMIT = 5
 _RESULT_CACHE_MAX_ENTRIES = 64
 
 
@@ -163,63 +162,9 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         vector_results: list[dict[str, object]],
         keyword_results: list[dict[str, object]],
     ) -> bool:
-        if query_type is not QueryType.FACTUAL:
-            return False
-
-        unique_chunk_ids = {
-            str(result["chunk_id"])
-            for result in vector_results + keyword_results
-            if isinstance(result.get("chunk_id"), str) and result.get("chunk_id")
-        }
-        if len(unique_chunk_ids) <= 1:
-            return True
-        if len(unique_chunk_ids) > _FACTUAL_QUERY_CLEAR_CANDIDATE_LIMIT:
-            return False
-
-        vector_top = [
-            str(result["chunk_id"])
-            for result in vector_results[:_FACTUAL_QUERY_CONSENSUS_DEPTH]
-            if isinstance(result.get("chunk_id"), str) and result.get("chunk_id")
-        ]
-        keyword_top = [
-            str(result["chunk_id"])
-            for result in keyword_results[:_FACTUAL_QUERY_CONSENSUS_DEPTH]
-            if isinstance(result.get("chunk_id"), str) and result.get("chunk_id")
-        ]
-
-        if not vector_top or not keyword_top:
-            return False
-
-        if vector_top[0] == keyword_top[0]:
-            return True
-
-        return bool(set(vector_top) & set(keyword_top))
-
-    def _resolve_effective_stage_top_k(
-        self,
-        *,
-        requested_top_k: int,
-        top_n: int,
-        query_type: QueryType,
-        project_filter: list[str] | None,
-    ) -> int:
-        if requested_top_k <= 0:
-            return requested_top_k
-
-        if project_filter:
-            return requested_top_k
-
-        if query_type is not QueryType.FACTUAL:
-            return requested_top_k
-
-        if top_n > _FACTUAL_QUERY_TOP_N_CONTRACTION_LIMIT:
-            return requested_top_k
-
-        contracted_top_k = max(
-            _FACTUAL_QUERY_CONTRACTED_TOP_K_FLOOR,
-            top_n * _FACTUAL_QUERY_CONTRACTED_TOP_K_MULTIPLIER,
+        return should_skip_expensive_factual_enrichments(
+            query_type, vector_results, keyword_results
         )
-        return min(requested_top_k, contracted_top_k)
 
     async def query(
         self,
@@ -269,160 +214,83 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         docs_root = self._documents_path
         query_context = self._create_query_execution_context()
-        base_semantic = self._config.search.semantic_weight
-        base_keyword = self._config.search.keyword_weight
-        base_graph = 1.0
-        routing_context = await self._route(
-            query_text, base_semantic, base_keyword, base_graph
+
+        deps = StageDeps(
+            search_vector=self._search_vector,
+            search_keyword=self._search_keyword,
+            rank_neighbors=self._get_ranked_graph_neighbors,
+            build_chunk_candidates=self._build_graph_chunk_candidates,
+            expand_query_with_tags=self._run_tag_expansion,
+            boost_by_community=self._graph.boost_by_community,
+            get_chunk=query_context.get_vector_chunk,
+            get_parent_chunk=query_context.get_parent_chunk,
+            hydrate_chunk_result=query_context.hydrate_chunk_result,
         )
-        query_type = routing_context.metadata["query_type"]
-        weights: dict[str, float] = routing_context.metadata["strategy_weights"]
-        effective_stage_top_k = self._resolve_effective_stage_top_k(
-            requested_top_k=top_k,
-            top_n=top_n,
-            query_type=query_type,
-            project_filter=project_filter,
-        )
-
-        retrieve_context = await self._retrieve(
-            query_text, effective_stage_top_k, excluded_files, docs_root
-        )
-        vector_results = retrieve_context.metadata["vector_results"]
-        keyword_results = retrieve_context.metadata["keyword_results"]
-        skip_expensive_factual_enrichments = (
-            self._should_skip_expensive_factual_enrichments(
-                query_type,
-                vector_results,
-                keyword_results,
-            )
-        )
-
-        all_doc_ids = set()
-        chunk_id_to_doc_id = {}
-
-        for result in vector_results:
-            chunk_id = result["chunk_id"]
-            doc_id = result["doc_id"]
-            all_doc_ids.add(doc_id)
-            chunk_id_to_doc_id[chunk_id] = doc_id
-
-        for result in keyword_results:
-            chunk_id = result["chunk_id"]
-            doc_id = result["doc_id"]
-            all_doc_ids.add(doc_id)
-            chunk_id_to_doc_id[chunk_id] = doc_id
-
-        graph_seed_scores = self._build_graph_seed_scores(
-            vector_results, keyword_results
+        context = SearchContext(
+            query=query_text,
+            metadata={
+                "base_semantic_weight": self._config.search.semantic_weight,
+                "base_keyword_weight": self._config.search.keyword_weight,
+                "base_graph_weight": 1.0,
+                "requested_top_k": top_k,
+                "top_n": top_n,
+                "project_filter": project_filter,
+                "excluded_files": excluded_files,
+                "docs_root": docs_root,
+                "source_filter": source_filter,
+                "active_project": project_context or self._config.detected_project,
+            },
         )
 
-        tag_expansion_context = self._apply_tag_expansion(
-            vector_results,
-            keyword_results,
-            chunk_id_to_doc_id,
-            all_doc_ids,
-            effective_stage_top_k,
-            skip=skip_expensive_factual_enrichments,
-        )
-        vector_results = tag_expansion_context.metadata["vector_results"]
-        chunk_id_to_doc_id = tag_expansion_context.metadata["chunk_id_to_doc_id"]
-        all_doc_ids = tag_expansion_context.metadata["all_doc_ids"]
-        tag_expansion_count = tag_expansion_context.metadata["tag_expansion_count"]
-        applied_tag_expansion_results = tag_expansion_context.metadata[
-            "applied_tag_expansion_results"
-        ]
+        for stage_spec in DEFAULT_QUERY_SPEC.stages:
+            name = stage_spec.name
 
-        graph_context = await self._graph_expand(
-            graph_seed_scores,
-            effective_stage_top_k,
-            excluded_chunk_ids=set(chunk_id_to_doc_id),
-        )
-        graph_chunk_ids = graph_context.metadata["graph_chunk_ids"]
-        graph_doc_scores = graph_context.metadata["graph_doc_scores"]
-
-        # Build strategy stats
-        strategy_stats = SearchStrategyStats(
-            vector_count=len(vector_results),
-            keyword_count=len(keyword_results),
-            graph_count=len(graph_chunk_ids),
-            tag_expansion_count=tag_expansion_count,
-        )
-
-        # Build strategy results with scores for ScorePipeline
-        strategy_results: dict[str, list[tuple[str, float]]] = {
-            "semantic": [(r["chunk_id"], r.get("score", 0.0)) for r in vector_results],
-            "keyword": [(r["chunk_id"], r.get("score", 0.0)) for r in keyword_results],
-            "graph": [
-                (
-                    cid,
-                    graph_doc_scores.get(extract_doc_id_from_chunk_id(cid), 0.0),
+            # dedup_rerank runs via the orchestrator's cached DedupRerankStage
+            # instance rather than a fresh run_stage call, so the reranker's
+            # lazily-loaded cross-encoder model is reused across queries
+            # instead of reloaded every time (see _get_pipeline/_resolve_pipeline).
+            if name == "dedup_rerank":
+                pipeline = self._resolve_pipeline(
+                    pipeline_config,
+                    disable_reranking=context.metadata["skip_tag_expansion"],
                 )
-                for cid in graph_chunk_ids
-            ],
-        }
-        provenance_results = dict(strategy_results)
-        if applied_tag_expansion_results:
-            provenance_results["tag_expansion"] = [
-                (r["chunk_id"], r.get("score", 0.0))
-                for r in applied_tag_expansion_results
-            ]
-        result_provenance = self._build_result_provenance(provenance_results)
+                dedup_metadata = dict(context.metadata)
+                dedup_metadata["get_embedding"] = query_context.get_chunk_embedding
+                dedup_metadata["get_content"] = query_context.get_chunk_content
+                dedup_metadata["top_n"] = top_n
+                context = pipeline.run(replace(context, metadata=dedup_metadata))
+                continue
 
-        fused = await self._apply_score_pipeline(strategy_results, weights)
+            config = dict(stage_spec.config)
+            if name == "fusion":
+                config["strategy_weights"] = context.metadata["strategy_weights"]
+            context = await self._executor.run_stage(name, config, context, deps)
 
-        fused = self._apply_community_boost(
-            fused,
-            all_doc_ids,
-            chunk_id_to_doc_id,
-            result_provenance=result_provenance,
-        )
-        fused = self._apply_project_uplift(
-            fused,
-            query_context=query_context,
-            project_context=project_context,
-            result_provenance=result_provenance,
-        )
-        fused = self._apply_project_filter(
-            fused,
-            query_context=query_context,
-            project_filter=project_filter,
-        )
-        fused = self._apply_source_filter(
-            fused,
-            query_context=query_context,
-            source_filter=source_filter,
-        )
+            if name == "parent_expansion":
+                for chunk_id in context.metadata["missing_chunk_ids"]:
+                    self._queue_reindex_for_chunks(
+                        [chunk_id], "docstore lookup failed during parent expansion"
+                    )
+                for parent_chunk_id in context.metadata["missing_parent_chunk_ids"]:
+                    self._queue_reindex_for_chunks(
+                        [parent_chunk_id],
+                        "parent chunk lookup failed during parent expansion",
+                    )
+            elif name == "hydrate":
+                missing_chunk_ids = context.metadata["missing_chunk_ids"]
+                if missing_chunk_ids:
+                    self._queue_reindex_for_chunks(
+                        missing_chunk_ids,
+                        "chunk hydration failed during result assembly",
+                    )
 
-        pipeline = self._resolve_pipeline(
-            pipeline_config,
-            disable_reranking=skip_expensive_factual_enrichments,
-        )
-
-        dedup_context = pipeline.run(
-            SearchContext(
-                query=query_text,
-                candidates=fused,
-                metadata={
-                    "get_embedding": query_context.get_chunk_embedding,
-                    "get_content": query_context.get_chunk_content,
-                    "top_n": top_n,
-                },
-            )
-        )
-        final = dedup_context.candidates
-        compression_stats = dedup_context.metadata["compression_stats"]
-
-        # Parent expansion: always expand child chunks to parent chunks
-        final = self._expand_to_parents(
-            final,
-            query_context=query_context,
-            result_provenance=result_provenance,
-        )
-
-        chunk_results = self._materialize_chunk_results(
-            final,
-            query_context=query_context,
-            result_provenance=result_provenance,
+        compression_stats = context.metadata["compression_stats"]
+        chunk_results = context.metadata["chunk_results"]
+        strategy_stats = SearchStrategyStats(
+            vector_count=len(context.metadata["vector_results"]),
+            keyword_count=len(context.metadata["keyword_results"]),
+            graph_count=len(context.metadata["graph_chunk_ids"]),
+            tag_expansion_count=context.metadata["tag_expansion_count"],
         )
 
         self._last_query_execution_stats = query_context.stats.to_dict()
@@ -517,51 +385,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
     def _get_chunk_content(self, chunk_id: str) -> str | None:
         return self._chunk_hydrator.get_content(chunk_id)
 
-    async def _route(
-        self,
-        query_text: str,
-        base_semantic: float,
-        base_keyword: float,
-        base_graph: float,
-    ) -> SearchContext:
-        return await self._executor.run_stage(
-            "routing",
-            {},
-            SearchContext(
-                query=query_text,
-                metadata={
-                    "base_semantic_weight": base_semantic,
-                    "base_keyword_weight": base_keyword,
-                    "base_graph_weight": base_graph,
-                },
-            ),
-        )
-
-    async def _graph_expand(
-        self,
-        seed_scores: dict[str, float],
-        top_k: int,
-        *,
-        excluded_chunk_ids: set[str] | None,
-    ) -> SearchContext:
-        deps = StageDeps(
-            rank_neighbors=self._get_ranked_graph_neighbors,
-            build_chunk_candidates=self._build_graph_chunk_candidates,
-        )
-        return await self._executor.run_stage(
-            "graph_expand",
-            {},
-            SearchContext(
-                query="",
-                metadata={
-                    "seed_scores": seed_scores,
-                    "top_k": top_k,
-                    "excluded_chunk_ids": excluded_chunk_ids,
-                },
-            ),
-            deps,
-        )
-
     def _build_graph_chunk_candidates(
         self,
         neighbor_doc_ids: list[str],
@@ -573,30 +396,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             self._vector,
             top_k,
             excluded_chunk_ids=excluded_chunk_ids,
-        )
-
-    async def _retrieve(
-        self,
-        query_text: str,
-        top_k: int,
-        excluded_files: set[str] | None,
-        docs_root: Path,
-    ) -> SearchContext:
-        deps = StageDeps(
-            search_vector=self._search_vector, search_keyword=self._search_keyword
-        )
-        return await self._executor.run_stage(
-            "retrieve",
-            {},
-            SearchContext(
-                query=query_text,
-                metadata={
-                    "top_k": top_k,
-                    "excluded_files": excluded_files,
-                    "docs_root": docs_root,
-                },
-            ),
-            deps,
         )
 
     async def _search_vector(
@@ -631,26 +430,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         )
         return results
 
-    def _build_graph_seed_scores(
-        self,
-        vector_results: list[dict[str, object]],
-        keyword_results: list[dict[str, object]],
-    ):
-        seed_scores: dict[str, float] = {}
-
-        for result in vector_results + keyword_results:
-            doc_id_obj = result.get("doc_id")
-            if not isinstance(doc_id_obj, str) or not doc_id_obj:
-                continue
-
-            raw_score = result.get("score", 0.0)
-            score = float(raw_score) if isinstance(raw_score, int | float) else 0.0
-            current_score = seed_scores.get(doc_id_obj, 0.0)
-            if score > current_score:
-                seed_scores[doc_id_obj] = score
-
-        return seed_scores
-
     def _run_tag_expansion(
         self,
         combined_initial_results: list[dict[str, object]],
@@ -663,33 +442,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             top_k=top_k,
             max_related_tags=5,
             max_depth=2,
-        )
-
-    def _apply_tag_expansion(
-        self,
-        vector_results: list[dict[str, object]],
-        keyword_results: list[dict[str, object]],
-        chunk_id_to_doc_id: dict[str, str],
-        all_doc_ids: set[str],
-        top_k: int,
-        *,
-        skip: bool,
-    ) -> SearchContext:
-        stage = DEFAULT_QUERY_STAGE_REGISTRY["tag_expansion"](
-            {}, StageDeps(expand_query_with_tags=self._run_tag_expansion)
-        )
-        return stage.run(
-            SearchContext(
-                query="",
-                metadata={
-                    "vector_results": vector_results,
-                    "keyword_results": keyword_results,
-                    "chunk_id_to_doc_id": chunk_id_to_doc_id,
-                    "all_doc_ids": all_doc_ids,
-                    "top_k": top_k,
-                    "skip_tag_expansion": skip,
-                },
-            )
         )
 
     def _get_ranked_graph_neighbors(self, seed_scores: dict[str, float]):
@@ -768,30 +520,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 query="",
                 candidates=fused,
                 metadata={"project_filter": project_filter},
-            )
-        )
-        return context.candidates
-
-    def _apply_source_filter(
-        self,
-        fused: list[tuple[str, float]],
-        *,
-        query_context: QueryExecutionContext | None = None,
-        source_filter: list[str] | None = None,
-    ) -> list[tuple[str, float]]:
-        get_chunk = (
-            query_context.get_vector_chunk
-            if query_context is not None
-            else self._vector.get_chunk_by_id
-        )
-        stage = DEFAULT_QUERY_STAGE_REGISTRY["source_filter"](
-            {}, StageDeps(get_chunk=get_chunk)
-        )
-        context = stage.run(
-            SearchContext(
-                query="",
-                candidates=fused,
-                metadata={"source_filter": source_filter},
             )
         )
         return context.candidates
