@@ -43,6 +43,7 @@ from searchkernel.pipeline.stages.retrieve import RetrieveStage, Searcher
 from searchkernel.pipeline.stages.routing import RoutingStage
 from searchkernel.pipeline.stages.seed_bookkeeping import SeedBookkeepingStage
 from searchkernel.pipeline.stages.source_filter import SourceFilterStage
+from searchkernel.pipeline.stages.strategy_results import StrategyResultsStage
 from searchkernel.pipeline.stages.tag_expansion import (
     ExpandQueryWithTags,
     TagExpansionStage,
@@ -89,6 +90,10 @@ def _make_seed_bookkeeping(config: dict[str, Any], deps: StageDeps) -> SearchSta
 
 def _make_graph_expand(config: dict[str, Any], deps: StageDeps) -> SearchStage:
     return GraphExpandStage(deps.rank_neighbors, deps.build_chunk_candidates)
+
+
+def _make_strategy_results(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return StrategyResultsStage()
 
 
 def _make_fusion(config: dict[str, Any], deps: StageDeps) -> SearchStage:
@@ -145,6 +150,7 @@ DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "retrieve": _make_retrieve,
     "seed_bookkeeping": _make_seed_bookkeeping,
     "graph_expand": _make_graph_expand,
+    "strategy_results": _make_strategy_results,
     "fusion": _make_fusion,
     "dedup_rerank": _make_dedup_rerank,
     "rag_fusion": _make_rag_fusion,
