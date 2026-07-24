@@ -29,6 +29,7 @@ from searchkernel.pipeline.stages.graph_expand import (
     RankNeighbors,
 )
 from searchkernel.pipeline.stages.hydrate import HydrateChunkResult, HydrateStage
+from searchkernel.pipeline.stages.project_uplift import GetChunk, ProjectUpliftStage
 from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.pipeline.stages.rag_fusion import (
     GenerateQueryVariants,
@@ -58,6 +59,7 @@ class StageDeps:
     hydrate_chunk_result: HydrateChunkResult | None = None
     expand_query_with_tags: ExpandQueryWithTags | None = None
     boost_by_community: BoostByCommunity | None = None
+    get_chunk: GetChunk | None = None
 
 
 StageFactory = Callable[[dict[str, Any], StageDeps], "SearchStage | AsyncSearchStage"]
@@ -107,6 +109,10 @@ def _make_community_boost(config: dict[str, Any], deps: StageDeps) -> SearchStag
     return CommunityBoostStage(deps.boost_by_community)
 
 
+def _make_project_uplift(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return ProjectUpliftStage(deps.get_chunk, config.get("uplift", 1.2))
+
+
 DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "routing": _make_routing,
     "retrieve": _make_retrieve,
@@ -118,4 +124,5 @@ DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "hydrate": _make_hydrate,
     "tag_expansion": _make_tag_expansion,
     "community_boost": _make_community_boost,
+    "project_uplift": _make_project_uplift,
 }
