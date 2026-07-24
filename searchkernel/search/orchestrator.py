@@ -16,7 +16,7 @@ from searchkernel.models import (
 )
 from searchkernel.search.base_orchestrator import BaseSearchOrchestrator
 from searchkernel.search.chunk_hydrator import ChunkHydrator
-from searchkernel.search.classifier import QueryType, classify_query, get_adaptive_weights
+from searchkernel.search.classifier import QueryType
 from searchkernel.search.filters import matches_project_filter, normalize_project_filter
 from searchkernel.search.graph_expansion import build_graph_chunk_candidates
 from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
@@ -25,6 +25,7 @@ from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.fusion import FusionStage
 from searchkernel.pipeline.stages.graph_expand import GraphExpandStage
 from searchkernel.pipeline.stages.retrieve import RetrieveStage
+from searchkernel.pipeline.stages.routing import RoutingStage
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
 from searchkernel.search.result_cache import QueryResultCache, QueryResultCacheKey
@@ -262,7 +263,14 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
         docs_root = self._documents_path
         query_context = self._create_query_execution_context()
-        query_type = classify_query(query_text)
+        base_semantic = self._config.search.semantic_weight
+        base_keyword = self._config.search.keyword_weight
+        base_graph = 1.0
+        routing_context = self._route(
+            query_text, base_semantic, base_keyword, base_graph
+        )
+        query_type = routing_context.metadata["query_type"]
+        weights: dict[str, float] = routing_context.metadata["strategy_weights"]
         effective_stage_top_k = self._resolve_effective_stage_top_k(
             requested_top_k=top_k,
             top_n=top_n,
@@ -342,20 +350,6 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             graph_count=len(graph_chunk_ids),
             tag_expansion_count=tag_expansion_count,
         )
-
-        base_semantic = self._config.search.semantic_weight
-        base_keyword = self._config.search.keyword_weight
-        base_graph = 1.0
-
-        semantic_w, keyword_w, graph_w = get_adaptive_weights(
-            query_type, base_semantic, base_keyword, base_graph
-        )
-
-        weights: dict[str, float] = {
-            "semantic": semantic_w,
-            "keyword": keyword_w,
-            "graph": graph_w,
-        }
 
         # Build strategy results with scores for ScorePipeline
         strategy_results: dict[str, list[tuple[str, float]]] = {
@@ -544,6 +538,25 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
     def _get_chunk_content(self, chunk_id: str) -> str | None:
         return self._chunk_hydrator.get_content(chunk_id)
+
+    def _route(
+        self,
+        query_text: str,
+        base_semantic: float,
+        base_keyword: float,
+        base_graph: float,
+    ) -> SearchContext:
+        stage = RoutingStage()
+        return stage.run(
+            SearchContext(
+                query=query_text,
+                metadata={
+                    "base_semantic_weight": base_semantic,
+                    "base_keyword_weight": base_keyword,
+                    "base_graph_weight": base_graph,
+                },
+            )
+        )
 
     def _graph_expand(
         self,
