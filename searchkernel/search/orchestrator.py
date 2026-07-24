@@ -726,36 +726,19 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         chunk_id_to_doc_id: dict[str, str],
         result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[tuple[str, float]]:
-        chunk_doc_ids = []
-        for chunk_id, _ in fused:
-            doc_id = chunk_id_to_doc_id.get(chunk_id)
-            if doc_id is None:
-                doc_id = (
-                    chunk_id.rsplit("_chunk_", 1)[0]
-                    if "_chunk_" in chunk_id
-                    else chunk_id
-                )
-            chunk_doc_ids.append(doc_id)
-
-        boosts = self._graph.boost_by_community(
-            chunk_doc_ids,
-            seed_doc_ids,
-            1.1,
+        stage = DEFAULT_QUERY_STAGE_REGISTRY["community_boost"](
+            {}, StageDeps(boost_by_community=self._graph.boost_by_community)
         )
-
-        boosted = []
-        for (chunk_id, score), doc_id in zip(fused, chunk_doc_ids):
-            boost = boosts.get(doc_id, 1.0)
-            if result_provenance is not None and boost != 1.0:
-                provenance = result_provenance.setdefault(
-                    chunk_id,
-                    SearchResultProvenance(),
-                )
-                provenance.community_boost = boost
-            # Clamp to [0, 1] since scores are calibrated confidence values
-            boosted.append((chunk_id, min(1.0, score * boost)))
-
-        return sorted(boosted, key=lambda x: x[1], reverse=True)
+        metadata: dict[str, object] = {
+            "seed_doc_ids": seed_doc_ids,
+            "chunk_id_to_doc_id": chunk_id_to_doc_id,
+        }
+        if result_provenance is not None:
+            metadata["result_provenance"] = result_provenance
+        context = stage.run(
+            SearchContext(query="", candidates=fused, metadata=metadata)
+        )
+        return context.candidates
 
     def _apply_project_uplift(
         self,
