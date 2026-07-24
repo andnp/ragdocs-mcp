@@ -25,12 +25,11 @@ from searchkernel.pipeline.stages.apply_move import ApplyMoveStage
 from searchkernel.pipeline.stages.chunk import ChunkStage
 from searchkernel.pipeline.stages.detect_moves import DetectMovesStage
 from searchkernel.pipeline.stages.index import IndexStage
+from searchkernel.pipeline.stages.repair import RepairStage
 from searchkernel.search.edge_types import infer_edge_type
 from searchkernel.search.path_utils import (
     compute_doc_id,
     compute_doc_id_multi_root,
-    resolve_doc_path,
-    resolve_doc_path_multi_root,
 )
 
 logger = logging.getLogger(__name__)
@@ -201,13 +200,18 @@ class IndexManager:
     def reindex_document(self, doc_id: str, reason: str | None = None):
         docs_path = Path(self._config.indexing.documents_path)
         suffixes = self._get_parser_suffixes()
-        resolved_path = resolve_doc_path_multi_root(
-            doc_id,
-            self._documents_roots,
-            suffixes,
+        context = RepairStage().run(
+            SearchContext(
+                query="",
+                metadata={
+                    "doc_id": doc_id,
+                    "docs_path": docs_path,
+                    "documents_roots": self._documents_roots,
+                    "suffixes": suffixes,
+                },
+            )
         )
-        if resolved_path is None:
-            resolved_path = resolve_doc_path(doc_id, docs_path, suffixes)
+        resolved_path = context.metadata["resolved_path"]
         if not resolved_path:
             self.prune_document(doc_id, reason=reason)
             if reason:
