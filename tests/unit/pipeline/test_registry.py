@@ -5,6 +5,7 @@ from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.fusion import FusionStage
 from searchkernel.pipeline.stages.graph_expand import GraphExpandStage
 from searchkernel.pipeline.stages.hydrate import HydrateStage
+from searchkernel.pipeline.stages.parent_expansion import ParentExpansionStage
 from searchkernel.pipeline.stages.project_filter import ProjectFilterStage
 from searchkernel.pipeline.stages.project_uplift import ProjectUpliftStage
 from searchkernel.pipeline.stages.provenance import ProvenanceStage
@@ -30,6 +31,7 @@ def test_registry_has_the_five_default_query_stages_plus_rag_fusion():
         "project_uplift",
         "project_filter",
         "source_filter",
+        "parent_expansion",
     }
 
 
@@ -182,3 +184,18 @@ def test_source_filter_factory_injects_get_chunk_from_deps():
 
     assert isinstance(stage, SourceFilterStage)
     assert stage._get_chunk is get_chunk
+
+
+def test_parent_expansion_factory_injects_get_chunk_callables_from_deps():
+    def get_chunk(_chunk_id):
+        return None
+
+    def get_parent_chunk(_chunk_id):
+        return None
+
+    deps = StageDeps(get_chunk=get_chunk, get_parent_chunk=get_parent_chunk)
+    stage = DEFAULT_QUERY_STAGE_REGISTRY["parent_expansion"]({}, deps)
+
+    assert isinstance(stage, ParentExpansionStage)
+    assert stage._get_chunk is get_chunk
+    assert stage._get_parent_chunk is get_parent_chunk

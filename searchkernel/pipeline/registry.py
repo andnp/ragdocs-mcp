@@ -29,6 +29,7 @@ from searchkernel.pipeline.stages.graph_expand import (
     RankNeighbors,
 )
 from searchkernel.pipeline.stages.hydrate import HydrateChunkResult, HydrateStage
+from searchkernel.pipeline.stages.parent_expansion import ParentExpansionStage
 from searchkernel.pipeline.stages.project_filter import ProjectFilterStage
 from searchkernel.pipeline.stages.project_uplift import GetChunk, ProjectUpliftStage
 from searchkernel.pipeline.stages.provenance import ProvenanceStage
@@ -62,6 +63,7 @@ class StageDeps:
     expand_query_with_tags: ExpandQueryWithTags | None = None
     boost_by_community: BoostByCommunity | None = None
     get_chunk: GetChunk | None = None
+    get_parent_chunk: GetChunk | None = None
 
 
 StageFactory = Callable[[dict[str, Any], StageDeps], "SearchStage | AsyncSearchStage"]
@@ -123,6 +125,10 @@ def _make_source_filter(config: dict[str, Any], deps: StageDeps) -> SearchStage:
     return SourceFilterStage(deps.get_chunk)
 
 
+def _make_parent_expansion(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return ParentExpansionStage(deps.get_chunk, deps.get_parent_chunk)
+
+
 DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "routing": _make_routing,
     "retrieve": _make_retrieve,
@@ -137,4 +143,5 @@ DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "project_uplift": _make_project_uplift,
     "project_filter": _make_project_filter,
     "source_filter": _make_source_filter,
+    "parent_expansion": _make_parent_expansion,
 }
