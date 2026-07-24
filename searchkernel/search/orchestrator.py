@@ -24,6 +24,7 @@ from searchkernel.pipeline.executor import PipelineExecutor
 from searchkernel.pipeline.registry import DEFAULT_QUERY_STAGE_REGISTRY, StageDeps
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
+from searchkernel.pipeline.stages.hydrate import HydrateStage
 from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
@@ -993,42 +994,24 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         query_context: QueryExecutionContext | None = None,
         result_provenance: dict[str, SearchResultProvenance] | None = None,
     ) -> list[ChunkResult]:
-        chunk_results: list[ChunkResult] = []
-        missing_chunk_ids: list[str] = []
+        hydrate_chunk_result = (
+            query_context.hydrate_chunk_result
+            if query_context is not None
+            else self._chunk_hydrator.hydrate_chunk_result
+        )
+        metadata: dict[str, object] = {}
+        if result_provenance is not None:
+            metadata["result_provenance"] = result_provenance
 
-        for chunk_id, score in final:
-            chunk_result = (
-                query_context.hydrate_chunk_result(chunk_id, score)
-                if query_context is not None
-                else self._chunk_hydrator.hydrate_chunk_result(chunk_id, score)
-            )
-            if chunk_result is not None:
-                if result_provenance is not None:
-                    chunk_result.provenance = result_provenance.get(chunk_id)
-                chunk_results.append(chunk_result)
-                continue
+        context = HydrateStage(hydrate_chunk_result).run(
+            SearchContext(query="", candidates=final, metadata=metadata)
+        )
 
-            missing_chunk_ids.append(chunk_id)
-            chunk_results.append(
-                ChunkResult(
-                    chunk_id=chunk_id,
-                    doc_id=extract_doc_id_from_chunk_id(chunk_id),
-                    score=score,
-                    header_path="",
-                    file_path="",
-                    content="",
-                    provenance=(
-                        result_provenance.get(chunk_id)
-                        if result_provenance is not None
-                        else None
-                    ),
-                )
-            )
-
+        missing_chunk_ids = context.metadata["missing_chunk_ids"]
         if missing_chunk_ids:
             self._queue_reindex_for_chunks(
                 missing_chunk_ids,
                 "chunk hydration failed during result assembly",
             )
 
-        return chunk_results
+        return context.metadata["chunk_results"]
