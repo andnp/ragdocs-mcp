@@ -20,6 +20,8 @@ from searchkernel.indexing.implicit_graph import ImplicitGraphBuilder
 from searchkernel.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexManifest, load_manifest, save_manifest
 from searchkernel.models import Chunk, Document
 from searchkernel.parsers.dispatcher import dispatch_parser
+from searchkernel.pipeline.stage import SearchContext
+from searchkernel.pipeline.stages.chunk import ChunkStage
 from searchkernel.search.edge_types import infer_edge_type
 from searchkernel.search.path_utils import (
     compute_doc_id,
@@ -133,6 +135,12 @@ class IndexManager:
 
     def _get_parser_suffixes(self) -> list[str]:
         return sorted(get_parser_suffixes())
+
+    def _chunk_document(self, document: Document) -> list[Chunk]:
+        context = ChunkStage(self._chunker).run(
+            SearchContext(query="", metadata={"document": document})
+        )
+        return context.metadata["chunks"]
 
     def _record_manifest_index(self, file_path: str, doc_id: str) -> None:
         rel_path_obj: Path | None = None
@@ -523,7 +531,7 @@ class IndexManager:
                     "project_id": project_id,
                 }
 
-            chunks = self._chunker.chunk_document(document)
+            chunks = self._chunk_document(document)
             for chunk in chunks:
                 chunk.project_id = project_id
                 if project_id is not None:
@@ -677,7 +685,7 @@ class IndexManager:
             modified_time=record.updated_at,
         )
 
-        chunks = self._chunker.chunk_document(document)
+        chunks = self._chunk_document(document)
         for chunk in chunks:
             chunk.metadata = {
                 **chunk.metadata,
@@ -935,7 +943,7 @@ class IndexManager:
                     document = parser.parse(file_path)
                     doc_id = self._compute_doc_id_for_path(file_path, docs_path)
                     document.id = doc_id
-                    chunks = self._chunker.chunk_document(document)
+                    chunks = self._chunk_document(document)
                     added_docs[doc_id] = chunks
                 except Exception as e:
                     logger.warning(
