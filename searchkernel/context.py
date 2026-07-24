@@ -24,11 +24,7 @@ from searchkernel.indexing.bootstrap_snapshot import (
     derive_loaded_index_state_snapshot,
 )
 from searchkernel.indexing.bootstrap_session import BootstrapSession
-from searchkernel.indexing.discovery import (
-    discover_files as _discover_files,
-    discover_files_multi_root,
-    get_parser_suffixes,
-)
+from searchkernel.indexing.discovery import get_parser_suffixes
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indexing.manifest import (
     CURRENT_MANIFEST_SPEC_VERSION,
@@ -47,6 +43,8 @@ from searchkernel.indexing.watcher import FileWatcher
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
+from searchkernel.pipeline.stage import SearchContext
+from searchkernel.pipeline.stages.discover import DiscoverStage
 from searchkernel.search.orchestrator import SearchOrchestrator
 from searchkernel.storage.db import DatabaseManager
 
@@ -279,20 +277,19 @@ class ApplicationContext:
         )
 
     def discover_files(self) -> list[str]:
-        if len(self.documents_roots) <= 1:
-            return _discover_files(
-                documents_path=self.config.indexing.documents_path,
-                include_patterns=self.config.indexing.include,
-                exclude_patterns=self.config.indexing.exclude,
-                exclude_hidden_dirs=self.config.indexing.exclude_hidden_dirs,
+        context = DiscoverStage().run(
+            SearchContext(
+                query="",
+                metadata={
+                    "documents_path": self.config.indexing.documents_path,
+                    "documents_roots": self.documents_roots,
+                    "include_patterns": self.config.indexing.include,
+                    "exclude_patterns": self.config.indexing.exclude,
+                    "exclude_hidden_dirs": self.config.indexing.exclude_hidden_dirs,
+                },
             )
-
-        return discover_files_multi_root(
-            [str(root) for root in self.documents_roots],
-            include_patterns=self.config.indexing.include,
-            exclude_patterns=self.config.indexing.exclude,
-            exclude_hidden_dirs=self.config.indexing.exclude_hidden_dirs,
         )
+        return context.metadata["discovered_files"]
 
     def discover_git_repositories(self) -> list[Path]:
         from searchkernel.git.repository import discover_git_repositories, discover_git_repositories_multi_root
