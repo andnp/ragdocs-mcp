@@ -796,25 +796,22 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         query_context: QueryExecutionContext | None = None,
         source_filter: list[str] | None = None,
     ) -> list[tuple[str, float]]:
-        if not source_filter:
-            return fused
-
-        allowed_kinds = set(source_filter)
-        filtered: list[tuple[str, float]] = []
-        for chunk_id, score in fused:
-            chunk_data = (
-                query_context.get_vector_chunk(chunk_id)
-                if query_context is not None
-                else self._vector.get_chunk_by_id(chunk_id)
+        get_chunk = (
+            query_context.get_vector_chunk
+            if query_context is not None
+            else self._vector.get_chunk_by_id
+        )
+        stage = DEFAULT_QUERY_STAGE_REGISTRY["source_filter"](
+            {}, StageDeps(get_chunk=get_chunk)
+        )
+        context = stage.run(
+            SearchContext(
+                query="",
+                candidates=fused,
+                metadata={"source_filter": source_filter},
             )
-            metadata = chunk_data.get("metadata", {}) if chunk_data else {}
-            source_kind = (
-                metadata.get("source_kind") if isinstance(metadata, dict) else None
-            )
-            if source_kind in allowed_kinds:
-                filtered.append((chunk_id, score))
-
-        return filtered
+        )
+        return context.candidates
 
     def _queue_reindex_for_chunks(self, chunk_ids: list[str], reason: str):
         doc_ids = {
