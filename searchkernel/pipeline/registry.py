@@ -33,6 +33,10 @@ from searchkernel.pipeline.stages.rag_fusion import (
 )
 from searchkernel.pipeline.stages.retrieve import RetrieveStage, Searcher
 from searchkernel.pipeline.stages.routing import RoutingStage
+from searchkernel.pipeline.stages.tag_expansion import (
+    ExpandQueryWithTags,
+    TagExpansionStage,
+)
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.score_pipeline import ScorePipelineConfig
 
@@ -48,6 +52,7 @@ class StageDeps:
     generate_query_variants: GenerateQueryVariants | None = None
     rag_fusion_retrieve: Searcher | None = None
     hydrate_chunk_result: HydrateChunkResult | None = None
+    expand_query_with_tags: ExpandQueryWithTags | None = None
 
 
 StageFactory = Callable[[dict[str, Any], StageDeps], "SearchStage | AsyncSearchStage"]
@@ -89,6 +94,10 @@ def _make_hydrate(config: dict[str, Any], deps: StageDeps) -> SearchStage:
     return HydrateStage(deps.hydrate_chunk_result)
 
 
+def _make_tag_expansion(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return TagExpansionStage(deps.expand_query_with_tags)
+
+
 DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "routing": _make_routing,
     "retrieve": _make_retrieve,
@@ -98,4 +107,5 @@ DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "rag_fusion": _make_rag_fusion,
     "provenance": _make_provenance,
     "hydrate": _make_hydrate,
+    "tag_expansion": _make_tag_expansion,
 }

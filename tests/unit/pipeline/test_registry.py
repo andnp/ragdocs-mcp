@@ -8,6 +8,7 @@ from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.pipeline.stages.rag_fusion import RAGFusionStage
 from searchkernel.pipeline.stages.retrieve import RetrieveStage
 from searchkernel.pipeline.stages.routing import RoutingStage
+from searchkernel.pipeline.stages.tag_expansion import TagExpansionStage
 
 
 def test_registry_has_the_five_default_query_stages_plus_rag_fusion():
@@ -20,6 +21,7 @@ def test_registry_has_the_five_default_query_stages_plus_rag_fusion():
         "rag_fusion",
         "provenance",
         "hydrate",
+        "tag_expansion",
     }
 
 
@@ -116,3 +118,14 @@ def test_hydrate_factory_injects_hydrate_chunk_result_from_deps():
 
     assert isinstance(stage, HydrateStage)
     assert stage._hydrate_chunk_result is hydrate_chunk_result
+
+
+def test_tag_expansion_factory_injects_expand_query_with_tags_from_deps():
+    def expand_query_with_tags(_initial_results, _top_k):
+        return []
+
+    deps = StageDeps(expand_query_with_tags=expand_query_with_tags)
+    stage = DEFAULT_QUERY_STAGE_REGISTRY["tag_expansion"]({}, deps)
+
+    assert isinstance(stage, TagExpansionStage)
+    assert stage._expand_query_with_tags is expand_query_with_tags
