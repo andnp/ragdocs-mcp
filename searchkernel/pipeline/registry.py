@@ -17,6 +17,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from searchkernel.pipeline.stage import AsyncSearchStage, SearchStage
+from searchkernel.pipeline.stages.community_boost import (
+    BoostByCommunity,
+    CommunityBoostStage,
+)
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.fusion import FusionStage
 from searchkernel.pipeline.stages.graph_expand import (
@@ -53,6 +57,7 @@ class StageDeps:
     rag_fusion_retrieve: Searcher | None = None
     hydrate_chunk_result: HydrateChunkResult | None = None
     expand_query_with_tags: ExpandQueryWithTags | None = None
+    boost_by_community: BoostByCommunity | None = None
 
 
 StageFactory = Callable[[dict[str, Any], StageDeps], "SearchStage | AsyncSearchStage"]
@@ -98,6 +103,10 @@ def _make_tag_expansion(config: dict[str, Any], deps: StageDeps) -> SearchStage:
     return TagExpansionStage(deps.expand_query_with_tags)
 
 
+def _make_community_boost(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return CommunityBoostStage(deps.boost_by_community)
+
+
 DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "routing": _make_routing,
     "retrieve": _make_retrieve,
@@ -108,4 +117,5 @@ DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "provenance": _make_provenance,
     "hydrate": _make_hydrate,
     "tag_expansion": _make_tag_expansion,
+    "community_boost": _make_community_boost,
 }

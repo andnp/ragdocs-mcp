@@ -1,5 +1,6 @@
 from searchkernel.pipeline.registry import DEFAULT_QUERY_STAGE_REGISTRY, StageDeps
 from searchkernel.pipeline.stage import AsyncSearchStage, SearchStage
+from searchkernel.pipeline.stages.community_boost import CommunityBoostStage
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.fusion import FusionStage
 from searchkernel.pipeline.stages.graph_expand import GraphExpandStage
@@ -22,6 +23,7 @@ def test_registry_has_the_five_default_query_stages_plus_rag_fusion():
         "provenance",
         "hydrate",
         "tag_expansion",
+        "community_boost",
     }
 
 
@@ -129,3 +131,14 @@ def test_tag_expansion_factory_injects_expand_query_with_tags_from_deps():
 
     assert isinstance(stage, TagExpansionStage)
     assert stage._expand_query_with_tags is expand_query_with_tags
+
+
+def test_community_boost_factory_injects_boost_by_community_from_deps():
+    def boost_by_community(_chunk_doc_ids, _seed_doc_ids, _factor):
+        return {}
+
+    deps = StageDeps(boost_by_community=boost_by_community)
+    stage = DEFAULT_QUERY_STAGE_REGISTRY["community_boost"]({}, deps)
+
+    assert isinstance(stage, CommunityBoostStage)
+    assert stage._boost_by_community is boost_by_community
