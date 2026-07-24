@@ -3,6 +3,8 @@ from searchkernel.pipeline.stage import AsyncSearchStage, SearchStage
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.fusion import FusionStage
 from searchkernel.pipeline.stages.graph_expand import GraphExpandStage
+from searchkernel.pipeline.stages.hydrate import HydrateStage
+from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.pipeline.stages.rag_fusion import RAGFusionStage
 from searchkernel.pipeline.stages.retrieve import RetrieveStage
 from searchkernel.pipeline.stages.routing import RoutingStage
@@ -16,6 +18,8 @@ def test_registry_has_the_five_default_query_stages_plus_rag_fusion():
         "fusion",
         "dedup_rerank",
         "rag_fusion",
+        "provenance",
+        "hydrate",
     }
 
 
@@ -94,3 +98,21 @@ def test_rag_fusion_factory_injects_callables_and_config_from_deps():
     assert stage._generate_query_variants is generate_query_variants
     assert stage._retrieve is rag_fusion_retrieve
     assert stage._config.enabled is True
+
+
+def test_provenance_factory_needs_no_deps():
+    stage = DEFAULT_QUERY_STAGE_REGISTRY["provenance"]({}, StageDeps())
+
+    assert isinstance(stage, ProvenanceStage)
+    assert isinstance(stage, SearchStage)
+
+
+def test_hydrate_factory_injects_hydrate_chunk_result_from_deps():
+    def hydrate_chunk_result(_chunk_id, _score):
+        return None
+
+    deps = StageDeps(hydrate_chunk_result=hydrate_chunk_result)
+    stage = DEFAULT_QUERY_STAGE_REGISTRY["hydrate"]({}, deps)
+
+    assert isinstance(stage, HydrateStage)
+    assert stage._hydrate_chunk_result is hydrate_chunk_result

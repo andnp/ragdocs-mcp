@@ -24,6 +24,8 @@ from searchkernel.pipeline.stages.graph_expand import (
     GraphExpandStage,
     RankNeighbors,
 )
+from searchkernel.pipeline.stages.hydrate import HydrateChunkResult, HydrateStage
+from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.pipeline.stages.rag_fusion import (
     GenerateQueryVariants,
     RAGFusionConfig,
@@ -45,6 +47,7 @@ class StageDeps:
     build_chunk_candidates: BuildChunkCandidates | None = None
     generate_query_variants: GenerateQueryVariants | None = None
     rag_fusion_retrieve: Searcher | None = None
+    hydrate_chunk_result: HydrateChunkResult | None = None
 
 
 StageFactory = Callable[[dict[str, Any], StageDeps], "SearchStage | AsyncSearchStage"]
@@ -78,6 +81,14 @@ def _make_rag_fusion(config: dict[str, Any], deps: StageDeps) -> AsyncSearchStag
     )
 
 
+def _make_provenance(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return ProvenanceStage()
+
+
+def _make_hydrate(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return HydrateStage(deps.hydrate_chunk_result)
+
+
 DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "routing": _make_routing,
     "retrieve": _make_retrieve,
@@ -85,4 +96,6 @@ DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "fusion": _make_fusion,
     "dedup_rerank": _make_dedup_rerank,
     "rag_fusion": _make_rag_fusion,
+    "provenance": _make_provenance,
+    "hydrate": _make_hydrate,
 }
