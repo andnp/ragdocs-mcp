@@ -22,6 +22,7 @@ from searchkernel.models import Chunk, Document
 from searchkernel.parsers.dispatcher import dispatch_parser
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.chunk import ChunkStage
+from searchkernel.pipeline.stages.detect_moves import DetectMovesStage
 from searchkernel.pipeline.stages.index import IndexStage
 from searchkernel.search.edge_types import infer_edge_type
 from searchkernel.search.path_utils import (
@@ -353,49 +354,17 @@ class IndexManager:
         Returns:
             Dict mapping old_doc_id -> new_doc_id for detected moves
         """
-        moves: dict[str, str] = {}
-        threshold = self._config.indexing.move_detection_threshold
-
-        for new_doc_id, new_chunks in added_docs.items():
-            if not new_chunks:
-                continue
-
-            # Build hash set for new document
-            new_hashes = {chunk.content_hash for chunk in new_chunks}
-
-            # Compare with each removed document
-            best_match_doc = None
-            best_match_ratio = 0.0
-
-            for old_doc_id in removed_docs:
-                old_chunk_data = self._hash_store.get_chunks_by_document(old_doc_id)
-                if not old_chunk_data:
-                    continue
-
-                old_hashes = {hash_val for _, hash_val in old_chunk_data}
-
-                # Calculate overlap ratio
-                if not old_hashes or not new_hashes:
-                    continue
-
-                matching_hashes = new_hashes & old_hashes
-                match_ratio = len(matching_hashes) / max(
-                    len(old_hashes), len(new_hashes)
-                )
-
-                if match_ratio > best_match_ratio:
-                    best_match_ratio = match_ratio
-                    best_match_doc = old_doc_id
-
-            # If match ratio exceeds threshold, it's a move
-            if best_match_doc and best_match_ratio >= threshold:
-                moves[best_match_doc] = new_doc_id
-                logger.info(
-                    f"Detected file move: {best_match_doc} -> {new_doc_id} "
-                    f"(match ratio: {best_match_ratio:.1%})"
-                )
-
-        return moves
+        context = DetectMovesStage(self._hash_store).run(
+            SearchContext(
+                query="",
+                metadata={
+                    "removed_doc_ids": removed_docs,
+                    "added_docs": added_docs,
+                    "move_detection_threshold": self._config.indexing.move_detection_threshold,
+                },
+            )
+        )
+        return context.metadata["moved_files"]
 
     def _apply_file_move(
         self,
