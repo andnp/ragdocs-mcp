@@ -316,32 +316,21 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             vector_results, keyword_results
         )
 
-        # Tag-based query expansion: Find related documents via tag graph traversal
-        tag_expansion_count = 0
-        combined_initial_results = vector_results + keyword_results
-        if skip_expensive_factual_enrichments:
-            tag_expanded_results: list[dict[str, object]] = []
-        else:
-            tag_expanded_results = expand_query_with_tags(
-                initial_results=combined_initial_results,
-                graph=self._graph,
-                vector=self._vector,
-                top_k=effective_stage_top_k,
-                max_related_tags=5,
-                max_depth=2,
-            )
-        applied_tag_expansion_results: list[dict[str, object]] = []
-
-        # Merge tag-expanded results into existing result sets
-        for result in tag_expanded_results:
-            chunk_id = result["chunk_id"]
-            doc_id = result["doc_id"]
-            if chunk_id not in chunk_id_to_doc_id:
-                all_doc_ids.add(doc_id)
-                chunk_id_to_doc_id[chunk_id] = doc_id
-                vector_results.append(result)  # Add to semantic results for fusion
-                applied_tag_expansion_results.append(result)
-                tag_expansion_count += 1
+        tag_expansion_context = self._apply_tag_expansion(
+            vector_results,
+            keyword_results,
+            chunk_id_to_doc_id,
+            all_doc_ids,
+            effective_stage_top_k,
+            skip=skip_expensive_factual_enrichments,
+        )
+        vector_results = tag_expansion_context.metadata["vector_results"]
+        chunk_id_to_doc_id = tag_expansion_context.metadata["chunk_id_to_doc_id"]
+        all_doc_ids = tag_expansion_context.metadata["all_doc_ids"]
+        tag_expansion_count = tag_expansion_context.metadata["tag_expansion_count"]
+        applied_tag_expansion_results = tag_expansion_context.metadata[
+            "applied_tag_expansion_results"
+        ]
 
         graph_context = await self._graph_expand(
             graph_seed_scores,
@@ -678,6 +667,47 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 seed_scores[doc_id_obj] = score
 
         return seed_scores
+
+    def _run_tag_expansion(
+        self,
+        combined_initial_results: list[dict[str, object]],
+        top_k: int,
+    ) -> list[dict[str, object]]:
+        return expand_query_with_tags(
+            initial_results=combined_initial_results,
+            graph=self._graph,
+            vector=self._vector,
+            top_k=top_k,
+            max_related_tags=5,
+            max_depth=2,
+        )
+
+    def _apply_tag_expansion(
+        self,
+        vector_results: list[dict[str, object]],
+        keyword_results: list[dict[str, object]],
+        chunk_id_to_doc_id: dict[str, str],
+        all_doc_ids: set[str],
+        top_k: int,
+        *,
+        skip: bool,
+    ) -> SearchContext:
+        stage = DEFAULT_QUERY_STAGE_REGISTRY["tag_expansion"](
+            {}, StageDeps(expand_query_with_tags=self._run_tag_expansion)
+        )
+        return stage.run(
+            SearchContext(
+                query="",
+                metadata={
+                    "vector_results": vector_results,
+                    "keyword_results": keyword_results,
+                    "chunk_id_to_doc_id": chunk_id_to_doc_id,
+                    "all_doc_ids": all_doc_ids,
+                    "top_k": top_k,
+                    "skip_tag_expansion": skip,
+                },
+            )
+        )
 
     def _get_ranked_graph_neighbors(self, seed_scores: dict[str, float]):
         neighbors = self._graph.rank_neighbors(seed_scores)
