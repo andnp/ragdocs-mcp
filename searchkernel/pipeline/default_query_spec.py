@@ -1,9 +1,16 @@
 """The default query `PipelineSpec`: reproduces `SearchOrchestrator.query`'s
-full hand-wired stage order -- routing -> retrieve -> tag_expansion ->
-graph_expand -> provenance -> fusion -> community_boost -> project_uplift
--> project_filter -> source_filter -> dedup_rerank -> parent_expansion ->
+full hand-wired stage order -- routing -> effective_top_k -> retrieve ->
+seed_bookkeeping -> tag_expansion -> graph_expand -> strategy_results ->
+provenance -> fusion -> community_boost -> project_uplift ->
+project_filter -> source_filter -> dedup_rerank -> parent_expansion ->
 hydrate -- as data, for `PipelineExecutor` to walk against
-`DEFAULT_QUERY_STAGE_REGISTRY`.
+`DEFAULT_QUERY_STAGE_REGISTRY`. `effective_top_k`/`seed_bookkeeping`/
+`strategy_results` are the bookkeeping stages that make a generic walk of
+this spec possible at all: without them, `tag_expansion` (needs
+`chunk_id_to_doc_id`/`all_doc_ids`/`top_k`), `graph_expand` (needs
+`seed_scores`) and `provenance`/`fusion` (need `context.strategy_results`)
+would each be missing required `context.metadata` keys on the first
+generic run.
 
 Per-query config (weights, top_k, min_confidence, ...) is resolved by the
 orchestrator at call time and passed as each `StageSpec.config`; this
@@ -29,9 +36,12 @@ DEFAULT_QUERY_SPEC = PipelineSpec(
     name="default_query",
     stages=(
         StageSpec(name="routing"),
+        StageSpec(name="effective_top_k"),
         StageSpec(name="retrieve"),
+        StageSpec(name="seed_bookkeeping"),
         StageSpec(name="tag_expansion"),
         StageSpec(name="graph_expand"),
+        StageSpec(name="strategy_results"),
         StageSpec(name="provenance"),
         StageSpec(name="fusion"),
         StageSpec(name="community_boost"),
