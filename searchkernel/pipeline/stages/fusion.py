@@ -1,18 +1,22 @@
-"""FusionStage: the RRF-fuse + calibrate (+ optional time-boost) query stage.
+"""FusionStage: composes the fuse/calibrate/recency-boost query stages.
 
 Lifted from SearchOrchestrator's direct use of ScorePipeline behind the
-SearchStage contract. Delegates straight to ScorePipeline.run -- same
-inputs, same outputs -- so wiring the orchestrator through this stage is
-a pure extraction with no behavior change.
+SearchStage contract. Composes the finer-grained RRFFuseStage,
+CalibrateStage and RecencyBoostStage in the same order
+ScorePipeline.run runs its fuse/calibrate/boost steps -- same inputs,
+same outputs -- so this stays a pure extraction with no behavior
+change.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import datetime
 
 from searchkernel.pipeline.stage import SearchContext
-from searchkernel.search.score_pipeline import ScorePipeline, ScorePipelineConfig
+from searchkernel.pipeline.stages.calibrate import CalibrateStage
+from searchkernel.pipeline.stages.recency_boost import RecencyBoostStage
+from searchkernel.pipeline.stages.rrf_fuse import RRFFuseStage
+from searchkernel.search.score_pipeline import ScorePipelineConfig
 
 
 class FusionStage:
@@ -22,12 +26,15 @@ class FusionStage:
     name = "fusion"
 
     def __init__(self, config: ScorePipelineConfig | None = None):
-        self._pipeline = ScorePipeline(config)
+        self._fuse = RRFFuseStage(config)
+        self._calibrate = CalibrateStage()
+        self._boost = RecencyBoostStage(config)
 
     def run(
         self,
         context: SearchContext,
         timestamps: dict[str, datetime] | None = None,
     ) -> SearchContext:
-        fused = self._pipeline.run(context.strategy_results, timestamps)
-        return replace(context, candidates=fused)
+        context = self._fuse.run(context)
+        context = self._calibrate.run(context)
+        return self._boost.run(context, timestamps)
