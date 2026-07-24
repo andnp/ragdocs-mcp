@@ -39,3 +39,19 @@ class SearchStage(Protocol):
     name: str
 
     def run(self, context: SearchContext) -> SearchContext: ...
+
+
+@runtime_checkable
+class AsyncSearchStage(Protocol):
+    """An I/O-bound composable pipeline step (e.g. retrieval).
+
+    Same contract as `SearchStage` -- pure with respect to `context`,
+    returns a new context rather than mutating -- but `run` is a
+    coroutine. Stages that must await (index lookups, network calls)
+    implement this instead of `SearchStage`; a pipeline executor awaits
+    `AsyncSearchStage`s and calls `SearchStage`s directly.
+    """
+
+    name: str
+
+    async def run(self, context: SearchContext) -> SearchContext: ...

@@ -1,12 +1,21 @@
 from dataclasses import replace
 
-from searchkernel.pipeline.stage import SearchContext, SearchStage
+import pytest
+
+from searchkernel.pipeline.stage import AsyncSearchStage, SearchContext, SearchStage
 
 
 class _UppercaseStage:
     name = "uppercase"
 
     def run(self, context: SearchContext) -> SearchContext:
+        return replace(context, query=context.query.upper())
+
+
+class _AsyncUppercaseStage:
+    name = "async_uppercase"
+
+    async def run(self, context: SearchContext) -> SearchContext:
         return replace(context, query=context.query.upper())
 
 
@@ -29,6 +38,23 @@ def test_stage_run_returns_new_context_without_mutating_input():
     stage = _UppercaseStage()
 
     result = stage.run(context)
+
+    assert result.query == "HELLO"
+    assert context.query == "hello"
+
+
+def test_async_stage_is_structurally_an_async_search_stage():
+    stage = _AsyncUppercaseStage()
+
+    assert isinstance(stage, AsyncSearchStage)
+
+
+@pytest.mark.asyncio
+async def test_async_stage_run_returns_new_context_without_mutating_input():
+    context = SearchContext(query="hello")
+    stage = _AsyncUppercaseStage()
+
+    result = await stage.run(context)
 
     assert result.query == "HELLO"
     assert context.query == "hello"
