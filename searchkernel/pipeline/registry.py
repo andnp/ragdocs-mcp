@@ -41,6 +41,7 @@ from searchkernel.pipeline.stages.rag_fusion import (
 )
 from searchkernel.pipeline.stages.retrieve import RetrieveStage, Searcher
 from searchkernel.pipeline.stages.routing import RoutingStage
+from searchkernel.pipeline.stages.seed_bookkeeping import SeedBookkeepingStage
 from searchkernel.pipeline.stages.source_filter import SourceFilterStage
 from searchkernel.pipeline.stages.tag_expansion import (
     ExpandQueryWithTags,
@@ -80,6 +81,10 @@ def _make_effective_top_k(config: dict[str, Any], deps: StageDeps) -> SearchStag
 
 def _make_retrieve(config: dict[str, Any], deps: StageDeps) -> AsyncSearchStage:
     return RetrieveStage(deps.search_vector, deps.search_keyword)
+
+
+def _make_seed_bookkeeping(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return SeedBookkeepingStage()
 
 
 def _make_graph_expand(config: dict[str, Any], deps: StageDeps) -> SearchStage:
@@ -138,6 +143,7 @@ DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "routing": _make_routing,
     "effective_top_k": _make_effective_top_k,
     "retrieve": _make_retrieve,
+    "seed_bookkeeping": _make_seed_bookkeeping,
     "graph_expand": _make_graph_expand,
     "fusion": _make_fusion,
     "dedup_rerank": _make_dedup_rerank,

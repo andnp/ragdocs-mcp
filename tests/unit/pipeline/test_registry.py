@@ -13,6 +13,7 @@ from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.pipeline.stages.rag_fusion import RAGFusionStage
 from searchkernel.pipeline.stages.retrieve import RetrieveStage
 from searchkernel.pipeline.stages.routing import RoutingStage
+from searchkernel.pipeline.stages.seed_bookkeeping import SeedBookkeepingStage
 from searchkernel.pipeline.stages.source_filter import SourceFilterStage
 from searchkernel.pipeline.stages.tag_expansion import TagExpansionStage
 
@@ -22,6 +23,7 @@ def test_registry_has_the_five_default_query_stages_plus_rag_fusion():
         "routing",
         "effective_top_k",
         "retrieve",
+        "seed_bookkeeping",
         "graph_expand",
         "fusion",
         "dedup_rerank",
@@ -48,6 +50,13 @@ def test_effective_top_k_factory_needs_no_deps():
     stage = DEFAULT_QUERY_STAGE_REGISTRY["effective_top_k"]({}, StageDeps())
 
     assert isinstance(stage, EffectiveTopKStage)
+    assert isinstance(stage, SearchStage)
+
+
+def test_seed_bookkeeping_factory_needs_no_deps():
+    stage = DEFAULT_QUERY_STAGE_REGISTRY["seed_bookkeeping"]({}, StageDeps())
+
+    assert isinstance(stage, SeedBookkeepingStage)
     assert isinstance(stage, SearchStage)
 
 
