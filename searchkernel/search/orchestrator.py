@@ -23,6 +23,7 @@ from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.fusion import FusionStage
+from searchkernel.pipeline.stages.graph_expand import GraphExpandStage
 from searchkernel.pipeline.stages.retrieve import RetrieveStage
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
@@ -326,17 +327,13 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 applied_tag_expansion_results.append(result)
                 tag_expansion_count += 1
 
-        ranked_graph_neighbors = self._get_ranked_graph_neighbors(graph_seed_scores)
-        graph_neighbor_ids = [doc_id for doc_id, _score in ranked_graph_neighbors]
-        graph_doc_scores = {
-            doc_id: score for doc_id, score in ranked_graph_neighbors
-        }
-        graph_chunk_ids = build_graph_chunk_candidates(
-            graph_neighbor_ids,
-            self._vector,
+        graph_context = self._graph_expand(
+            graph_seed_scores,
             effective_stage_top_k,
             excluded_chunk_ids=set(chunk_id_to_doc_id),
         )
+        graph_chunk_ids = graph_context.metadata["graph_chunk_ids"]
+        graph_doc_scores = graph_context.metadata["graph_doc_scores"]
 
         # Build strategy stats
         strategy_stats = SearchStrategyStats(
@@ -547,6 +544,40 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
     def _get_chunk_content(self, chunk_id: str) -> str | None:
         return self._chunk_hydrator.get_content(chunk_id)
+
+    def _graph_expand(
+        self,
+        seed_scores: dict[str, float],
+        top_k: int,
+        *,
+        excluded_chunk_ids: set[str] | None,
+    ) -> SearchContext:
+        stage = GraphExpandStage(
+            self._get_ranked_graph_neighbors, self._build_graph_chunk_candidates
+        )
+        return stage.run(
+            SearchContext(
+                query="",
+                metadata={
+                    "seed_scores": seed_scores,
+                    "top_k": top_k,
+                    "excluded_chunk_ids": excluded_chunk_ids,
+                },
+            )
+        )
+
+    def _build_graph_chunk_candidates(
+        self,
+        neighbor_doc_ids: list[str],
+        top_k: int,
+        excluded_chunk_ids: set[str] | None,
+    ) -> list[str]:
+        return build_graph_chunk_candidates(
+            neighbor_doc_ids,
+            self._vector,
+            top_k,
+            excluded_chunk_ids=excluded_chunk_ids,
+        )
 
     async def _retrieve(
         self,
