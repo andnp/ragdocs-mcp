@@ -1,4 +1,4 @@
-"""Unit tests for search_anything: per-source fan-out timeout/failure isolation."""
+"""Unit tests for search_anything: fan-out timeouts + retrieve-then-rerank-once."""
 
 import asyncio
 from typing import Any, Iterable
@@ -156,3 +156,56 @@ def test_searchable_source_protocol_conformance_of_stubs():
     assert isinstance(_FastSource(), SearchableSource)
     assert isinstance(_SlowSource(), SearchableSource)
     assert isinstance(_FailingSource(), SearchableSource)
+
+
+@pytest.mark.asyncio
+async def test_rerank_once_reorders_by_reranker_not_source_score():
+    """The merged set is ordered by the single rerank pass, not each source's
+    own score -- a source's high self-reported score should not win if the
+    reranker judges it less relevant than a lower-scored candidate."""
+    registry = SourceRegistry()
+
+    class _SourceA:
+        source_kind = "a"
+
+        async def search(self, query, k, filters=None):
+            return [
+                ScoredRef(
+                    source_id="a-1",
+                    score=0.99,  # highest self-reported score
+                    source_kind="a",
+                    metadata={"text": "irrelevant filler text"},
+                )
+            ]
+
+    class _SourceB:
+        source_kind = "b"
+
+        async def search(self, query, k, filters=None):
+            return [
+                ScoredRef(
+                    source_id="b-1",
+                    score=0.1,  # lowest self-reported score
+                    source_kind="b",
+                    metadata={"text": "the most relevant answer"},
+                )
+            ]
+
+    registry.register(_SourceA())
+    registry.register(_SourceB())
+    reranker = _StubReranker(
+        {
+            "irrelevant filler text": 0.05,
+            "the most relevant answer": 0.95,
+        }
+    )
+
+    results = await search_anything(
+        "query",
+        registry=registry,
+        reranker=reranker,
+    )
+
+    assert [r.source_id for r in results] == ["b-1", "a-1"]
+    assert results[0].score == 0.95
+    assert results[0].metadata["source_score"] == 0.1
