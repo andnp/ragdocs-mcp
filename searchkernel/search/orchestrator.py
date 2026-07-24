@@ -24,6 +24,7 @@ from searchkernel.pipeline.executor import PipelineExecutor
 from searchkernel.pipeline.registry import DEFAULT_QUERY_STAGE_REGISTRY, StageDeps
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
+from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
 from searchkernel.search.result_cache import QueryResultCache, QueryResultCacheKey
@@ -514,17 +515,10 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         self,
         strategy_results: dict[str, list[tuple[str, float]]],
     ) -> dict[str, SearchResultProvenance]:
-        result_provenance: dict[str, SearchResultProvenance] = {}
-
-        for strategy, result_list in strategy_results.items():
-            for rank, (chunk_id, raw_score) in enumerate(result_list, start=1):
-                provenance = result_provenance.setdefault(
-                    chunk_id,
-                    SearchResultProvenance(),
-                )
-                provenance.add_strategy(strategy, rank, raw_score)
-
-        return result_provenance
+        context = ProvenanceStage().run(
+            SearchContext(query="", strategy_results=strategy_results)
+        )
+        return context.metadata["result_provenance"]
 
     def _build_score_pipeline_config(
         self, weights: dict[str, float]
