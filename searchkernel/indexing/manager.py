@@ -21,6 +21,7 @@ from searchkernel.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexM
 from searchkernel.models import Chunk, Document
 from searchkernel.parsers.dispatcher import dispatch_parser
 from searchkernel.pipeline.stage import SearchContext
+from searchkernel.pipeline.stages.apply_move import ApplyMoveStage
 from searchkernel.pipeline.stages.chunk import ChunkStage
 from searchkernel.pipeline.stages.detect_moves import DetectMovesStage
 from searchkernel.pipeline.stages.index import IndexStage
@@ -381,75 +382,39 @@ class IndexManager:
             True if move successful, False if fallback to re-index needed
         """
         try:
-            # Get old chunks for mapping
-            old_chunk_data = self._hash_store.get_chunks_by_document(old_doc_id)
-            if not old_chunk_data:
+            context = ApplyMoveStage(
+                self.vector,
+                self.keyword,
+                self.graph,
+                self._hash_store,
+                self._config.indexing.move_detection_threshold,
+            ).run(
+                SearchContext(
+                    query="",
+                    metadata={
+                        "old_doc_id": old_doc_id,
+                        "new_doc_id": new_doc_id,
+                        "new_chunks": new_chunks,
+                    },
+                )
+            )
+
+            if not context.metadata["hash_store_updated"]:
                 logger.debug(
                     f"No old chunks found for {old_doc_id}, using full reindex"
                 )
                 return False
 
-            # Build hash -> old_chunk_id mapping
-            old_hash_to_chunk: dict[str, str] = {
-                hash_val: chunk_id for chunk_id, hash_val in old_chunk_data
-            }
-
-            # Process each new chunk
-            moved_count = 0
-            failed_moves = []
-
-            for new_chunk in new_chunks:
-                old_chunk_id = old_hash_to_chunk.get(new_chunk.content_hash)
-                if not old_chunk_id:
-                    # Content changed, need full re-index
-                    failed_moves.append(new_chunk.chunk_id)
-                    continue
-
-                # Update indices with new IDs/metadata
-                new_metadata = {
-                    "doc_id": new_chunk.doc_id,
-                    "chunk_id": new_chunk.chunk_id,
-                    "file_path": new_chunk.file_path,
-                    "header_path": new_chunk.header_path,
-                    **new_chunk.metadata,
-                }
-
-                # Update vector index
-                if not self.vector.update_chunk_path(
-                    old_chunk_id, new_chunk.chunk_id, new_metadata
-                ):
-                    failed_moves.append(new_chunk.chunk_id)
-                    continue
-
-                # Update keyword index
-                if not self.keyword.move_chunk(old_chunk_id, new_chunk):
-                    failed_moves.append(new_chunk.chunk_id)
-                    continue
-
-                # Update graph
-                if not self.graph.rename_node(old_chunk_id, new_chunk.chunk_id):
-                    # Graph update is optional, just log
-                    logger.debug(f"Graph node rename failed for {old_chunk_id}")
-
-                moved_count += 1
-
-            # Update hash store
-            self._hash_store.remove_document(old_doc_id)
-            for chunk in new_chunks:
-                self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
             self._persist_hash_store_if_needed()
 
-            # If too many chunks failed, fall back to full re-index
-            if failed_moves:
-                failure_ratio = len(failed_moves) / len(new_chunks)
-                if failure_ratio > (
-                    1.0 - self._config.indexing.move_detection_threshold
-                ):
-                    logger.info(
-                        f"Move operation had {failure_ratio:.1%} failures, "
-                        "falling back to full re-index"
-                    )
-                    return False
+            moved_count = context.metadata["moved_chunk_count"]
+            if not context.metadata["move_applied"]:
+                failure_ratio = 1.0 - (moved_count / len(new_chunks))
+                logger.info(
+                    f"Move operation had {failure_ratio:.1%} failures, "
+                    "falling back to full re-index"
+                )
+                return False
 
             logger.info(
                 f"Successfully moved {moved_count}/{len(new_chunks)} chunks "
