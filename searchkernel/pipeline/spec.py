@@ -1,10 +1,10 @@
 """PipelineSpec: a declarative, pinned description of a pipeline's stages.
 
 A `PipelineSpec` names an ordered sequence of stages plus per-stage config.
-It is pure data: building an executor that walks a spec and runs the named
-stages against a registry is follow-on work (see the W4a plan notes); for
-now specs exist so a pipeline's shape can be described, versioned, and
-diffed independently of the code that (today) still runs it inline.
+It is pure data, walked by `searchkernel.pipeline.executor.PipelineExecutor`
+against a stage registry (see `searchkernel.pipeline.registry`); specs exist
+so a pipeline's shape can be described, versioned, and diffed independently
+of the stage implementations that run it.
 """
 
 from __future__ import annotations
