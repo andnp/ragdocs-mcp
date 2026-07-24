@@ -6,9 +6,17 @@ def test_default_query_spec_matches_the_orchestrators_hand_wired_order():
     assert DEFAULT_QUERY_SPEC.stage_names() == (
         "routing",
         "retrieve",
+        "tag_expansion",
         "graph_expand",
+        "provenance",
         "fusion",
+        "community_boost",
+        "project_uplift",
+        "project_filter",
+        "source_filter",
         "dedup_rerank",
+        "parent_expansion",
+        "hydrate",
     )
 
 
