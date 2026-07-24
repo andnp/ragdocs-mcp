@@ -24,8 +24,6 @@ from searchkernel.pipeline.executor import PipelineExecutor
 from searchkernel.pipeline.registry import DEFAULT_QUERY_STAGE_REGISTRY, StageDeps
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
-from searchkernel.pipeline.stages.hydrate import HydrateStage
-from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
 from searchkernel.search.result_cache import QueryResultCache, QueryResultCacheKey
@@ -516,7 +514,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         self,
         strategy_results: dict[str, list[tuple[str, float]]],
     ) -> dict[str, SearchResultProvenance]:
-        context = ProvenanceStage().run(
+        stage = DEFAULT_QUERY_STAGE_REGISTRY["provenance"]({}, StageDeps())
+        context = stage.run(
             SearchContext(query="", strategy_results=strategy_results)
         )
         return context.metadata["result_provenance"]
@@ -1003,7 +1002,10 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         if result_provenance is not None:
             metadata["result_provenance"] = result_provenance
 
-        context = HydrateStage(hydrate_chunk_result).run(
+        stage = DEFAULT_QUERY_STAGE_REGISTRY["hydrate"](
+            {}, StageDeps(hydrate_chunk_result=hydrate_chunk_result)
+        )
+        context = stage.run(
             SearchContext(query="", candidates=final, metadata=metadata)
         )
 
