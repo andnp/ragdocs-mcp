@@ -39,6 +39,7 @@ from searchkernel.pipeline.stages.rag_fusion import (
 )
 from searchkernel.pipeline.stages.retrieve import RetrieveStage, Searcher
 from searchkernel.pipeline.stages.routing import RoutingStage
+from searchkernel.pipeline.stages.source_filter import SourceFilterStage
 from searchkernel.pipeline.stages.tag_expansion import (
     ExpandQueryWithTags,
     TagExpansionStage,
@@ -118,6 +119,10 @@ def _make_project_filter(config: dict[str, Any], deps: StageDeps) -> SearchStage
     return ProjectFilterStage(deps.get_chunk)
 
 
+def _make_source_filter(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return SourceFilterStage(deps.get_chunk)
+
+
 DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "routing": _make_routing,
     "retrieve": _make_retrieve,
@@ -131,4 +136,5 @@ DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "community_boost": _make_community_boost,
     "project_uplift": _make_project_uplift,
     "project_filter": _make_project_filter,
+    "source_filter": _make_source_filter,
 }

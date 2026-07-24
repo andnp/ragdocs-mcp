@@ -11,6 +11,7 @@ from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.pipeline.stages.rag_fusion import RAGFusionStage
 from searchkernel.pipeline.stages.retrieve import RetrieveStage
 from searchkernel.pipeline.stages.routing import RoutingStage
+from searchkernel.pipeline.stages.source_filter import SourceFilterStage
 from searchkernel.pipeline.stages.tag_expansion import TagExpansionStage
 
 
@@ -28,6 +29,7 @@ def test_registry_has_the_five_default_query_stages_plus_rag_fusion():
         "community_boost",
         "project_uplift",
         "project_filter",
+        "source_filter",
     }
 
 
@@ -168,4 +170,15 @@ def test_project_filter_factory_injects_get_chunk_from_deps():
     stage = DEFAULT_QUERY_STAGE_REGISTRY["project_filter"]({}, deps)
 
     assert isinstance(stage, ProjectFilterStage)
+    assert stage._get_chunk is get_chunk
+
+
+def test_source_filter_factory_injects_get_chunk_from_deps():
+    def get_chunk(_chunk_id):
+        return None
+
+    deps = StageDeps(get_chunk=get_chunk)
+    stage = DEFAULT_QUERY_STAGE_REGISTRY["source_filter"]({}, deps)
+
+    assert isinstance(stage, SourceFilterStage)
     assert stage._get_chunk is get_chunk
