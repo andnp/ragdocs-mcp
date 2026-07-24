@@ -52,3 +52,22 @@ def test_provenance_stage_does_not_mutate_input_context():
     ProvenanceStage().run(context)
 
     assert "result_provenance" not in context.metadata
+
+
+def test_provenance_stage_prefers_metadata_strategy_results_override():
+    context = SearchContext(
+        query="",
+        strategy_results={"semantic": [("chunk_a", 0.9)]},
+        metadata={
+            "provenance_strategy_results": {
+                "semantic": [("chunk_a", 0.9)],
+                "tag_expansion": [("chunk_b", 0.3)],
+            }
+        },
+    )
+
+    result = ProvenanceStage().run(context)
+
+    provenance = result.metadata["result_provenance"]
+    assert set(provenance) == {"chunk_a", "chunk_b"}
+    assert provenance["chunk_b"].strategies == ("tag_expansion",)
