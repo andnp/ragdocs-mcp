@@ -23,6 +23,7 @@ from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.fusion import FusionStage
+from searchkernel.pipeline.stages.retrieve import RetrieveStage
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
 from searchkernel.search.result_cache import QueryResultCache, QueryResultCacheKey
@@ -268,25 +269,11 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             project_filter=project_filter,
         )
 
-        search_tasks = [
-            self._search_vector(
-                query_text,
-                effective_stage_top_k,
-                excluded_files,
-                docs_root,
-            ),
-            self._search_keyword(
-                query_text,
-                effective_stage_top_k,
-                excluded_files,
-                docs_root,
-            ),
-        ]
-
-        results = await asyncio.gather(*search_tasks)
-
-        vector_results = results[0]
-        keyword_results = results[1]
+        retrieve_context = await self._retrieve(
+            query_text, effective_stage_top_k, excluded_files, docs_root
+        )
+        vector_results = retrieve_context.metadata["vector_results"]
+        keyword_results = retrieve_context.metadata["keyword_results"]
         skip_expensive_factual_enrichments = (
             self._should_skip_expensive_factual_enrichments(
                 query_type,
@@ -560,6 +547,25 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
 
     def _get_chunk_content(self, chunk_id: str) -> str | None:
         return self._chunk_hydrator.get_content(chunk_id)
+
+    async def _retrieve(
+        self,
+        query_text: str,
+        top_k: int,
+        excluded_files: set[str] | None,
+        docs_root: Path,
+    ) -> SearchContext:
+        stage = RetrieveStage(self._search_vector, self._search_keyword)
+        return await stage.run(
+            SearchContext(
+                query=query_text,
+                metadata={
+                    "top_k": top_k,
+                    "excluded_files": excluded_files,
+                    "docs_root": docs_root,
+                },
+            )
+        )
 
     async def _search_vector(
         self,
