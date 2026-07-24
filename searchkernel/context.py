@@ -6,7 +6,10 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from searchkernel.adapters.stores.pgvector_index import PGVectorIndex
 
 from searchkernel.config import (
     Config,
@@ -143,18 +146,8 @@ class ApplicationContext:
 
         embedding_model_name = config.llm.resolved_embedding_model
 
-        if lazy_embeddings:
-            vector = VectorIndex(
-                embedding_model_name=embedding_model_name,
-                embedding_workers=config.indexing.embedding_workers,
-                torch_num_threads=config.indexing.torch_num_threads,
-            )
-        else:
-            vector = VectorIndex(
-                embedding_model_name=embedding_model_name,
-                embedding_workers=config.indexing.embedding_workers,
-                torch_num_threads=config.indexing.torch_num_threads,
-            )
+        vector = cls._build_vector_store(config, embedding_model_name)
+        if not lazy_embeddings:
             vector.warm_up()
 
         from searchkernel.indexing.migration import detect_and_migrate_legacy_index
@@ -220,6 +213,30 @@ class ApplicationContext:
             db_manager=db_manager,
             current_manifest=None,
             reconciliation_task=None,
+        )
+
+    @staticmethod
+    def _build_vector_store(
+        config: Config, embedding_model_name: str
+    ) -> VectorIndex | PGVectorIndex:
+        """Build the live vector store per `config.store.backend`.
+
+        FAISS (`VectorIndex`) is the default; `store.backend = "pgvector"`
+        selects the Postgres+pgvector-backed adapter instead. Both present
+        the same method surface the live index/search path calls.
+        """
+        if config.store.backend == "pgvector":
+            from searchkernel.adapters.stores.pgvector_index import PGVectorIndex
+
+            return PGVectorIndex(
+                pg_dsn=config.store.pg_dsn,
+                embedding_model_name=embedding_model_name,
+            )
+
+        return VectorIndex(
+            embedding_model_name=embedding_model_name,
+            embedding_workers=config.indexing.embedding_workers,
+            torch_num_threads=config.indexing.torch_num_threads,
         )
 
     @staticmethod
