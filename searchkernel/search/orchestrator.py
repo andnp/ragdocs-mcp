@@ -17,7 +17,7 @@ from searchkernel.models import (
 from searchkernel.search.base_orchestrator import BaseSearchOrchestrator
 from searchkernel.search.chunk_hydrator import ChunkHydrator
 from searchkernel.search.classifier import QueryType
-from searchkernel.search.filters import matches_project_filter, normalize_project_filter
+from searchkernel.search.filters import normalize_project_filter
 from searchkernel.search.graph_expansion import build_graph_chunk_candidates
 from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
 from searchkernel.pipeline.executor import PipelineExecutor
@@ -772,28 +772,22 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         query_context: QueryExecutionContext | None = None,
         project_filter: list[str] | None = None,
     ) -> list[tuple[str, float]]:
-        normalized_filter = normalize_project_filter(project_filter)
-        if normalized_filter is None:
-            return fused
-
-        filtered: list[tuple[str, float]] = []
-        for chunk_id, score in fused:
-            chunk_data = (
-                query_context.get_vector_chunk(chunk_id)
-                if query_context is not None
-                else self._vector.get_chunk_by_id(chunk_id)
+        get_chunk = (
+            query_context.get_vector_chunk
+            if query_context is not None
+            else self._vector.get_chunk_by_id
+        )
+        stage = DEFAULT_QUERY_STAGE_REGISTRY["project_filter"](
+            {}, StageDeps(get_chunk=get_chunk)
+        )
+        context = stage.run(
+            SearchContext(
+                query="",
+                candidates=fused,
+                metadata={"project_filter": project_filter},
             )
-            metadata = chunk_data.get("metadata", {}) if chunk_data else {}
-            project_id = (
-                metadata.get("project_id") if isinstance(metadata, dict) else None
-            )
-            if matches_project_filter(
-                str(project_id) if project_id is not None else None,
-                normalized_filter,
-            ):
-                filtered.append((chunk_id, score))
-
-        return filtered
+        )
+        return context.candidates
 
     def _apply_source_filter(
         self,
