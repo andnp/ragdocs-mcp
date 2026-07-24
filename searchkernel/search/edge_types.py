@@ -1,19 +1,6 @@
-from enum import Enum
+from searchkernel.domain.graph_policy import DEFAULT_GRAPH_PROVIDER, EdgeType
 
-
-class EdgeType(Enum):
-    LINKS_TO = "links_to"
-    IMPLEMENTS = "implements"
-    TESTS = "tests"
-    RELATED = "related"
-
-
-EDGE_TYPE_WEIGHTS: dict[EdgeType, float] = {
-    EdgeType.IMPLEMENTS: 1.0,
-    EdgeType.LINKS_TO: 0.85,
-    EdgeType.RELATED: 0.7,
-    EdgeType.TESTS: 0.55,
-}
+EDGE_TYPE_WEIGHTS: dict[EdgeType, float] = DEFAULT_GRAPH_PROVIDER.edge_type_weights
 
 
 _EDGE_TYPE_ALIASES: dict[str, EdgeType] = {
@@ -51,7 +38,7 @@ def normalize_edge_type(edge_type: str | EdgeType):
 
 
 def edge_type_weight(edge_type: str | EdgeType):
-    return EDGE_TYPE_WEIGHTS[normalize_edge_type(edge_type)]
+    return DEFAULT_GRAPH_PROVIDER.weight_for(normalize_edge_type(edge_type))
 
 
 def infer_edge_type(header_context: str, target: str):
