@@ -29,6 +29,7 @@ from searchkernel.pipeline.stages.graph_expand import (
     RankNeighbors,
 )
 from searchkernel.pipeline.stages.hydrate import HydrateChunkResult, HydrateStage
+from searchkernel.pipeline.stages.project_filter import ProjectFilterStage
 from searchkernel.pipeline.stages.project_uplift import GetChunk, ProjectUpliftStage
 from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.pipeline.stages.rag_fusion import (
@@ -113,6 +114,10 @@ def _make_project_uplift(config: dict[str, Any], deps: StageDeps) -> SearchStage
     return ProjectUpliftStage(deps.get_chunk, config.get("uplift", 1.2))
 
 
+def _make_project_filter(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return ProjectFilterStage(deps.get_chunk)
+
+
 DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "routing": _make_routing,
     "retrieve": _make_retrieve,
@@ -125,4 +130,5 @@ DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "tag_expansion": _make_tag_expansion,
     "community_boost": _make_community_boost,
     "project_uplift": _make_project_uplift,
+    "project_filter": _make_project_filter,
 }

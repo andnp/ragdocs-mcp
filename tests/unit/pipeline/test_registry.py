@@ -5,6 +5,7 @@ from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.fusion import FusionStage
 from searchkernel.pipeline.stages.graph_expand import GraphExpandStage
 from searchkernel.pipeline.stages.hydrate import HydrateStage
+from searchkernel.pipeline.stages.project_filter import ProjectFilterStage
 from searchkernel.pipeline.stages.project_uplift import ProjectUpliftStage
 from searchkernel.pipeline.stages.provenance import ProvenanceStage
 from searchkernel.pipeline.stages.rag_fusion import RAGFusionStage
@@ -26,6 +27,7 @@ def test_registry_has_the_five_default_query_stages_plus_rag_fusion():
         "tag_expansion",
         "community_boost",
         "project_uplift",
+        "project_filter",
     }
 
 
@@ -156,3 +158,14 @@ def test_project_uplift_factory_injects_get_chunk_and_uplift_from_config():
     assert isinstance(stage, ProjectUpliftStage)
     assert stage._get_chunk is get_chunk
     assert stage._uplift == 1.2
+
+
+def test_project_filter_factory_injects_get_chunk_from_deps():
+    def get_chunk(_chunk_id):
+        return None
+
+    deps = StageDeps(get_chunk=get_chunk)
+    stage = DEFAULT_QUERY_STAGE_REGISTRY["project_filter"]({}, deps)
+
+    assert isinstance(stage, ProjectFilterStage)
+    assert stage._get_chunk is get_chunk
