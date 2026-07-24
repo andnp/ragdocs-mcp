@@ -2,6 +2,7 @@ from searchkernel.pipeline.registry import DEFAULT_QUERY_STAGE_REGISTRY, StageDe
 from searchkernel.pipeline.stage import AsyncSearchStage, SearchStage
 from searchkernel.pipeline.stages.community_boost import CommunityBoostStage
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
+from searchkernel.pipeline.stages.effective_top_k import EffectiveTopKStage
 from searchkernel.pipeline.stages.fusion import FusionStage
 from searchkernel.pipeline.stages.graph_expand import GraphExpandStage
 from searchkernel.pipeline.stages.hydrate import HydrateStage
@@ -19,6 +20,7 @@ from searchkernel.pipeline.stages.tag_expansion import TagExpansionStage
 def test_registry_has_the_five_default_query_stages_plus_rag_fusion():
     assert set(DEFAULT_QUERY_STAGE_REGISTRY) == {
         "routing",
+        "effective_top_k",
         "retrieve",
         "graph_expand",
         "fusion",
@@ -39,6 +41,13 @@ def test_routing_factory_needs_no_deps():
     stage = DEFAULT_QUERY_STAGE_REGISTRY["routing"]({}, StageDeps())
 
     assert isinstance(stage, RoutingStage)
+    assert isinstance(stage, SearchStage)
+
+
+def test_effective_top_k_factory_needs_no_deps():
+    stage = DEFAULT_QUERY_STAGE_REGISTRY["effective_top_k"]({}, StageDeps())
+
+    assert isinstance(stage, EffectiveTopKStage)
     assert isinstance(stage, SearchStage)
 
 

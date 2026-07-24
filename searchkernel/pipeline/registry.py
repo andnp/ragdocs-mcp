@@ -22,6 +22,7 @@ from searchkernel.pipeline.stages.community_boost import (
     CommunityBoostStage,
 )
 from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
+from searchkernel.pipeline.stages.effective_top_k import EffectiveTopKStage
 from searchkernel.pipeline.stages.fusion import FusionStage
 from searchkernel.pipeline.stages.graph_expand import (
     BuildChunkCandidates,
@@ -71,6 +72,10 @@ StageFactory = Callable[[dict[str, Any], StageDeps], "SearchStage | AsyncSearchS
 
 def _make_routing(config: dict[str, Any], deps: StageDeps) -> SearchStage:
     return RoutingStage()
+
+
+def _make_effective_top_k(config: dict[str, Any], deps: StageDeps) -> SearchStage:
+    return EffectiveTopKStage()
 
 
 def _make_retrieve(config: dict[str, Any], deps: StageDeps) -> AsyncSearchStage:
@@ -131,6 +136,7 @@ def _make_parent_expansion(config: dict[str, Any], deps: StageDeps) -> SearchSta
 
 DEFAULT_QUERY_STAGE_REGISTRY: dict[str, StageFactory] = {
     "routing": _make_routing,
+    "effective_top_k": _make_effective_top_k,
     "retrieve": _make_retrieve,
     "graph_expand": _make_graph_expand,
     "fusion": _make_fusion,
