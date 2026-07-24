@@ -22,6 +22,7 @@ from searchkernel.models import Chunk, Document
 from searchkernel.parsers.dispatcher import dispatch_parser
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.chunk import ChunkStage
+from searchkernel.pipeline.stages.index import IndexStage
 from searchkernel.search.edge_types import infer_edge_type
 from searchkernel.search.path_utils import (
     compute_doc_id,
@@ -141,6 +142,11 @@ class IndexManager:
             SearchContext(query="", metadata={"document": document})
         )
         return context.metadata["chunks"]
+
+    def _index_chunks(self, chunks: list[Chunk]) -> None:
+        IndexStage(self.vector, self.keyword, self.graph).run(
+            SearchContext(query="", metadata={"chunks": chunks})
+        )
 
     def _record_manifest_index(self, file_path: str, doc_id: str) -> None:
         rel_path_obj: Path | None = None
@@ -311,10 +317,7 @@ class IndexManager:
             self.graph.remove_chunk(chunk_id)
 
         # Add new versions
-        self.vector.add_chunks(chunks)
-        self.keyword.add_chunks(chunks)
-        for chunk in chunks:
-            self.graph.add_node(chunk.chunk_id, chunk.metadata)
+        self._index_chunks(chunks)
 
         logger.debug(f"Updated {len(chunks)} chunks for {doc_id}")
 
@@ -326,10 +329,7 @@ class IndexManager:
         self.graph.remove_node(doc_id)
 
         # Add all new chunks
-        self.vector.add_chunks(chunks)
-        self.keyword.add_chunks(chunks)
-        for chunk in chunks:
-            self.graph.add_node(chunk.chunk_id, chunk.metadata)
+        self._index_chunks(chunks)
 
         # Update hash store (clear old hashes first)
         self._hash_store.remove_document(doc_id)
