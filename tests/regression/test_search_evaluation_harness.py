@@ -23,6 +23,7 @@ def test_search_eval_cases_cover_expected_query_shapes() -> None:
         "conceptual_refresh_tokens",
         "graph_adjacent_api_auth",
         "artifact_fileish",
+        "exact_title_beats_interior_section",
         "scoped_project_context",
     }
     assert (FIXTURE_CORPUS_ROOT / "alpha" / "docs").exists()
@@ -37,7 +38,7 @@ async def test_search_evaluation_harness_fixture_corpus(search_evaluation_harnes
     assert failures == [], report.format_summary()
 
     aggregate = report.aggregate
-    assert aggregate.query_count == 5
+    assert aggregate.query_count == len(SEARCH_EVALUATION_CASES)
     assert aggregate.mrr >= 0.8, report.format_summary()
     assert aggregate.recall_at_3 >= 0.8, report.format_summary()
     assert aggregate.recall_at_5 >= 0.9, report.format_summary()
