@@ -70,13 +70,23 @@ class _FakeContext:
         self.schedule_freshness_refresh_calls += 1
         return True
 
-    async def _query(self, query: str, *, top_k: int, top_n: int, project_filter, project_context):
+    async def _query(
+        self,
+        query: str,
+        *,
+        top_k: int,
+        top_n: int,
+        project_filter,
+        source_filter,
+        project_context,
+    ):
         self.query_calls.append(
             {
                 "query": query,
                 "top_k": top_k,
                 "top_n": top_n,
                 "project_filter": project_filter,
+                "source_filter": source_filter,
                 "project_context": project_context,
             }
         )
@@ -179,6 +189,7 @@ async def test_search_query_route_executes_query_when_ready() -> None:
             "query": "daemon transport",
             "top_n": 3,
             "project_filter": ["proj-a"],
+            "source_filter": ["git_commit"],
             "project_context": "proj-a",
         },
     )
@@ -197,6 +208,7 @@ async def test_search_query_route_executes_query_when_ready() -> None:
             "top_k": 30,
             "top_n": 3,
             "project_filter": ["proj-a"],
+            "source_filter": ["git_commit"],
             "project_context": "proj-a",
         }
     ]

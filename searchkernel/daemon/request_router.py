@@ -307,6 +307,12 @@ def build_daemon_request_handler(
                 if isinstance(project_filter_payload, list)
                 else []
             )
+            source_filter_payload = payload.get("source_filter", [])
+            source_filter = (
+                [str(item) for item in source_filter_payload if isinstance(item, str)]
+                if isinstance(source_filter_payload, list)
+                else []
+            )
             if project_filter:
                 top_k = max(top_k, top_n * 10)
             results, compression_stats, strategy_stats = await ctx.orchestrator.query(
@@ -314,6 +320,7 @@ def build_daemon_request_handler(
                 top_k=top_k,
                 top_n=top_n,
                 project_filter=project_filter,
+                source_filter=source_filter,
                 project_context=(
                     str(payload.get("project_context"))
                     if payload.get("project_context") is not None
