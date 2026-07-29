@@ -193,6 +193,40 @@ async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
 
 
 @pytest.mark.asyncio
+async def test_git_watcher_skips_unchanged_repository_after_refresh(
+    test_config, index_manager, tmp_path, monkeypatch
+):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    observed: list[str] = []
+
+    watcher = GitWatcher(
+        git_repos=[git_dir],
+        index_manager=index_manager,
+        config=test_config,
+        use_tasks=True,
+    )
+
+    monkeypatch.setattr(
+        "searchkernel.git.watcher.get_git_ref_signature",
+        lambda _git_dir: "same-head",
+    )
+    monkeypatch.setattr(
+        "searchkernel.git.watcher.get_head",
+        lambda _root, _git_dir: "same-head",
+    )
+    monkeypatch.setattr(
+        "searchkernel.indexing.tasks.submit_refresh_git_request",
+        lambda git_dir_str: observed.append(git_dir_str)
+        or TaskSubmissionResult(status="enqueued"),
+    )
+
+    await watcher._batch_process({git_dir})
+
+    assert observed == []
+
+
+@pytest.mark.asyncio
 async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
     test_config, index_manager, tmp_path, monkeypatch
 ):

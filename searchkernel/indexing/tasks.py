@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+import threading
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from searchkernel.coordination.task_submission import (
@@ -16,11 +17,17 @@ from searchkernel.coordination.task_submission import (
     is_backpressured,
     submit_coalesced_batch_task,
     submit_single_task,
-    submit_task_batch,
 )
+from searchkernel.git.repository import get_git_ref_signature
 from searchkernel.indexing.bootstrap_checkpoint import (
     mark_bootstrap_file_completed,
     mark_bootstrap_files_completed,
+)
+from searchkernel.indexing.git_refresh_state import (
+    get_cursor,
+    get_head,
+    save_cursor,
+    save_head,
 )
 from searchkernel.indexing.rebuild_service import run_rebuild
 
@@ -31,6 +38,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RECORD_BATCH_TASK_PRIORITY = 100
+GIT_REFRESH_TASK_PRIORITY = 10
 
 
 @dataclass(frozen=True)
@@ -109,6 +117,8 @@ _task_backpressure_limit: int = 100
 _bootstrap_index_path: Path | None = None
 _bootstrap_documents_roots: list[Path] = []
 _schedule_vocabulary_catch_up: Callable[[], bool] | None = None
+_git_refresh_in_flight: set[str] = set()
+_git_refresh_lock = threading.Lock()
 
 # Task references (set after register_tasks is called)
 index_document_task = None
@@ -381,11 +391,52 @@ def register_tasks(
         from searchkernel.adapters.sources.git import GitContentSource
         from searchkernel.indexing.git_ingestion import ingest_git_source
 
-        git_dir_path = Path(git_dir)
+        git_dir_path = Path(git_dir).resolve()
+        repo_key = str(git_dir_path)
+        with _git_refresh_lock:
+            if repo_key in _git_refresh_in_flight:
+                logger.info("Skipping git refresh already running for %s", git_dir_path)
+                return True
+            _git_refresh_in_flight.add(repo_key)
 
         try:
+            refresh_head = get_git_ref_signature(git_dir_path)
+            if (
+                _bootstrap_index_path is not None
+                and refresh_head is not None
+                and get_head(_bootstrap_index_path, git_dir_path) == refresh_head
+            ):
+                logger.debug("Skipping unchanged git repository %s", git_dir_path)
+                return True
+
+            cursor = (
+                get_cursor(_bootstrap_index_path, git_dir_path)
+                if _bootstrap_index_path is not None
+                else None
+            )
+            since = str(max(0, cursor - 1)) if cursor is not None else None
+            latest_cursor = cursor
+
+            def _track_record(record: "Record") -> None:
+                nonlocal latest_cursor
+                timestamp = int(record.updated_at.timestamp())
+                latest_cursor = max(latest_cursor or timestamp, timestamp)
+
             source = GitContentSource(git_dir_path)
-            indexed = ingest_git_source(_index_manager, source)
+            indexed = ingest_git_source(
+                _index_manager,
+                source,
+                since=since,
+                on_record=_track_record,
+            )
+            if indexed:
+                _index_manager.persist()
+                if _bootstrap_index_path is not None and latest_cursor is not None:
+                    save_cursor(_bootstrap_index_path, git_dir_path, latest_cursor)
+            if _bootstrap_index_path is not None and refresh_head is not None:
+                # Persist the head observed before ingestion. A commit created
+                # during the task must remain visible to the next poll.
+                save_head(_bootstrap_index_path, git_dir_path, refresh_head)
             logger.info(
                 "Task completed: refreshed git repository %s (%d commits)",
                 git_dir_path,
@@ -395,6 +446,9 @@ def register_tasks(
         except Exception:
             logger.error("Task failed: refresh git %s", git_dir_path, exc_info=True)
             return False
+        finally:
+            with _git_refresh_lock:
+                _git_refresh_in_flight.discard(repo_key)
 
     @huey.task()
     def _rebuild_index(project_override: str | None, request_id: str) -> bool:
@@ -717,6 +771,11 @@ def enqueue_refresh_git(git_dir: str) -> bool:
 def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
     if refresh_git_repository_task is None or _huey is None:
         return TaskSubmissionResult(status="unavailable")
+    git_dir_key = str(Path(git_dir).resolve())
+    with _git_refresh_lock:
+        if git_dir_key in _git_refresh_in_flight:
+            logger.info("Skipping git refresh enqueue for %s because it is running", git_dir)
+            return TaskSubmissionResult(status="already_pending")
     if is_backpressured(
         _huey,
         _task_backpressure_limit,
@@ -727,6 +786,7 @@ def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
     enqueued = submit_single_task(
         refresh_git_repository_task,
         git_dir,
+        task_kwargs={"priority": GIT_REFRESH_TASK_PRIORITY},
         pending_first_args=_get_pending_refresh_git_dirs(),
         pending_skip_log_message="Skipping git refresh enqueue for %s because a pending task already exists",
     )
@@ -736,7 +796,7 @@ def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
 
 
 def enqueue_refresh_git_batch(git_dirs: list[str]) -> int:
-    """Enqueue many git refresh tasks without watcher backpressure throttling."""
+    """Enqueue many git refresh tasks, respecting queue backpressure."""
     return submit_refresh_git_batch(git_dirs).enqueued_count
 
 
@@ -748,22 +808,25 @@ def submit_refresh_git_batch(git_dirs: list[str]) -> TaskBatchSubmissionResult:
             enqueued_count=0,
         )
 
-    pending_git_dirs = _get_pending_refresh_git_dirs()
-    requested_unique_dirs = set(git_dirs)
-    enqueued_count = submit_task_batch(
-        refresh_git_repository_task,
-        git_dirs,
-        pending_first_args=pending_git_dirs,
-        skipped_pending_log_message="Skipped %d startup git refresh task(s) already pending in queue",
-    )
-    already_pending_count = sum(
-        1 for git_dir in requested_unique_dirs if git_dir in pending_git_dirs
-    )
+    unique_git_dirs = list(dict.fromkeys(git_dirs))
+    enqueued_count = 0
+    already_pending_count = 0
+    backpressured_items: list[str] = []
+    for git_dir in unique_git_dirs:
+        submission = submit_refresh_git_request(git_dir)
+        if submission.status == "enqueued":
+            enqueued_count += 1
+        elif submission.status == "already_pending":
+            already_pending_count += 1
+        elif submission.status == "backpressured":
+            backpressured_items.append(git_dir)
+
     return TaskBatchSubmissionResult(
         queue_available=True,
-        requested_unique_count=len(requested_unique_dirs),
+        requested_unique_count=len(unique_git_dirs),
         enqueued_count=enqueued_count,
         already_pending_count=already_pending_count,
+        backpressured_items=tuple(backpressured_items),
     )
 
 

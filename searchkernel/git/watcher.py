@@ -13,7 +13,9 @@ import time
 from pathlib import Path
 
 from searchkernel.config import Config
+from searchkernel.git.repository import get_git_ref_signature
 from searchkernel.indexing.manager import IndexManager
+from searchkernel.indexing.git_refresh_state import get_head
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,10 @@ class GitWatcher:
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._last_indexed: dict[Path, int] = {}
+
+    @property
+    def _refresh_state_root(self) -> Path:
+        return Path(self._config.indexing.index_path)
 
     def start(self) -> None:
         """Start polling git directories."""
@@ -84,8 +90,19 @@ class GitWatcher:
         if self._use_tasks:
             from searchkernel.indexing.tasks import submit_refresh_git_request
 
+            signatures = await asyncio.gather(
+                *(
+                    asyncio.to_thread(get_git_ref_signature, git_dir)
+                    for git_dir in git_dirs
+                )
+            )
             direct_refresh_dirs: set[Path] = set()
-            for git_dir in git_dirs:
+            for git_dir, signature in zip(git_dirs, signatures, strict=True):
+                if signature is not None and get_head(
+                    self._refresh_state_root, git_dir
+                ) == signature:
+                    continue
+
                 submission = submit_refresh_git_request(str(git_dir))
                 if submission.enqueued:
                     logger.info("Enqueued git refresh task for %s", git_dir.parent)

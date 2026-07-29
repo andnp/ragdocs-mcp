@@ -17,12 +17,14 @@ from searchkernel.domain import Record
 import searchkernel.indexing.tasks as tasks_mod
 from searchkernel.daemon.queue_status import get_queue_stats
 from searchkernel.indexing.bootstrap_checkpoint import BootstrapCheckpoint, BootstrapFileStamp, load_bootstrap_checkpoint, save_bootstrap_checkpoint
+from searchkernel.indexing.git_refresh_state import get_cursor, save_cursor, save_head
 from searchkernel.indexing.tasks import (
     enqueue_index,
     enqueue_index_batch,
     enqueue_remove,
     enqueue_refresh_git,
     enqueue_refresh_git_batch,
+    GIT_REFRESH_TASK_PRIORITY,
     get_pending_index_document_count,
     register_tasks,
     RECORD_BATCH_TASK_PRIORITY,
@@ -92,6 +94,7 @@ def _reset_tasks():
     tasks_mod._task_backpressure_limit = 100
     tasks_mod._bootstrap_index_path = None
     tasks_mod._bootstrap_documents_roots = []
+    tasks_mod._git_refresh_in_flight.clear()
     tasks_mod.index_document_task = None
     tasks_mod.index_documents_batch_task = None
     tasks_mod.index_records_batch_task = None
@@ -104,6 +107,7 @@ def _reset_tasks():
     tasks_mod._task_backpressure_limit = 100
     tasks_mod._bootstrap_index_path = None
     tasks_mod._bootstrap_documents_roots = []
+    tasks_mod._git_refresh_in_flight.clear()
     tasks_mod.index_document_task = None
     tasks_mod.index_documents_batch_task = None
     tasks_mod.index_records_batch_task = None
@@ -168,7 +172,7 @@ class TestTaskRegistration:
         assert enqueue_index("/some/other.md") is False
         assert enqueue_remove("some-doc") is False
 
-    def test_startup_batch_enqueue_bypasses_backpressure_limit(
+    def test_startup_git_batch_respects_backpressure_limit(
         self,
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
@@ -179,12 +183,31 @@ class TestTaskRegistration:
             task_backpressure_limit=1,
         )
 
-        indexed = enqueue_index_batch(["/some/file.md", "/some/other.md"])
         refreshed = enqueue_refresh_git_batch(["/repo-a/.git", "/repo-b/.git"])
 
-        assert indexed == 2
-        assert refreshed == 2
-        assert huey_instance.pending_count() == 3
+        assert refreshed == 1
+        assert huey_instance.pending_count() == 1
+
+    def test_git_refresh_has_lower_priority_than_record_ingestion(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        assert enqueue_refresh_git("/repo/.git") is True
+        payload = Record(
+            source_kind="note",
+            source_id="note:priority",
+            title="A note",
+            body="Body",
+            created_at=datetime(2026, 1, 1),
+            updated_at=datetime(2026, 1, 1),
+        ).to_dict()
+        assert submit_record_batch([payload]) is not None
+
+        first_task = huey_instance.dequeue()
+        assert first_task is not None
+        assert first_task.priority == RECORD_BATCH_TASK_PRIORITY
+        assert first_task.priority > GIT_REFRESH_TASK_PRIORITY
 
     def test_startup_batch_skips_files_already_pending_in_queue(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -302,6 +325,20 @@ class TestTaskRegistration:
         assert submission.status == "already_pending"
         assert submission.accepted_by_queue is True
         assert submission.enqueued is False
+
+    def test_submit_refresh_git_request_reports_running_as_already_pending(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        git_dir = "/repo/.git"
+        tasks_mod._git_refresh_in_flight.add(str(Path(git_dir).resolve()))
+
+        submission = submit_refresh_git_request(git_dir)
+
+        assert submission.status == "already_pending"
+        assert huey_instance.pending_count() == 0
 
     def test_startup_git_batch_skips_repos_already_pending_in_queue(
         self,
@@ -679,7 +716,7 @@ class TestTaskExecution:
 
         observed: dict[str, object] = {}
 
-        def _fake_ingest_git_source(index_manager, source, since=None):
+        def _fake_ingest_git_source(index_manager, source, since=None, on_record=None):
             observed["index_manager"] = index_manager
             observed["repo_path"] = source.repo_path
             observed["since"] = since
@@ -701,3 +738,91 @@ class TestTaskExecution:
         assert observed["index_manager"] is fake_manager
         assert observed["repo_path"] == git_dir.parent
         assert observed["since"] is None
+        assert fake_manager.persist_calls == 1
+
+    def test_refresh_git_task_uses_cursor_and_persists_cursor(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        state_root = tmp_path / "index"
+        git_dir = tmp_path / "repo" / ".git"
+        git_dir.parent.mkdir(parents=True)
+        git_dir.mkdir()
+        save_cursor(state_root, git_dir, 123)
+        observed: dict[str, object] = {}
+        record = Record(
+            source_kind="git_commit",
+            source_id="git:abc",
+            title="Commit",
+            body="Body",
+            created_at=datetime.fromtimestamp(124),
+            updated_at=datetime.fromtimestamp(124),
+        )
+
+        def _fake_ingest_git_source(index_manager, source, since=None, on_record=None):
+            observed["since"] = since
+            assert on_record is not None
+            on_record(record)
+            return 1
+
+        monkeypatch.setattr(
+            "searchkernel.indexing.git_ingestion.ingest_git_source",
+            _fake_ingest_git_source,
+        )
+        monkeypatch.setattr(
+            "searchkernel.indexing.tasks.get_git_ref_signature",
+            lambda _git_dir: "head-1",
+        )
+
+        register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=state_root,
+        )
+        enqueue_refresh_git(str(git_dir))
+        task = huey_instance.dequeue()
+        assert task is not None
+        assert huey_instance.execute(task) is True
+
+        assert observed["since"] == "122"
+        assert fake_manager.persist_calls == 1
+        assert get_cursor(state_root, git_dir) == 124
+
+    def test_refresh_git_task_skips_completed_head(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        state_root = tmp_path / "index"
+        git_dir = tmp_path / "repo" / ".git"
+        git_dir.parent.mkdir(parents=True)
+        git_dir.mkdir()
+        save_head(state_root, git_dir, "head-1")
+        monkeypatch.setattr(
+            "searchkernel.indexing.tasks.get_git_ref_signature",
+            lambda _git_dir: "head-1",
+        )
+
+        def _unexpected_ingest(*args, **kwargs):
+            raise AssertionError("unchanged repository should not be ingested")
+
+        monkeypatch.setattr(
+            "searchkernel.indexing.git_ingestion.ingest_git_source",
+            _unexpected_ingest,
+        )
+        register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=state_root,
+        )
+        enqueue_refresh_git(str(git_dir))
+        task = huey_instance.dequeue()
+        assert task is not None
+
+        assert huey_instance.execute(task) is True
+        assert fake_manager.persist_calls == 0

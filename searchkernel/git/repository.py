@@ -124,6 +124,40 @@ def get_commits_after_timestamp(
         return []
 
 
+def get_git_ref_signature(git_dir: Path) -> str | None:
+    """Return a stable signature for the refs visible to ``git log --all``."""
+
+    repo_path = git_dir.parent
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        ).stdout.strip()
+        refs = subprocess.run(
+            [
+                "git",
+                "for-each-ref",
+                "--format=%(refname)=%(objectname)",
+                "refs/heads",
+                "refs/remotes",
+                "refs/tags",
+            ],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+
+    return f"{head}\n{refs}"
+
+
 def is_git_available() -> bool:
     """Check if git binary is available in PATH."""
     try:
