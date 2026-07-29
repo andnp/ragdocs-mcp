@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -105,7 +107,12 @@ class _FakeCoordinator:
         self.shutdown_requested = True
 
 
-def _build_dependencies(ctx: _FakeContext, coordinator: _FakeCoordinator) -> DaemonRequestRouterDependencies:
+def _build_dependencies(
+    ctx: _FakeContext,
+    coordinator: _FakeCoordinator,
+    *,
+    submit_record_batch=None,
+) -> DaemonRequestRouterDependencies:
     return DaemonRequestRouterDependencies(
         ctx=ctx,
         coordinator=coordinator,
@@ -129,6 +136,7 @@ def _build_dependencies(ctx: _FakeContext, coordinator: _FakeCoordinator) -> Dae
             "worker_running": worker_running,
             "backpressure_limit": backpressure_limit,
         },
+        submit_record_batch=submit_record_batch,
     )
 
 
@@ -239,6 +247,73 @@ async def test_record_index_route_indexes_deserialized_records_through_live_mana
     assert payload == {"status": "ok", "indexed_count": 2}
     assert [record.source_id for record in ctx.indexed_records] == ["note:1", "note:2"]
     assert all(record.created_at.tzinfo == timezone.utc for record in ctx.indexed_records)
+
+
+@pytest.mark.asyncio
+async def test_record_index_route_can_wait_for_worker_result_without_daemon_indexing() -> None:
+    ctx = _FakeContext(ready=True)
+    submitted: list[list[dict[str, object]]] = []
+
+    class _FakeResult:
+        def get(self, *, blocking: bool, timeout: float) -> dict[str, object]:
+            assert blocking is True
+            assert timeout == 300.0
+            return {"status": "ok", "indexed_count": 2}
+
+    def _submit(records: list[dict[str, object]]) -> _FakeResult:
+        submitted.append(records)
+        return _FakeResult()
+
+    handler = build_daemon_request_handler(
+        _build_dependencies(
+            ctx,
+            _FakeCoordinator(),
+            submit_record_batch=_submit,
+        )
+    )
+
+    payload = await handler(
+        "/api/index/records",
+        {"records": [_record_payload("note:1"), _record_payload("note:2")]},
+    )
+
+    assert payload == {"status": "ok", "indexed_count": 2}
+    assert [record["source_id"] for record in submitted[0]] == ["note:1", "note:2"]
+    assert ctx.indexed_records == []
+
+
+@pytest.mark.asyncio
+async def test_record_index_route_does_not_block_other_requests() -> None:
+    ctx = _FakeContext(ready=True)
+    indexing_started = threading.Event()
+    release_indexing = threading.Event()
+
+    def _slow_index_record(record: Record) -> None:
+        indexing_started.set()
+        assert release_indexing.wait(timeout=1.0)
+        ctx.indexed_records.append(record)
+
+    ctx.index_manager.index_record = _slow_index_record
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    indexing_task = asyncio.create_task(
+        handler(
+            "/api/index/records",
+            {"records": [_record_payload("note:slow")]},
+        )
+    )
+    await asyncio.to_thread(indexing_started.wait, 1.0)
+
+    fast_response = await asyncio.wait_for(
+        handler("/internal/shutdown", {}),
+        timeout=0.2,
+    )
+
+    release_indexing.set()
+    indexing_response = await indexing_task
+
+    assert fast_response["status"] == "ok"
+    assert indexing_response == {"status": "ok", "indexed_count": 1}
 
 
 @pytest.mark.asyncio

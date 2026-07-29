@@ -14,7 +14,7 @@ from searchkernel.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
 )
-from searchkernel.indexing.tasks import register_tasks
+from searchkernel.indexing.tasks import register_tasks, submit_record_batch
 from searchkernel.worker.process import HueyWorkerProcess
 
 
@@ -85,6 +85,7 @@ def create_daemon_runtime(
                 ),
                 build_index_stats_payload=build_index_stats_payload,
                 build_queue_status_payload=build_queue_status_payload,
+                submit_record_batch=submit_record_batch,
             )
         ),
     )

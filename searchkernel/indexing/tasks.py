@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+RECORD_BATCH_TASK_PRIORITY = 100
+
 
 @dataclass(frozen=True)
 class TaskSubmissionResult:
@@ -111,6 +113,7 @@ _schedule_vocabulary_catch_up: Callable[[], bool] | None = None
 # Task references (set after register_tasks is called)
 index_document_task = None
 index_documents_batch_task = None
+index_records_batch_task = None
 remove_document_task = None
 remove_documents_batch_task = None
 refresh_git_repository_task = None
@@ -133,7 +136,8 @@ def register_tasks(
     global _huey, _index_manager, _task_backpressure_limit
     global _bootstrap_index_path, _bootstrap_documents_roots
     global _schedule_vocabulary_catch_up
-    global index_document_task, index_documents_batch_task, remove_document_task
+    global index_document_task, index_documents_batch_task, index_records_batch_task
+    global remove_document_task
     global remove_documents_batch_task, refresh_git_repository_task
     global rebuild_index_task
     _huey = huey
@@ -230,6 +234,75 @@ def register_tasks(
             "" if not failures else f" with {len(failures)} failure(s)",
         )
         return not failures
+
+    @huey.task()
+    def _index_records_batch(
+        record_payloads: list[dict[str, object]],
+    ) -> dict[str, object]:
+        """Deserialize, index, and persist a Record batch in the worker.
+
+        Record ingestion comes from separate applications, so keeping the
+        entire write path in the worker prevents the daemon and worker from
+        mutating the same persisted index concurrently.
+        """
+        if _index_manager is None:
+            logger.error("IndexManager not available for record batch task")
+            return {
+                "status": "error",
+                "error": "record_queue_unavailable",
+                "details": "Index worker is not configured.",
+            }
+
+        from searchkernel.daemon.record_rpc import (
+            RecordSerializationError,
+            deserialize_record,
+        )
+
+        records = []
+        for index, payload in enumerate(record_payloads):
+            try:
+                records.append(deserialize_record(payload))
+            except RecordSerializationError as exc:
+                return {
+                    "status": "error",
+                    "error": "invalid_record",
+                    "record_index": index,
+                    "details": str(exc),
+                }
+
+        if not records:
+            return {"status": "ok", "indexed_count": 0}
+
+        for index, record in enumerate(records):
+            try:
+                _index_manager.index_record(record)
+            except Exception as exc:
+                logger.error(
+                    "Task failed within record batch at index %d",
+                    index,
+                    exc_info=True,
+                )
+                return {
+                    "status": "error",
+                    "error": "record_indexing_failed",
+                    "record_index": index,
+                    "indexed_count": index,
+                    "details": str(exc),
+                }
+
+        try:
+            _index_manager.persist()
+        except Exception as exc:
+            logger.error("Task failed to persist record batch", exc_info=True)
+            return {
+                "status": "error",
+                "error": "record_indexing_failed",
+                "indexed_count": len(records),
+                "details": str(exc),
+            }
+
+        logger.info("Task completed: indexed %d record(s) in batch", len(records))
+        return {"status": "ok", "indexed_count": len(records)}
 
     @huey.task()
     def _remove_document(doc_id: str) -> bool:
@@ -352,6 +425,7 @@ def register_tasks(
 
     index_document_task = _index_document
     index_documents_batch_task = _index_documents_batch
+    index_records_batch_task = _index_records_batch
     remove_document_task = _remove_document
     remove_documents_batch_task = _remove_documents_batch
     refresh_git_repository_task = _refresh_git_repository
@@ -573,6 +647,18 @@ def submit_index_request_batch(
         items=file_paths,
         task_kwargs={"force": force},
         pending_items=pending_paths,
+    )
+
+
+def submit_record_batch(
+    record_payloads: list[dict[str, object]],
+) -> object | None:
+    """Queue a Record batch and return its Huey result handle."""
+    if index_records_batch_task is None or _huey is None:
+        return None
+    return index_records_batch_task(
+        record_payloads,
+        priority=RECORD_BATCH_TASK_PRIORITY,
     )
 
 

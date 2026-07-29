@@ -12,6 +12,7 @@ from searchkernel.daemon.management import inspect_daemon, start_daemon, wait_fo
 
 
 DAEMON_PENDING_READY_STATUSES = {"starting", "initializing"}
+DEFAULT_RECORD_REQUEST_TIMEOUT_SECONDS = 300.0
 
 
 def call_with_supported_kwargs(func, /, **kwargs):
@@ -41,6 +42,7 @@ def request_daemon_json_with_dependencies(
     project_override: str | None,
     auto_start: bool,
     allow_error: bool = False,
+    timeout_seconds: float = DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
     runtime_paths_resolver=RuntimePaths.resolve,
     start_daemon_fn=start_daemon,
     wait_for_daemon_ready_fn=wait_for_daemon_ready,
@@ -72,7 +74,7 @@ def request_daemon_json_with_dependencies(
             Path(metadata.socket_path),
             path,
             payload,
-            timeout_seconds=DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
+            timeout_seconds=timeout_seconds,
         )
         if response is None:
             return None
@@ -96,6 +98,7 @@ def request_daemon_json(
     project_override: str | None,
     auto_start: bool,
     allow_error: bool = False,
+    timeout_seconds: float = DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
 ) -> dict[str, object] | None:
     return request_daemon_json_with_dependencies(
         path,
@@ -108,6 +111,7 @@ def request_daemon_json(
         wait_for_daemon_ready_fn=wait_for_daemon_ready,
         inspect_daemon_fn=inspect_daemon,
         request_daemon_socket_fn=request_daemon_socket,
+        timeout_seconds=timeout_seconds,
     )
 
 

@@ -6,11 +6,13 @@ Commit 3.3: Verifies indexing operations work as Huey tasks.
 
 from __future__ import annotations
 
+from datetime import datetime
 import time
 from pathlib import Path
 
 import pytest
 from huey import SqliteHuey
+from searchkernel.domain import Record
 
 import searchkernel.indexing.tasks as tasks_mod
 from searchkernel.daemon.queue_status import get_queue_stats
@@ -23,8 +25,10 @@ from searchkernel.indexing.tasks import (
     enqueue_refresh_git_batch,
     get_pending_index_document_count,
     register_tasks,
+    RECORD_BATCH_TASK_PRIORITY,
     submit_index_batch,
     submit_index_request_batch,
+    submit_record_batch,
     submit_remove_request_batch,
     submit_refresh_git_request,
 )
@@ -36,6 +40,7 @@ class FakeIndexManager:
     def __init__(self) -> None:
         self.indexed: list[tuple[str, bool]] = []
         self.removed: list[str] = []
+        self.indexed_records: list[Record] = []
         self.persist_calls = 0
 
     def index_document(self, file_path: str, force: bool = False) -> None:
@@ -63,6 +68,9 @@ class FakeIndexManager:
     def persist(self) -> None:
         self.persist_calls += 1
 
+    def index_record(self, record: Record) -> None:
+        self.indexed_records.append(record)
+
 
 @pytest.fixture()
 def huey_instance(tmp_path: Path) -> SqliteHuey:
@@ -86,6 +94,7 @@ def _reset_tasks():
     tasks_mod._bootstrap_documents_roots = []
     tasks_mod.index_document_task = None
     tasks_mod.index_documents_batch_task = None
+    tasks_mod.index_records_batch_task = None
     tasks_mod.remove_document_task = None
     tasks_mod.remove_documents_batch_task = None
     tasks_mod.refresh_git_repository_task = None
@@ -97,6 +106,7 @@ def _reset_tasks():
     tasks_mod._bootstrap_documents_roots = []
     tasks_mod.index_document_task = None
     tasks_mod.index_documents_batch_task = None
+    tasks_mod.index_records_batch_task = None
     tasks_mod.remove_document_task = None
     tasks_mod.remove_documents_batch_task = None
     tasks_mod.refresh_git_repository_task = None
@@ -110,6 +120,7 @@ class TestTaskRegistration:
         register_tasks(huey_instance, fake_manager)
         assert tasks_mod.index_document_task is not None
         assert tasks_mod.index_documents_batch_task is not None
+        assert tasks_mod.index_records_batch_task is not None
         assert tasks_mod.remove_document_task is not None
         assert tasks_mod.remove_documents_batch_task is not None
 
@@ -125,6 +136,28 @@ class TestTaskRegistration:
         register_tasks(huey_instance, fake_manager)
         assert enqueue_index("/some/file.md") is True
         assert enqueue_remove("some-doc") is True
+
+    def test_record_batch_task_indexes_and_persists_once(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        payload = Record(
+            source_kind="note",
+            source_id="note:1",
+            title="A note",
+            body="Body",
+            created_at=datetime(2026, 1, 1),
+            updated_at=datetime(2026, 1, 1),
+        ).to_dict()
+
+        result = submit_record_batch([payload])
+        assert result is not None
+        task = huey_instance.dequeue()
+        assert task is not None
+        assert task.priority == RECORD_BATCH_TASK_PRIORITY
+        assert huey_instance.execute(task) == {"status": "ok", "indexed_count": 1}
+        assert [record.source_id for record in fake_manager.indexed_records] == ["note:1"]
+        assert fake_manager.persist_calls == 1
 
     def test_enqueue_respects_backpressure_limit(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager

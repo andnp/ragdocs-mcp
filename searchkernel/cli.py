@@ -504,14 +504,16 @@ async def _run_daemon_forever() -> None:
 
     try:
         try:
+            # Bind transport before initialization so health and cold-start
+            # search requests remain available while indices are loading.
+            await health_server.start()
+            health_server_started = True
             await coordinator.start(
                 ctx,
                 background_index=True,
                 db_manager=ctx.db_manager,
                 huey_worker=huey_worker,
             )
-            await health_server.start()
-            health_server_started = True
             await asyncio.to_thread(lock.release)
             lock_released = True
             while coordinator.state not in (

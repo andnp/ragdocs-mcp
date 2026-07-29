@@ -41,7 +41,10 @@ from searchkernel.indexing.runtime_readiness import (
     can_serve_queries,
     is_fully_ready as runtime_is_fully_ready,
 )
-from searchkernel.indexing.reconciler import build_indexed_files_map
+from searchkernel.indexing.reconciler import (
+    build_indexed_files_map,
+    reconcile_indices,
+)
 from searchkernel.indexing.watcher import FileWatcher
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
@@ -756,6 +759,10 @@ class ApplicationContext:
             )
 
     async def _startup_reconciliation(self) -> None:
+        if self.use_tasks:
+            await self._enqueue_reconciliation_tasks()
+            return
+
         logger.info("Running startup reconciliation")
         docs_path = Path(self.config.indexing.documents_path)
         discovered_files = await asyncio.to_thread(self.discover_files)
@@ -768,15 +775,11 @@ class ApplicationContext:
         )
 
         if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
-            self.index_manager.persist()
-            self._mark_index_state_loaded()
-            if self.current_manifest:
-                self.current_manifest.indexed_files = build_indexed_files_map(
-                    discovered_files,
-                    docs_path,
-                    self.documents_roots,
-                )
-                save_manifest(self.index_path, self.current_manifest)
+            await asyncio.to_thread(
+                self._persist_reconciliation_state,
+                discovered_files,
+                docs_path,
+            )
             logger.info(
                 f"Reconciliation complete: "
                 f"added={result.added_count}, "
@@ -787,6 +790,79 @@ class ApplicationContext:
         else:
             logger.info("Reconciliation complete: no changes needed")
 
+    def _persist_reconciliation_state(
+        self,
+        discovered_files: list[str],
+        docs_path: Path,
+    ) -> None:
+        self.index_manager.persist()
+        self._mark_index_state_loaded()
+        if self.current_manifest:
+            self.current_manifest.indexed_files = build_indexed_files_map(
+                discovered_files,
+                docs_path,
+                self.documents_roots,
+            )
+            save_manifest(self.index_path, self.current_manifest)
+
+    async def _enqueue_reconciliation_tasks(self) -> None:
+        """Reconcile through the worker process without blocking query serving.
+
+        Move detection parses and chunks every added file against every removed
+        document. That work is useful for foreground reconciliation, but it can
+        monopolize the daemon process during startup. Task-backed daemons leave
+        move handling to the normal add/remove tasks so the worker owns all
+        CPU-heavy indexing and the daemon keeps serving the loaded snapshot.
+        """
+        logger.info("Running task-backed startup reconciliation")
+        docs_path = Path(self.config.indexing.documents_path)
+        discovered_files = await asyncio.to_thread(self.discover_files)
+        saved_manifest = await asyncio.to_thread(load_manifest, self.index_path)
+        if saved_manifest is None:
+            logger.warning("No manifest found during task-backed reconciliation")
+            return
+
+        files_to_add, doc_ids_to_remove, _ = await asyncio.to_thread(
+            reconcile_indices,
+            discovered_files,
+            saved_manifest,
+            docs_path,
+            self.documents_roots,
+            self.config.indexing.include,
+            self.config.indexing.exclude,
+            self.config.indexing.exclude_hidden_dirs,
+        )
+        if not files_to_add and not doc_ids_to_remove:
+            logger.info("Task-backed reconciliation complete: no changes needed")
+            return
+
+        from searchkernel.indexing.tasks import (
+            submit_index_batch,
+            submit_remove_request_batch,
+        )
+
+        index_submission, remove_submission = await asyncio.gather(
+            asyncio.to_thread(submit_index_batch, files_to_add),
+            asyncio.to_thread(submit_remove_request_batch, doc_ids_to_remove),
+        )
+        if not index_submission.all_represented:
+            logger.warning(
+                "Task-backed reconciliation could not represent %d added file(s): %s",
+                len(files_to_add),
+                index_submission,
+            )
+        if not remove_submission.all_represented:
+            logger.warning(
+                "Task-backed reconciliation could not represent %d removed document(s): %s",
+                len(doc_ids_to_remove),
+                remove_submission,
+            )
+        logger.info(
+            "Task-backed reconciliation enqueued %d file(s) and %d removal(s)",
+            index_submission.enqueued_count,
+            remove_submission.enqueued_count,
+        )
+
     async def _periodic_reconciliation(self) -> None:
         interval = self.config.indexing.reconciliation_interval_seconds
 
@@ -794,6 +870,10 @@ class ApplicationContext:
             try:
                 await asyncio.sleep(interval)
                 logger.info("Starting periodic reconciliation")
+                if self.use_tasks:
+                    await self._enqueue_reconciliation_tasks()
+                    continue
+
                 docs_path = Path(self.config.indexing.documents_path)
                 discovered_files = await asyncio.to_thread(self.discover_files)
                 result = await asyncio.to_thread(
@@ -808,15 +888,11 @@ class ApplicationContext:
                     or result.removed_count > 0
                     or result.moved_count > 0
                 ):
-                    self.index_manager.persist()
-                    self._mark_index_state_loaded()
-                    if self.current_manifest:
-                        self.current_manifest.indexed_files = build_indexed_files_map(
-                            discovered_files,
-                            docs_path,
-                            self.documents_roots,
-                        )
-                        save_manifest(self.index_path, self.current_manifest)
+                    await asyncio.to_thread(
+                        self._persist_reconciliation_state,
+                        discovered_files,
+                        docs_path,
+                    )
                     logger.info(
                         f"Periodic reconciliation: "
                         f"added={result.added_count}, "

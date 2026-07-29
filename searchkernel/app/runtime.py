@@ -6,8 +6,32 @@ for threading and numerical libraries.
 """
 
 import os
+import logging
 
 from searchkernel.config import Config, load_config
+
+
+logger = logging.getLogger(__name__)
+
+
+def raise_file_descriptor_limit() -> None:
+    """Raise the soft descriptor limit to the process hard limit when possible.
+
+    Daemon workers may need more descriptors than the common interactive-shell
+    default while watching multiple repositories. This is a best-effort process
+    setup step and is intentionally a no-op on platforms without ``resource``
+    or when the operating system refuses the adjustment.
+    """
+    try:
+        import resource
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft >= hard:
+            return
+        resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+        logger.info("Raised file descriptor soft limit from %s to %s", soft, hard)
+    except (ImportError, OSError, ValueError) as exc:
+        logger.debug("Could not raise file descriptor limit: %s", exc)
 
 
 def configure_runtime_threads(config: Config | None = None) -> None:
@@ -26,6 +50,8 @@ def configure_runtime_threads(config: Config | None = None) -> None:
             omitted, the config is loaded so callers can invoke this before the
             context (and thus the config) exists.
     """
+    raise_file_descriptor_limit()
+
     if config is None:
         config = load_config()
     num_threads = str(config.indexing.torch_num_threads)

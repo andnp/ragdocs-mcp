@@ -14,6 +14,8 @@ from searchkernel.daemon.paths import RuntimePaths
 
 logger = logging.getLogger(__name__)
 
+WORKER_STARTUP_TIMEOUT_SECONDS = 60.0
+
 _DAEMON_PARENT_COMMAND = ("-m", "searchkernel.cli", "daemon-internal-run")
 _WORKER_COMMAND = ("-m", "searchkernel.cli", "worker-run")
 
@@ -95,7 +97,10 @@ class HueyWorkerProcess:
         finally:
             stderr_handle.close()
 
-        deadline = time.monotonic() + 10.0
+        # Loading the embedding model can take longer than the daemon's normal
+        # health interval. Keep the subprocess alive while it initializes so
+        # the supervisor does not repeatedly restart a healthy-but-cold worker.
+        deadline = time.monotonic() + WORKER_STARTUP_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             if self.is_healthy():
                 return

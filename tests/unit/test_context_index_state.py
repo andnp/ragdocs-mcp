@@ -1575,6 +1575,70 @@ async def test_task_mode_existing_index_becomes_ready_before_reconciliation(
 
 
 @pytest.mark.asyncio
+async def test_task_backed_reconciliation_enqueues_changes_without_index_manager_work(
+    tmp_path: Path,
+    monkeypatch,
+):
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    mock_config.indexing.include = ["**/*"]
+    mock_config.indexing.exclude = []
+    mock_config.indexing.exclude_hidden_dirs = True
+    _setattr(ctx, "config", mock_config)
+    manager = MagicMock()
+    _setattr(ctx, "index_manager", manager)
+    _setattr(ctx, "index_path", tmp_path / ".index")
+    ctx.index_path.mkdir()
+    _setattr(ctx, "documents_roots", [tmp_path])
+
+    added = str(tmp_path / "new.md")
+    removed = "old/document"
+    _setattr(ctx, "discover_files", lambda: [added])
+
+    monkeypatch.setattr(
+        "searchkernel.context.load_manifest",
+        lambda path: object(),
+    )
+    monkeypatch.setattr(
+        "searchkernel.context.reconcile_indices",
+        lambda *args: ([added], [removed], {}),
+    )
+    observed: dict[str, object] = {}
+
+    def fake_submit_index_batch(paths):
+        observed["added"] = paths
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=len(paths),
+            enqueued_count=len(paths),
+        )
+
+    def fake_submit_remove_batch(doc_ids):
+        observed["removed"] = doc_ids
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=len(doc_ids),
+            enqueued_count=len(doc_ids),
+        )
+
+    monkeypatch.setattr(
+        "searchkernel.indexing.tasks.submit_index_batch",
+        fake_submit_index_batch,
+    )
+    monkeypatch.setattr(
+        "searchkernel.indexing.tasks.submit_remove_request_batch",
+        fake_submit_remove_batch,
+    )
+
+    await ctx._enqueue_reconciliation_tasks()
+
+    assert observed == {"added": [added], "removed": [removed]}
+    manager.reconcile_indices.assert_not_called()
+    manager.persist.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_task_mode_existing_index_schedules_embedding_warmup(tmp_path: Path):
     ctx = object.__new__(ApplicationContext)
     mock_config = MockConfig()

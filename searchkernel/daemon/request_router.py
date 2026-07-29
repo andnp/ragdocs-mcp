@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import uuid4
@@ -19,9 +21,13 @@ from searchkernel.indexing.rebuild_service import (
 from searchkernel.indexing.tasks import submit_rebuild_request
 
 
+logger = logging.getLogger(__name__)
+
+
 type BuildAdminOverviewPayload = Callable[[object, Path, bool, int | None, str], dict[str, object]]
 type BuildIndexStatsPayload = Callable[[object], dict[str, object]]
 type BuildQueueStatusPayload = Callable[[Path, bool, int | None], dict[str, object]]
+type SubmitRecordBatch = Callable[[list[dict[str, object]]], object | None]
 
 
 class _RecordIndexManager(Protocol):
@@ -33,25 +39,9 @@ class _RecordIndexContext(Protocol):
 
 
 def _index_records(ctx: _RecordIndexContext, payload: dict[str, object]) -> dict[str, object]:
-    raw_records = payload.get("records")
-    if not isinstance(raw_records, list):
-        return {
-            "status": "error",
-            "error": "records_must_be_list",
-            "details": "The request payload must contain a records list.",
-        }
-
-    records: list[Record] = []
-    for index, raw_record in enumerate(raw_records):
-        try:
-            records.append(deserialize_record(raw_record))
-        except RecordSerializationError as exc:
-            return {
-                "status": "error",
-                "error": "invalid_record",
-                "record_index": index,
-                "details": str(exc),
-            }
+    records, error = _deserialize_records(payload)
+    if error is not None:
+        return error
 
     for index, record in enumerate(records):
         try:
@@ -68,6 +58,31 @@ def _index_records(ctx: _RecordIndexContext, payload: dict[str, object]) -> dict
     return {"status": "ok", "indexed_count": len(records)}
 
 
+def _deserialize_records(
+    payload: dict[str, object],
+) -> tuple[list[Record], dict[str, object] | None]:
+    raw_records = payload.get("records")
+    if not isinstance(raw_records, list):
+        return [], {
+            "status": "error",
+            "error": "records_must_be_list",
+            "details": "The request payload must contain a records list.",
+        }
+
+    records: list[Record] = []
+    for index, raw_record in enumerate(raw_records):
+        try:
+            records.append(deserialize_record(raw_record))
+        except RecordSerializationError as exc:
+            return [], {
+                "status": "error",
+                "error": "invalid_record",
+                "record_index": index,
+                "details": str(exc),
+            }
+    return records, None
+
+
 @dataclass(frozen=True)
 class DaemonRequestRouterDependencies:
     ctx: object
@@ -81,6 +96,58 @@ class DaemonRequestRouterDependencies:
     build_admin_overview_payload: BuildAdminOverviewPayload
     build_index_stats_payload: BuildIndexStatsPayload
     build_queue_status_payload: BuildQueueStatusPayload
+    submit_record_batch: SubmitRecordBatch | None = None
+
+
+def _record_batch_error(details: str) -> dict[str, object]:
+    return {
+        "status": "error",
+        "error": "record_indexing_failed",
+        "details": details,
+    }
+
+
+async def _submit_record_batch(
+    dependencies: DaemonRequestRouterDependencies,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    records, error = _deserialize_records(payload)
+    if error is not None:
+        return error
+
+    if dependencies.submit_record_batch is None:
+        return await asyncio.to_thread(
+            _index_records,
+            cast(_RecordIndexContext, dependencies.ctx),
+            payload,
+        )
+
+    result = await asyncio.to_thread(
+        dependencies.submit_record_batch,
+        [record.to_dict() for record in records],
+    )
+    if result is None:
+        return _record_batch_error("Index worker is unavailable.")
+
+    result_get = getattr(result, "get", None)
+    if not callable(result_get):
+        return _record_batch_error("Index worker returned an invalid result handle.")
+
+    try:
+        response = await asyncio.to_thread(
+            result_get,
+            blocking=True,
+            timeout=300.0,
+        )
+    except TimeoutError:
+        return _record_batch_error("Timed out waiting for the index worker.")
+    except Exception as exc:
+        logger.exception("Record batch task failed")
+        return _record_batch_error(str(exc))
+
+    if isinstance(response, dict):
+        return response
+    return _record_batch_error("Index worker returned an invalid result.")
 
 
 def _filter_git_history_results(
@@ -213,7 +280,7 @@ def build_daemon_request_handler(
                 payload=payload,
             )
         if path == "/api/index/records":
-            return _index_records(cast(_RecordIndexContext, ctx), payload)
+            return await _submit_record_batch(dependencies, payload)
         if path == "/api/admin/overview":
             await ctx.ensure_fresh_indices()
             return dependencies.build_admin_overview_payload(
