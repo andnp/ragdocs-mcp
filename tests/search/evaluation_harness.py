@@ -370,4 +370,18 @@ SEARCH_EVALUATION_CASES = (
         expected_top1_path="alpha/docs/project-rollout-checklist.md",
         project_context="alpha",
     ),
+    SearchEvaluationCase(
+        case_id="scoped_project_context_beta",
+        query="Project Rollout Checklist",
+        relevant_paths=("beta/docs/project-rollout-checklist.md",),
+        expected_top1_path="beta/docs/project-rollout-checklist.md",
+        project_context="beta",
+    ),
+    SearchEvaluationCase(
+        case_id="specific_fact_beats_generic_mention",
+        query="how many days until a refresh token expires",
+        relevant_paths=("alpha/docs/token-lifecycle.md",),
+        expected_top1_path="alpha/docs/token-lifecycle.md",
+        required_hits_at_k=((1, 1), (3, 1)),
+    ),
 )

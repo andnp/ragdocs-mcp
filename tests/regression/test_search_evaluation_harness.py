@@ -25,6 +25,8 @@ def test_search_eval_cases_cover_expected_query_shapes() -> None:
         "artifact_fileish",
         "exact_title_beats_interior_section",
         "scoped_project_context",
+        "scoped_project_context_beta",
+        "specific_fact_beats_generic_mention",
     }
     assert (FIXTURE_CORPUS_ROOT / "alpha" / "docs").exists()
     assert (FIXTURE_CORPUS_ROOT / "beta" / "docs").exists()
@@ -50,3 +52,10 @@ async def test_search_evaluation_harness_fixture_corpus(search_evaluation_harnes
         if case_result.case.case_id == "scoped_project_context"
     )
     assert scoped_case.top_path() == "alpha/docs/project-rollout-checklist.md"
+
+    scoped_beta_case = next(
+        case_result
+        for case_result in report.case_results
+        if case_result.case.case_id == "scoped_project_context_beta"
+    )
+    assert scoped_beta_case.top_path() == "beta/docs/project-rollout-checklist.md"
