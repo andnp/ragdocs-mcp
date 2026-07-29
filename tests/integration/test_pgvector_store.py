@@ -20,7 +20,7 @@ from searchkernel.adapters.stores.pgvector import (
     _vector_table_name,
 )
 
-pytestmark = pytest.mark.serial  # Database tests must run serially due to shared Postgres state
+from tests.integration.conftest import pg_dsn_for_schema, pg_worker_schema
 
 
 @pytest.fixture(scope="session")
@@ -33,17 +33,37 @@ def pg_dsn():
 
 
 @pytest.fixture(scope="function")
-def pg_conn(pg_dsn):
-    """Create a test connection pool and initialize schema."""
-    conn_pool = PostgresConnection(pg_dsn)
+def pg_conn(pg_dsn, request):
+    """Create a test connection pool scoped to this xdist worker's own schema.
+
+    Each xdist worker gets a private Postgres schema (pinned via search_path
+    on the connection DSN), so this file's DELETE-everything cleanup below
+    only ever touches this worker's own tables -- concurrent workers running
+    the same file's tests can never collide, regardless of --dist mode.
+    """
+    schema = pg_worker_schema(request.config)
+    scoped_dsn = pg_dsn_for_schema(pg_dsn, schema)
+
+    bootstrap_pool = PostgresConnection(pg_dsn, min_connections=1, max_connections=1)
+    bootstrap_conn = bootstrap_pool.get_connection()
+    bootstrap_cursor = bootstrap_conn.cursor()
+    bootstrap_cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}";')
+    bootstrap_conn.commit()
+    bootstrap_cursor.close()
+    bootstrap_pool.put_connection(bootstrap_conn)
+    bootstrap_pool.close()
+
+    conn_pool = PostgresConnection(scoped_dsn)
     _create_schema(conn_pool)
 
-    # Clear all tables, including any per-model vector tables from prior tests
+    # Clean slate for this worker's schema before every test.
     conn = conn_pool.get_connection()
     cursor = conn.cursor()
+
     cursor.execute("SELECT table_name FROM vector_tables;")
     for (table_name,) in cursor.fetchall():
         cursor.execute(f'DROP TABLE IF EXISTS "{table_name}";')
+
     cursor.execute("DELETE FROM vector_tables;")
     cursor.execute("DELETE FROM records;")
     cursor.execute("DELETE FROM graph_edges;")
