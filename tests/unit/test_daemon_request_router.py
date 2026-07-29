@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ from searchkernel.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
 )
+from searchkernel.domain import Record
 from searchkernel.lifecycle import LifecycleState
 
 
@@ -42,6 +44,12 @@ class _FakeContext:
             indexing=SimpleNamespace(task_backpressure_limit=5),
         )
         self.git_indexing_enabled = False
+        self.indexed_records: list[Record] = []
+
+        def _index_record(record: Record) -> None:
+            self.indexed_records.append(record)
+
+        self.index_manager = SimpleNamespace(index_record=_index_record)
         self.orchestrator = SimpleNamespace(
             query=self._query,
             drain_reindex=self._drain_reindex,
@@ -112,6 +120,18 @@ def _build_dependencies(ctx: _FakeContext, coordinator: _FakeCoordinator) -> Dae
             "backpressure_limit": backpressure_limit,
         },
     )
+
+
+def _record_payload(source_id: str = "note:1") -> dict[str, object]:
+    now = datetime(2026, 7, 29, 12, 30, tzinfo=timezone.utc)
+    return Record(
+        source_kind="note",
+        source_id=source_id,
+        title="A note",
+        body="Some note content.",
+        created_at=now,
+        updated_at=now,
+    ).to_dict()
 
 
 @pytest.mark.asyncio
@@ -192,3 +212,84 @@ async def test_internal_shutdown_route_requests_shutdown() -> None:
 
     assert coordinator.shutdown_requested is True
     assert payload == {"status": "ok", "lifecycle": "ready"}
+
+
+@pytest.mark.asyncio
+async def test_record_index_route_indexes_deserialized_records_through_live_manager() -> None:
+    ctx = _FakeContext(ready=True)
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    payload = await handler(
+        "/api/index/records",
+        {"records": [_record_payload("note:1"), _record_payload("note:2")]},
+    )
+
+    assert payload == {"status": "ok", "indexed_count": 2}
+    assert [record.source_id for record in ctx.indexed_records] == ["note:1", "note:2"]
+    assert all(record.created_at.tzinfo == timezone.utc for record in ctx.indexed_records)
+
+
+@pytest.mark.asyncio
+async def test_record_index_route_validates_batch_before_indexing() -> None:
+    ctx = _FakeContext(ready=True)
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+    invalid = _record_payload("note:bad")
+    invalid["created_at"] = "not-a-datetime"
+
+    payload = await handler(
+        "/api/index/records",
+        {"records": [_record_payload("note:1"), invalid]},
+    )
+
+    assert payload == {
+        "status": "error",
+        "error": "invalid_record",
+        "record_index": 1,
+        "details": "created_at must be an ISO datetime string",
+    }
+    assert ctx.indexed_records == []
+
+
+@pytest.mark.asyncio
+async def test_record_index_route_reports_indexing_failure_and_completed_count() -> None:
+    ctx = _FakeContext(ready=True)
+    calls = 0
+
+    def _index_record(record: Record) -> None:
+        nonlocal calls
+        if calls == 1:
+            raise RuntimeError("embedding unavailable")
+        calls += 1
+        ctx.indexed_records.append(record)
+
+    ctx.index_manager.index_record = _index_record
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    payload = await handler(
+        "/api/index/records",
+        {"records": [_record_payload("note:1"), _record_payload("note:2")]},
+    )
+
+    assert payload == {
+        "status": "error",
+        "error": "record_indexing_failed",
+        "record_index": 1,
+        "indexed_count": 1,
+        "details": "embedding unavailable",
+    }
+    assert [record.source_id for record in ctx.indexed_records] == ["note:1"]
+
+
+@pytest.mark.asyncio
+async def test_record_index_route_requires_records_list() -> None:
+    ctx = _FakeContext(ready=True)
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    payload = await handler("/api/index/records", {})
+
+    assert payload == {
+        "status": "error",
+        "error": "records_must_be_list",
+        "details": "The request payload must contain a records list.",
+    }
+    assert ctx.indexed_records == []

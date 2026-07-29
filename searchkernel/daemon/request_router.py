@@ -3,9 +3,12 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, cast
 from uuid import uuid4
 
 from searchkernel.daemon.mcp_requests import build_mcp_tools_payload, handle_mcp_tool_call
+from searchkernel.daemon.record_rpc import RecordSerializationError, deserialize_record
+from searchkernel.domain import Record
 from searchkernel.indexing.rebuild_service import (
     REBUILD_ACTIVE_STATUSES,
     read_rebuild_status,
@@ -19,6 +22,50 @@ from searchkernel.indexing.tasks import submit_rebuild_request
 type BuildAdminOverviewPayload = Callable[[object, Path, bool, int | None, str], dict[str, object]]
 type BuildIndexStatsPayload = Callable[[object], dict[str, object]]
 type BuildQueueStatusPayload = Callable[[Path, bool, int | None], dict[str, object]]
+
+
+class _RecordIndexManager(Protocol):
+    def index_record(self, record: Record) -> None: ...
+
+
+class _RecordIndexContext(Protocol):
+    index_manager: _RecordIndexManager
+
+
+def _index_records(ctx: _RecordIndexContext, payload: dict[str, object]) -> dict[str, object]:
+    raw_records = payload.get("records")
+    if not isinstance(raw_records, list):
+        return {
+            "status": "error",
+            "error": "records_must_be_list",
+            "details": "The request payload must contain a records list.",
+        }
+
+    records: list[Record] = []
+    for index, raw_record in enumerate(raw_records):
+        try:
+            records.append(deserialize_record(raw_record))
+        except RecordSerializationError as exc:
+            return {
+                "status": "error",
+                "error": "invalid_record",
+                "record_index": index,
+                "details": str(exc),
+            }
+
+    for index, record in enumerate(records):
+        try:
+            ctx.index_manager.index_record(record)
+        except Exception as exc:
+            return {
+                "status": "error",
+                "error": "record_indexing_failed",
+                "record_index": index,
+                "indexed_count": index,
+                "details": str(exc),
+            }
+
+    return {"status": "ok", "indexed_count": len(records)}
 
 
 @dataclass(frozen=True)
@@ -165,6 +212,8 @@ def build_daemon_request_handler(
                 coordinator=coordinator,
                 payload=payload,
             )
+        if path == "/api/index/records":
+            return _index_records(cast(_RecordIndexContext, ctx), payload)
         if path == "/api/admin/overview":
             await ctx.ensure_fresh_indices()
             return dependencies.build_admin_overview_payload(
