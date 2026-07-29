@@ -18,6 +18,7 @@ class QueryRequest(BaseModel):
     query: str
     top_n: int = Field(default=5, ge=1, le=100, description="Maximum results to return")
     project_filter: list[str] = Field(default_factory=list)
+    source_filter: list[str] | None = None
     project_context: str | None = None
 
 
@@ -85,6 +86,7 @@ def create_app():
         top_n: int,
         max_chunks_per_doc: int = 0,
         project_filter: list[str] | None = None,
+        source_filter: list[str] | None = None,
         project_context: str | None = None,
     ):
         top_k = max(20, top_n * 4)
@@ -103,6 +105,7 @@ def create_app():
             top_n=top_n,
             pipeline_config=pipeline_config,
             project_filter=project_filter,
+            source_filter=source_filter,
             project_context=project_context,
         )
 
@@ -125,6 +128,7 @@ def create_app():
             request.top_n,
             max_chunks_per_doc=0,
             project_filter=request.project_filter,
+            source_filter=request.source_filter,
             project_context=request.project_context,
         )
         return QueryResponse(results=results_dict)
