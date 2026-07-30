@@ -9,7 +9,9 @@ from searchkernel.domain import Vector
 class EmbeddingBatchProvider(Protocol):
     """Generates a batch of embeddings without imposing dimension policy."""
 
-    model_name: str
+    @property
+    def model_name(self) -> str:
+        ...
 
     def embed(self, texts: list[str]) -> list[Vector]:
         """Return one embedding for each input text, in input order."""
