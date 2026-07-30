@@ -54,7 +54,7 @@ def _wrap_persist_counts(monkeypatch: pytest.MonkeyPatch, manager: IndexManager)
 
     original_vector_persist = manager.vector.persist
     original_keyword_persist = manager.keyword.persist
-    original_graph_persist = manager.graph.persist
+    original_refresh_communities = manager.graph.refresh_communities
     original_hash_store_persist = manager._hash_store.persist
 
     def vector_persist(path: Path) -> None:
@@ -65,9 +65,9 @@ def _wrap_persist_counts(monkeypatch: pytest.MonkeyPatch, manager: IndexManager)
         counts["keyword"] += 1
         original_keyword_persist(path)
 
-    def graph_persist(path: Path) -> None:
+    def refresh_communities(*, force: bool = False) -> None:
         counts["graph"] += 1
-        original_graph_persist(path)
+        original_refresh_communities(force=force)
 
     def hash_store_persist() -> None:
         counts["hash_store"] += 1
@@ -75,7 +75,7 @@ def _wrap_persist_counts(monkeypatch: pytest.MonkeyPatch, manager: IndexManager)
 
     monkeypatch.setattr(manager.vector, "persist", vector_persist)
     monkeypatch.setattr(manager.keyword, "persist", keyword_persist)
-    monkeypatch.setattr(manager.graph, "persist", graph_persist)
+    monkeypatch.setattr(manager.graph, "refresh_communities", refresh_communities)
     monkeypatch.setattr(manager._hash_store, "persist", hash_store_persist)
 
     return counts
