@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Protocol
 
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
 from searchkernel.pipeline.stage import SearchContext
 
 _OLD_DOC_ID_KEY = "old_doc_id"
@@ -110,10 +110,10 @@ class ApplyMoveStage:
                 continue
 
             new_metadata = {
-                "doc_id": new_chunk.doc_id,
+                "doc_id": new_chunk.record_id,
                 "chunk_id": new_chunk.chunk_id,
-                "file_path": new_chunk.file_path,
-                "header_path": new_chunk.header_path,
+                "file_path": new_chunk.metadata.get("file_path", ""),
+                "header_path": new_chunk.metadata.get("header_path", ""),
                 **new_chunk.metadata,
             }
 

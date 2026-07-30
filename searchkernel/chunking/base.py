@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
 
 
 class ChunkingStrategy(ABC):

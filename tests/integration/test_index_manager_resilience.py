@@ -14,7 +14,24 @@ from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 
 @pytest.fixture
@@ -48,18 +65,7 @@ def test_remove_document_continues_on_partial_failure(tmp_path, config):
     graph = GraphStore()
     manager = IndexManager(config, vector, keyword, graph)
 
-    chunk = Chunk(
-        chunk_id="resilience_test_0",
-        doc_id="test-doc",
-        content="Content for resilience testing.",
-        metadata={"tags": []},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=35,
-        file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="resilience_test_0", record_id="test-doc", content="Content for resilience testing.", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 35, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     vector.add_chunk(chunk)
     keyword.add_chunk(chunk)
@@ -93,18 +99,7 @@ def test_startup_reconciliation_survives_corrupted_keyword_index(tmp_path, confi
     keyword = KeywordIndex()
     graph = GraphStore()
 
-    chunk = Chunk(
-        chunk_id="startup_test_0",
-        doc_id="startup-doc",
-        content="Content for startup reconciliation testing.",
-        metadata={"tags": []},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=45,
-        file_path="/tmp/startup.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="startup_test_0", record_id="startup-doc", content="Content for startup reconciliation testing.", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 45, "file_path": "/tmp/startup.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector.add_chunk(chunk)
     keyword.add_chunk(chunk)
     graph.add_node("startup-doc", {"tags": []})
@@ -122,18 +117,7 @@ def test_startup_reconciliation_survives_corrupted_keyword_index(tmp_path, confi
     results = keyword.search("startup reconciliation", top_k=5)
     assert results == []
 
-    new_chunk = Chunk(
-        chunk_id="after_recovery_0",
-        doc_id="recovery-doc",
-        content="New content after startup recovery.",
-        metadata={"tags": []},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=40,
-        file_path="/tmp/recovery.md",
-        modified_time=datetime.now(UTC),
-    )
+    new_chunk = _with_hash(Chunk(chunk_id="after_recovery_0", record_id="recovery-doc", content="New content after startup recovery.", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 40, "file_path": "/tmp/recovery.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     keyword.add_chunk(new_chunk)
 
     keyword_results = keyword.search("startup recovery", top_k=5)

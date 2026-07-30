@@ -9,8 +9,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from searchkernel.domain import Chunk
 from searchkernel.indexing.semantic import SemanticInput, semantic_input_for_chunk
-from searchkernel.models import Chunk, Document
+from searchkernel.models import Document
 from searchkernel.search.edge_types import infer_edge_type
 
 

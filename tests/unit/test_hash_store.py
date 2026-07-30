@@ -6,7 +6,24 @@ from datetime import UTC, datetime
 import pytest
 
 from searchkernel.indices.hash_store import ChunkHashStore
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 
 @pytest.fixture
@@ -19,18 +36,7 @@ def temp_hash_store(tmp_path):
 @pytest.fixture
 def sample_chunk():
     """Create a sample chunk for testing."""
-    return Chunk(
-        chunk_id="doc1#chunk-0",
-        doc_id="doc1",
-        content="Sample content",
-        metadata={},
-        chunk_index=0,
-        header_path="Introduction",
-        start_pos=0,
-        end_pos=14,
-        file_path="test.md",
-        modified_time=datetime.now(UTC),
-    )
+    return _with_hash(Chunk(chunk_id="doc1#chunk-0", record_id="doc1", content="Sample content", metadata={**({}), "header_path": "Introduction", "start_pos": 0, "end_pos": 14, "file_path": "test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
 
 def test_hash_store_initialization(tmp_path):
@@ -93,35 +99,13 @@ def test_hash_store_has_changed_unchanged_chunk(temp_hash_store, sample_chunk):
 def test_hash_store_has_changed_modified_chunk(temp_hash_store):
     """Test has_changed returns True when content has changed."""
     # Create chunk with original content
-    chunk_v1 = Chunk(
-        chunk_id="doc1#chunk-0",
-        doc_id="doc1",
-        content="Original content",
-        metadata={},
-        chunk_index=0,
-        header_path="Section",
-        start_pos=0,
-        end_pos=16,
-        file_path="test.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk_v1 = _with_hash(Chunk(chunk_id="doc1#chunk-0", record_id="doc1", content="Original content", metadata={**({}), "header_path": "Section", "start_pos": 0, "end_pos": 16, "file_path": "test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     # Store original hash
     temp_hash_store.set_hash(chunk_v1.chunk_id, chunk_v1.content_hash)
 
     # Create chunk with modified content (same ID)
-    chunk_v2 = Chunk(
-        chunk_id="doc1#chunk-0",
-        doc_id="doc1",
-        content="Modified content",
-        metadata={},
-        chunk_index=0,
-        header_path="Section",
-        start_pos=0,
-        end_pos=16,
-        file_path="test.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk_v2 = _with_hash(Chunk(chunk_id="doc1#chunk-0", record_id="doc1", content="Modified content", metadata={**({}), "header_path": "Section", "start_pos": 0, "end_pos": 16, "file_path": "test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     assert temp_hash_store.has_changed(chunk_v2) is True
 

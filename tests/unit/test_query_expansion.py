@@ -19,7 +19,24 @@ from datetime import UTC, datetime
 import pytest
 
 from searchkernel.indices.vector import STOPWORDS, VectorIndex
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 # ============================================================================
 # Fixtures
@@ -44,42 +61,9 @@ def vector_index_populated(shared_embedding_model):
     index = VectorIndex(embedding_model=shared_embedding_model)
 
     chunks = [
-        Chunk(
-            chunk_id="doc1_chunk_0",
-            doc_id="doc1",
-            content="Authentication is the process of verifying user identity.",
-            metadata={"tags": [], "links": []},
-            chunk_index=0,
-            header_path="Security > Authentication",
-            start_pos=0,
-            end_pos=60,
-            file_path="/docs/auth.md",
-            modified_time=datetime.now(UTC),
-        ),
-        Chunk(
-            chunk_id="doc2_chunk_0",
-            doc_id="doc2",
-            content="Authorization determines what a user can access after login.",
-            metadata={"tags": [], "links": []},
-            chunk_index=0,
-            header_path="Security > Authorization",
-            start_pos=0,
-            end_pos=60,
-            file_path="/docs/authz.md",
-            modified_time=datetime.now(UTC),
-        ),
-        Chunk(
-            chunk_id="doc3_chunk_0",
-            doc_id="doc3",
-            content="The login page allows users to enter credentials for authentication.",
-            metadata={"tags": [], "links": []},
-            chunk_index=0,
-            header_path="User Interface > Login",
-            start_pos=0,
-            end_pos=70,
-            file_path="/docs/login.md",
-            modified_time=datetime.now(UTC),
-        ),
+        _with_hash(Chunk(chunk_id="doc1_chunk_0", record_id="doc1", content="Authentication is the process of verifying user identity.", metadata={**({"tags": [], "links": []}), "header_path": "Security > Authentication", "start_pos": 0, "end_pos": 60, "file_path": "/docs/auth.md", "modified_time": datetime.now(UTC)}, chunk_index=0)),
+        _with_hash(Chunk(chunk_id="doc2_chunk_0", record_id="doc2", content="Authorization determines what a user can access after login.", metadata={**({"tags": [], "links": []}), "header_path": "Security > Authorization", "start_pos": 0, "end_pos": 60, "file_path": "/docs/authz.md", "modified_time": datetime.now(UTC)}, chunk_index=0)),
+        _with_hash(Chunk(chunk_id="doc3_chunk_0", record_id="doc3", content="The login page allows users to enter credentials for authentication.", metadata={**({"tags": [], "links": []}), "header_path": "User Interface > Login", "start_pos": 0, "end_pos": 70, "file_path": "/docs/login.md", "modified_time": datetime.now(UTC)}, chunk_index=0)),
     ]
 
     for chunk in chunks:
@@ -335,18 +319,7 @@ class TestVocabularyPersistence:
         """
         # Create and populate first index
         index1 = VectorIndex(embedding_model=shared_embedding_model)
-        chunk = Chunk(
-            chunk_id="doc1_chunk_0",
-            doc_id="doc1",
-            content="Authentication security credentials verification process.",
-            metadata={},
-            chunk_index=0,
-            header_path="",
-            start_pos=0,
-            end_pos=60,
-            file_path="/docs/test.md",
-            modified_time=datetime.now(UTC),
-        )
+        chunk = _with_hash(Chunk(chunk_id="doc1_chunk_0", record_id="doc1", content="Authentication security credentials verification process.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 60, "file_path": "/docs/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
         index1.add_chunk(chunk)
         index1.build_concept_vocabulary(min_frequency=1)
 
@@ -377,18 +350,7 @@ class TestVocabularyPersistence:
 
         # Create a real index and persist it WITHOUT building vocabulary
         index1 = VectorIndex(embedding_model=shared_embedding_model)
-        chunk = Chunk(
-            chunk_id="doc1_chunk_0",
-            doc_id="doc1",
-            content="Test content for index.",
-            metadata={},
-            chunk_index=0,
-            header_path="",
-            start_pos=0,
-            end_pos=30,
-            file_path="/docs/test.md",
-            modified_time=datetime.now(UTC),
-        )
+        chunk = _with_hash(Chunk(chunk_id="doc1_chunk_0", record_id="doc1", content="Test content for index.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 30, "file_path": "/docs/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
         index1.add_chunk(chunk)
         # Note: NOT calling build_concept_vocabulary()
         index1.persist(persist_path)

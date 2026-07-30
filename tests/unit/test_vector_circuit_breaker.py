@@ -9,6 +9,23 @@ from searchkernel.indices.vector import VectorIndex
 from searchkernel.utils.circuit_breaker import CircuitState
 
 
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
+
+
 class TestCircuitBreakerState:
     """Test circuit_state property and get_circuit_breaker_status()."""
 
@@ -356,24 +373,13 @@ class TestSearchCircuitBreaker:
 
     def test_search_works_after_circuit_reset(self, shared_embedding_model):
         """Search works normally after circuit breaker is reset."""
-        from searchkernel.models import Chunk
+        from searchkernel.domain import Chunk
 
         vector_index = VectorIndex(embedding_model=shared_embedding_model)
         vector_index._initialize_index()
 
         # Add a chunk to search for
-        chunk = Chunk(
-            chunk_id="test_doc_chunk_0",
-            doc_id="test_doc",
-            content="This is test content for searching",
-            header_path="Test Section",
-            file_path="/test/doc.md",
-            chunk_index=0,
-            metadata={},
-            start_pos=0,
-            end_pos=34,
-            modified_time=datetime.now(UTC),
-        )
+        chunk = _with_hash(Chunk(chunk_id="test_doc_chunk_0", record_id="test_doc", content="This is test content for searching", metadata={**({}), "header_path": "Test Section", "start_pos": 0, "end_pos": 34, "file_path": "/test/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
         vector_index.add_chunk(chunk)
 
         # Force circuit open then reset
@@ -402,20 +408,9 @@ class TestVocabularyCircuitBreaker:
         vector_index._initialize_index()
 
         # Add some content
-        from searchkernel.models import Chunk
+        from searchkernel.domain import Chunk
 
-        chunk = Chunk(
-            chunk_id="doc1_chunk_0",
-            doc_id="doc1",
-            content="test content python programming code",
-            header_path="",
-            file_path="/test.md",
-            chunk_index=0,
-            metadata={},
-            start_pos=0,
-            end_pos=37,
-            modified_time=datetime.now(UTC),
-        )
+        chunk = _with_hash(Chunk(chunk_id="doc1_chunk_0", record_id="doc1", content="test content python programming code", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 37, "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
         vector_index.add_chunk(chunk)
 
         # Should complete without errors even with low threshold

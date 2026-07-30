@@ -12,6 +12,23 @@ from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 
 
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
+
+
 @pytest.fixture
 def config(tmp_path):
     """Create test configuration."""
@@ -70,20 +87,9 @@ def test_hash_store_persisted_with_indices(tmp_path, manager):
     chunk_id = chunks[0].id_
 
     # Manually store hash (simulating delta indexing flow)
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
-    test_chunk = Chunk(
-        chunk_id=chunk_id,
-        doc_id="test",
-        content="Test content",
-        metadata={},
-        chunk_index=0,
-        header_path="Test",
-        start_pos=0,
-        end_pos=12,
-        file_path=str(test_file),
-        modified_time=datetime.now(UTC),
-    )
+    test_chunk = _with_hash(Chunk(chunk_id=chunk_id, record_id="test", content="Test content", metadata={**({}), "header_path": "Test", "start_pos": 0, "end_pos": 12, "file_path": str(test_file), "modified_time": datetime.now(UTC)}, chunk_index=0))
     manager._hash_store.set_hash(test_chunk.chunk_id, test_chunk.content_hash)
 
     # Persist

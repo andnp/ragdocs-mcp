@@ -1,9 +1,27 @@
 from datetime import UTC, datetime
 
 from searchkernel.chunking.base import ChunkingStrategy
-from searchkernel.models import Chunk, Document
+from searchkernel.domain import Chunk
+from searchkernel.models import Document
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.chunk import ChunkStage
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 
 class _StubChunker(ChunkingStrategy):
@@ -28,18 +46,7 @@ def _document() -> Document:
 
 
 def _chunk() -> Chunk:
-    return Chunk(
-        chunk_id="doc-1_chunk_0",
-        doc_id="doc-1",
-        content="hello world",
-        metadata={},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=11,
-        file_path="doc-1.md",
-        modified_time=datetime.now(UTC),
-    )
+    return _with_hash(Chunk(chunk_id="doc-1_chunk_0", record_id="doc-1", content="hello world", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 11, "file_path": "doc-1.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
 
 def test_chunk_stage_delegates_to_chunker():

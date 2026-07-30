@@ -90,7 +90,7 @@ def test_txt_chunks_have_no_header_path(tmp_path, config):
     chunks = chunker.chunk_document(doc)
 
     for chunk in chunks:
-        assert chunk.header_path == ""
+        assert chunk.metadata.get("header_path") == ""
 
 
 def test_txt_small_content_single_chunk(tmp_path, config):
@@ -161,9 +161,9 @@ def test_txt_chunk_start_end_positions(tmp_path, config):
     chunks = chunker.chunk_document(doc)
 
     for chunk in chunks:
-        assert chunk.start_pos >= 0
-        assert chunk.end_pos <= len(content)
-        assert chunk.start_pos < chunk.end_pos
+        assert chunk.metadata.get("start_pos") >= 0
+        assert chunk.metadata.get("end_pos") <= len(content)
+        assert chunk.metadata.get("start_pos") < chunk.metadata.get("end_pos")
 
 
 def test_txt_multiple_paragraphs_chunking(tmp_path, config):
@@ -224,9 +224,9 @@ def test_txt_metadata_preserved(tmp_path, config):
     chunks = chunker.chunk_document(doc)
 
     for chunk in chunks:
-        assert chunk.file_path == str(txt_file)
-        assert chunk.modified_time == doc.modified_time
-        assert chunk.doc_id == doc.id
+        assert chunk.metadata.get("file_path") == str(txt_file)
+        assert chunk.metadata.get("modified_time") == doc.modified_time.isoformat()
+        assert chunk.record_id == doc.id
 
 
 def test_txt_chunk_ids_unique(tmp_path, config):

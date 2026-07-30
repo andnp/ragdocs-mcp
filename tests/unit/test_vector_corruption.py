@@ -10,24 +10,30 @@ from datetime import UTC, datetime
 import pytest
 
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 
 @pytest.fixture
 def sample_chunk():
     """Create a sample chunk for testing."""
-    return Chunk(
-        chunk_id="test_doc_chunk_0",
-        doc_id="test_doc",
-        content="Machine learning and artificial intelligence.",
-        metadata={"source": "test"},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=45,
-        file_path="/test/doc.md",
-        modified_time=datetime.now(UTC),
-    )
+    return _with_hash(Chunk(chunk_id="test_doc_chunk_0", record_id="test_doc", content="Machine learning and artificial intelligence.", metadata={**({"source": "test"}), "header_path": "", "start_pos": 0, "end_pos": 45, "file_path": "/test/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
 
 def test_vector_index_load_with_corrupted_concept_vocabulary(
@@ -186,18 +192,7 @@ def test_vector_index_persist_recovers_from_partial_write(
     (persist_path / "concept_vocabulary.json").write_text("corrupted")
 
     # Add more data
-    chunk2 = Chunk(
-        chunk_id="test_doc2_chunk_0",
-        doc_id="test_doc2",
-        content="Deep learning neural networks.",
-        metadata={},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=30,
-        file_path="/test/doc2.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk2 = _with_hash(Chunk(chunk_id="test_doc2_chunk_0", record_id="test_doc2", content="Deep learning neural networks.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 30, "file_path": "/test/doc2.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     index.add_chunk(chunk2)
 
     # Second persist should succeed and overwrite corrupted file
@@ -271,18 +266,7 @@ def test_vector_index_vocabulary_building_with_single_chunk(shared_embedding_mod
     """
     index = VectorIndex(embedding_model=shared_embedding_model)
 
-    chunk = Chunk(
-        chunk_id="single_chunk",
-        doc_id="single_doc",
-        content="machine learning",
-        metadata={},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=16,
-        file_path="/test.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="single_chunk", record_id="single_doc", content="machine learning", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 16, "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     index.add_chunk(chunk)
     index.build_concept_vocabulary()

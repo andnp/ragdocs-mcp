@@ -31,8 +31,7 @@ from searchkernel.adapters.stores.pgvector import (
     PostgresConnection,
     _create_schema,
 )
-from searchkernel.domain import Record, RecordStatus, Vector
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk, Record, RecordStatus, Vector
 from searchkernel.search.types import SearchResultDict
 
 logger = logging.getLogger(__name__)
@@ -58,28 +57,46 @@ def _default_embedder(model_name: str) -> _Embedder:
 
 
 def _embedding_text(chunk: Chunk) -> str:
-    return f"{chunk.header_path}\n\n{chunk.content}" if chunk.header_path else chunk.content
+    header_path = chunk.metadata.get("header_path", "")
+    return f"{header_path}\n\n{chunk.content}" if header_path else chunk.content
+
+
+def _parse_modified_time(raw: Any) -> datetime:
+    """Parse a chunk's `metadata["modified_time"]` (ISO text) back to a datetime.
+
+    Chunk metadata must stay JSON-serializable (it's also spread into
+    vector/keyword/graph index payloads), so `modified_time` is stored as
+    ISO text rather than a raw `datetime`.
+    """
+    if isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, str) and raw:
+        return datetime.fromisoformat(raw)
+    return datetime.now(UTC)
 
 
 def _chunk_to_record(chunk: Chunk) -> Record:
+    header_path = chunk.metadata.get("header_path", "")
+    file_path = chunk.metadata.get("file_path", "")
+    modified_time = _parse_modified_time(chunk.metadata.get("modified_time"))
     metadata = {
         **chunk.metadata,
-        "doc_id": chunk.doc_id,
+        "doc_id": chunk.record_id,
         "chunk_index": chunk.chunk_index,
-        "header_path": chunk.header_path,
-        "file_path": chunk.file_path,
-        "parent_chunk_id": chunk.parent_chunk_id,
-        "project_id": chunk.project_id,
+        "header_path": header_path,
+        "file_path": file_path,
+        "parent_chunk_id": chunk.metadata.get("parent_chunk_id"),
+        "project_id": chunk.metadata.get("project_id"),
     }
     return Record(
         source_kind=_SOURCE_KIND,
         source_id=chunk.chunk_id,
-        title=chunk.header_path or chunk.file_path,
+        title=header_path or file_path,
         body=chunk.content,
-        created_at=chunk.modified_time,
-        updated_at=chunk.modified_time,
+        created_at=modified_time,
+        updated_at=modified_time,
         metadata=metadata,
-        uri=chunk.file_path,
+        uri=file_path,
         status=RecordStatus.ACTIVE,
     )
 

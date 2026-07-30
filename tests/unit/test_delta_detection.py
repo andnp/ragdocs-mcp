@@ -15,24 +15,30 @@ from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
 from tests.conftest import create_test_document
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 
 def make_chunk(chunk_id: str, doc_id: str, content: str, chunk_index: int = 0) -> Chunk:
     """Helper to create test chunks with minimal boilerplate."""
-    return Chunk(
-        chunk_id=chunk_id,
-        doc_id=doc_id,
-        content=content,
-        metadata={},
-        chunk_index=chunk_index,
-        header_path="",
-        start_pos=0,
-        end_pos=len(content),
-        file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
-    )
+    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=chunk_index))
 
 
 @pytest.fixture

@@ -42,12 +42,12 @@ Rotate credentials every 24 hours and revoke compromised tokens immediately.
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
 
         authentication_chunk = next(
-            chunk for chunk in child_chunks if chunk.header_path == "API Guide > Authentication"
+            chunk for chunk in child_chunks if chunk.metadata.get("header_path") == "API Guide > Authentication"
         )
         rotation_chunk = next(
             chunk
             for chunk in child_chunks
-            if chunk.header_path == "API Guide > Authentication > Rotation"
+            if chunk.metadata.get("header_path") == "API Guide > Authentication > Rotation"
         )
 
         assert authentication_chunk.content.startswith("Authentication")
@@ -95,9 +95,9 @@ Bearer tokens must be rotated every 24 hours. Include scopes and issuer validati
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
 
         assert len(parent_chunks) == 1
-        assert parent_chunks[0].header_path == "API Guide"
-        assert "+" not in parent_chunks[0].header_path
-        assert all("+" not in chunk.header_path for chunk in child_chunks)
+        assert parent_chunks[0].metadata.get("header_path") == "API Guide"
+        assert "+" not in parent_chunks[0].metadata.get("header_path")
+        assert all("+" not in chunk.metadata.get("header_path") for chunk in child_chunks)
         assert "Authentication Details" in parent_chunks[0].content
 
     def test_trailing_short_section_merges_backward_into_previous_chunk(self):
@@ -137,7 +137,7 @@ CLI cheatsheet.
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
 
         assert len(child_chunks) >= 1
-        assert all(chunk.header_path != "Operations Guide > Appendix" for chunk in child_chunks)
+        assert all(chunk.metadata.get("header_path") != "Operations Guide > Appendix" for chunk in child_chunks)
         assert any("Appendix" in chunk.content for chunk in child_chunks)
         assert any("CLI cheatsheet." in chunk.content for chunk in child_chunks)
 
@@ -192,8 +192,8 @@ More text to ensure this section is substantial enough for chunking.
 
         # Child chunks should have parent_chunk_id set
         for child in child_chunks:
-            if child.parent_chunk_id:
-                assert child.parent_chunk_id.startswith("test_doc_parent_")
+            if child.metadata.get("parent_chunk_id"):
+                assert child.metadata.get("parent_chunk_id").startswith("test_doc_parent_")
 
     def test_child_chunks_reference_correct_parent(self):
         config = ChunkingConfig(
@@ -240,8 +240,8 @@ Content for section three with more text for the chunk.
 
         # Each child with a parent_chunk_id should reference an existing parent
         for child in child_chunks:
-            if child.parent_chunk_id:
-                assert child.parent_chunk_id in parent_chunks
+            if child.metadata.get("parent_chunk_id"):
+                assert child.metadata.get("parent_chunk_id") in parent_chunks
 
     def test_parent_content_contains_child_content(self):
         config = ChunkingConfig(
@@ -284,8 +284,8 @@ Content for section B with enough text.
 
         # Child content should be part of parent content
         for child in child_chunks:
-            if child.parent_chunk_id and child.parent_chunk_id in parent_chunks:
-                parent = parent_chunks[child.parent_chunk_id]
+            if child.metadata.get("parent_chunk_id") and child.metadata.get("parent_chunk_id") in parent_chunks:
+                parent = parent_chunks[child.metadata.get("parent_chunk_id")]
                 # The child content (without overlap markers) should be in parent
                 child_text = child.content
                 if child_text.startswith("[..."):

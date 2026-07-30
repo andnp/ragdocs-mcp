@@ -16,7 +16,24 @@ from searchkernel.indexing.semantic import (
     embedding_identity,
     semantic_input_for_chunk,
 )
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 
 def make_test_chunk(
@@ -26,18 +43,7 @@ def make_test_chunk(
     header_path: str = "Header",
 ) -> Chunk:
     """Create a test chunk with minimal required fields."""
-    return Chunk(
-        chunk_id=chunk_id,
-        doc_id=doc_id,
-        content=content,
-        header_path=header_path,
-        chunk_index=0,
-        start_pos=0,
-        end_pos=len(content),
-        file_path="/test.md",
-        modified_time=datetime.now(UTC),
-        metadata={},
-    )
+    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={**({}), "header_path": header_path, "start_pos": 0, "end_pos": len(content), "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
 
 class FakeEncoder:

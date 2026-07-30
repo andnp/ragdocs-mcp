@@ -4,7 +4,7 @@ import json
 import logging
 from pathlib import Path
 
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
 
 logger = logging.getLogger(__name__)
 

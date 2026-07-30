@@ -6,7 +6,8 @@ from tree_sitter_markdown import language
 
 from searchkernel.chunking.base import ChunkingStrategy
 from searchkernel.config import ChunkingConfig
-from searchkernel.models import Chunk, Document
+from searchkernel.domain import Chunk
+from searchkernel.models import Document
 
 
 @dataclass
@@ -40,6 +41,77 @@ class HeaderBasedChunker(ChunkingStrategy):
         final_chunks = self._create_parent_child_chunks(document, final_chunks)
 
         return final_chunks
+
+    # ------------------------------------------------------------------
+    # Chunk construction / field access helpers
+    #
+    # `domain.Chunk` is source-agnostic: markdown-specific fields
+    # (header_path, start_pos, end_pos, file_path, modified_time,
+    # parent_chunk_id) live in `metadata` rather than as first-class
+    # dataclass fields. These helpers centralize construction (so
+    # `content_hash` is always computed) and reads.
+    # ------------------------------------------------------------------
+
+    def _build_chunk(
+        self,
+        *,
+        chunk_id: str,
+        record_id: str,
+        content: str,
+        metadata: dict,
+        chunk_index: int,
+        header_path: str,
+        start_pos: int,
+        end_pos: int,
+        file_path: str,
+        modified_time,
+        parent_chunk_id: str | None = None,
+    ) -> Chunk:
+        full_metadata = dict(metadata)
+        full_metadata["header_path"] = header_path
+        full_metadata["start_pos"] = start_pos
+        full_metadata["end_pos"] = end_pos
+        full_metadata["file_path"] = file_path
+        # Metadata flows into index/docstore JSON persistence (vector.py,
+        # keyword.py, graph store) via blind `**chunk.metadata` spreads, so
+        # it must stay JSON-serializable -- a raw datetime is not.
+        full_metadata["modified_time"] = (
+            modified_time.isoformat()
+            if hasattr(modified_time, "isoformat")
+            else modified_time
+        )
+        if parent_chunk_id is not None:
+            full_metadata["parent_chunk_id"] = parent_chunk_id
+
+        chunk = Chunk(
+            chunk_id=chunk_id,
+            record_id=record_id,
+            content=content,
+            metadata=full_metadata,
+            chunk_index=chunk_index,
+        )
+        chunk.content_hash = chunk.compute_content_hash()
+        return chunk
+
+    @staticmethod
+    def _chunk_header_path(chunk: Chunk) -> str:
+        return chunk.metadata.get("header_path", "")
+
+    @staticmethod
+    def _chunk_start_pos(chunk: Chunk) -> int:
+        return chunk.metadata.get("start_pos", 0)
+
+    @staticmethod
+    def _chunk_end_pos(chunk: Chunk) -> int:
+        return chunk.metadata.get("end_pos", 0)
+
+    @staticmethod
+    def _chunk_file_path(chunk: Chunk) -> str:
+        return chunk.metadata.get("file_path", "")
+
+    @staticmethod
+    def _chunk_modified_time(chunk: Chunk):
+        return chunk.metadata.get("modified_time")
 
     def _extract_headers(self, root_node, content_bytes: bytes) -> list[HeaderNode]:
         headers = []
@@ -111,9 +183,9 @@ class HeaderBasedChunker(ChunkingStrategy):
             chunk_id = f"{document.id}_chunk_{i}"
 
             chunks.append(
-                Chunk(
+                self._build_chunk(
                     chunk_id=chunk_id,
-                    doc_id=document.id,
+                    record_id=document.id,
                     content=chunk_content,
                     metadata={
                         **document.metadata,
@@ -211,42 +283,44 @@ class HeaderBasedChunker(ChunkingStrategy):
         return bool(base_parts) and candidate_parts[: len(base_parts)] == base_parts
 
     def _merge_chunk_pair(self, left: Chunk, right: Chunk) -> Chunk:
-        left_body = self._strip_structured_chunk_prefix(left.content, left.header_path)
-        right_body = self._strip_structured_chunk_prefix(right.content, right.header_path)
+        left_header_path = self._chunk_header_path(left)
+        right_header_path = self._chunk_header_path(right)
+        left_body = self._strip_structured_chunk_prefix(left.content, left_header_path)
+        right_body = self._strip_structured_chunk_prefix(right.content, right_header_path)
 
         left_is_context_only = left.content.strip() != "" and not left_body.strip()
         right_is_context_only = right.content.strip() != "" and not right_body.strip()
 
         if left_is_context_only and self._header_path_extends(
-            left.header_path,
-            right.header_path,
+            left_header_path,
+            right_header_path,
         ):
             combined_content = right.content
-            merged_header_path = right.header_path
+            merged_header_path = right_header_path
         elif right_is_context_only and self._header_path_extends(
-            right.header_path,
-            left.header_path,
+            right_header_path,
+            left_header_path,
         ):
             combined_content = left.content
-            merged_header_path = left.header_path
+            merged_header_path = left_header_path
         else:
             combined_content = f"{left.content}\n\n{right.content}"
             merged_header_path = self._combine_header_paths(
-                left.header_path,
-                right.header_path,
+                left_header_path,
+                right_header_path,
             )
 
-        return Chunk(
+        return self._build_chunk(
             chunk_id=left.chunk_id,
-            doc_id=left.doc_id,
+            record_id=left.record_id,
             content=combined_content,
             metadata=left.metadata,
             chunk_index=left.chunk_index,
             header_path=merged_header_path,
-            start_pos=left.start_pos,
-            end_pos=right.end_pos,
-            file_path=left.file_path,
-            modified_time=left.modified_time,
+            start_pos=self._chunk_start_pos(left),
+            end_pos=self._chunk_end_pos(right),
+            file_path=self._chunk_file_path(left),
+            modified_time=self._chunk_modified_time(left),
         )
 
     def _strip_structured_chunk_prefix(self, content: str, header_path: str) -> str:
@@ -273,7 +347,11 @@ class HeaderBasedChunker(ChunkingStrategy):
         return "\n".join(lines[index:]).lstrip()
 
     def _select_parent_header_path(self, chunks: list[Chunk]) -> str:
-        header_paths = [chunk.header_path for chunk in chunks if chunk.header_path]
+        header_paths = [
+            self._chunk_header_path(chunk)
+            for chunk in chunks
+            if self._chunk_header_path(chunk)
+        ]
         if not header_paths:
             return ""
 
@@ -319,9 +397,10 @@ class HeaderBasedChunker(ChunkingStrategy):
                 result.append(chunk)
                 continue
 
+            header_path = self._chunk_header_path(chunk)
             section_body = self._strip_structured_chunk_prefix(
                 chunk.content,
-                chunk.header_path,
+                header_path,
             )
             paragraphs = re.split(r"\n\n+", section_body if section_body else chunk.content)
             current_content = ""
@@ -336,20 +415,20 @@ class HeaderBasedChunker(ChunkingStrategy):
                     current_content += "\n\n" + para
                 else:
                     sub_chunk_content = self._compose_chunk_content(
-                        chunk.header_path,
+                        header_path,
                         current_content,
                     )
-                    sub_chunk = Chunk(
+                    sub_chunk = self._build_chunk(
                         chunk_id=f"{chunk.chunk_id}_sub_{sub_index}",
-                        doc_id=chunk.doc_id,
+                        record_id=chunk.record_id,
                         content=sub_chunk_content,
                         metadata=chunk.metadata,
                         chunk_index=chunk.chunk_index,
-                        header_path=chunk.header_path,
-                        start_pos=chunk.start_pos,
-                        end_pos=chunk.end_pos,
-                        file_path=chunk.file_path,
-                        modified_time=chunk.modified_time,
+                        header_path=header_path,
+                        start_pos=self._chunk_start_pos(chunk),
+                        end_pos=self._chunk_end_pos(chunk),
+                        file_path=self._chunk_file_path(chunk),
+                        modified_time=self._chunk_modified_time(chunk),
                     )
                     result.append(sub_chunk)
                     current_content = para
@@ -357,22 +436,22 @@ class HeaderBasedChunker(ChunkingStrategy):
 
             if current_content:
                 sub_chunk_content = self._compose_chunk_content(
-                    chunk.header_path,
+                    header_path,
                     current_content,
                 )
-                sub_chunk = Chunk(
+                sub_chunk = self._build_chunk(
                     chunk_id=f"{chunk.chunk_id}_sub_{sub_index}"
                     if sub_index > 0
                     else chunk.chunk_id,
-                    doc_id=chunk.doc_id,
+                    record_id=chunk.record_id,
                     content=sub_chunk_content,
                     metadata=chunk.metadata,
                     chunk_index=chunk.chunk_index,
-                    header_path=chunk.header_path,
-                    start_pos=chunk.start_pos,
-                    end_pos=chunk.end_pos,
-                    file_path=chunk.file_path,
-                    modified_time=chunk.modified_time,
+                    header_path=header_path,
+                    start_pos=self._chunk_start_pos(chunk),
+                    end_pos=self._chunk_end_pos(chunk),
+                    file_path=self._chunk_file_path(chunk),
+                    modified_time=self._chunk_modified_time(chunk),
                 )
                 result.append(sub_chunk)
 
@@ -407,17 +486,17 @@ class HeaderBasedChunker(ChunkingStrategy):
                 if overlap_text:
                     content = f"[...{overlap_text}]\n\n{content}"
 
-            overlapped_chunk = Chunk(
+            overlapped_chunk = self._build_chunk(
                 chunk_id=chunk.chunk_id,
-                doc_id=chunk.doc_id,
+                record_id=chunk.record_id,
                 content=content,
                 metadata=chunk.metadata,
                 chunk_index=chunk.chunk_index,
-                header_path=chunk.header_path,
-                start_pos=chunk.start_pos,
-                end_pos=chunk.end_pos,
-                file_path=chunk.file_path,
-                modified_time=chunk.modified_time,
+                header_path=self._chunk_header_path(chunk),
+                start_pos=self._chunk_start_pos(chunk),
+                end_pos=self._chunk_end_pos(chunk),
+                file_path=self._chunk_file_path(chunk),
+                modified_time=self._chunk_modified_time(chunk),
             )
             result.append(overlapped_chunk)
 
@@ -427,9 +506,9 @@ class HeaderBasedChunker(ChunkingStrategy):
         content = document.content
         if len(content) <= self.config.max_chunk_chars:
             return [
-                Chunk(
+                self._build_chunk(
                     chunk_id=f"{document.id}_chunk_0",
-                    doc_id=document.id,
+                    record_id=document.id,
                     content=content,
                     metadata={
                         **document.metadata,
@@ -459,9 +538,9 @@ class HeaderBasedChunker(ChunkingStrategy):
             else:
                 end_pos = start_pos + len(current_content)
                 chunks.append(
-                    Chunk(
+                    self._build_chunk(
                         chunk_id=f"{document.id}_chunk_{chunk_index}",
-                        doc_id=document.id,
+                        record_id=document.id,
                         content=current_content,
                         metadata={
                             **document.metadata,
@@ -483,9 +562,9 @@ class HeaderBasedChunker(ChunkingStrategy):
         if current_content:
             end_pos = start_pos + len(current_content)
             chunks.append(
-                Chunk(
+                self._build_chunk(
                     chunk_id=f"{document.id}_chunk_{chunk_index}",
-                    doc_id=document.id,
+                    record_id=document.id,
                     content=current_content,
                     metadata={
                         **document.metadata,
@@ -529,34 +608,34 @@ class HeaderBasedChunker(ChunkingStrategy):
             else:
                 if len(current_parent_content) >= parent_min:
                     parent_chunk_id = f"{document.id}_parent_{parent_index}"
-                    parent = Chunk(
+                    parent = self._build_chunk(
                         chunk_id=parent_chunk_id,
-                        doc_id=document.id,
+                        record_id=document.id,
                         content=current_parent_content,
                         metadata=current_parent_chunks[0].metadata,
                         chunk_index=parent_index,
                         header_path=self._select_parent_header_path(
                             current_parent_chunks
                         ),
-                        start_pos=current_parent_chunks[0].start_pos,
-                        end_pos=current_parent_chunks[-1].end_pos,
+                        start_pos=self._chunk_start_pos(current_parent_chunks[0]),
+                        end_pos=self._chunk_end_pos(current_parent_chunks[-1]),
                         file_path=document.file_path,
                         modified_time=document.modified_time,
                     )
                     parents.append(parent)
 
                     for child_chunk in current_parent_chunks:
-                        child = Chunk(
+                        child = self._build_chunk(
                             chunk_id=child_chunk.chunk_id,
-                            doc_id=child_chunk.doc_id,
+                            record_id=child_chunk.record_id,
                             content=child_chunk.content,
                             metadata=child_chunk.metadata,
                             chunk_index=child_chunk.chunk_index,
-                            header_path=child_chunk.header_path,
-                            start_pos=child_chunk.start_pos,
-                            end_pos=child_chunk.end_pos,
-                            file_path=child_chunk.file_path,
-                            modified_time=child_chunk.modified_time,
+                            header_path=self._chunk_header_path(child_chunk),
+                            start_pos=self._chunk_start_pos(child_chunk),
+                            end_pos=self._chunk_end_pos(child_chunk),
+                            file_path=self._chunk_file_path(child_chunk),
+                            modified_time=self._chunk_modified_time(child_chunk),
                             parent_chunk_id=parent_chunk_id,
                         )
                         children.append(child)
@@ -571,32 +650,32 @@ class HeaderBasedChunker(ChunkingStrategy):
         if current_parent_chunks:
             if len(current_parent_content) >= parent_min:
                 parent_chunk_id = f"{document.id}_parent_{parent_index}"
-                parent = Chunk(
+                parent = self._build_chunk(
                     chunk_id=parent_chunk_id,
-                    doc_id=document.id,
+                    record_id=document.id,
                     content=current_parent_content,
                     metadata=current_parent_chunks[0].metadata,
                     chunk_index=parent_index,
                     header_path=self._select_parent_header_path(current_parent_chunks),
-                    start_pos=current_parent_chunks[0].start_pos,
-                    end_pos=current_parent_chunks[-1].end_pos,
+                    start_pos=self._chunk_start_pos(current_parent_chunks[0]),
+                    end_pos=self._chunk_end_pos(current_parent_chunks[-1]),
                     file_path=document.file_path,
                     modified_time=document.modified_time,
                 )
                 parents.append(parent)
 
                 for child_chunk in current_parent_chunks:
-                    child = Chunk(
+                    child = self._build_chunk(
                         chunk_id=child_chunk.chunk_id,
-                        doc_id=child_chunk.doc_id,
+                        record_id=child_chunk.record_id,
                         content=child_chunk.content,
                         metadata=child_chunk.metadata,
                         chunk_index=child_chunk.chunk_index,
-                        header_path=child_chunk.header_path,
-                        start_pos=child_chunk.start_pos,
-                        end_pos=child_chunk.end_pos,
-                        file_path=child_chunk.file_path,
-                        modified_time=child_chunk.modified_time,
+                        header_path=self._chunk_header_path(child_chunk),
+                        start_pos=self._chunk_start_pos(child_chunk),
+                        end_pos=self._chunk_end_pos(child_chunk),
+                        file_path=self._chunk_file_path(child_chunk),
+                        modified_time=self._chunk_modified_time(child_chunk),
                         parent_chunk_id=parent_chunk_id,
                     )
                     children.append(child)

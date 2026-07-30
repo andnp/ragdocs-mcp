@@ -28,8 +28,25 @@ from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
 from searchkernel.search.orchestrator import SearchOrchestrator
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 # ============================================================================
 # Fixtures
@@ -279,18 +296,7 @@ async def test_query_uses_orchestrator_documents_path(base_config, indices, tmp_
     )
 
     # Add a chunk that references the explicit docs path
-    chunk = Chunk(
-        chunk_id="test/doc_chunk_0",
-        doc_id="test/doc",
-        content="Test content for path verification",
-        metadata={},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=50,
-        file_path=str(explicit_docs / "test" / "doc.md"),
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="test/doc_chunk_0", record_id="test/doc", content="Test content for path verification", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(explicit_docs / "test" / "doc.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector.add_chunk(chunk)
     keyword.add_chunk(chunk)
 

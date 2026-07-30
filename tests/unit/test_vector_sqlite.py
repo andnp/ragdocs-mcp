@@ -7,24 +7,30 @@ from pathlib import Path
 import pytest
 
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
 from searchkernel.storage.db import DatabaseManager
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 
 def _make_chunk(doc_id: str, index: int, content: str) -> Chunk:
     chunk_id = f"{doc_id}_chunk_{index}"
-    return Chunk(
-        chunk_id=chunk_id,
-        doc_id=doc_id,
-        content=content,
-        metadata={"doc_id": doc_id},
-        chunk_index=index,
-        header_path="",
-        start_pos=0,
-        end_pos=len(content),
-        file_path=f"/docs/{doc_id}.md",
-        modified_time=datetime.now(UTC),
-    )
+    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={**({"doc_id": doc_id}), "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": f"/docs/{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=index))
 
 
 @pytest.fixture

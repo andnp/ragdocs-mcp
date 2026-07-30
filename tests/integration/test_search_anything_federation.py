@@ -22,10 +22,27 @@ from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
 from searchkernel.runtime.federation import search_anything
 from searchkernel.runtime.registry import SourceRegistry
 from searchkernel.search.orchestrator import SearchOrchestrator
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 
 class _StubExternalSource:
@@ -101,18 +118,7 @@ def registry(orchestrator):
 
 
 def _seed(indices):
-    chunk = Chunk(
-        chunk_id="note_doc_chunk_0",
-        doc_id="note_doc",
-        content="Authentication documentation covers OAuth flows for the public API.",
-        metadata={"source_kind": "note"},
-        chunk_index=0,
-        header_path="Auth",
-        start_pos=0,
-        end_pos=10,
-        file_path="note_doc.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="note_doc_chunk_0", record_id="note_doc", content="Authentication documentation covers OAuth flows for the public API.", metadata={**({"source_kind": "note"}), "header_path": "Auth", "start_pos": 0, "end_pos": 10, "file_path": "note_doc.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     indices["vector"].add_chunk(chunk)
     indices["keyword"].add_chunk(chunk)
 

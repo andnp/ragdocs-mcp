@@ -10,6 +10,23 @@ from searchkernel.models import Document
 from searchkernel.parsers.markdown import MarkdownParser
 
 
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
+
+
 def _extract_chunk_ids(results: list) -> list[str]:
     if not results:
         return []
@@ -296,22 +313,11 @@ def test_vector_index_chunk_with_header_path_includes_header_in_embedding(
     Verifies P2: Heading-weighted embeddings prepend header_path to content
     before generating embeddings, improving semantic search relevance.
     """
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
-    chunk = Chunk(
-        chunk_id="doc1_chunk_0",
-        doc_id="doc1",
-        content="This section covers the basics of training neural networks.",
-        metadata={"tags": [], "links": []},
-        chunk_index=0,
-        header_path="Machine Learning > Deep Learning > Training",
-        start_pos=0,
-        end_pos=100,
-        file_path="/tmp/ml.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="doc1_chunk_0", record_id="doc1", content="This section covers the basics of training neural networks.", metadata={**({"tags": [], "links": []}), "header_path": "Machine Learning > Deep Learning > Training", "start_pos": 0, "end_pos": 100, "file_path": "/tmp/ml.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     vector_index.add_chunk(chunk)
 
@@ -332,22 +338,11 @@ def test_vector_index_chunk_without_header_path_uses_content_only(
 
     Ensures backward compatibility for chunks that don't have header paths.
     """
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
-    chunk = Chunk(
-        chunk_id="doc2_chunk_0",
-        doc_id="doc2",
-        content="Python is a versatile programming language used for web development.",
-        metadata={"tags": ["python"], "links": []},
-        chunk_index=0,
-        header_path="",  # Empty header path
-        start_pos=0,
-        end_pos=80,
-        file_path="/tmp/python.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="doc2_chunk_0", record_id="doc2", content="Python is a versatile programming language used for web development.", metadata={**({"tags": ["python"], "links": []}), "header_path": "", "start_pos": 0, "end_pos": 80, "file_path": "/tmp/python.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     vector_index.add_chunk(chunk)
 
@@ -363,37 +358,15 @@ def test_vector_index_header_weighted_improves_relevance(shared_embedding_model)
     Verifies that chunks with relevant headers rank higher than those without
     when searching for terms in the header path.
     """
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
     # Chunk with relevant header
-    chunk_with_header = Chunk(
-        chunk_id="api_chunk_0",
-        doc_id="api-docs",
-        content="This function accepts parameters and returns a value.",
-        metadata={},
-        chunk_index=0,
-        header_path="API Reference > Authentication > Token Validation",
-        start_pos=0,
-        end_pos=60,
-        file_path="/tmp/api.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk_with_header = _with_hash(Chunk(chunk_id="api_chunk_0", record_id="api-docs", content="This function accepts parameters and returns a value.", metadata={**({}), "header_path": "API Reference > Authentication > Token Validation", "start_pos": 0, "end_pos": 60, "file_path": "/tmp/api.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     # Chunk without relevant header
-    chunk_without_header = Chunk(
-        chunk_id="general_chunk_0",
-        doc_id="general-docs",
-        content="This function accepts parameters and returns a value.",
-        metadata={},
-        chunk_index=0,
-        header_path="",  # No header
-        start_pos=0,
-        end_pos=60,
-        file_path="/tmp/general.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk_without_header = _with_hash(Chunk(chunk_id="general_chunk_0", record_id="general-docs", content="This function accepts parameters and returns a value.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 60, "file_path": "/tmp/general.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     vector_index.add_chunk(chunk_with_header)
     vector_index.add_chunk(chunk_without_header)
@@ -420,23 +393,12 @@ def test_stale_chunk_ref_cleaned_on_lookup(shared_embedding_model):
     When get_chunk_by_id() encounters a chunk ID that exists in mappings
     but not in the docstore, it should remove the stale reference.
     """
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
     # Add a real chunk
-    chunk = Chunk(
-        chunk_id="real_chunk",
-        doc_id="doc1",
-        content="Real content that exists in docstore.",
-        metadata={},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=50,
-        file_path="/tmp/real.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="real_chunk", record_id="doc1", content="Real content that exists in docstore.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": "/tmp/real.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector_index.add_chunk(chunk)
 
     # Manually inject a stale reference (ID in mappings but not docstore)
@@ -513,24 +475,13 @@ def test_reconcile_mappings_removes_stale_refs(shared_embedding_model):
     The reconcile_mappings() method should scan all mappings and remove
     any chunk IDs that no longer exist in the docstore.
     """
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
     # Add real chunks
     for i in range(3):
-        chunk = Chunk(
-            chunk_id=f"real_chunk_{i}",
-            doc_id=f"doc_{i}",
-            content=f"Real content number {i}.",
-            metadata={},
-            chunk_index=0,
-            header_path="",
-            start_pos=0,
-            end_pos=30,
-            file_path=f"/tmp/real_{i}.md",
-            modified_time=datetime.now(UTC),
-        )
+        chunk = _with_hash(Chunk(chunk_id=f"real_chunk_{i}", record_id=f"doc_{i}", content=f"Real content number {i}.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 30, "file_path": f"/tmp/real_{i}.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
         vector_index.add_chunk(chunk)
 
     # Inject multiple stale references
@@ -579,23 +530,12 @@ def test_warned_set_cleared_on_load(shared_embedding_model, tmp_path):
     After loading an index from disk, the warned set should be reset
     since the stale state may have changed during persistence.
     """
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
     # Add a chunk
-    chunk = Chunk(
-        chunk_id="persistent_chunk",
-        doc_id="doc1",
-        content="Content to persist.",
-        metadata={},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=30,
-        file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="persistent_chunk", record_id="doc1", content="Content to persist.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 30, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector_index.add_chunk(chunk)
 
     # Simulate having warned about some stale chunks
@@ -634,24 +574,13 @@ def test_term_counts_and_vocabulary_loaded_as_ordereddict(
     """
     from collections import OrderedDict
 
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
     # Add chunks to populate term counts and vocabulary
     for i in range(3):
-        chunk = Chunk(
-            chunk_id=f"chunk_{i}",
-            doc_id=f"doc_{i}",
-            content="Machine learning algorithms require training data for optimization.",
-            metadata={},
-            chunk_index=0,
-            header_path="",
-            start_pos=0,
-            end_pos=100,
-            file_path=f"/tmp/doc_{i}.md",
-            modified_time=datetime.now(UTC),
-        )
+        chunk = _with_hash(Chunk(chunk_id=f"chunk_{i}", record_id=f"doc_{i}", content="Machine learning algorithms require training data for optimization.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 100, "file_path": f"/tmp/doc_{i}.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
         vector_index.add_chunk(chunk)
 
     # Register terms to populate _term_counts
@@ -688,18 +617,7 @@ def test_term_counts_and_vocabulary_loaded_as_ordereddict(
         )  # Should not raise AttributeError
 
     # Verify indexing still works after load (this triggered the original bug)
-    chunk = Chunk(
-        chunk_id="new_chunk_after_load",
-        doc_id="new_doc",
-        content="New content about neural networks and deep learning.",
-        metadata={},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=60,
-        file_path="/tmp/new.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="new_chunk_after_load", record_id="new_doc", content="New content about neural networks and deep learning.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 60, "file_path": "/tmp/new.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector_index2.add_chunk(chunk)  # Should not raise AttributeError
 
     # Verify search works
@@ -720,23 +638,12 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(
     """
     from collections import OrderedDict
 
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     # Create index and add initial content
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
 
-    chunk1 = Chunk(
-        chunk_id="chunk_1",
-        doc_id="doc_1",
-        content="Python programming language with asyncio and type hints.",
-        metadata={},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=100,
-        file_path="/tmp/doc_1.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk1 = _with_hash(Chunk(chunk_id="chunk_1", record_id="doc_1", content="Python programming language with asyncio and type hints.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 100, "file_path": "/tmp/doc_1.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector_index.add_chunk(chunk1)
 
     # Populate term counts and vocabulary
@@ -770,18 +677,7 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(
     )
 
     # Simulate add-after-load flow: add new chunk after loading (this would fail with plain dict)
-    chunk2 = Chunk(
-        chunk_id="chunk_2",
-        doc_id="doc_2",
-        content="FastAPI web framework with dependency injection and Pydantic models.",
-        metadata={},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=100,
-        file_path="/tmp/doc_2.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk2 = _with_hash(Chunk(chunk_id="chunk_2", record_id="doc_2", content="FastAPI web framework with dependency injection and Pydantic models.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 100, "file_path": "/tmp/doc_2.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     # This should NOT raise AttributeError: 'dict' object has no attribute 'move_to_end'
     vector_index2.add_chunk(chunk2)
@@ -803,33 +699,11 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(
 
 def test_remove_chunk_removes_from_all_mappings(vector_index, shared_embedding_model):
     """Test that remove_chunk() removes chunk from index and all mappings."""
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     # Add chunks
-    chunk1 = Chunk(
-        chunk_id="doc1#chunk#0",
-        doc_id="doc1",
-        content="First chunk content.",
-        metadata={},
-        chunk_index=0,
-        header_path="Section 1",
-        start_pos=0,
-        end_pos=20,
-        file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
-    )
-    chunk2 = Chunk(
-        chunk_id="doc1#chunk#1",
-        doc_id="doc1",
-        content="Second chunk content.",
-        metadata={},
-        chunk_index=1,
-        header_path="Section 2",
-        start_pos=21,
-        end_pos=42,
-        file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk1 = _with_hash(Chunk(chunk_id="doc1#chunk#0", record_id="doc1", content="First chunk content.", metadata={**({}), "header_path": "Section 1", "start_pos": 0, "end_pos": 20, "file_path": "/tmp/doc1.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk2 = _with_hash(Chunk(chunk_id="doc1#chunk#1", record_id="doc1", content="Second chunk content.", metadata={**({}), "header_path": "Section 2", "start_pos": 21, "end_pos": 42, "file_path": "/tmp/doc1.md", "modified_time": datetime.now(UTC)}, chunk_index=1))
 
     vector_index.add_chunk(chunk1)
     vector_index.add_chunk(chunk2)
@@ -859,20 +733,9 @@ def test_remove_chunk_handles_missing_chunk(vector_index):
 
 def test_remove_chunk_removes_last_chunk_cleans_doc_mapping(vector_index):
     """Test that removing last chunk of a doc removes the doc from mappings."""
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
-    chunk = Chunk(
-        chunk_id="doc_single#chunk#0",
-        doc_id="doc_single",
-        content="Only chunk.",
-        metadata={},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=11,
-        file_path="/tmp/single.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="doc_single#chunk#0", record_id="doc_single", content="Only chunk.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 11, "file_path": "/tmp/single.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     vector_index.add_chunk(chunk)
 
@@ -889,23 +752,12 @@ def test_remove_chunk_thread_safe(vector_index):
     """Test that remove_chunk() is thread-safe with concurrent operations."""
     from concurrent.futures import ThreadPoolExecutor
 
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     # Add multiple chunks
     chunks = []
     for i in range(10):
-        chunk = Chunk(
-            chunk_id=f"concurrent_doc#chunk#{i}",
-            doc_id="concurrent_doc",
-            content=f"Chunk {i} content.",
-            metadata={},
-            chunk_index=i,
-            header_path=f"Section {i}",
-            start_pos=i * 20,
-            end_pos=(i + 1) * 20,
-            file_path="/tmp/concurrent.md",
-            modified_time=datetime.now(UTC),
-        )
+        chunk = _with_hash(Chunk(chunk_id=f"concurrent_doc#chunk#{i}", record_id="concurrent_doc", content=f"Chunk {i} content.", metadata={**({}), "header_path": f"Section {i}", "start_pos": i * 20, "end_pos": (i + 1) * 20, "file_path": "/tmp/concurrent.md", "modified_time": datetime.now(UTC)}, chunk_index=i))
         chunks.append(chunk)
         vector_index.add_chunk(chunk)
 
@@ -938,21 +790,10 @@ def test_remove_chunk_before_initialization(vector_index):
 def test_vocabulary_lifecycle_marks_stale_on_authoritative_mutation(
     shared_embedding_model,
 ):
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
-    chunk = Chunk(
-        chunk_id="doc1_chunk_0",
-        doc_id="doc1",
-        content="Authentication tokens verify user identity.",
-        metadata={},
-        chunk_index=0,
-        header_path="Security",
-        start_pos=0,
-        end_pos=40,
-        file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="doc1_chunk_0", record_id="doc1", content="Authentication tokens verify user identity.", metadata={**({}), "header_path": "Security", "start_pos": 0, "end_pos": 40, "file_path": "/tmp/doc1.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     vector_index.add_chunk(chunk)
 
@@ -963,21 +804,10 @@ def test_vocabulary_lifecycle_marks_stale_on_authoritative_mutation(
 def test_vocabulary_lifecycle_reports_building_and_finishes_ready(
     shared_embedding_model,
 ):
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
-    chunk = Chunk(
-        chunk_id="doc2_chunk_0",
-        doc_id="doc2",
-        content="Authorization policies protect access after authentication.",
-        metadata={},
-        chunk_index=0,
-        header_path="Security",
-        start_pos=0,
-        end_pos=60,
-        file_path="/tmp/doc2.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="doc2_chunk_0", record_id="doc2", content="Authorization policies protect access after authentication.", metadata={**({}), "header_path": "Security", "start_pos": 0, "end_pos": 60, "file_path": "/tmp/doc2.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector_index.add_chunk(chunk)
 
     observed_statuses: list[str] = []
@@ -995,33 +825,11 @@ def test_vocabulary_lifecycle_reports_building_and_finishes_ready(
 
 
 def test_vocabulary_incremental_catch_up_returns_to_ready(shared_embedding_model):
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
-    first_chunk = Chunk(
-        chunk_id="doc3_chunk_0",
-        doc_id="doc3",
-        content="Authentication requires credentials and verification.",
-        metadata={},
-        chunk_index=0,
-        header_path="Security",
-        start_pos=0,
-        end_pos=55,
-        file_path="/tmp/doc3.md",
-        modified_time=datetime.now(UTC),
-    )
-    second_chunk = Chunk(
-        chunk_id="doc4_chunk_0",
-        doc_id="doc4",
-        content="Authorization protects privileged administration endpoints.",
-        metadata={},
-        chunk_index=0,
-        header_path="Security",
-        start_pos=0,
-        end_pos=58,
-        file_path="/tmp/doc4.md",
-        modified_time=datetime.now(UTC),
-    )
+    first_chunk = _with_hash(Chunk(chunk_id="doc3_chunk_0", record_id="doc3", content="Authentication requires credentials and verification.", metadata={**({}), "header_path": "Security", "start_pos": 0, "end_pos": 55, "file_path": "/tmp/doc3.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    second_chunk = _with_hash(Chunk(chunk_id="doc4_chunk_0", record_id="doc4", content="Authorization protects privileged administration endpoints.", metadata={**({}), "header_path": "Security", "start_pos": 0, "end_pos": 58, "file_path": "/tmp/doc4.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     vector_index.add_chunk(first_chunk)
     vector_index.build_concept_vocabulary(min_frequency=1)
@@ -1044,21 +852,10 @@ def test_vocabulary_lifecycle_persists_stale_state_without_materialized_terms(
     shared_embedding_model,
     tmp_path,
 ):
-    from searchkernel.models import Chunk
+    from searchkernel.domain import Chunk
 
     vector_index = VectorIndex(embedding_model=shared_embedding_model)
-    chunk = Chunk(
-        chunk_id="doc5_chunk_0",
-        doc_id="doc5",
-        content="Bootstrap rebuild persists authoritative terms without full vocabulary build.",
-        metadata={},
-        chunk_index=0,
-        header_path="Lifecycle",
-        start_pos=0,
-        end_pos=75,
-        file_path="/tmp/doc5.md",
-        modified_time=datetime.now(UTC),
-    )
+    chunk = _with_hash(Chunk(chunk_id="doc5_chunk_0", record_id="doc5", content="Bootstrap rebuild persists authoritative terms without full vocabulary build.", metadata={**({}), "header_path": "Lifecycle", "start_pos": 0, "end_pos": 75, "file_path": "/tmp/doc5.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector_index.add_chunk(chunk)
 
     persist_path = tmp_path / "vector_state"

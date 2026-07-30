@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Protocol
 
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
 from searchkernel.pipeline.stage import SearchContext
 
 _CHUNKS_KEY = "chunks"

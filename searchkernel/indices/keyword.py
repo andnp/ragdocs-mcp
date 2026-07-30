@@ -7,7 +7,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from searchkernel.models import Chunk, Document
+from searchkernel.domain import Chunk
+from searchkernel.models import Document
 from searchkernel.search.types import SearchResultDict
 from searchkernel.storage.db import DatabaseManager
 
@@ -257,10 +258,10 @@ class KeywordIndex:
     def _insert_chunk(self, chunk: Chunk) -> None:
         metadata = chunk.metadata
         title = str(metadata.get("title", ""))
-        header_path = chunk.header_path or ""
+        header_path = metadata.get("header_path") or ""
         tags_list = metadata.get("tags", [])
         tags = ",".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
-        source_file = str(metadata.get("source_file", chunk.doc_id))
+        source_file = str(metadata.get("source_file", chunk.record_id))
         # Include aliases, keywords, description, author, category in headers field
         aliases_list = metadata.get("aliases", [])
         aliases_text = (
@@ -303,7 +304,7 @@ class KeywordIndex:
             """,
             (
                 chunk.chunk_id,
-                chunk.doc_id,
+                chunk.record_id,
                 chunk.content,
                 title,
                 headers,

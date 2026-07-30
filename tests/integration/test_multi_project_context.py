@@ -29,8 +29,25 @@ from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
 from searchkernel.search.orchestrator import SearchOrchestrator
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 # ============================================================================
 # Fixtures
@@ -175,18 +192,7 @@ async def test_queries_return_results_from_correct_project(
     )
 
     # Add Project A specific chunk
-    chunk_a = Chunk(
-        chunk_id="readme_chunk_0",
-        doc_id="readme",
-        content="Project Alpha documentation",
-        metadata={},
-        chunk_index=0,
-        header_path="Project A",
-        start_pos=0,
-        end_pos=30,
-        file_path=str(two_projects["project_a_docs"] / "readme.md"),
-        modified_time=datetime.now(UTC),
-    )
+    chunk_a = _with_hash(Chunk(chunk_id="readme_chunk_0", record_id="readme", content="Project Alpha documentation", metadata={**({}), "header_path": "Project A", "start_pos": 0, "end_pos": 30, "file_path": str(two_projects["project_a_docs"] / "readme.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector_a.add_chunk(chunk_a)
     keyword_a.add_chunk(chunk_a)
 
@@ -205,18 +211,7 @@ async def test_queries_return_results_from_correct_project(
     )
 
     # Add Project B specific chunk
-    chunk_b = Chunk(
-        chunk_id="readme_chunk_0",
-        doc_id="readme",
-        content="Project Beta documentation",
-        metadata={},
-        chunk_index=0,
-        header_path="Project B",
-        start_pos=0,
-        end_pos=30,
-        file_path=str(two_projects["project_b_docs"] / "readme.md"),
-        modified_time=datetime.now(UTC),
-    )
+    chunk_b = _with_hash(Chunk(chunk_id="readme_chunk_0", record_id="readme", content="Project Beta documentation", metadata={**({}), "header_path": "Project B", "start_pos": 0, "end_pos": 30, "file_path": str(two_projects["project_b_docs"] / "readme.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector_b.add_chunk(chunk_b)
     keyword_b.add_chunk(chunk_b)
 
@@ -492,18 +487,7 @@ async def test_file_exclusions_resolve_against_orchestrator_path(
 
     # Add multiple chunks
     for name in ["readme", "api", "guide"]:
-        chunk = Chunk(
-            chunk_id=f"{name}_chunk_0",
-            doc_id=name,
-            content=f"Content from {name} file in Project A",
-            metadata={},
-            chunk_index=0,
-            header_path=name,
-            start_pos=0,
-            end_pos=50,
-            file_path=str(two_projects["project_a_docs"] / f"{name}.md"),
-            modified_time=datetime.now(UTC),
-        )
+        chunk = _with_hash(Chunk(chunk_id=f"{name}_chunk_0", record_id=name, content=f"Content from {name} file in Project A", metadata={**({}), "header_path": name, "start_pos": 0, "end_pos": 50, "file_path": str(two_projects["project_a_docs"] / f"{name}.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
         vector.add_chunk(chunk)
         keyword.add_chunk(chunk)
 

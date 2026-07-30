@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 import numpy as np
 
 from searchkernel.indices.vocabulary_state import VocabularyLifecycleState
-from searchkernel.models import Chunk, Document
+from searchkernel.domain import Chunk
+from searchkernel.models import Document
 from searchkernel.search.types import SearchResultDict
 from searchkernel.utils.atomic_io import atomic_write_json, fsync_path
 from searchkernel.utils.circuit_breaker import (
@@ -341,38 +342,37 @@ class VectorIndex:
                 "VectorIndex not initialized - call load() or add_chunks() first"
             )
 
+        header_path = chunk.metadata.get("header_path", "")
         embedding_text = (
-            f"{chunk.header_path}\n\n{chunk.content}"
-            if chunk.header_path
-            else chunk.content
+            f"{header_path}\n\n{chunk.content}" if header_path else chunk.content
         )
 
         llama_doc = LlamaDocument(
             text=embedding_text,
             metadata={
                 "chunk_id": chunk.chunk_id,
-                "doc_id": chunk.doc_id,
+                "doc_id": chunk.record_id,
                 "chunk_index": chunk.chunk_index,
-                "header_path": chunk.header_path,
-                "file_path": chunk.file_path,
+                "header_path": header_path,
+                "file_path": chunk.metadata.get("file_path", ""),
                 "tags": chunk.metadata.get("tags", []),
                 "links": chunk.metadata.get("links", []),
-                "parent_chunk_id": chunk.parent_chunk_id,
+                "parent_chunk_id": chunk.metadata.get("parent_chunk_id"),
                 **chunk.metadata,  # Include ALL metadata from chunk
             },
             id_=chunk.chunk_id,
         )
 
         node_id = llama_doc.id_
-        self._tombstoned_docs.discard(chunk.doc_id)
+        self._tombstoned_docs.discard(chunk.record_id)
 
         # Protect index operations with lock to prevent race condition during shutdown/persist
         with self._index_lock:
             self._chunk_id_to_node_id[chunk.chunk_id] = node_id
 
-            if chunk.doc_id not in self._doc_id_to_node_ids:
-                self._doc_id_to_node_ids[chunk.doc_id] = []
-            self._doc_id_to_node_ids[chunk.doc_id].append(node_id)
+            if chunk.record_id not in self._doc_id_to_node_ids:
+                self._doc_id_to_node_ids[chunk.record_id] = []
+            self._doc_id_to_node_ids[chunk.record_id].append(node_id)
 
             self._index.insert_nodes([llama_doc])
 
@@ -408,22 +408,21 @@ class VectorIndex:
         llama_docs: list[tuple[LlamaDocument, Chunk]] = []
         for chunk in chunks:
             try:
+                header_path = chunk.metadata.get("header_path", "")
                 embedding_text = (
-                    f"{chunk.header_path}\n\n{chunk.content}"
-                    if chunk.header_path
-                    else chunk.content
+                    f"{header_path}\n\n{chunk.content}" if header_path else chunk.content
                 )
                 llama_doc = LlamaDocument(
                     text=embedding_text,
                     metadata={
                         "chunk_id": chunk.chunk_id,
-                        "doc_id": chunk.doc_id,
+                        "doc_id": chunk.record_id,
                         "chunk_index": chunk.chunk_index,
-                        "header_path": chunk.header_path,
-                        "file_path": chunk.file_path,
+                        "header_path": header_path,
+                        "file_path": chunk.metadata.get("file_path", ""),
                         "tags": chunk.metadata.get("tags", []),
                         "links": chunk.metadata.get("links", []),
-                        "parent_chunk_id": chunk.parent_chunk_id,
+                        "parent_chunk_id": chunk.metadata.get("parent_chunk_id"),
                         **chunk.metadata,
                     },
                     id_=chunk.chunk_id,
@@ -440,20 +439,19 @@ class VectorIndex:
         with self._index_lock:
             for llama_doc, chunk in llama_docs:
                 node_id = llama_doc.id_
-                self._tombstoned_docs.discard(chunk.doc_id)
+                self._tombstoned_docs.discard(chunk.record_id)
                 self._chunk_id_to_node_id[chunk.chunk_id] = node_id
 
-                if chunk.doc_id not in self._doc_id_to_node_ids:
-                    self._doc_id_to_node_ids[chunk.doc_id] = []
-                self._doc_id_to_node_ids[chunk.doc_id].append(node_id)
+                if chunk.record_id not in self._doc_id_to_node_ids:
+                    self._doc_id_to_node_ids[chunk.record_id] = []
+                self._doc_id_to_node_ids[chunk.record_id].append(node_id)
 
             self._index.insert_nodes([doc for doc, _ in llama_docs])
 
         for _, chunk in llama_docs:
+            header_path = chunk.metadata.get("header_path", "")
             embedding_text = (
-                f"{chunk.header_path}\n\n{chunk.content}"
-                if chunk.header_path
-                else chunk.content
+                f"{header_path}\n\n{chunk.content}" if header_path else chunk.content
             )
             self.register_document_terms(embedding_text)
 

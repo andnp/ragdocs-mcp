@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
 
 SemanticTier = Literal["coarse", "fine"]
 
@@ -63,7 +63,7 @@ def semantic_input_for_chunk(
     priority: int = 0,
 ) -> SemanticInput:
     """Build the canonical semantic input for one chunk."""
-    text = build_embedding_text(chunk.header_path, chunk.content)
+    text = build_embedding_text(chunk.metadata.get("header_path", ""), chunk.content)
     return SemanticInput(
         source_id=chunk.chunk_id,
         text=text,

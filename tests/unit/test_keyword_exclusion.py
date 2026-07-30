@@ -3,7 +3,24 @@ from datetime import UTC, datetime
 import pytest
 
 from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.models import Chunk
+from searchkernel.domain import Chunk
+
+
+def _with_hash(chunk):
+    """Finalize a freshly-built domain.Chunk (test helper).
+
+    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
+    content_hash in __post_init__, and its metadata dict must stay JSON
+    serializable (it flows into index/docstore persistence), so a raw
+    datetime `modified_time` is normalized to ISO text.
+    """
+    if not chunk.content_hash:
+        chunk.content_hash = chunk.compute_content_hash()
+    modified_time = chunk.metadata.get("modified_time")
+    if hasattr(modified_time, "isoformat"):
+        chunk.metadata["modified_time"] = modified_time.isoformat()
+    return chunk
+
 
 
 @pytest.fixture
@@ -19,18 +36,7 @@ def keyword_index():
 
 
 def test_keyword_search_without_exclusions(keyword_index, docs_root):
-    chunk1 = Chunk(
-        chunk_id="docs/api_chunk_0",
-        doc_id="docs/api",
-        content="API authentication using tokens",
-        metadata={"tags": []},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=50,
-        file_path=str(docs_root / "docs" / "api.md"),
-        modified_time=datetime.now(UTC),
-    )
+    chunk1 = _with_hash(Chunk(chunk_id="docs/api_chunk_0", record_id="docs/api", content="API authentication using tokens", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_root / "docs" / "api.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk1)
 
@@ -40,31 +46,9 @@ def test_keyword_search_without_exclusions(keyword_index, docs_root):
 
 
 def test_keyword_search_with_exclusions_exact_match(keyword_index, docs_root):
-    chunk1 = Chunk(
-        chunk_id="docs/api_chunk_0",
-        doc_id="docs/api",
-        content="API authentication using tokens",
-        metadata={"tags": []},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=50,
-        file_path=str(docs_root / "docs" / "api.md"),
-        modified_time=datetime.now(UTC),
-    )
+    chunk1 = _with_hash(Chunk(chunk_id="docs/api_chunk_0", record_id="docs/api", content="API authentication using tokens", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_root / "docs" / "api.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
 
-    chunk2 = Chunk(
-        chunk_id="docs/guide_chunk_0",
-        doc_id="docs/guide",
-        content="Authentication guide for users",
-        metadata={"tags": []},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=50,
-        file_path=str(docs_root / "docs" / "guide.md"),
-        modified_time=datetime.now(UTC),
-    )
+    chunk2 = _with_hash(Chunk(chunk_id="docs/guide_chunk_0", record_id="docs/guide", content="Authentication guide for users", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_root / "docs" / "guide.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk1)
     keyword_index.add_chunk(chunk2)
@@ -80,31 +64,9 @@ def test_keyword_search_with_exclusions_exact_match(keyword_index, docs_root):
 
 
 def test_keyword_search_with_exclusions_filename_match(keyword_index, docs_root):
-    chunk1 = Chunk(
-        chunk_id="docs/README_chunk_0",
-        doc_id="docs/README",
-        content="Project README documentation",
-        metadata={"tags": []},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=50,
-        file_path=str(docs_root / "docs" / "README.md"),
-        modified_time=datetime.now(UTC),
-    )
+    chunk1 = _with_hash(Chunk(chunk_id="docs/README_chunk_0", record_id="docs/README", content="Project README documentation", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_root / "docs" / "README.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
 
-    chunk2 = Chunk(
-        chunk_id="docs/guide_chunk_0",
-        doc_id="docs/guide",
-        content="Project guide and documentation",
-        metadata={"tags": []},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=50,
-        file_path=str(docs_root / "docs" / "guide.md"),
-        modified_time=datetime.now(UTC),
-    )
+    chunk2 = _with_hash(Chunk(chunk_id="docs/guide_chunk_0", record_id="docs/guide", content="Project guide and documentation", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_root / "docs" / "guide.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk1)
     keyword_index.add_chunk(chunk2)
@@ -120,18 +82,7 @@ def test_keyword_search_with_exclusions_filename_match(keyword_index, docs_root)
 
 
 def test_keyword_search_with_empty_exclusion_set(keyword_index, docs_root):
-    chunk1 = Chunk(
-        chunk_id="docs/api_chunk_0",
-        doc_id="docs/api",
-        content="API documentation",
-        metadata={"tags": []},
-        chunk_index=0,
-        header_path="",
-        start_pos=0,
-        end_pos=50,
-        file_path=str(docs_root / "docs" / "api.md"),
-        modified_time=datetime.now(UTC),
-    )
+    chunk1 = _with_hash(Chunk(chunk_id="docs/api_chunk_0", record_id="docs/api", content="API documentation", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_root / "docs" / "api.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk1)
 
@@ -146,18 +97,7 @@ def test_keyword_search_with_empty_exclusion_set(keyword_index, docs_root):
 def test_keyword_search_over_fetching(keyword_index, docs_root):
     chunks = []
     for i in range(5):
-        chunk = Chunk(
-            chunk_id=f"docs/file{i}_chunk_0",
-            doc_id=f"docs/file{i}",
-            content=f"Content about API topic {i}",
-            metadata={"tags": []},
-            chunk_index=0,
-            header_path="",
-            start_pos=0,
-            end_pos=50,
-            file_path=str(docs_root / "docs" / f"file{i}.md"),
-            modified_time=datetime.now(UTC),
-        )
+        chunk = _with_hash(Chunk(chunk_id=f"docs/file{i}_chunk_0", record_id=f"docs/file{i}", content=f"Content about API topic {i}", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_root / "docs" / f"file{i}.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
         chunks.append(chunk)
         keyword_index.add_chunk(chunk)
 
@@ -174,18 +114,7 @@ def test_keyword_search_over_fetching(keyword_index, docs_root):
 def test_keyword_search_with_multiple_exclusions(keyword_index, docs_root):
     chunks = []
     for name in ["api", "guide", "tutorial", "reference"]:
-        chunk = Chunk(
-            chunk_id=f"docs/{name}_chunk_0",
-            doc_id=f"docs/{name}",
-            content=f"Documentation for {name}",
-            metadata={"tags": []},
-            chunk_index=0,
-            header_path="",
-            start_pos=0,
-            end_pos=50,
-            file_path=str(docs_root / "docs" / f"{name}.md"),
-            modified_time=datetime.now(UTC),
-        )
+        chunk = _with_hash(Chunk(chunk_id=f"docs/{name}_chunk_0", record_id=f"docs/{name}", content=f"Documentation for {name}", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_root / "docs" / f"{name}.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
         chunks.append(chunk)
         keyword_index.add_chunk(chunk)
 
