@@ -269,10 +269,10 @@ def test_server_shutdown_persists_indices(client, tmp_path, test_docs_dir):
     keyword_path = index_path / "keyword"
     assert keyword_path.exists()
 
-    # Check graph store file
-    graph_path = index_path / "graph"
-    assert graph_path.exists()
-    assert (graph_path / "graph.json").exists()
+    # Graph data lives directly in the shared SQLite db (graph_nodes/graph_edges
+    # tables, written continuously via commit rather than an explicit persist
+    # step), not a separate graph.json snapshot.
+    assert (index_path / "index.db").exists()
 
     # Check manifest file
     manifest_file = index_path / "index.manifest.json"
