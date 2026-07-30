@@ -28,6 +28,28 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TQDM_DISABLE"] = "1"
 
+# The test suite must never touch the HuggingFace Hub network: real-model tests
+# rely entirely on a pre-populated local cache (see scripts/download_test_models.py).
+# This avoids Hub rate limiting when multiple pytest-xdist workers start at once.
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+# llama_index's HuggingFaceEmbedding caches to its own directory (not HF_HOME),
+# and HF_HOME itself governs where transformers/sentence-transformers/
+# huggingface_hub look up cached models (embedding, reranker, and the
+# query-pipeline cross-encoder reranker). Both are resolved from the real HOME
+# at process startup - before isolate_xdg_data_home (below) starts giving each
+# test an isolated fake HOME. Pin both once, globally, here, rather than
+# per-test in isolate_xdg_data_home: relying on that fixture re-deriving the
+# "original" value from the CURRENT os.environ["HOME"] each test is fragile to
+# fixture-ordering races (a session-scoped fixture can build a real subprocess
+# before or after HOME gets faked for a given test, depending on execution
+# order) - pinning here is immune to that entirely, since it never changes.
+os.environ.setdefault(
+    "LLAMA_INDEX_CACHE_DIR", os.path.join(os.path.expanduser("~"), ".cache", "llama_index")
+)
+os.environ.setdefault("HF_HOME", os.path.join(os.path.expanduser("~"), ".cache", "huggingface"))
+
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
@@ -59,17 +81,16 @@ from searchkernel.storage.db import DatabaseManager
 def isolate_xdg_data_home(tmp_path_factory):
     """Isolate application data while preserving HuggingFace model cache.
 
-    Creates temp directories for XDG_DATA_HOME and HOME to isolate test data,
-    but preserves HF_HOME to avoid re-downloading large embedding models
-    and hitting rate limits during parallel test execution.
-    """
-    # Preserve original HuggingFace cache location BEFORE modifying HOME
-    # Default to ~/.cache/huggingface if not set
-    original_home = os.environ.get("HOME", "")
-    original_hf_home = os.environ.get(
-        "HF_HOME", os.path.join(original_home, ".cache", "huggingface")
-    )
+    Creates temp directories for XDG_DATA_HOME and HOME to isolate test data.
 
+    (HF_HOME and LLAMA_INDEX_CACHE_DIR are handled separately: both are pinned
+    once, globally, at conftest import time - see top of this file - since
+    they must be fixed before any per-test HOME isolation to be robust to
+    fixture ordering. Re-deriving "the original HF_HOME" here, per test, from
+    whatever os.environ["HOME"] happens to be at that moment was fragile -
+    subprocess-spawning fixtures can run before or after this fixture's own
+    HOME override depending on execution order.)
+    """
     # Create isolated temp directories for application data
     data_home = tmp_path_factory.mktemp("xdg-data-home")
     home_dir = tmp_path_factory.mktemp("home")
@@ -77,9 +98,6 @@ def isolate_xdg_data_home(tmp_path_factory):
     environment = pytest.MonkeyPatch()
     environment.setenv("XDG_DATA_HOME", str(data_home))
     environment.setenv("HOME", str(home_dir))
-
-    # Restore HuggingFace cache to original location (shared across workers)
-    environment.setenv("HF_HOME", original_hf_home)
 
     try:
         yield
@@ -142,15 +160,14 @@ def deterministic_fake_embedding_model() -> DeterministicFakeEmbeddingModel:
 
 @pytest.fixture(autouse=True)
 def configure_embedding_mode_for_test(request, monkeypatch):
-    """Default to fake embeddings; real-model tests warm once, then run offline."""
+    """Default to fake embeddings; real-model tests use the pre-cached HF models.
+
+    HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE are set globally at import time (see top
+    of this file), so real-model tests never touch the network - they require
+    scripts/download_test_models.py to have been run beforehand.
+    """
     if request.node.get_closest_marker("real_embeddings"):
-        # Ensure the shared session fixture performs the one-time model download/
-        # warmup before we force offline/cache-only behavior for this test and any
-        # subprocesses it spawns.
-        request.getfixturevalue("shared_embedding_model")
         monkeypatch.delenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, raising=False)
-        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
-        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
     else:
         monkeypatch.setenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, "1")
 
@@ -164,22 +181,30 @@ def configure_embedding_mode_for_test(request, monkeypatch):
 def shared_embedding_model():
     """Session-scoped embedding model shared across all tests.
 
-    Uses filelock to ensure only one pytest worker downloads the model
-    at a time, preventing race conditions and rate limit issues.
-    Pre-warms the model with a dummy embedding call to avoid first-call
-    overhead (~1-2s) during actual tests.
+    Requires the model to already be cached locally (see
+    scripts/download_test_models.py) - HF_HUB_OFFLINE is set globally, so this
+    never touches the network. Uses a filelock because HuggingFace's cache
+    loading is not safe against concurrent first-access from multiple
+    pytest-xdist worker processes, even when the model is fully cached.
+    Pre-warms with a dummy embedding call to avoid first-call overhead
+    (~1-2s) during actual tests.
     """
     import filelock
 
-    # Lock file in the HF cache directory
     hf_home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
-    lock_path = os.path.join(hf_home, ".model_download.lock")
+    lock_path = os.path.join(hf_home, ".model_load.lock")
     os.makedirs(os.path.dirname(lock_path), exist_ok=True)
 
-    with filelock.FileLock(lock_path, timeout=300):  # 5 min timeout
-        model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
-        # Pre-warm: trigger model initialization and cache warmup
-        _ = model.get_text_embedding("warmup")
+    try:
+        with filelock.FileLock(lock_path, timeout=300):
+            model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+            _ = model.get_text_embedding("warmup")
+    except OSError as exc:
+        raise RuntimeError(
+            "BAAI/bge-small-en-v1.5 is not in the local HuggingFace cache and "
+            "the test suite runs offline. Run "
+            "`uv run python scripts/download_test_models.py` first."
+        ) from exc
 
     return model
 
