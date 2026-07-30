@@ -13,6 +13,7 @@ from searchkernel.ports.embedding import (
     EmbeddingSink,
 )
 from searchkernel.ports.llm import LLMProvider
+from searchkernel.ports.orchestrator_config import OrchestratorConfig
 from searchkernel.ports.rerank import Reranker
 from searchkernel.ports.search import SearchAPI
 from searchkernel.ports.stores import CacheStore, GraphStore, KeywordStore, VectorStore
@@ -26,6 +27,7 @@ __all__ = [
     "GraphStore",
     "KeywordStore",
     "LLMProvider",
+    "OrchestratorConfig",
     "Reranker",
     "SearchAPI",
     "SearchableSource",

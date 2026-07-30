@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeVar
 
-from searchkernel.config import Config
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
+from searchkernel.ports.orchestrator_config import OrchestratorConfig
 from searchkernel.search.score_pipeline import ScorePipeline, ScorePipelineConfig
 from searchkernel.search.tag_expansion import expand_query_with_tags
 from searchkernel.search.types import SearchResultDict
@@ -39,7 +39,7 @@ class BaseSearchOrchestrator[ResultT](ABC):
         vector: VectorIndex,
         keyword: KeywordIndex,
         graph: GraphStore,
-        config: Config,
+        config: OrchestratorConfig,
         documents_path: Path | None = None,
     ):
         self._vector = vector

@@ -4,7 +4,6 @@ import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from searchkernel.config import Config
 from searchkernel.domain import (
     ChunkResult,
     CompressionStats,
@@ -23,6 +22,7 @@ from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.seed_bookkeeping import (
     should_skip_expensive_factual_enrichments,
 )
+from searchkernel.ports.orchestrator_config import OrchestratorConfig
 from searchkernel.search.base_orchestrator import BaseSearchOrchestrator
 from searchkernel.search.chunk_hydrator import ChunkHydrator
 from searchkernel.search.classifier import QueryType
@@ -58,7 +58,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         vector_index: VectorIndex,
         keyword_index: KeywordIndex,
         graph_store: GraphStore,
-        config: Config,
+        config: OrchestratorConfig,
         index_manager: IndexManager | None = None,
         documents_path: Path | None = None,
     ):
