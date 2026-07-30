@@ -535,6 +535,118 @@ def daemon_group():
     """Manage the long-lived Ragdocs daemon."""
 
 
+def _coerce_dict(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _coerce_list_of_dicts(value: object) -> list[dict[str, object]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _coerce_int(value: object, default: int = 0) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
+_QUEUE_DETAIL_STATES = ("all", "pending", "scheduled", "failed")
+
+
+def _apply_queue_detail_limit(
+    items: list[dict[str, object]],
+    *,
+    limit: int | None,
+) -> list[dict[str, object]]:
+    if limit is None:
+        return items
+    return items[:limit]
+
+
+def _filter_queue_status_payload(
+    payload: dict[str, object],
+    *,
+    state: str,
+    limit: int | None,
+) -> dict[str, object]:
+    filtered_payload = dict(payload)
+    pending_tasks = _coerce_list_of_dicts(payload.get("pending_tasks"))
+    scheduled_tasks = _coerce_list_of_dicts(payload.get("scheduled_tasks"))
+    recent_failures = _coerce_list_of_dicts(payload.get("recent_failures"))
+
+    filtered_payload["pending_tasks"] = _apply_queue_detail_limit(
+        pending_tasks if state in ("all", "pending") else [],
+        limit=limit,
+    )
+    filtered_payload["scheduled_tasks"] = _apply_queue_detail_limit(
+        scheduled_tasks if state in ("all", "scheduled") else [],
+        limit=limit,
+    )
+    filtered_payload["recent_failures"] = _apply_queue_detail_limit(
+        recent_failures if state in ("all", "failed") else [],
+        limit=limit,
+    )
+    filtered_payload["detail_state_filter"] = state
+    filtered_payload["detail_limit"] = limit
+    return filtered_payload
+
+
+def _format_queue_task_summary(
+    task: dict[str, object],
+    *,
+    details: bool,
+) -> list[str]:
+    task_name = str(task.get("task_name") or "unknown")
+    task_id = str(task.get("task_id") or "unknown")
+
+    if not details:
+        parts = [f"id={task_id}"]
+        if task.get("priority") is not None:
+            parts.append(f"priority={task['priority']}")
+        if task.get("eta"):
+            parts.append(f"eta={task['eta']}")
+        return [f"  {task_name} ({', '.join(parts)})"]
+
+    lines = [f"  {task_name}", f"    id: {task_id}"]
+    state = task.get("state")
+    if state:
+        lines.append(f"    state: {state}")
+    source_queue = task.get("source_queue")
+    if source_queue:
+        lines.append(f"    queue: {source_queue}")
+    priority = task.get("priority")
+    if priority is not None:
+        lines.append(f"    priority: {priority}")
+    eta = task.get("eta")
+    if eta:
+        lines.append(f"    eta: {eta}")
+    lines.append(f"    retries: {_coerce_int(task.get('retries'))}")
+    return lines
+
+
+def _emit_queue_task_section(
+    title: str,
+    tasks: list[dict[str, object]],
+    *,
+    details: bool,
+) -> None:
+    if not tasks:
+        return
+
+    click.echo(title)
+    for task in tasks:
+        for line in _format_queue_task_summary(task, details=details):
+            click.echo(line)
+
+
 @cli.group("queue")
 def queue_group():
     """Inspect task queue state."""
@@ -906,8 +1018,32 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
 )
+@click.option(
+    "--state",
+    type=click.Choice(_QUEUE_DETAIL_STATES, case_sensitive=False),
+    default="all",
+    show_default=True,
+    help="Filter task detail output by queue state.",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum number of detail entries to render per selected section.",
+)
+@click.option(
+    "--details",
+    is_flag=True,
+    help="Render expanded task detail fields in human output.",
+)
 @click.option("--json", "output_json", is_flag=True, help="Output queue stats as JSON")
-def queue_status(project: str | None, output_json: bool):
+def queue_status(
+    project: str | None,
+    state: str,
+    limit: int | None,
+    details: bool,
+    output_json: bool,
+):
     """Print queue depth and recent task failures."""
     try:
         payload = _request_daemon_json(
@@ -920,8 +1056,14 @@ def queue_status(project: str | None, output_json: bool):
         if payload is None or payload.get("status") == "error":
             _raise_daemon_request_error(payload)
 
+        filtered_payload = _filter_queue_status_payload(
+            payload,
+            state=state.lower(),
+            limit=limit,
+        )
+
         if output_json:
-            click.echo(json.dumps(payload, indent=2))
+            click.echo(json.dumps(filtered_payload, indent=2))
             return
 
         click.echo("Queue status")
@@ -944,7 +1086,21 @@ def queue_status(project: str | None, output_json: bool):
             for task_name, count in task_counts.items():
                 click.echo(f"  {task_name}: {count}")
 
-        failures = payload.get("recent_failures", [])
+        pending_tasks = _coerce_list_of_dicts(filtered_payload.get("pending_tasks"))
+        _emit_queue_task_section(
+            "Pending task detail:",
+            pending_tasks,
+            details=details,
+        )
+
+        scheduled_tasks = _coerce_list_of_dicts(filtered_payload.get("scheduled_tasks"))
+        _emit_queue_task_section(
+            "Scheduled task detail:",
+            scheduled_tasks,
+            details=details,
+        )
+
+        failures = filtered_payload.get("recent_failures", [])
         if isinstance(failures, list) and failures:
             click.echo("Recent failures:")
             for failure in failures:
@@ -954,10 +1110,75 @@ def queue_status(project: str | None, output_json: bool):
                 click.echo(
                     f"  {task_name} ({failure.get('task_id', 'unknown')}): {failure.get('error', 'unknown error')}"
                 )
-        else:
+        elif state.lower() in ("all", "failed"):
             click.echo("Recent failures: none")
     except Exception as e:
         logger.error(f"Failed to inspect queue status: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@queue_group.command("purge")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+@click.option(
+    "--state",
+    type=click.Choice(_QUEUE_DETAIL_STATES, case_sensitive=False),
+    default="all",
+    show_default=True,
+    help="Select which queue state to purge.",
+)
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Confirm the destructive purge operation.",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output purge result as JSON")
+def queue_purge(
+    project: str | None,
+    state: str,
+    yes: bool,
+    output_json: bool,
+):
+    """Purge daemon-owned queue state for explicit admin recovery."""
+    if not yes:
+        raise click.UsageError("Refusing to purge queue state without --yes.")
+
+    try:
+        payload = _request_daemon_json(
+            "/api/admin/tasks/purge",
+            {
+                "state": state.lower(),
+                "confirm": True,
+            },
+            project_override=project,
+            auto_start=False,
+            allow_error=True,
+        )
+        if payload is None or payload.get("status") == "error":
+            _raise_daemon_request_error(payload)
+        assert payload is not None
+
+        if output_json:
+            click.echo(json.dumps(payload, indent=2))
+            return
+
+        click.echo(f"Queue purge complete ({payload['purged_state']})")
+        purged_counts = _coerce_dict(payload.get("purged_counts"))
+        click.echo(
+            "Purged tasks: "
+            f"pending={_coerce_int(purged_counts.get('pending'))}, "
+            f"scheduled={_coerce_int(purged_counts.get('scheduled'))}, "
+            f"failed={_coerce_int(purged_counts.get('failed'))}"
+        )
+        click.echo(f"Queue DB: {payload['queue_db_path']}")
+        click.echo(f"Pending tasks: {payload['pending_count']}")
+        click.echo(f"Scheduled tasks: {payload['scheduled_count']}")
+        click.echo(f"Failed tasks: {payload['failed_count']}")
+        click.echo(f"Worker running: {'yes' if payload['worker_running'] else 'no'}")
+    except Exception as e:
+        logger.error(f"Failed to purge queue state: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 

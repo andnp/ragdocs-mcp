@@ -380,3 +380,88 @@ async def test_record_index_route_requires_records_list() -> None:
         "details": "The request payload must contain a records list.",
     }
     assert ctx.indexed_records == []
+
+
+@pytest.mark.asyncio
+async def test_admin_tasks_purge_route_requires_confirmation() -> None:
+    ctx = _FakeContext(ready=True)
+    coordinator = _FakeCoordinator()
+    handler = build_daemon_request_handler(_build_dependencies(ctx, coordinator))
+
+    payload = await handler("/api/admin/tasks/purge", {"state": "all"})
+
+    assert payload == {
+        "status": "error",
+        "error": "queue_purge_confirmation_required",
+        "details": "Refusing to purge queue state without confirm=true.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_admin_tasks_purge_route_uses_huey_storage_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _FakeContext(ready=True)
+    coordinator = _FakeCoordinator()
+    handler = build_daemon_request_handler(_build_dependencies(ctx, coordinator))
+
+    sentinel_huey = object()
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "searchkernel.daemon.request_router.get_huey",
+        lambda queue_db_path: observed.setdefault("queue_db_path", queue_db_path)
+        or sentinel_huey,
+    )
+    monkeypatch.setattr(
+        "searchkernel.daemon.request_router.purge_queue_state",
+        lambda huey, *, state, worker_running, backpressure_limit: SimpleNamespace(
+            to_dict=lambda: {
+                "purged_state": state,
+                "purged_counts": {
+                    "pending": 0,
+                    "scheduled": 1,
+                    "failed": 0,
+                },
+                "pending_count": 2,
+                "scheduled_count": 0,
+                "running_count": 0,
+                "failed_count": 0,
+                "worker_running": worker_running,
+                "backpressure_limit": backpressure_limit,
+                "backpressure_utilization": 0.4,
+                "task_counts": {},
+                "recent_failures": [],
+                "pending_tasks": [],
+                "scheduled_tasks": [],
+            }
+        ),
+    )
+
+    payload = await handler(
+        "/api/admin/tasks/purge",
+        {"state": "scheduled", "confirm": True},
+    )
+
+    assert observed["queue_db_path"] == Path("/runtime/queue.db")
+    assert payload == {
+        "status": "ok",
+        "queue_db_path": "/runtime/queue.db",
+        "purged_state": "scheduled",
+        "purged_counts": {
+            "pending": 0,
+            "scheduled": 1,
+            "failed": 0,
+        },
+        "pending_count": 2,
+        "scheduled_count": 0,
+        "running_count": 0,
+        "failed_count": 0,
+        "worker_running": True,
+        "backpressure_limit": 5,
+        "backpressure_utilization": 0.4,
+        "task_counts": {},
+        "recent_failures": [],
+        "pending_tasks": [],
+        "scheduled_tasks": [],
+    }

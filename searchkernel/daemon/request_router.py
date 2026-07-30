@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Protocol, cast
 from uuid import uuid4
 
+from searchkernel.coordination.queue import get_huey
 from searchkernel.daemon.mcp_requests import build_mcp_tools_payload, handle_mcp_tool_call
+from searchkernel.daemon.queue_status import purge_queue_state
 from searchkernel.daemon.record_rpc import RecordSerializationError, deserialize_record
 from searchkernel.domain import Record
 from searchkernel.indexing.rebuild_service import (
@@ -299,6 +301,32 @@ def build_daemon_request_handler(
                 dependencies.get_worker_running(),
                 ctx.config.indexing.task_backpressure_limit,
             )
+        if path == "/api/admin/tasks/purge":
+            if payload.get("confirm") is not True:
+                return {
+                    "status": "error",
+                    "error": "queue_purge_confirmation_required",
+                    "details": "Refusing to purge queue state without confirm=true.",
+                }
+
+            state = str(payload.get("state", "all")).lower()
+            if state not in {"pending", "scheduled", "failed", "all"}:
+                return {
+                    "status": "error",
+                    "error": "invalid_queue_purge_state",
+                    "details": "state must be one of: pending, scheduled, failed, all",
+                }
+
+            purge_result = purge_queue_state(
+                get_huey(dependencies.queue_db_path),
+                state=state,
+                worker_running=dependencies.get_worker_running(),
+                backpressure_limit=ctx.config.indexing.task_backpressure_limit,
+            )
+            response = purge_result.to_dict()
+            response["status"] = "ok"
+            response["queue_db_path"] = str(dependencies.queue_db_path)
+            return response
         if path == "/api/admin/rebuild/status":
             return read_rebuild_status(dependencies.runtime_root)
         if path == "/api/admin/rebuild/submit":

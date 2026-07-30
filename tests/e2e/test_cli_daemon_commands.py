@@ -1125,6 +1125,271 @@ def test_queue_status_reports_explicit_daemon_timeout(monkeypatch):
     assert "Daemon request timed out" in result.output
 
 
+def test_queue_status_json_includes_task_details(monkeypatch):
+    """JSON queue status output includes pending and scheduled task details."""
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "searchkernel.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start, allow_error=False: {
+            "queue_db_path": "/queue.db",
+            "pending_count": 1,
+            "scheduled_count": 1,
+            "running_count": 0,
+            "failed_count": 0,
+            "worker_running": True,
+            "backpressure_limit": 100,
+            "backpressure_utilization": 0.01,
+            "task_counts": {"_index_document": 1, "_refresh_git_repository": 1},
+            "pending_tasks": [
+                {
+                    "task_id": "pending-123",
+                    "task_name": "_index_document",
+                    "state": "pending",
+                    "source_queue": "pending",
+                    "eta": None,
+                    "priority": 4,
+                    "retries": 0,
+                }
+            ],
+            "scheduled_tasks": [
+                {
+                    "task_id": "scheduled-456",
+                    "task_name": "_refresh_git_repository",
+                    "state": "scheduled",
+                    "source_queue": "scheduled",
+                    "eta": "2026-04-04T19:35:00+00:00",
+                    "priority": 9,
+                    "retries": 0,
+                }
+            ],
+            "recent_failures": [],
+        },
+    )
+
+    result = runner.invoke(cli, ["queue", "status", "--json"])
+
+    assert result.exit_code == 0
+    assert '"pending_tasks":' in result.output
+    assert '"scheduled_tasks":' in result.output
+
+
+def test_queue_status_human_output_renders_task_detail_sections(monkeypatch):
+    """Human queue status output renders pending and scheduled task summaries.
+
+    This keeps the existing aggregate display while making concrete queued work
+    inspectable without switching to JSON mode.
+    """
+
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "searchkernel.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start, allow_error=False: {
+            "queue_db_path": "/queue.db",
+            "pending_count": 1,
+            "scheduled_count": 1,
+            "running_count": 0,
+            "failed_count": 0,
+            "worker_running": True,
+            "backpressure_limit": 100,
+            "backpressure_utilization": 0.01,
+            "task_counts": {"_index_document": 1, "_refresh_git_repository": 1},
+            "pending_tasks": [
+                {
+                    "task_id": "pending-123",
+                    "task_name": "_index_document",
+                    "state": "pending",
+                    "source_queue": "pending",
+                    "eta": None,
+                    "priority": 4,
+                    "retries": 0,
+                }
+            ],
+            "scheduled_tasks": [
+                {
+                    "task_id": "scheduled-456",
+                    "task_name": "_refresh_git_repository",
+                    "state": "scheduled",
+                    "source_queue": "scheduled",
+                    "eta": "2026-04-04T19:35:00+00:00",
+                    "priority": 9,
+                    "retries": 0,
+                }
+            ],
+            "recent_failures": [],
+        },
+    )
+
+    result = runner.invoke(cli, ["queue", "status"])
+
+    assert result.exit_code == 0
+    assert "Queue status" in result.output
+    assert "Pending task detail:" in result.output
+    assert "_index_document (id=pending-123, priority=4)" in result.output
+    assert "Scheduled task detail:" in result.output
+    assert (
+        "_refresh_git_repository (id=scheduled-456, priority=9, eta=2026-04-04T19:35:00+00:00)"
+        in result.output
+    )
+
+
+def test_queue_status_json_filters_detail_sections_by_state_and_limit(monkeypatch):
+    """Queue JSON output applies state/limit filters only to inspectable detail arrays.
+
+    Aggregate counts stay exact so operators can narrow inspection without losing
+    the overall queue picture.
+    """
+
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "searchkernel.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start, allow_error=False: {
+            "queue_db_path": "/queue.db",
+            "pending_count": 2,
+            "scheduled_count": 2,
+            "running_count": 0,
+            "failed_count": 1,
+            "worker_running": True,
+            "task_counts": {"_index_document": 2, "_refresh_git_repository": 2},
+            "pending_tasks": [
+                {
+                    "task_id": "pending-123",
+                    "task_name": "_index_document",
+                    "state": "pending",
+                    "source_queue": "pending",
+                    "eta": None,
+                    "priority": 4,
+                    "retries": 0,
+                },
+                {
+                    "task_id": "pending-456",
+                    "task_name": "_index_document",
+                    "state": "pending",
+                    "source_queue": "pending",
+                    "eta": None,
+                    "priority": 2,
+                    "retries": 1,
+                },
+            ],
+            "scheduled_tasks": [
+                {
+                    "task_id": "scheduled-111",
+                    "task_name": "_refresh_git_repository",
+                    "state": "scheduled",
+                    "source_queue": "scheduled",
+                    "eta": "2026-04-04T19:35:00+00:00",
+                    "priority": 9,
+                    "retries": 0,
+                },
+                {
+                    "task_id": "scheduled-222",
+                    "task_name": "_refresh_git_repository",
+                    "state": "scheduled",
+                    "source_queue": "scheduled",
+                    "eta": "2026-04-04T20:35:00+00:00",
+                    "priority": 8,
+                    "retries": 0,
+                },
+            ],
+            "recent_failures": [
+                {
+                    "task_id": "failed-123",
+                    "task_name": "_refresh_git_repository",
+                    "error": "RuntimeError('boom')",
+                    "retries": 1,
+                    "traceback": "trace",
+                }
+            ],
+        },
+    )
+
+    result = runner.invoke(
+        cli,
+        ["queue", "status", "--json", "--state", "scheduled", "--limit", "1"],
+    )
+
+    assert result.exit_code == 0
+    assert '"pending_count": 2' in result.output
+    assert '"scheduled_count": 2' in result.output
+    assert '"detail_state_filter": "scheduled"' in result.output
+    assert '"detail_limit": 1' in result.output
+    assert '"pending_tasks": []' in result.output
+    assert '"recent_failures": []' in result.output
+    assert '"task_id": "scheduled-111"' in result.output
+    assert '"task_id": "scheduled-222"' not in result.output
+
+
+def test_queue_status_human_output_filters_sections_by_state_and_limit(monkeypatch):
+    """Queue human output can narrow inspection to one queue section.
+
+    Operators can focus on the first few pending items without unrelated
+    scheduled or failure sections crowding the output.
+    """
+
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "searchkernel.cli._request_daemon_json",
+        lambda path, payload, project_override, auto_start, allow_error=False: {
+            "queue_db_path": "/queue.db",
+            "pending_count": 2,
+            "scheduled_count": 1,
+            "running_count": 0,
+            "failed_count": 1,
+            "worker_running": True,
+            "task_counts": {"_index_document": 2},
+            "pending_tasks": [
+                {
+                    "task_id": "pending-123",
+                    "task_name": "_index_document",
+                    "state": "pending",
+                    "source_queue": "pending",
+                    "eta": None,
+                    "priority": 4,
+                    "retries": 0,
+                },
+                {
+                    "task_id": "pending-456",
+                    "task_name": "_index_document",
+                    "state": "pending",
+                    "source_queue": "pending",
+                    "eta": None,
+                    "priority": 2,
+                    "retries": 1,
+                },
+            ],
+            "scheduled_tasks": [
+                {
+                    "task_id": "scheduled-111",
+                    "task_name": "_refresh_git_repository",
+                    "state": "scheduled",
+                    "source_queue": "scheduled",
+                    "eta": "2026-04-04T19:35:00+00:00",
+                    "priority": 9,
+                    "retries": 0,
+                }
+            ],
+            "recent_failures": [
+                {
+                    "task_id": "failed-123",
+                    "task_name": "_refresh_git_repository",
+                    "error": "RuntimeError('boom')",
+                    "retries": 1,
+                    "traceback": "trace",
+                }
+            ],
+        },
+    )
+
+    result = runner.invoke(cli, ["queue", "status", "--state", "pending", "--limit", "1"])
+
+    assert result.exit_code == 0
+    assert "Queue status" in result.output
+    assert "Pending task detail:" in result.output
+    assert "_index_document (id=pending-123" in result.output
+    assert "pending-456" not in result.output
+    assert "Scheduled task detail:" not in result.output
+    assert "Recent failures:" not in result.output
+
+
 def test_request_daemon_json_uses_running_daemon(monkeypatch):
     metadata = DaemonMetadata(
         pid=4321,
