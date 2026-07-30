@@ -277,51 +277,51 @@ async def test_delta_indexing_multiple_updates(tmp_path, manager):
     docs_path = tmp_path / "docs"
     test_file = docs_path / "test.md"
 
+    # Section bodies are padded well past min_chunk_chars=100 so each section
+    # forms its own chunk instead of being merged with its neighbor.
+    section_1_v1 = (
+        "Version 1 of section 1, with enough padding text so this section on "
+        "its own comfortably exceeds the minimum chunk size and is never "
+        "merged with its neighbor."
+    )
+    section_1_v2 = (
+        "Version 2 of section 1, with enough padding text so this section on "
+        "its own comfortably exceeds the minimum chunk size and is never "
+        "merged with its neighbor."
+    )
+    section_1_v3 = (
+        "Version 3 of section 1, with enough padding text so this section on "
+        "its own comfortably exceeds the minimum chunk size and is never "
+        "merged with its neighbor."
+    )
+    section_2_v1 = (
+        "Version 1 of section 2, with enough padding text so this section on "
+        "its own comfortably exceeds the minimum chunk size and is never "
+        "merged with its neighbor."
+    )
+    section_2_v2 = (
+        "Version 2 of section 2, with enough padding text so this section on "
+        "its own comfortably exceeds the minimum chunk size and is never "
+        "merged with its neighbor."
+    )
+
     # 1. Index doc
-    content_v1 = """# Document
-
-## Section 1
-Version 1 of section 1.
-
-## Section 2
-Version 1 of section 2.
-"""
+    content_v1 = f"# Document\n\n## Section 1\n{section_1_v1}\n\n## Section 2\n{section_2_v1}\n"
     test_file.write_text(content_v1)
     manager.index_document(str(test_file))
 
     # 2. Modify section 1 → re-index
-    content_v2 = """# Document
-
-## Section 1
-Version 2 of section 1.
-
-## Section 2
-Version 1 of section 2.
-"""
+    content_v2 = f"# Document\n\n## Section 1\n{section_1_v2}\n\n## Section 2\n{section_2_v1}\n"
     test_file.write_text(content_v2)
     manager.index_document(str(test_file))
 
     # 3. Modify section 2 → re-index
-    content_v3 = """# Document
-
-## Section 1
-Version 2 of section 1.
-
-## Section 2
-Version 2 of section 2.
-"""
+    content_v3 = f"# Document\n\n## Section 1\n{section_1_v2}\n\n## Section 2\n{section_2_v2}\n"
     test_file.write_text(content_v3)
     manager.index_document(str(test_file))
 
     # 4. Modify section 1 again → re-index
-    content_v4 = """# Document
-
-## Section 1
-Version 3 of section 1.
-
-## Section 2
-Version 2 of section 2.
-"""
+    content_v4 = f"# Document\n\n## Section 1\n{section_1_v3}\n\n## Section 2\n{section_2_v2}\n"
     test_file.write_text(content_v4)
     manager.index_document(str(test_file))
 
