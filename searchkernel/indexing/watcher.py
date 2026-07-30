@@ -5,6 +5,7 @@ import logging
 import queue
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,6 +64,7 @@ class FileWatcher:
         parser_suffixes: set[str] | frozenset[str] | None = None,
         use_tasks: bool = False,
         task_backpressure_limit: int | None = None,
+        on_overflow_detected: Callable[[], Awaitable[None]] | None = None,
     ):
         self._documents_path = Path(documents_path)
         self._documents_paths = (
@@ -93,6 +95,7 @@ class FileWatcher:
         self._debounce_overwrites = 0
         self._deferred_task_retries = 0
         self._pending_debounce_count = 0
+        self._on_overflow_detected = on_overflow_detected
 
     @property
     def stopped_cleanly(self) -> bool:
@@ -475,6 +478,32 @@ class FileWatcher:
                     file_path,
                 )
 
+        await self._maybe_trigger_overflow_reconciliation()
+
+    async def _maybe_trigger_overflow_reconciliation(self) -> None:
+        """Check for inotify queue overflow and trigger reconciliation if detected.
+
+        If events were dropped since the last reconciliation and a callback is
+        registered, invoke the callback to trigger a full reconciliation pass.
+        After callback returns, reset the per-reconciliation counter.
+        """
+        if self._on_overflow_detected is None:
+            return
+
+        if not self.should_reconcile():
+            return
+
+        try:
+            await self._on_overflow_detected()
+            self.reset_dropped_counter()
+            logger.info(
+                "Triggered reconciliation due to inotify queue overflow "
+                "(%d events dropped since last reconciliation)",
+                self.dropped_since_reconcile,
+            )
+        except Exception:
+            logger.exception("Error invoking overflow reconciliation callback")
+
     async def _process_direct_batch(
         self,
         *,
@@ -592,6 +621,16 @@ class FileWatcher:
         """Call after reconciliation to reset per-reconcile counter."""
         if self._event_handler is not None:
             self._event_handler.reset_dropped_counter()
+
+    def set_overflow_callback(
+        self, callback: Callable[[], Awaitable[None]] | None
+    ) -> None:
+        """Set the callback to invoke when inotify queue overflow is detected.
+
+        The callback should be an async function that triggers reconciliation.
+        Pass None to disable overflow detection.
+        """
+        self._on_overflow_detected = callback
 
     def should_reconcile(self) -> bool:
         """True if drops occurred since last reconcile and reconciliation is advised."""

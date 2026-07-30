@@ -522,6 +522,7 @@ class ApplicationContext:
                 self.schedule_vocabulary_catch_up()
 
         if self.watcher:
+            self.watcher.set_overflow_callback(self._on_watcher_overflow)
             self.watcher.start()
             logger.info("File watcher started")
 
@@ -865,6 +866,44 @@ class ApplicationContext:
             index_submission.enqueued_count,
             remove_submission.enqueued_count,
         )
+
+    async def _on_watcher_overflow(self) -> None:
+        """Handle inotify queue overflow detected by the file watcher.
+
+        Triggers an immediate reconciliation pass to ensure the index state
+        is consistent after dropped file-change events.
+        """
+        logger.info("File watcher detected inotify queue overflow, triggering reconciliation")
+        if self.use_tasks:
+            await self._enqueue_reconciliation_tasks()
+            return
+
+        docs_path = Path(self.config.indexing.documents_path)
+        discovered_files = await asyncio.to_thread(self.discover_files)
+        result = await asyncio.to_thread(
+            self.index_manager.reconcile_indices,
+            discovered_files,
+            docs_path,
+            self.documents_roots,
+        )
+
+        if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
+            await asyncio.to_thread(
+                self._persist_reconciliation_state,
+                discovered_files,
+                docs_path,
+            )
+            logger.info(
+                f"Overflow reconciliation complete: "
+                f"added={result.added_count}, "
+                f"removed={result.removed_count}, "
+                f"moved={result.moved_count}"
+            )
+        else:
+            logger.debug("Overflow reconciliation: no changes needed")
+
+        if self.watcher:
+            self.watcher.refresh_watches()
 
     async def _periodic_reconciliation(self) -> None:
         interval = self.config.indexing.reconciliation_interval_seconds

@@ -1078,3 +1078,144 @@ class TestWalkIncludedDirs:
         assert tmp_path / "a" in result
         assert tmp_path / "a" / "b" in result
         assert tmp_path / "a" / "b" / "c" in result
+
+
+class TestWatcherOverflowDetection:
+    """Tests for inotify queue overflow detection and recovery."""
+
+    @pytest.mark.asyncio
+    async def test_overflow_callback_triggered_on_dropped_events(
+        self, tmp_path, mock_index_manager
+    ):
+        """Overflow callback should be invoked when events are dropped."""
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            cooldown=0.01,
+        )
+        callback_invoked = False
+
+        async def mock_callback():
+            nonlocal callback_invoked
+            callback_invoked = True
+
+        watcher.set_overflow_callback(mock_callback)
+        watcher.start()
+
+        # Simulate dropped events by manually incrementing the counter
+        if watcher._event_handler:
+            with watcher._event_handler._lock:
+                watcher._event_handler._dropped_since_last_reconcile = 5
+
+        # Create a dummy event to trigger batch processing
+        test_file = docs_path / "test.md"
+        test_file.write_text("# Test")
+        watcher._event_queue.put_nowait(("created", str(test_file)))
+
+        # Give the watcher time to process
+        await asyncio.sleep(0.15)
+
+        await watcher.stop()
+        assert callback_invoked, "Overflow callback should have been invoked"
+
+    @pytest.mark.asyncio
+    async def test_overflow_callback_not_triggered_without_drops(
+        self, tmp_path, mock_index_manager
+    ):
+        """Overflow callback should not be invoked when no events are dropped."""
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            cooldown=0.01,
+        )
+        callback_invoked = False
+
+        async def mock_callback():
+            nonlocal callback_invoked
+            callback_invoked = True
+
+        watcher.set_overflow_callback(mock_callback)
+        watcher.start()
+
+        # Create a normal event without any drops
+        test_file = docs_path / "test.md"
+        test_file.write_text("# Test")
+        watcher._event_queue.put_nowait(("created", str(test_file)))
+
+        # Give the watcher time to process
+        await asyncio.sleep(0.15)
+
+        await watcher.stop()
+        assert not callback_invoked, "Overflow callback should not have been invoked"
+
+    @pytest.mark.asyncio
+    async def test_dropped_counter_reset_after_callback(
+        self, tmp_path, mock_index_manager
+    ):
+        """Dropped counter should reset after overflow callback is invoked."""
+        docs_path = tmp_path / "docs"
+        docs_path.mkdir()
+        watcher = FileWatcher(
+            documents_path=str(docs_path),
+            index_manager=mock_index_manager,
+            cooldown=0.01,
+        )
+
+        async def mock_callback():
+            pass  # Do nothing, just trigger
+
+        watcher.set_overflow_callback(mock_callback)
+        watcher.start()
+
+        # Simulate dropped events
+        if watcher._event_handler:
+            with watcher._event_handler._lock:
+                watcher._event_handler._dropped_since_last_reconcile = 5
+
+        assert watcher.dropped_since_reconcile == 5
+
+        # Create a dummy event to trigger batch processing
+        test_file = docs_path / "test.md"
+        test_file.write_text("# Test")
+        watcher._event_queue.put_nowait(("created", str(test_file)))
+
+        # Give the watcher time to process
+        await asyncio.sleep(0.15)
+
+        await watcher.stop()
+
+        # After callback, counter should be reset
+        assert watcher.dropped_since_reconcile == 0, "Counter should be reset after callback"
+
+    def test_set_overflow_callback(self, tmp_path, mock_index_manager):
+        """set_overflow_callback should store the callback."""
+        watcher = FileWatcher(
+            documents_path=str(tmp_path),
+            index_manager=mock_index_manager,
+        )
+
+        async def my_callback():
+            pass
+
+        watcher.set_overflow_callback(my_callback)
+        assert watcher._on_overflow_detected is my_callback
+
+    def test_set_overflow_callback_to_none(self, tmp_path, mock_index_manager):
+        """set_overflow_callback should allow setting callback to None."""
+        watcher = FileWatcher(
+            documents_path=str(tmp_path),
+            index_manager=mock_index_manager,
+        )
+
+        async def my_callback():
+            pass
+
+        watcher.set_overflow_callback(my_callback)
+        assert watcher._on_overflow_detected is my_callback
+
+        watcher.set_overflow_callback(None)
+        assert watcher._on_overflow_detected is None
