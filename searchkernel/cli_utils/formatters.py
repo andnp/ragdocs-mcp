@@ -30,6 +30,7 @@ def print_debug_stats(
     strategy_stats,
     compression_stats,
     min_confidence: float,
+    query_execution_stats: dict[str, int | float] | None = None,
 ) -> None:
     from searchkernel.models import CompressionStats, SearchStrategyStats
 
@@ -117,4 +118,57 @@ def print_debug_stats(
         )
 
         console.print(compression_table)
+        console.print()
+
+    if isinstance(query_execution_stats, dict) and query_execution_stats:
+        timing_table = Table(
+            title="Query Phase Timings", show_header=True, title_style="bold yellow"
+        )
+        timing_table.add_column("Phase", style="cyan")
+        timing_table.add_column("Time (ms)", style="green", justify="right")
+
+        phase_labels = {
+            "vector_search_ms": "Vector Search",
+            "keyword_search_ms": "Keyword Search",
+            "tag_expansion_ms": "Tag Expansion",
+            "graph_expansion_ms": "Graph Expansion",
+            "fusion_ms": "Fusion + Ranking",
+            "pipeline_ms": "Compression Pipeline",
+            "parent_expansion_ms": "Parent Expansion",
+            "materialization_ms": "Result Hydration",
+            "total_query_ms": "Total Query",
+        }
+        for key, label in phase_labels.items():
+            raw_value = query_execution_stats.get(key)
+            if isinstance(raw_value, (int, float)) and raw_value > 0:
+                timing_table.add_row(label, f"{float(raw_value):.3f}")
+
+        if timing_table.row_count > 0:
+            console.print(timing_table)
+            console.print()
+
+        cache_table = Table(
+            title="Query Execution Cache Stats",
+            show_header=True,
+            title_style="bold yellow",
+        )
+        cache_table.add_column("Metric", style="cyan")
+        cache_table.add_column("Count", style="green", justify="right")
+
+        cache_labels = {
+            "metadata_lookups": "Metadata Lookups",
+            "metadata_cache_hits": "Metadata Cache Hits",
+            "content_lookups": "Content Lookups",
+            "content_cache_hits": "Content Cache Hits",
+            "embedding_fetches": "Embedding Fetches",
+            "embedding_cache_hits": "Embedding Cache Hits",
+            "parent_lookups": "Parent Lookups",
+            "parent_cache_hits": "Parent Cache Hits",
+        }
+        for key, label in cache_labels.items():
+            raw_value = query_execution_stats.get(key)
+            if isinstance(raw_value, int):
+                cache_table.add_row(label, str(raw_value))
+
+        console.print(cache_table)
         console.print()

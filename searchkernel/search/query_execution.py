@@ -20,8 +20,17 @@ class QueryExecutionStats:
     embedding_cache_hits: int = 0
     parent_lookups: int = 0
     parent_cache_hits: int = 0
+    vector_search_ms: float = 0.0
+    keyword_search_ms: float = 0.0
+    tag_expansion_ms: float = 0.0
+    graph_expansion_ms: float = 0.0
+    fusion_ms: float = 0.0
+    pipeline_ms: float = 0.0
+    parent_expansion_ms: float = 0.0
+    materialization_ms: float = 0.0
+    total_query_ms: float = 0.0
 
-    def to_dict(self) -> dict[str, int]:
+    def to_dict(self) -> dict[str, int | float]:
         return asdict(self)
 
 

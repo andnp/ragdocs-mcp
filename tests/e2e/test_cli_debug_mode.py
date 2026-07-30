@@ -229,3 +229,27 @@ def test_query_debug_shows_removal_counts(runner, tmp_path, indexed_docs):
 
     finally:
         os.chdir(original_cwd)
+
+
+def test_query_debug_displays_timing_stats(runner, tmp_path, indexed_docs):
+    """
+    Test query --debug displays query timing and cache statistics.
+
+    Validates that debug tables show phase timings and execution cache stats.
+    """
+    import os
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+
+        result = runner.invoke(cli, ["query", "authentication", "--debug"])
+
+        assert result.exit_code == 0
+        assert "Query Phase Timings" in result.output
+        assert "Total Query" in result.output
+        assert "Query Execution Cache Stats" in result.output
+        assert "Metadata Lookups" in result.output
+
+    finally:
+        os.chdir(original_cwd)

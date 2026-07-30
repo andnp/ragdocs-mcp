@@ -18,6 +18,48 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TQDM_DISABLE", "1")
 
+_CLI_REEXEC_GUARD = "MCP_MARKDOWN_RAGDOCS_SKIP_REEXEC"
+
+
+def _repo_venv_python() -> Path:
+    repo_root = Path(__file__).resolve().parents[1]
+    if os.name == "nt":
+        return repo_root / ".venv" / "Scripts" / "python.exe"
+    return repo_root / ".venv" / "bin" / "python"
+
+
+def _should_reexec_into_repo_venv() -> bool:
+    if os.environ.get(_CLI_REEXEC_GUARD) == "1":
+        return False
+
+    repo_python = _repo_venv_python()
+    if not repo_python.exists():
+        return False
+
+    current_python = Path(sys.executable).resolve()
+    return current_python != repo_python.resolve()
+
+
+def _reexec_into_repo_venv() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_python = _repo_venv_python()
+    env = os.environ.copy()
+    env[_CLI_REEXEC_GUARD] = "1"
+
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        f"{repo_root}{os.pathsep}{existing_pythonpath}"
+        if existing_pythonpath
+        else str(repo_root)
+    )
+
+    argv = [str(repo_python), "-m", "searchkernel.cli", *sys.argv[1:]]
+    os.execve(str(repo_python), argv, env)
+
+
+if _should_reexec_into_repo_venv():
+    _reexec_into_repo_venv()
+
 from datetime import UTC
 
 import click
@@ -1549,6 +1591,7 @@ def query(
                 strategy_stats,
                 compression_stats,
                 0.02,
+                daemon_payload.get("query_execution_stats", {}),
             )
 
         results = daemon_payload.get("results", [])

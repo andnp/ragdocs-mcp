@@ -430,6 +430,7 @@ def build_daemon_request_handler(
                 "results": [result.to_dict() for result in results],
                 "compression_stats": compression_stats.to_dict(),
                 "strategy_stats": strategy_stats.to_dict(),
+                "query_execution_stats": ctx.orchestrator.last_query_execution_stats or {},
             }
         if path == "/api/search/git-history":
             if not ctx.git_indexing_enabled:

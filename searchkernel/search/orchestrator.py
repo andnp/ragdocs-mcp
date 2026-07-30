@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
@@ -39,12 +40,16 @@ logger = logging.getLogger(__name__)
 _RESULT_CACHE_MAX_ENTRIES = 64
 
 
+def _elapsed_ms(start_time: float) -> float:
+    return round((time.perf_counter() - start_time) * 1000, 3)
+
+
 @dataclass
 class CachedQueryResult:
     chunk_results: list[ChunkResult]
     compression_stats: CompressionStats
     strategy_stats: SearchStrategyStats
-    query_execution_stats: dict[str, int] | None
+    query_execution_stats: dict[str, int | float] | None
 
 
 class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
@@ -78,8 +83,12 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         self._result_cache: QueryResultCache[CachedQueryResult] = QueryResultCache(
             max_entries=_RESULT_CACHE_MAX_ENTRIES
         )
-        self._last_query_execution_stats: dict[str, int] | None = None
+        self._last_query_execution_stats: dict[str, int | float] | None = None
         self._executor = PipelineExecutor(DEFAULT_QUERY_STAGE_REGISTRY)
+
+    @property
+    def last_query_execution_stats(self) -> dict[str, int | float] | None:
+        return self._last_query_execution_stats
 
     @property
     def documents_path(self) -> Path:
@@ -241,6 +250,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             },
         )
 
+        total_query_start = time.perf_counter()
+
         for stage_spec in DEFAULT_QUERY_SPEC.stages:
             name = stage_spec.name
 
@@ -249,6 +260,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             # lazily-loaded cross-encoder model is reused across queries
             # instead of reloaded every time (see _get_pipeline/_resolve_pipeline).
             if name == "dedup_rerank":
+                pipeline_start = time.perf_counter()
                 pipeline = self._resolve_pipeline(
                     pipeline_config,
                     disable_reranking=context.metadata["skip_tag_expansion"],
@@ -258,8 +270,10 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 dedup_metadata["get_content"] = query_context.get_chunk_content
                 dedup_metadata["top_n"] = top_n
                 context = pipeline.run(replace(context, metadata=dedup_metadata))
+                query_context.stats.pipeline_ms = _elapsed_ms(pipeline_start)
                 continue
 
+            stage_start = time.perf_counter()
             config = dict(stage_spec.config)
             if name == "fusion":
                 config["strategy_weights"] = context.metadata["strategy_weights"]
@@ -267,7 +281,22 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                 config["uplift"] = self._config.search.project_uplift_multiplier
             context = await self._executor.run_stage(name, config, context, deps)
 
-            if name == "parent_expansion":
+            # Record timing for key stages. Vector and keyword retrieval run
+            # concurrently inside RetrieveStage (asyncio.gather), so there is
+            # no separately-measurable per-strategy duration -- both fields
+            # record the same combined wall-clock time for the stage.
+            if name == "retrieve":
+                retrieve_ms = _elapsed_ms(stage_start)
+                query_context.stats.vector_search_ms = retrieve_ms
+                query_context.stats.keyword_search_ms = retrieve_ms
+            elif name == "tag_expansion":
+                query_context.stats.tag_expansion_ms = _elapsed_ms(stage_start)
+            elif name == "graph_expand":
+                query_context.stats.graph_expansion_ms = _elapsed_ms(stage_start)
+            elif name == "fusion":
+                query_context.stats.fusion_ms = _elapsed_ms(stage_start)
+            elif name == "parent_expansion":
+                query_context.stats.parent_expansion_ms = _elapsed_ms(stage_start)
                 for chunk_id in context.metadata["missing_chunk_ids"]:
                     self._queue_reindex_for_chunks(
                         [chunk_id], "docstore lookup failed during parent expansion"
@@ -278,6 +307,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
                         "parent chunk lookup failed during parent expansion",
                     )
             elif name == "hydrate":
+                query_context.stats.materialization_ms = _elapsed_ms(stage_start)
                 missing_chunk_ids = context.metadata["missing_chunk_ids"]
                 if missing_chunk_ids:
                     self._queue_reindex_for_chunks(
@@ -294,6 +324,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             tag_expansion_count=context.metadata["tag_expansion_count"],
         )
 
+        query_context.stats.total_query_ms = _elapsed_ms(total_query_start)
         self._last_query_execution_stats = query_context.stats.to_dict()
 
         if cache_key is not None:

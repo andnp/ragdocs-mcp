@@ -55,6 +55,7 @@ class _FakeContext:
         self.orchestrator = SimpleNamespace(
             query=self._query,
             drain_reindex=self._drain_reindex,
+            last_query_execution_stats=None,
         )
         self.query_calls: list[dict[str, object]] = []
         self.drain_reindex_calls = 0
@@ -207,6 +208,7 @@ async def test_search_query_route_executes_query_when_ready() -> None:
         "results": [],
         "compression_stats": {"after_dedup": 0},
         "strategy_stats": {"vector_count": 0},
+        "query_execution_stats": {},
     }
     assert ctx.schedule_freshness_refresh_calls == 1
     assert ctx.drain_reindex_calls == 1

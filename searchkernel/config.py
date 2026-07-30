@@ -193,11 +193,197 @@ class AutoRegistrationResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class GitWorktreeCandidate:
+    root: Path
+    branch: str | None = None
+
+
 def _expand_path(path_str: str):
     path = Path(path_str).expanduser()
     if not path.is_absolute():
         path = path.resolve()
     return str(path)
+
+
+def _read_text_file(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def _parse_gitdir_pointer(pointer: str, base_dir: Path) -> Path | None:
+    if not pointer.lower().startswith("gitdir:"):
+        return None
+
+    raw_path = pointer.partition(":")[2].strip()
+    if not raw_path:
+        return None
+
+    git_dir = Path(raw_path).expanduser()
+    if not git_dir.is_absolute():
+        git_dir = (base_dir / git_dir).resolve()
+    else:
+        git_dir = git_dir.resolve()
+
+    return git_dir
+
+
+def _resolve_git_dir(repo_root: Path) -> Path | None:
+    git_entry = repo_root / ".git"
+    if git_entry.is_dir():
+        return git_entry.resolve()
+
+    if not git_entry.is_file():
+        return None
+
+    pointer = _read_text_file(git_entry)
+    if pointer is None:
+        return None
+
+    return _parse_gitdir_pointer(pointer, repo_root)
+
+
+def _resolve_git_common_dir_from_git_dir(git_dir: Path) -> Path:
+    commondir_file = git_dir / "commondir"
+    commondir = _read_text_file(commondir_file)
+    if commondir is None:
+        return git_dir.resolve()
+
+    common_dir = Path(commondir).expanduser()
+    if not common_dir.is_absolute():
+        common_dir = (git_dir / common_dir).resolve()
+    else:
+        common_dir = common_dir.resolve()
+
+    return common_dir
+
+
+def _resolve_git_common_dir(repo_root: Path) -> Path | None:
+    git_dir = _resolve_git_dir(repo_root)
+    if git_dir is None:
+        return None
+
+    return _resolve_git_common_dir_from_git_dir(git_dir)
+
+
+def _read_symbolic_branch(head_path: Path) -> str | None:
+    head_value = _read_text_file(head_path)
+    if head_value is None or not head_value.startswith("ref:"):
+        return None
+
+    ref = head_value.partition(":")[2].strip()
+    if not ref:
+        return None
+
+    return Path(ref).name
+
+
+def _git_dir_is_bare(git_dir: Path) -> bool:
+    config_text = _read_text_file(git_dir / "config")
+    if config_text is None:
+        return False
+
+    return re.search(r"(?mi)^\s*bare\s*=\s*true\s*$", config_text) is not None
+
+
+def _discover_main_worktree(common_git_dir: Path) -> GitWorktreeCandidate | None:
+    if _git_dir_is_bare(common_git_dir):
+        return None
+
+    main_root = common_git_dir.parent.resolve()
+    if _resolve_git_dir(main_root) != common_git_dir.resolve():
+        return None
+
+    return GitWorktreeCandidate(
+        root=main_root,
+        branch=_read_symbolic_branch(common_git_dir / "HEAD"),
+    )
+
+
+def _discover_linked_worktrees(common_git_dir: Path) -> list[GitWorktreeCandidate]:
+    worktrees_dir = common_git_dir / "worktrees"
+    if not worktrees_dir.is_dir():
+        return []
+
+    candidates: list[GitWorktreeCandidate] = []
+    for worktree_dir in sorted(worktrees_dir.iterdir(), key=lambda path: path.name):
+        if not worktree_dir.is_dir():
+            continue
+
+        gitdir_pointer = _read_text_file(worktree_dir / "gitdir")
+        if gitdir_pointer is None:
+            continue
+
+        worktree_git_file = Path(gitdir_pointer).expanduser()
+        if not worktree_git_file.is_absolute():
+            worktree_git_file = (worktree_dir / worktree_git_file).resolve()
+        else:
+            worktree_git_file = worktree_git_file.resolve()
+
+        candidates.append(
+            GitWorktreeCandidate(
+                root=worktree_git_file.parent.resolve(),
+                branch=_read_symbolic_branch(worktree_dir / "HEAD"),
+            )
+        )
+
+    return candidates
+
+
+def _list_git_worktrees(repo_root: Path) -> tuple[Path | None, list[GitWorktreeCandidate]]:
+    git_dir = _resolve_git_dir(repo_root)
+    if git_dir is None:
+        return None, []
+
+    common_git_dir = _resolve_git_common_dir_from_git_dir(git_dir)
+    deduped_candidates: dict[Path, GitWorktreeCandidate] = {}
+
+    main_worktree = _discover_main_worktree(common_git_dir)
+    if main_worktree is not None:
+        deduped_candidates[main_worktree.root] = main_worktree
+
+    for candidate in _discover_linked_worktrees(common_git_dir):
+        deduped_candidates[candidate.root] = candidate
+
+    if not deduped_candidates:
+        deduped_candidates[repo_root.resolve()] = GitWorktreeCandidate(
+            root=repo_root.resolve(),
+            branch=_read_symbolic_branch(git_dir / "HEAD"),
+        )
+
+    return common_git_dir, sorted(
+        deduped_candidates.values(),
+        key=lambda candidate: str(candidate.root),
+    )
+
+
+def _select_canonical_worktree(repo_root: Path) -> Path | None:
+    common_git_dir, worktrees = _list_git_worktrees(repo_root)
+    if common_git_dir is None or not worktrees:
+        return None
+
+    preferred_branch = _read_symbolic_branch(common_git_dir / "HEAD")
+    preferred_names = {"main", "master"}
+    current_root = repo_root.resolve()
+
+    def _sort_key(candidate: GitWorktreeCandidate):
+        return (
+            0 if candidate.root.name in preferred_names else 1,
+            0 if candidate.branch in preferred_names else 1,
+            0
+            if preferred_branch is not None
+            and (
+                candidate.branch == preferred_branch
+                or candidate.root.name == preferred_branch
+            )
+            else 1,
+            0 if candidate.root == current_root else 1,
+            str(candidate.root),
+        )
+
+    return min(worktrees, key=_sort_key).root
 
 
 def _load_dataclass_from_dict[T](
@@ -298,7 +484,7 @@ def _find_nearest_project_config_root(cwd: Path) -> Path | None:
         current = parent
 
 
-def _find_nearest_git_root(cwd: Path) -> Path | None:
+def _find_nearest_git_root_candidate(cwd: Path) -> Path | None:
     current = cwd.resolve()
 
     while True:
@@ -311,6 +497,56 @@ def _find_nearest_git_root(cwd: Path) -> Path | None:
             return None
 
         current = parent
+
+
+def _find_nearest_git_root(cwd: Path) -> Path | None:
+    repo_root = _find_nearest_git_root_candidate(cwd)
+    if repo_root is None:
+        return None
+
+    canonical_root = _select_canonical_worktree(repo_root)
+    if canonical_root is not None:
+        return canonical_root
+
+    return repo_root
+
+
+def _detect_project_from_related_git_repo(
+    cwd: Path,
+    projects: list[ProjectConfig],
+) -> str | None:
+    repo_root = _find_nearest_git_root_candidate(cwd)
+    if repo_root is None:
+        return None
+
+    common_git_dir = _resolve_git_common_dir(repo_root)
+    if common_git_dir is None:
+        return None
+
+    related_projects = [
+        project
+        for project in projects
+        if _resolve_git_common_dir(Path(project.path).resolve()) == common_git_dir
+    ]
+    if not related_projects:
+        return None
+
+    canonical_root = _select_canonical_worktree(repo_root)
+    if canonical_root is not None:
+        for project in related_projects:
+            if Path(project.path).resolve() == canonical_root:
+                logger.info(
+                    "Detected project %s via shared git worktree identity",
+                    project.name,
+                )
+                return project.name
+
+    fallback_project = related_projects[0]
+    logger.info(
+        "Detected project %s via fallback shared git worktree identity",
+        fallback_project.name,
+    )
+    return fallback_project.name
 
 
 def derive_auto_registration_root(cwd: Path | None = None) -> Path:
@@ -554,6 +790,24 @@ def get_project_root_warnings(projects: list[ProjectConfig]):
                 f"Project '{project.name}' path '{project.path}' contains other registered project roots: {child_projects}."
             )
 
+    projects_by_repo_identity: dict[Path, list[ProjectConfig]] = {}
+    for project in projects:
+        common_git_dir = _resolve_git_common_dir(resolved_paths[project.name])
+        if common_git_dir is None:
+            continue
+        projects_by_repo_identity.setdefault(common_git_dir, []).append(project)
+
+    for common_git_dir, related_projects in sorted(
+        projects_by_repo_identity.items(), key=lambda item: str(item[0])
+    ):
+        if len(related_projects) < 2:
+            continue
+
+        related_names = ", ".join(sorted(project.name for project in related_projects))
+        warnings.append(
+            f"Registered projects {related_names} point to git worktrees from the same repository identity '{common_git_dir}'."
+        )
+
     return warnings
 
 
@@ -701,6 +955,10 @@ def detect_project(
             return project.name
         except ValueError:
             continue
+
+    related_git_project = _detect_project_from_related_git_repo(cwd_resolved, projects)
+    if related_git_project is not None:
+        return related_git_project
 
     logger.debug(f"No project match for CWD: {cwd_resolved}")
     return None

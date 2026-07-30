@@ -273,7 +273,18 @@ async def test_query_uses_single_execution_context_and_records_stats(monkeypatch
     assert strategy_stats.vector_count == 1
     assert strategy_stats.keyword_count == 1
     assert call_counts == {"chunk": 1, "embedding": 1}
-    assert orchestrator._last_query_execution_stats == {
+    stats = orchestrator._last_query_execution_stats
+    assert stats is not None
+    assert {
+        "metadata_lookups": stats["metadata_lookups"],
+        "metadata_cache_hits": stats["metadata_cache_hits"],
+        "content_lookups": stats["content_lookups"],
+        "content_cache_hits": stats["content_cache_hits"],
+        "embedding_fetches": stats["embedding_fetches"],
+        "embedding_cache_hits": stats["embedding_cache_hits"],
+        "parent_lookups": stats["parent_lookups"],
+        "parent_cache_hits": stats["parent_cache_hits"],
+    } == {
         "metadata_lookups": 1,
         "metadata_cache_hits": 4,
         "content_lookups": 1,
@@ -283,6 +294,19 @@ async def test_query_uses_single_execution_context_and_records_stats(monkeypatch
         "parent_lookups": 0,
         "parent_cache_hits": 0,
     }
+    timing_keys = {
+        "vector_search_ms",
+        "keyword_search_ms",
+        "tag_expansion_ms",
+        "graph_expansion_ms",
+        "fusion_ms",
+        "pipeline_ms",
+        "parent_expansion_ms",
+        "materialization_ms",
+        "total_query_ms",
+    }
+    assert timing_keys <= stats.keys()
+    assert all(isinstance(stats[key], float) for key in timing_keys)
 
 
 def test_skip_expensive_factual_enrichments_with_single_clear_candidate() -> None:
