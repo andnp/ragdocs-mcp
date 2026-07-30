@@ -12,6 +12,10 @@ from typing import cast
 import pytest
 
 from searchkernel.config import Config, LLMConfig, load_config, resolve_embedding_model
+from searchkernel.embeddings import (
+    TEST_FAKE_EMBEDDING_MODEL_NAME,
+    TEST_FAKE_EMBEDDINGS_ENV_VAR,
+)
 
 
 def test_load_from_project_local_config(tmp_path):
@@ -527,14 +531,26 @@ include = ["**/*.md", "**/*.rst"]
 # =============================================================================
 
 
-def test_llm_config_resolved_embedding_model_local():
+def test_llm_config_resolved_embedding_model_local(monkeypatch):
     """Property resolves 'local' to default model name."""
+    monkeypatch.delenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, raising=False)
     llm = LLMConfig(embedding_model="local")
 
     result = llm.resolved_embedding_model
 
     assert result == LLMConfig.DEFAULT_LOCAL_MODEL
     assert result == "BAAI/bge-small-en-v1.5"
+
+
+def test_llm_config_resolved_embedding_model_local_uses_fake_in_test_mode(
+    monkeypatch,
+):
+    """Property resolves 'local' to deterministic fake model in test mode."""
+    monkeypatch.setenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, "1")
+
+    llm = LLMConfig(embedding_model="local")
+
+    assert llm.resolved_embedding_model == TEST_FAKE_EMBEDDING_MODEL_NAME
 
 
 def test_llm_config_resolved_embedding_model_custom():
@@ -547,16 +563,18 @@ def test_llm_config_resolved_embedding_model_custom():
     assert result == custom_model
 
 
-def test_llm_config_resolved_embedding_model_default():
+def test_llm_config_resolved_embedding_model_default(monkeypatch):
     """Default LLMConfig uses 'local' which resolves to default model."""
+    monkeypatch.delenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, raising=False)
     llm = LLMConfig()
 
     assert llm.embedding_model == "local"
     assert llm.resolved_embedding_model == LLMConfig.DEFAULT_LOCAL_MODEL
 
 
-def test_resolve_embedding_model_with_local(tmp_path):
+def test_resolve_embedding_model_with_local(tmp_path, monkeypatch):
     """resolve_embedding_model resolves 'local' to default model."""
+    monkeypatch.delenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, raising=False)
     original_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
@@ -566,6 +584,22 @@ def test_resolve_embedding_model_with_local(tmp_path):
         result = resolve_embedding_model(config)
 
         assert result == LLMConfig.DEFAULT_LOCAL_MODEL
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_resolve_embedding_model_with_local_in_test_mode(tmp_path, monkeypatch):
+    """resolve_embedding_model honors deterministic fake test-mode override."""
+    monkeypatch.setenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, "1")
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+        config.llm = LLMConfig(embedding_model="local")
+
+        result = resolve_embedding_model(config)
+
+        assert result == TEST_FAKE_EMBEDDING_MODEL_NAME
     finally:
         os.chdir(original_cwd)
 
@@ -586,12 +620,14 @@ def test_resolve_embedding_model_with_custom(tmp_path):
         os.chdir(original_cwd)
 
 
-def test_resolve_embedding_model_fallback_when_property_missing():
+def test_resolve_embedding_model_fallback_when_property_missing(monkeypatch):
     """resolve_embedding_model falls back when property not accessible.
 
     This is a regression test for the worker subprocess bug where accessing
     config.llm.resolved_embedding_model raised AttributeError.
     """
+
+    monkeypatch.delenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, raising=False)
 
     # Create a mock config with an LLMConfig that has no resolved_embedding_model
     # property (simulating the edge case that caused the bug)

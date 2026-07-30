@@ -10,6 +10,11 @@ from typing import Any, cast
 
 import tomlkit
 
+from searchkernel.embeddings import (
+    TEST_FAKE_EMBEDDING_MODEL_NAME,
+    should_use_test_fake_embeddings,
+)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_INDEX_PATH = ".index_data/"
@@ -103,6 +108,8 @@ class LLMConfig:
         This centralizes the embedding model resolution logic.
         """
         if self.embedding_model == "local":
+            if should_use_test_fake_embeddings():
+                return TEST_FAKE_EMBEDDING_MODEL_NAME
             return self.DEFAULT_LOCAL_MODEL
         return self.embedding_model
 
@@ -125,6 +132,8 @@ def resolve_embedding_model(config: "Config") -> str:
         # Fallback: resolve manually if property not accessible
         model = config.llm.embedding_model
         if model == "local":
+            if should_use_test_fake_embeddings():
+                return TEST_FAKE_EMBEDDING_MODEL_NAME
             return LLMConfig.DEFAULT_LOCAL_MODEL
         return model
 

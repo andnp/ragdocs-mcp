@@ -67,6 +67,7 @@ markers = [
     "integration: marks integration tests (involve multiple components)",
     "e2e: marks end-to-end tests (full system tests)",
     "slow: marks slow tests (>5s, load models or process large datasets)",
+    "real_embeddings: marks tests that require real embedding models (not fake deterministic embeddings)",
 ]
 
 [tool.importlinter]

@@ -211,9 +211,18 @@ class VectorIndex:
 
             def load_model():
                 from llama_index.core import Settings
-                from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-                model = HuggingFaceEmbedding(model_name=self._embedding_model_name)
+                from searchkernel.embeddings import (
+                    TEST_FAKE_EMBEDDING_MODEL_NAME,
+                    DeterministicFakeEmbeddingModel,
+                )
+
+                if self._embedding_model_name == TEST_FAKE_EMBEDDING_MODEL_NAME:
+                    model = DeterministicFakeEmbeddingModel()
+                else:
+                    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
+                    model = HuggingFaceEmbedding(model_name=self._embedding_model_name)
                 Settings.embed_model = model
                 return model
 

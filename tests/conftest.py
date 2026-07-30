@@ -44,6 +44,10 @@ from searchkernel.config import (
 )
 from searchkernel.daemon.management import inspect_daemon, stop_daemon
 from searchkernel.daemon.paths import RuntimePaths
+from searchkernel.embeddings import (
+    TEST_FAKE_EMBEDDINGS_ENV_VAR,
+    DeterministicFakeEmbeddingModel,
+)
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
@@ -84,7 +88,8 @@ def isolate_xdg_data_home(tmp_path_factory):
         # inside this test's isolated HOME before restoring the environment,
         # or user systemd will adopt both the daemon and its worker.
         runtime_paths = RuntimePaths.resolve()
-        if runtime_paths.root.exists():
+        runtime_root = getattr(runtime_paths, "root", None)
+        if runtime_root is not None and runtime_root.exists():
             with contextlib.suppress(Exception):
                 metadata = inspect_daemon(runtime_paths).metadata
                 # In-process lifecycle tests register the runner's own PID as
@@ -122,6 +127,32 @@ def create_test_document(docs_dir: Path | str, doc_id: str, content: str):
     doc_path = Path(docs_dir) / f"{doc_id}.md"
     doc_path.write_text(content)
     return str(doc_path)
+
+
+# ============================================================================
+# Fake Embedding Model Fixture
+# ============================================================================
+
+
+@pytest.fixture(scope="session")
+def deterministic_fake_embedding_model() -> DeterministicFakeEmbeddingModel:
+    """Session-scoped fake embedding model for deterministic, offline tests."""
+    return DeterministicFakeEmbeddingModel()
+
+
+@pytest.fixture(autouse=True)
+def configure_embedding_mode_for_test(request, monkeypatch):
+    """Default to fake embeddings; real-model tests warm once, then run offline."""
+    if request.node.get_closest_marker("real_embeddings"):
+        # Ensure the shared session fixture performs the one-time model download/
+        # warmup before we force offline/cache-only behavior for this test and any
+        # subprocesses it spawns.
+        request.getfixturevalue("shared_embedding_model")
+        monkeypatch.delenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, raising=False)
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+    else:
+        monkeypatch.setenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, "1")
 
 
 # ============================================================================
@@ -475,8 +506,25 @@ def pytest_xdist_auto_num_workers(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    """Mark serial tests to run in the main process."""
+    """Mark serial tests to run in the main process and tag real embedding tests."""
     for item in items:
+        # Mark tests that use shared_embedding_model to use real embeddings
+        if "shared_embedding_model" in item.fixturenames:
+            fixture_info = getattr(item, "_fixtureinfo", None)
+            fixture_defs = (
+                fixture_info.name2fixturedefs.get("shared_embedding_model", [])
+                if fixture_info is not None
+                else []
+            )
+            resolved_fixture = fixture_defs[-1] if fixture_defs else None
+            fixture_func = getattr(resolved_fixture, "func", None)
+            if (
+                fixture_func is not None
+                and fixture_func.__module__ == "tests.conftest"
+                and fixture_func.__name__ == "shared_embedding_model"
+            ):
+                item.add_marker(pytest.mark.real_embeddings)
+
         if "serial" in item.keywords:
             # Force serial tests to run in dist group 'serial'
             # This ensures they don't run in parallel with other tests
