@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from searchkernel.indexing.manifest import IndexManifest
@@ -57,6 +57,8 @@ class BootstrapCheckpoint:
     complete: bool
     targets: dict[str, BootstrapFileStamp]
     completed: dict[str, BootstrapFileStamp]
+    semantic_encoder_namespace: str | None = None
+    semantic_completed: dict[str, bool] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -71,6 +73,11 @@ class BootstrapCheckpoint:
                 self.completed[key].to_dict()
                 for key in sorted(self.completed)
             ],
+            "semantic_encoder_namespace": self.semantic_encoder_namespace,
+            "semantic_completed": {
+                key: self.semantic_completed[key]
+                for key in sorted(self.semantic_completed)
+            },
         }
 
 
@@ -173,18 +180,24 @@ def load_bootstrap_checkpoint(index_path: Path) -> BootstrapCheckpoint | None:
         complete = data.get("complete", False)
         targets = _load_stamp_entries(data.get("targets", []))
         completed = _load_stamp_entries(data.get("completed", []))
+        semantic_encoder_namespace = data.get("semantic_encoder_namespace")
+        semantic_completed = data.get("semantic_completed", {})
         if not isinstance(schema_version, str):
             raise KeyError("schema_version")
         if not isinstance(generation, str):
             raise KeyError("generation")
         if not isinstance(complete, bool):
             raise KeyError("complete")
+        if not isinstance(semantic_completed, dict):
+            semantic_completed = {}
         return BootstrapCheckpoint(
             schema_version=schema_version,
             generation=generation,
             complete=complete,
             targets=targets,
             completed=completed,
+            semantic_encoder_namespace=semantic_encoder_namespace,
+            semantic_completed=semantic_completed,
         )
     except (OSError, json.JSONDecodeError, KeyError, TypeError):
         logger.warning(
@@ -221,6 +234,8 @@ def prepare_bootstrap_checkpoint(
             complete=not target_stamps,
             targets=dict(target_stamps),
             completed={},
+            semantic_encoder_namespace=None,
+            semantic_completed={},
         )
         save_bootstrap_checkpoint(index_path, checkpoint)
         return checkpoint
@@ -236,6 +251,8 @@ def prepare_bootstrap_checkpoint(
         complete=len(valid_completed) == len(target_stamps),
         targets=dict(target_stamps),
         completed=valid_completed,
+        semantic_encoder_namespace=checkpoint.semantic_encoder_namespace,
+        semantic_completed=dict(checkpoint.semantic_completed),
     )
     if updated_checkpoint != checkpoint:
         save_bootstrap_checkpoint(index_path, updated_checkpoint)
@@ -323,3 +340,70 @@ def has_incomplete_bootstrap_checkpoint(index_path: Path) -> bool:
     if checkpoint is None:
         return False
     return not checkpoint.complete and bool(checkpoint.targets)
+
+
+def mark_semantic_work_completed(
+    index_path: Path,
+    encoder_namespace: str,
+    relative_path: str,
+) -> bool:
+    """Mark a file's semantic work as completed.
+
+    Returns True if the checkpoint was updated, False otherwise.
+    """
+    checkpoint = load_bootstrap_checkpoint(index_path)
+    if checkpoint is None:
+        return False
+
+    # If the encoder namespace changed, reset semantic progress
+    if (
+        checkpoint.semantic_encoder_namespace is not None
+        and checkpoint.semantic_encoder_namespace != encoder_namespace
+    ):
+        updated_checkpoint = BootstrapCheckpoint(
+            schema_version=checkpoint.schema_version,
+            generation=checkpoint.generation,
+            complete=checkpoint.complete,
+            targets=checkpoint.targets,
+            completed=checkpoint.completed,
+            semantic_encoder_namespace=encoder_namespace,
+            semantic_completed={relative_path: True},
+        )
+        save_bootstrap_checkpoint(index_path, updated_checkpoint)
+        return True
+
+    if relative_path not in checkpoint.targets:
+        return False
+
+    updated_completed = dict(checkpoint.semantic_completed)
+    updated_completed[relative_path] = True
+
+    updated_checkpoint = BootstrapCheckpoint(
+        schema_version=checkpoint.schema_version,
+        generation=checkpoint.generation,
+        complete=checkpoint.complete,
+        targets=checkpoint.targets,
+        completed=checkpoint.completed,
+        semantic_encoder_namespace=encoder_namespace,
+        semantic_completed=updated_completed,
+    )
+    if updated_checkpoint == checkpoint:
+        return False
+
+    save_bootstrap_checkpoint(index_path, updated_checkpoint)
+    return True
+
+
+def get_semantic_completion_status(
+    index_path: Path,
+    encoder_namespace: str,
+) -> dict[str, bool]:
+    """Get which files have completed semantic work for the given encoder.
+
+    Returns a mapping of relative_path -> completion status.
+    """
+    checkpoint = load_bootstrap_checkpoint(index_path)
+    if checkpoint is None or checkpoint.semantic_encoder_namespace != encoder_namespace:
+        return {}
+
+    return dict(checkpoint.semantic_completed)
