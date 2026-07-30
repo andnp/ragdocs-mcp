@@ -36,14 +36,11 @@ class TestSchemaAllTablesExist:
         conn = db.get_connection()
         tables = _table_names(conn)
         expected = {
-            "documents",
-            "chunks",
             "kv_store",
             "search_index",
             "graph_nodes",
             "graph_edges",
             "tasks",
-            "system1_journal",
             "system_state",
         }
         assert expected.issubset(tables), f"Missing tables: {expected - tables}"
@@ -163,40 +160,6 @@ class TestTasksTable:
         assert "idx_tasks_status" in indexes
 
 
-class TestSystem1Journal:
-    def test_autoincrement(self, db: DatabaseManager) -> None:
-        conn = db.get_connection()
-        conn.execute(
-            "INSERT INTO system1_journal (content, timestamp) VALUES ('a', 1.0)"
-        )
-        conn.execute(
-            "INSERT INTO system1_journal (content, timestamp) VALUES ('b', 2.0)"
-        )
-        conn.execute(
-            "INSERT INTO system1_journal (content, timestamp) VALUES ('c', 3.0)"
-        )
-        # Delete the middle row
-        conn.execute("DELETE FROM system1_journal WHERE id = 2")
-        conn.execute(
-            "INSERT INTO system1_journal (content, timestamp) VALUES ('d', 4.0)"
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT id FROM system1_journal ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        # AUTOINCREMENT ensures new id > max previous id (which was 3)
-        assert row[0] > 3
-
-    def test_default_status(self, db: DatabaseManager) -> None:
-        conn = db.get_connection()
-        conn.execute(
-            "INSERT INTO system1_journal (content, timestamp) VALUES ('test', 1.0)"
-        )
-        conn.commit()
-        row = conn.execute("SELECT status FROM system1_journal WHERE id = 1").fetchone()
-        assert row[0] == "pending"
-
-
 class TestSystemState:
     def test_upsert(self, db: DatabaseManager) -> None:
         conn = db.get_connection()
@@ -314,5 +277,4 @@ class TestFreshDbOnTmpPath:
         assert "graph_nodes" in tables
         assert "graph_edges" in tables
         assert "tasks" in tables
-        assert "system1_journal" in tables
         assert "system_state" in tables
