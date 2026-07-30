@@ -147,6 +147,7 @@ class VectorIndex:
         self._embedding_workers = max(1, embedding_workers)
         self._torch_num_threads = max(1, torch_num_threads)
         self._torch_threads_configured = False
+        self._embedding_cache: object | None = None
 
         # Circuit breaker for embedding model failure protection
         self._embedding_circuit_breaker = CircuitBreaker(
@@ -183,6 +184,20 @@ class VectorIndex:
         self._index_lock = (
             threading.Lock()
         )  # Protects index operations during concurrent access
+
+        if embedding_model is not None and self._embedding_cache is not None:
+            embedding_model.embeddings_cache = self._embedding_cache
+
+    def set_embedding_cache(self, cache: object) -> None:
+        """Attach a llama_index-shaped embeddings cache (get/put by text key).
+
+        Applies immediately if the embedding model is already loaded, and
+        persists for the lazy-load path in `_ensure_model_loaded` so a
+        cache attached before first use is never missed.
+        """
+        self._embedding_cache = cache
+        if self._embedding_model is not None:
+            self._embedding_model.embeddings_cache = cache
 
     def _ensure_model_loaded(self, timeout: float = 120.0) -> None:
         """Load the embedding model with timeout and circuit breaker protection.
@@ -233,6 +248,8 @@ class VectorIndex:
                     self._embedding_model = self._embedding_circuit_breaker.call(
                         lambda: future.result(timeout=timeout)
                     )
+                    if self._embedding_cache is not None:
+                        self._embedding_model.embeddings_cache = self._embedding_cache
                     self._model_loaded = True
                     logger.info(f"Embedding model loaded: {self._embedding_model_name}")
             except CircuitBreakerOpen as e:

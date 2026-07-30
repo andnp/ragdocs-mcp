@@ -12,12 +12,17 @@ from searchkernel.config import Config, resolve_project_id_for_path
 from searchkernel.coordination import IndexLock
 from searchkernel.domain import Record
 from searchkernel.indexing.discovery import get_parser_suffixes
+from searchkernel.indexing.embedding_cache import SQLiteEmbeddingCache
 from searchkernel.indexing.implicit_graph import ImplicitGraphBuilder
 from searchkernel.indexing.manifest import (
     CURRENT_MANIFEST_SPEC_VERSION,
     IndexManifest,
     load_manifest,
     save_manifest,
+)
+from searchkernel.indexing.semantic import (
+    EncoderFingerprint,
+    LlamaIndexEmbeddingCacheAdapter,
 )
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.hash_store import ChunkHashStore
@@ -77,6 +82,29 @@ class IndexManager:
         self._state_version = 0
         self._deferred_persist_depth = 0
         self._derived_graph_state_dirty = False
+
+        # Initialize embedding cache for semantic indexing
+        cache_path = index_path / "embedding_cache.db"
+        encoder_fp = EncoderFingerprint(
+            model=config.llm.resolved_embedding_model,
+            version="1",
+        )
+        self._embedding_cache = SQLiteEmbeddingCache(
+            path=cache_path,
+            encoder_namespace=encoder_fp.namespace,
+        )
+        self._encoder_fingerprint = encoder_fp
+
+        # Attach the embedding cache to the vector index's embedding model so
+        # llama_index's own get_text_embedding[_batch] path reuses vectors for
+        # unchanged content across re-indexing runs.
+        if hasattr(self.vector, "set_embedding_cache"):
+            self.vector.set_embedding_cache(
+                LlamaIndexEmbeddingCacheAdapter(
+                    cache=self._embedding_cache,
+                    encoder_namespace=encoder_fp.namespace,
+                )
+            )
 
         logger.info(
             f"IndexManager initialized with embedding_workers={config.indexing.embedding_workers} "
