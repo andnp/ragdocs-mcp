@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from searchkernel.coordination.task_submission import (
     coalesce_pending_first_args,
@@ -32,6 +31,10 @@ from searchkernel.indexing.git_refresh_state import (
     save_head,
 )
 from searchkernel.indexing.rebuild_service import run_rebuild
+from searchkernel.indexing.submission import (
+    TaskBatchSubmissionResult,
+    TaskSubmissionResult,
+)
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
@@ -43,54 +46,10 @@ logger = logging.getLogger(__name__)
 RECORD_BATCH_TASK_PRIORITY = 100
 GIT_REFRESH_TASK_PRIORITY = 10
 
-
-@dataclass(frozen=True)
-class TaskSubmissionResult:
-    status: Literal["enqueued", "already_pending", "backpressured", "unavailable"]
-
-    @property
-    def accepted_by_queue(self) -> bool:
-        return self.status in {"enqueued", "already_pending"}
-
-    @property
-    def should_retry_later(self) -> bool:
-        return self.status == "backpressured"
-
-    @property
-    def queue_available(self) -> bool:
-        return self.status != "unavailable"
-
-    @property
-    def enqueued(self) -> bool:
-        return self.status == "enqueued"
-
-
-@dataclass(frozen=True)
-class TaskBatchSubmissionResult:
-    queue_available: bool
-    requested_unique_count: int
-    enqueued_count: int
-    already_pending_count: int = 0
-    backpressured_items: tuple[str, ...] = ()
-
-    @property
-    def backpressured_count(self) -> int:
-        return len(self.backpressured_items)
-
-    @property
-    def should_retry_later(self) -> bool:
-        return bool(self.backpressured_items)
-
-    @property
-    def all_represented(self) -> bool:
-        if not self.queue_available:
-            return False
-        if self.should_retry_later:
-            return False
-        return (
-            self.enqueued_count + self.already_pending_count
-            >= self.requested_unique_count
-        )
+__all__ = [
+    "TaskBatchSubmissionResult",
+    "TaskSubmissionResult",
+]
 
 
 class IndexManagerLike(Protocol):
