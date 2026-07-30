@@ -11,6 +11,7 @@ from searchkernel.chunking.factory import get_chunker
 from searchkernel.config import Config, resolve_project_id_for_path
 from searchkernel.coordination import IndexLock
 from searchkernel.domain import Record
+from searchkernel.indexing.core import IndexCore
 from searchkernel.indexing.discovery import get_parser_suffixes
 from searchkernel.indexing.embedding_cache import SQLiteEmbeddingCache
 from searchkernel.indexing.implicit_graph import ImplicitGraphBuilder
@@ -32,9 +33,7 @@ from searchkernel.models import Chunk, Document
 from searchkernel.parsers.dispatcher import dispatch_parser
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.apply_move import ApplyMoveStage
-from searchkernel.pipeline.stages.chunk import ChunkStage
 from searchkernel.pipeline.stages.detect_moves import DetectMovesStage
-from searchkernel.pipeline.stages.index import IndexStage
 from searchkernel.pipeline.stages.repair import RepairStage
 from searchkernel.search.edge_types import infer_edge_type
 from searchkernel.search.path_utils import (
@@ -94,6 +93,10 @@ class IndexManager:
             encoder_namespace=encoder_fp.namespace,
         )
         self._encoder_fingerprint = encoder_fp
+
+        self._core = IndexCore(
+            self._chunker, self.vector, self.keyword, self.graph, self._hash_store
+        )
 
         # Attach the embedding cache to the vector index's embedding model so
         # llama_index's own get_text_embedding[_batch] path reuses vectors for
@@ -172,15 +175,10 @@ class IndexManager:
         return sorted(get_parser_suffixes())
 
     def _chunk_document(self, document: Document) -> list[Chunk]:
-        context = ChunkStage(self._chunker).run(
-            SearchContext(query="", metadata={"document": document})
-        )
-        return context.metadata["chunks"]
+        return self._core.chunk_document(document)
 
     def _index_chunks(self, chunks: list[Chunk]) -> None:
-        IndexStage(self.vector, self.keyword, self.graph).run(
-            SearchContext(query="", metadata={"chunks": chunks})
-        )
+        self._core.index_chunks(chunks)
 
     def _record_manifest_index(self, file_path: str, doc_id: str) -> None:
         rel_path_obj: Path | None = None
@@ -309,16 +307,7 @@ class IndexManager:
         Returns:
             (changed_chunks, unchanged_chunk_ids)
         """
-        changed = []
-        unchanged = []
-
-        for chunk in chunks:
-            if self._hash_store.has_changed(chunk):
-                changed.append(chunk)
-            else:
-                unchanged.append(chunk.chunk_id)
-
-        return changed, unchanged
+        return self._core.detect_changed_chunks(chunks)
 
     def _should_use_delta_indexing(
         self,
@@ -326,57 +315,21 @@ class IndexManager:
         total_chunks: int,
     ) -> bool:
         """Decide whether to use delta or full re-index based on change ratio."""
-        if total_chunks == 0:
-            return True
-
-        change_ratio = len(changed_chunks) / total_chunks
-        threshold = self._config.indexing.delta_full_reindex_threshold
-
-        if change_ratio > threshold:
-            logger.info(
-                f"Change ratio {change_ratio:.1%} exceeds threshold {threshold:.1%}, "
-                "using full re-index"
-            )
-            return False
-
-        return True
+        return self._core.should_use_delta_indexing(
+            changed_chunks,
+            total_chunks,
+            self._config.indexing.delta_full_reindex_threshold,
+        )
 
     def _update_chunks(self, doc_id: str, chunks: list[Chunk]) -> None:
         """Update specific chunks in all indices (remove old → add new)."""
-        if not chunks:
-            return
-
-        chunk_ids = [chunk.chunk_id for chunk in chunks]
-
-        # Remove old versions (batch where possible)
-        for chunk_id in chunk_ids:
-            self.vector.remove_chunk(chunk_id)
-        self.keyword.remove_chunks(chunk_ids)
-        for chunk_id in chunk_ids:
-            self.graph.remove_chunk(chunk_id)
-
-        # Add new versions
-        self._index_chunks(chunks)
-
-        logger.debug(f"Updated {len(chunks)} chunks for {doc_id}")
+        self._core.update_chunks(doc_id, chunks)
 
     def _full_reindex_document(self, doc_id: str, chunks: list[Chunk]) -> None:
         """Full re-index of document (remove all old chunks, add all new)."""
-        # Remove all old chunks
-        self.vector.remove(doc_id)
-        self.keyword.remove(doc_id)
-        self.graph.remove_node(doc_id)
-
-        # Add all new chunks
-        self._index_chunks(chunks)
-
-        # Update hash store (clear old hashes first)
-        self._hash_store.remove_document(doc_id)
-        for chunk in chunks:
-            self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
-        self._persist_hash_store_if_needed()
-
-        logger.debug(f"Full re-indexed {doc_id} with {len(chunks)} chunks")
+        self._core.full_reindex_document(
+            doc_id, chunks, on_persist_hash_store=self._persist_hash_store_if_needed
+        )
 
     def _detect_file_moves(
         self,
@@ -649,36 +602,12 @@ class IndexManager:
         source_kind/source_id metadata so SearchOrchestrator.query's
         source_filter can scope a query to this source.
         """
-        document = Document(
-            id=record.source_id,
-            content=record.body,
-            metadata={**record.metadata, "title": record.title},
-            links=[],
-            tags=[],
-            file_path=record.uri or "",
-            modified_time=record.updated_at,
+        mutated = self._core.index_record(
+            record, on_persist_hash_store=self._persist_hash_store_if_needed
         )
-
-        chunks = self._chunk_document(document)
-        for chunk in chunks:
-            chunk.metadata = {
-                **chunk.metadata,
-                "source_kind": record.source_kind,
-                "source_id": record.source_id,
-            }
-
-        changed_chunks, _unchanged_chunk_ids = self._detect_changed_chunks(chunks)
-        if not changed_chunks and document.id in self.vector.get_document_ids():
-            logger.debug("No changes in record %s, skipping re-index", record.source_id)
-            return
-
-        self._full_reindex_document(document.id, chunks)
-
-        graph_metadata = {**document.metadata, "source_kind": record.source_kind}
-        self.graph.add_node(document.id, graph_metadata)
-
-        self._mark_derived_graph_state_dirty()
-        self._bump_state_version()
+        if mutated:
+            self._mark_derived_graph_state_dirty()
+            self._bump_state_version()
 
     def remove_document(self, doc_id: str):
         errors: list[tuple[str, Exception]] = []
