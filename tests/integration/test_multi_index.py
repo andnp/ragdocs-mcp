@@ -193,12 +193,12 @@ def test_persist_recovers_after_transient_graph_lock(manager, tmp_path, config):
 
     index_path = Path(config.indexing.index_path)
     with pytest.raises(sqlite3.OperationalError, match="locked"):
-        manager._persist_indices(index_path)
+        manager._finalize_derived_graph_state_locked(index_path)
 
     lock_conn.rollback()
     lock_conn.close()
 
-    manager._persist_indices(index_path)
+    manager._finalize_derived_graph_state_locked(index_path)
 
     conn = manager.graph._db.get_connection()
     initial_edge_count = conn.execute(
@@ -207,7 +207,7 @@ def test_persist_recovers_after_transient_graph_lock(manager, tmp_path, config):
     ).fetchone()[0]
     assert initial_edge_count > 0
 
-    manager._persist_indices(index_path)
+    manager._finalize_derived_graph_state_locked(index_path)
 
     repeated_edge_count = conn.execute(
         "SELECT COUNT(*) FROM graph_edges WHERE edge_type = ?",
