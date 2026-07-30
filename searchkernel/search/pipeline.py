@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from searchkernel.models import CompressionStats
+from searchkernel.domain import CompressionStats
 from searchkernel.search.dedup import (
     deduplicate_by_content_hash,
     deduplicate_by_ngram,

@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 
-from searchkernel.models import SearchResultProvenance
+from searchkernel.domain import SearchResultProvenance
 from searchkernel.pipeline.stage import SearchContext
 
 BoostByCommunity = Callable[[list[str], set[str], float], dict[str, float]]

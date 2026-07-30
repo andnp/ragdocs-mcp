@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 
-from searchkernel.models import CompressionStats
+from searchkernel.domain import CompressionStats
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.dedup_content_hash import ContentHashDedupStage
 from searchkernel.pipeline.stages.dedup_ngram import NgramDedupStage

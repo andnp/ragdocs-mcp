@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from searchkernel.models import SearchResultProvenance
+from searchkernel.domain import SearchResultProvenance
 from searchkernel.pipeline.stage import SearchContext
 
 _RESULT_PROVENANCE_KEY = "result_provenance"

@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
-from searchkernel.models import SearchResultProvenance
+from searchkernel.domain import SearchResultProvenance
 from searchkernel.pipeline.stage import SearchContext
 
 GetChunk = Callable[[str], "dict[str, Any] | None"]

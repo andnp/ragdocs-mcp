@@ -7,12 +7,16 @@ and the outside world. Types here are source-agnostic and I/O-free.
 from searchkernel.domain.models import (
     ChangeSignal,
     Chunk,
+    CompressionStats,
     Cursor,
     Filters,
     Record,
     RecordStatus,
     ScoredRef,
     SearchResult,
+    SearchResultProvenance,
+    SearchStrategyStats,
+    StrategyContribution,
     Tier,
     Vector,
 )
@@ -20,12 +24,16 @@ from searchkernel.domain.models import (
 __all__ = [
     "ChangeSignal",
     "Chunk",
+    "CompressionStats",
     "Cursor",
     "Filters",
     "Record",
     "RecordStatus",
     "ScoredRef",
     "SearchResult",
+    "SearchResultProvenance",
+    "SearchStrategyStats",
+    "StrategyContribution",
     "Tier",
     "Vector",
 ]

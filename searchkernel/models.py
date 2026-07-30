@@ -5,8 +5,28 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from searchkernel.domain import (
+    CompressionStats,
+    SearchResultProvenance,
+    SearchStrategyStats,
+    StrategyContribution,
+)
+
 if TYPE_CHECKING:
     from searchkernel.domain import Record
+
+__all__ = [
+    "Chunk",
+    "ChunkResult",
+    "CommitResult",
+    "CompressionStats",
+    "Document",
+    "GitSearchResponse",
+    "ReconciliationResult",
+    "SearchResultProvenance",
+    "SearchStrategyStats",
+    "StrategyContribution",
+]
 
 
 @dataclass
@@ -33,69 +53,6 @@ class Chunk:
     def compute_content_hash(self) -> str:
         """Compute SHA256 hash of chunk content for change detection."""
         return hashlib.sha256(self.content.encode("utf-8")).hexdigest()
-
-
-@dataclass(frozen=True)
-class StrategyContribution:
-    rank: int
-    raw_score: float
-
-    def to_dict(self):
-        return {
-            "rank": self.rank,
-            "raw_score": self.raw_score,
-        }
-
-
-@dataclass
-class SearchResultProvenance:
-    strategies: tuple[str, ...] = ()
-    strategy_details: dict[str, StrategyContribution] = field(default_factory=dict)
-    community_boost: float | None = None
-    project_uplift: float | None = None
-    parent_expanded_from: str | None = None
-
-    def add_strategy(self, strategy: str, rank: int, raw_score: float):
-        if strategy in self.strategy_details:
-            return
-
-        self.strategy_details[strategy] = StrategyContribution(
-            rank=rank,
-            raw_score=raw_score,
-        )
-        if strategy not in self.strategies:
-            self.strategies = (*self.strategies, strategy)
-
-    def clone(self):
-        return SearchResultProvenance(
-            strategies=tuple(self.strategies),
-            strategy_details=dict(self.strategy_details),
-            community_boost=self.community_boost,
-            project_uplift=self.project_uplift,
-            parent_expanded_from=self.parent_expanded_from,
-        )
-
-    def to_dict(self):
-        result: dict[str, object] = {
-            "strategies": list(self.strategies),
-        }
-        if self.strategy_details:
-            result["strategy_details"] = {
-                strategy: contribution.to_dict()
-                for strategy, contribution in self.strategy_details.items()
-            }
-
-        adjustments: dict[str, object] = {}
-        if self.community_boost is not None and self.community_boost != 1.0:
-            adjustments["community_boost"] = self.community_boost
-        if self.project_uplift is not None and self.project_uplift != 1.0:
-            adjustments["project_uplift"] = self.project_uplift
-        if self.parent_expanded_from is not None:
-            adjustments["parent_expanded_from"] = self.parent_expanded_from
-        if adjustments:
-            result["adjustments"] = adjustments
-
-        return result
 
 
 @dataclass
@@ -129,48 +86,6 @@ class ChunkResult:
             result["parent_content"] = self.parent_content
         if self.provenance is not None:
             result["provenance"] = self.provenance.to_dict()
-        return result
-
-
-@dataclass
-class CompressionStats:
-    original_count: int
-    after_threshold: int
-    after_content_dedup: int
-    after_ngram_dedup: int
-    after_dedup: int
-    after_doc_limit: int
-    clusters_merged: int
-
-    def to_dict(self):
-        return {
-            "original_count": self.original_count,
-            "after_threshold": self.after_threshold,
-            "after_content_dedup": self.after_content_dedup,
-            "after_ngram_dedup": self.after_ngram_dedup,
-            "after_dedup": self.after_dedup,
-            "after_doc_limit": self.after_doc_limit,
-            "clusters_merged": self.clusters_merged,
-        }
-
-
-@dataclass
-class SearchStrategyStats:
-    vector_count: int | None = None
-    keyword_count: int | None = None
-    graph_count: int | None = None
-    tag_expansion_count: int | None = None
-
-    def to_dict(self):
-        result = {}
-        if self.vector_count is not None:
-            result["vector_count"] = self.vector_count
-        if self.keyword_count is not None:
-            result["keyword_count"] = self.keyword_count
-        if self.graph_count is not None:
-            result["graph_count"] = self.graph_count
-        if self.tag_expansion_count is not None:
-            result["tag_expansion_count"] = self.tag_expansion_count
         return result
 
 
