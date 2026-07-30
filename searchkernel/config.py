@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, cast
+import math
 import os
 import re
 import logging
@@ -76,6 +77,16 @@ class SearchConfig:
     dedup_threshold: float = 0.80
     reranking_enabled: bool = True
     rerank_top_n: int = 10
+    project_uplift_multiplier: float = 1.2
+
+    def __post_init__(self):
+        if not math.isfinite(self.project_uplift_multiplier):
+            raise ValueError("search.project_uplift_multiplier must be a finite number")
+
+        if self.project_uplift_multiplier <= 0:
+            raise ValueError(
+                "search.project_uplift_multiplier must be greater than 0"
+            )
 
 
 @dataclass

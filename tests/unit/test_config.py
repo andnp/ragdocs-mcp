@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from typing import cast
 
+import pytest
 
 from searchkernel.config import load_config, Config, LLMConfig, resolve_embedding_model
 
@@ -86,6 +87,7 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         assert config.search.semantic_weight == 1.0
         assert config.search.keyword_weight == 1.0
         assert config.search.recency_bias == 0.5
+        assert config.search.project_uplift_multiplier == 1.2
         assert config.llm.embedding_model == "local"
         assert config.indexing.torch_num_threads == 4
         assert config.indexing.debounce_window_seconds == 0.5
@@ -196,8 +198,53 @@ keyword_weight = 0.5
 
         # User-provided value
         assert config.search.keyword_weight == 0.5
+        assert config.search.project_uplift_multiplier == 1.2
         # Default values for missing fields
         assert config.llm.embedding_model == "local"
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_search_project_uplift_multiplier_loads_from_config(tmp_path):
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
+    config_file.write_text(
+        """
+[search]
+project_uplift_multiplier = 1.35
+"""
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+
+        assert config.search.project_uplift_multiplier == 1.35
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_search_project_uplift_multiplier_rejects_non_positive_values(tmp_path):
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
+    config_file.write_text(
+        """
+[search]
+project_uplift_multiplier = 0
+"""
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        with pytest.raises(
+            ValueError,
+            match="search.project_uplift_multiplier must be greater than 0",
+        ):
+            load_config()
     finally:
         os.chdir(original_cwd)
 

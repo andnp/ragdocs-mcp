@@ -7,13 +7,17 @@ from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.orchestrator import SearchOrchestrator
 
 
-def _orchestrator(*, detected_project: str | None) -> SearchOrchestrator:
+def _orchestrator(
+    *,
+    detected_project: str | None,
+    project_uplift_multiplier: float = 1.2,
+) -> SearchOrchestrator:
     config = Config(
         indexing=IndexingConfig(
             documents_path="/tmp/docs",
             index_path="/tmp/index",
         ),
-        search=SearchConfig(),
+        search=SearchConfig(project_uplift_multiplier=project_uplift_multiplier),
         chunking=ChunkingConfig(),
         detected_project=detected_project,
     )
@@ -75,6 +79,22 @@ def test_project_uplift_prefers_explicit_project_context(monkeypatch) -> None:
     )
 
     assert boosted == [("chunk-b", 0.05 * 1.2)]
+
+
+def test_project_uplift_uses_configured_multiplier(monkeypatch) -> None:
+    orchestrator = _orchestrator(
+        detected_project="project-a",
+        project_uplift_multiplier=1.5,
+    )
+    monkeypatch.setattr(
+        orchestrator._vector,
+        "get_chunk_by_id",
+        lambda chunk_id: {"metadata": {"project_id": "project-a"}},
+    )
+
+    boosted = orchestrator._apply_project_uplift([("chunk-a", 0.05)])
+
+    assert boosted == [("chunk-a", 0.05 * 1.5)]
 
 
 def test_project_filter_restricts_results(monkeypatch) -> None:

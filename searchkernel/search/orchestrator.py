@@ -36,7 +36,6 @@ from searchkernel.search.tag_expansion import expand_query_with_tags
 
 logger = logging.getLogger(__name__)
 
-_ACTIVE_PROJECT_UPLIFT = 1.2
 _RESULT_CACHE_MAX_ENTRIES = 64
 
 
@@ -264,6 +263,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             config = dict(stage_spec.config)
             if name == "fusion":
                 config["strategy_weights"] = context.metadata["strategy_weights"]
+            elif name == "project_uplift":
+                config["uplift"] = self._config.search.project_uplift_multiplier
             context = await self._executor.run_stage(name, config, context, deps)
 
             if name == "parent_expansion":
@@ -490,7 +491,8 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
             else self._vector.get_chunk_by_id
         )
         stage = DEFAULT_QUERY_STAGE_REGISTRY["project_uplift"](
-            {"uplift": _ACTIVE_PROJECT_UPLIFT}, StageDeps(get_chunk=get_chunk)
+            {"uplift": self._config.search.project_uplift_multiplier},
+            StageDeps(get_chunk=get_chunk),
         )
         metadata: dict[str, object] = {"active_project": active_project}
         if result_provenance is not None:

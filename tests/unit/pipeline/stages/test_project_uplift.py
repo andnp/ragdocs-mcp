@@ -37,6 +37,15 @@ def test_project_uplift_no_active_project_returns_context_unchanged():
     assert result.candidates == [("a_chunk_0", 0.4)]
 
 
+def test_project_uplift_uses_configured_multiplier():
+    chunks = {"a_chunk_0": {"metadata": {"project_id": "proj-a"}}}
+    context = _context([("a_chunk_0", 0.05)], active_project="proj-a")
+
+    result = ProjectUpliftStage(_chunk_lookup(chunks), 1.5).run(context)
+
+    assert result.candidates == [("a_chunk_0", 0.05 * 1.5)]
+
+
 def test_project_uplift_records_provenance():
     chunks = {"a_chunk_0": {"metadata": {"project_id": "proj-a"}}}
     provenance = {}
