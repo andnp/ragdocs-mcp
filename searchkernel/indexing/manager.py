@@ -10,7 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from searchkernel.chunking.factory import get_chunker
 from searchkernel.config import Config, resolve_project_id_for_path
 from searchkernel.coordination import IndexLock
-from searchkernel.domain import Record
+from searchkernel.domain import Chunk, Record
 from searchkernel.indexing.core import IndexCore
 from searchkernel.indexing.discovery import get_parser_suffixes
 from searchkernel.indexing.embedding_cache import SQLiteEmbeddingCache
@@ -29,7 +29,7 @@ from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.hash_store import ChunkHashStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import Chunk, Document
+from searchkernel.models import Document
 from searchkernel.parsers.dispatcher import dispatch_parser
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.apply_move import ApplyMoveStage
@@ -457,7 +457,6 @@ class IndexManager:
 
             chunks = self._chunk_document(document)
             for chunk in chunks:
-                chunk.project_id = project_id
                 if project_id is not None:
                     chunk.metadata = {
                         **chunk.metadata,
