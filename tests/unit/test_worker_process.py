@@ -67,6 +67,7 @@ def test_worker_process_start_uses_internal_worker_command(monkeypatch, tmp_path
         return fake_process
 
     monkeypatch.setattr("searchkernel.worker.process.subprocess.Popen", _fake_popen)
+    monkeypatch.setattr("searchkernel.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
 
     worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
     worker.start()
@@ -102,6 +103,7 @@ def test_worker_process_stop_sends_sigterm(monkeypatch, tmp_path: Path):
         "searchkernel.worker.process.subprocess.Popen",
         lambda *args, **kwargs: fake_process,
     )
+    monkeypatch.setattr("searchkernel.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
 
     worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
     worker.start()
@@ -129,6 +131,7 @@ def test_worker_process_restart_replaces_process(monkeypatch, tmp_path: Path):
         lambda *args, **kwargs: next(created),
     )
     monkeypatch.setattr("searchkernel.worker.process.time.sleep", lambda _: None)
+    monkeypatch.setattr("searchkernel.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
 
     worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
     worker.start()
@@ -195,6 +198,7 @@ def test_worker_process_start_terminates_runtime_matching_workers(
         "searchkernel.worker.process.subprocess.Popen",
         lambda *args, **kwargs: fake_process,
     )
+    monkeypatch.setattr("searchkernel.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
 
     worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
     worker.start()
