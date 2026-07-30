@@ -1,4 +1,4 @@
-from searchkernel.models import ChunkResult
+from searchkernel.domain import ChunkResult
 
 
 def filter_by_score(results: list[ChunkResult], min_score: float = 0.3):

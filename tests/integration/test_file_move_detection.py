@@ -222,8 +222,9 @@ async def test_query_after_move_finds_content(config, manager, orchestrator):
 
     found_moved = False
     for result in results:
-        assert "security.md" not in result.file_path or "guides" in result.file_path
-        if "guides/security.md" in result.file_path:
+        result_file_path = result.metadata.get("file_path", "")
+        assert "security.md" not in result_file_path or "guides" in result_file_path
+        if "guides/security.md" in result_file_path:
             found_moved = True
 
     assert found_moved, "Should find content in moved location"
@@ -282,7 +283,7 @@ async def test_move_multiple_files(config, manager, orchestrator):
             f"document number {i}", top_k=5, top_n=2
         )
         assert len(results) > 0
-        assert any("archive" in r.file_path for r in results), (
+        assert any("archive" in r.metadata.get("file_path", "") for r in results), (
             f"Document {i} should be searchable in archive location"
         )
 
@@ -323,9 +324,10 @@ async def test_move_detection_with_git_rename(config, manager, orchestrator):
     # Should detect as move
     results, _, _ = await orchestrator.query("Project README", top_k=5, top_n=2)
     assert len(results) > 0
-    assert any("README_OLD.md" in r.file_path for r in results)
+    assert any("README_OLD.md" in r.metadata.get("file_path", "") for r in results)
     assert not any(
-        "README.md" in r.file_path or "README.md" == Path(r.file_path).name
+        "README.md" in r.metadata.get("file_path", "")
+        or "README.md" == Path(r.metadata.get("file_path", "")).name
         for r in results
     )
 

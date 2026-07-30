@@ -6,6 +6,7 @@ from pathlib import Path
 
 from searchkernel.config import Config
 from searchkernel.domain import (
+    ChunkResult,
     CompressionStats,
     SearchResultProvenance,
     SearchStrategyStats,
@@ -14,7 +15,6 @@ from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import ChunkResult
 from searchkernel.pipeline.default_query_spec import DEFAULT_QUERY_SPEC
 from searchkernel.pipeline.executor import PipelineExecutor
 from searchkernel.pipeline.registry import DEFAULT_QUERY_STAGE_REGISTRY, StageDeps

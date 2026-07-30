@@ -1,4 +1,4 @@
-from searchkernel.models import ChunkResult, SearchResultProvenance
+from searchkernel.domain import ChunkResult, SearchResultProvenance
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.hydrate import HydrateStage
 
@@ -17,11 +17,10 @@ def test_hydrate_stage_wraps_successful_hydration_and_attaches_provenance():
     def hydrate(chunk_id: str, score: float) -> ChunkResult | None:
         return ChunkResult(
             chunk_id=chunk_id,
-            doc_id="doc1",
+            record_id="doc1",
             score=score,
-            header_path="H",
-            file_path="doc1.md",
             content="body",
+            metadata={"header_path": "H", "file_path": "doc1.md"},
         )
 
     provenance = SearchResultProvenance()
@@ -48,10 +47,10 @@ def test_hydrate_stage_emits_placeholder_and_reports_missing_chunk_ids():
     assert len(chunk_results) == 1
     placeholder = chunk_results[0]
     assert placeholder.chunk_id == "doc1_chunk_0"
-    assert placeholder.doc_id == "doc1"
+    assert placeholder.record_id == "doc1"
     assert placeholder.content == ""
-    assert placeholder.header_path == ""
-    assert placeholder.file_path == ""
+    assert placeholder.metadata["header_path"] == ""
+    assert placeholder.metadata["file_path"] == ""
     assert result.metadata["missing_chunk_ids"] == ["doc1_chunk_0"]
 
 
@@ -61,11 +60,10 @@ def test_hydrate_stage_preserves_candidate_order_with_mixed_hits_and_misses():
             return None
         return ChunkResult(
             chunk_id=chunk_id,
-            doc_id="doc1",
+            record_id="doc1",
             score=score,
-            header_path="",
-            file_path="",
             content="",
+            metadata={"header_path": "", "file_path": ""},
         )
 
     result = HydrateStage(hydrate).run(

@@ -19,11 +19,11 @@ from searchkernel.config import (
     LLMConfig,
     SearchConfig,
 )
+from searchkernel.domain import ChunkResult
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import ChunkResult
 from searchkernel.search.orchestrator import SearchOrchestrator
 
 

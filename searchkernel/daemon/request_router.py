@@ -24,6 +24,7 @@ from searchkernel.indexing.rebuild_service import (
     write_rebuild_status,
 )
 from searchkernel.indexing.tasks import submit_rebuild_request
+from searchkernel.models import ChunkResult
 
 logger = logging.getLogger(__name__)
 
@@ -424,6 +425,7 @@ def build_daemon_request_handler(
                     else None
                 ),
             )
+            results = [ChunkResult.from_domain(r) for r in results]
             await ctx.orchestrator.drain_reindex()
             return {
                 "query": query_text,
@@ -476,6 +478,7 @@ def build_daemon_request_handler(
                 project_context=project_context,
                 source_filter=["git_commit"],
             )
+            results = [ChunkResult.from_domain(r) for r in results]
             commits = _filter_git_history_results(
                 results, files_glob, after_timestamp, before_timestamp
             )[:top_n]

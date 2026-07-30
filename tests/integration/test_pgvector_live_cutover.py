@@ -96,4 +96,4 @@ async def test_pgvector_backend_indexes_and_searches_live(test_config, monkeypat
     )
 
     assert results
-    assert results[0].doc_id == "photosynthesis"
+    assert results[0].record_id == "photosynthesis"

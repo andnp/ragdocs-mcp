@@ -24,7 +24,7 @@ from searchkernel.pipeline.stage import SearchContext
 from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
 
 if TYPE_CHECKING:
-    from searchkernel.models import ChunkResult
+    from searchkernel.domain import ChunkResult
 
 HydrateChunkResult = Callable[[str, float], "ChunkResult | None"]
 
@@ -50,7 +50,7 @@ class HydrateStage:
         self._hydrate_chunk_result = hydrate_chunk_result
 
     def run(self, context: SearchContext) -> SearchContext:
-        from searchkernel.models import ChunkResult
+        from searchkernel.domain import ChunkResult
 
         result_provenance = context.metadata.get(_RESULT_PROVENANCE_KEY)
         chunk_results: list[ChunkResult] = []
@@ -68,11 +68,10 @@ class HydrateStage:
             chunk_results.append(
                 ChunkResult(
                     chunk_id=chunk_id,
-                    doc_id=extract_doc_id_from_chunk_id(chunk_id),
+                    record_id=extract_doc_id_from_chunk_id(chunk_id),
                     score=score,
-                    header_path="",
-                    file_path="",
                     content="",
+                    metadata={"header_path": "", "file_path": ""},
                     provenance=(
                         result_provenance.get(chunk_id)
                         if result_provenance is not None

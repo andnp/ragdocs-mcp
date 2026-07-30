@@ -375,7 +375,7 @@ Example tool registration in src/mcp_server.py.
         )
 
         assert len(results) > 0
-        result_doc_ids = [r.doc_id for r in results]
+        result_doc_ids = [r.record_id for r in results]
         assert "mcp_tools" in result_doc_ids or "configuration" in result_doc_ids
 
     @pytest.mark.asyncio

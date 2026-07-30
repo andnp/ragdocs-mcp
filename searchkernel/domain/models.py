@@ -69,6 +69,40 @@ class Chunk:
 
 
 @dataclass
+class ChunkResult:
+    """A single hydrated, scored chunk returned from a search query.
+
+    Source-agnostic result shape: source-specific fields (e.g. a markdown
+    note's header_path/file_path/project_id) live in `metadata` rather than
+    as first-class attributes.
+    """
+
+    chunk_id: str
+    """ID of the matched chunk."""
+
+    record_id: str
+    """ID of the parent Record this chunk came from."""
+
+    score: float
+    """Relevance score."""
+
+    content: str = ""
+    """Hydrated chunk content."""
+
+    parent_chunk_id: str | None = None
+    """ID of the parent chunk, if this is a child chunk."""
+
+    parent_content: str | None = None
+    """Content of the parent chunk, if hydrated."""
+
+    provenance: "SearchResultProvenance | None" = None
+    """Which strategies/adjustments contributed to this result's ranking."""
+
+    metadata: dict[str, Any] = field(default_factory=dict)
+    """Source-specific metadata (e.g. header_path, file_path, project_id)."""
+
+
+@dataclass
 class Record:
     """A source-agnostic record representing indexable content.
 

@@ -3,11 +3,11 @@ from pathlib import Path
 import pytest
 
 from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.domain import ChunkResult
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import ChunkResult
 from searchkernel.search.orchestrator import SearchOrchestrator
 from searchkernel.search.pipeline import SearchPipelineConfig
 from tests.conftest import create_test_document
@@ -175,7 +175,7 @@ Connection pooling and query optimization.
         results, _, _ = await orchestrator.query("auth", top_k=10, top_n=5)
 
         # Should find security doc (contains "authentication")
-        result_doc_ids = [r.doc_id for r in results]
+        result_doc_ids = [r.record_id for r in results]
         assert "security" in result_doc_ids or any(
             "security" in did for did in result_doc_ids
         )
@@ -229,8 +229,8 @@ It is not the canonical testing strategy document.
         )
 
         assert len(results) >= 2
-        assert results[0].file_path.endswith("testing_strategy.md")
-        assert results[1].file_path.endswith("development.md")
+        assert results[0].metadata.get("file_path", "").endswith("testing_strategy.md")
+        assert results[1].metadata.get("file_path", "").endswith("development.md")
 
 
 # ============================================================================

@@ -1,7 +1,6 @@
-from types import SimpleNamespace
-
 import pytest
 
+from searchkernel.domain import ChunkResult
 from searchkernel.server import QueryRequest, create_app
 
 
@@ -11,7 +10,19 @@ class FakeOrchestrator:
 
     async def query(self, query, **kwargs):
         self.query_kwargs = {"query": query, **kwargs}
-        return [SimpleNamespace(to_dict=lambda: {"content": "result"})], None, None
+        return (
+            [
+                ChunkResult(
+                    chunk_id="chunk_1",
+                    record_id="doc_1",
+                    score=0.5,
+                    content="result",
+                    metadata={"header_path": "", "file_path": ""},
+                )
+            ],
+            None,
+            None,
+        )
 
 
 def _query_endpoint(app):
@@ -32,7 +43,16 @@ async def test_legacy_query_documents_passes_source_and_project_filters():
         )
     )
 
-    assert response.results == [{"content": "result"}]
+    assert response.results == [
+        {
+            "chunk_id": "chunk_1",
+            "doc_id": "doc_1",
+            "score": 0.5,
+            "header_path": "",
+            "file_path": "",
+            "content": "result",
+        }
+    ]
     assert orchestrator.query_kwargs["project_filter"] == ["docs"]
     assert orchestrator.query_kwargs["source_filter"] == ["git_commit"]
 

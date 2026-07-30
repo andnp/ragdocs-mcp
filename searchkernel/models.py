@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from searchkernel import domain
 from searchkernel.domain import (
     CompressionStats,
     SearchResultProvenance,
@@ -87,6 +88,49 @@ class ChunkResult:
         if self.provenance is not None:
             result["provenance"] = self.provenance.to_dict()
         return result
+
+    def to_domain(self) -> domain.ChunkResult:
+        """Convert a ChunkResult to a domain ChunkResult."""
+        metadata = {
+            "header_path": self.header_path,
+            "file_path": self.file_path,
+            **self.metadata,
+        }
+        if self.project_id is not None:
+            metadata["project_id"] = self.project_id
+
+        return domain.ChunkResult(
+            chunk_id=self.chunk_id,
+            record_id=self.doc_id,
+            score=self.score,
+            content=self.content,
+            parent_chunk_id=self.parent_chunk_id,
+            parent_content=self.parent_content,
+            provenance=self.provenance,
+            metadata=metadata,
+        )
+
+    @classmethod
+    def from_domain(cls, result: domain.ChunkResult) -> ChunkResult:
+        """Construct a ChunkResult from a domain ChunkResult."""
+        metadata = dict(result.metadata)
+        header_path = metadata.pop("header_path", "")
+        file_path = metadata.pop("file_path", "")
+        project_id = metadata.pop("project_id", None)
+
+        return cls(
+            chunk_id=result.chunk_id,
+            doc_id=result.record_id,
+            score=result.score,
+            header_path=header_path,
+            file_path=file_path,
+            project_id=project_id,
+            content=result.content,
+            parent_chunk_id=result.parent_chunk_id,
+            parent_content=result.parent_content,
+            provenance=result.provenance,
+            metadata=metadata,
+        )
 
 
 @dataclass

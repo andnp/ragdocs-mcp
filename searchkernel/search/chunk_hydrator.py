@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from searchkernel.domain import ChunkResult
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import ChunkResult
 from searchkernel.search.path_utils import (
     extract_doc_id_from_chunk_id,
     resolve_doc_path,
@@ -67,17 +67,22 @@ class ChunkHydrator:
             else:
                 parent_content = self._vector.get_parent_content(parent_chunk_id_str)
 
+        result_metadata = {
+            **(metadata if isinstance(metadata, dict) else {}),
+            "header_path": hydrated.header_path,
+            "file_path": hydrated.file_path,
+        }
+        if hydrated.project_id is not None:
+            result_metadata["project_id"] = hydrated.project_id
+
         return ChunkResult(
             chunk_id=hydrated.chunk_id,
-            doc_id=hydrated.doc_id,
+            record_id=hydrated.doc_id,
             score=score,
-            header_path=hydrated.header_path,
-            file_path=hydrated.file_path,
-            project_id=hydrated.project_id,
             content=hydrated.content,
             parent_chunk_id=(str(parent_chunk_id) if parent_chunk_id is not None else None),
             parent_content=(str(parent_content) if parent_content is not None else None),
-            metadata=metadata if isinstance(metadata, dict) else {},
+            metadata=result_metadata,
         )
 
     def get_content(

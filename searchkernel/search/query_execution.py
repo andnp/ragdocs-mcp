@@ -4,9 +4,9 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from searchkernel.domain import ChunkResult
     from searchkernel.indices.keyword import KeywordIndex
     from searchkernel.indices.vector import VectorIndex
-    from searchkernel.models import ChunkResult
     from searchkernel.search.chunk_hydrator import ChunkHydrator
 
 

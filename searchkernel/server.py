@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from searchkernel.app.runtime import configure_runtime_threads
 from searchkernel.context import ApplicationContext
 from searchkernel.indexing.manifest import load_manifest
+from searchkernel.models import ChunkResult
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.utils import classify_query_type, truncate_content
 
@@ -113,7 +114,7 @@ def create_app():
 
         formatted_results = []
         for i, result in enumerate(results):
-            result_dict = result.to_dict()
+            result_dict = ChunkResult.from_domain(result).to_dict()
             if query_type == "factual":
                 result_dict["content"] = truncate_content(result_dict["content"], 200)
             formatted_results.append(result_dict)

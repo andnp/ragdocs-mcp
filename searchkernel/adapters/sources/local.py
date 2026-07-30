@@ -9,8 +9,7 @@ import asyncio
 from collections.abc import Iterable
 from typing import Any
 
-from searchkernel.domain import ScoredRef
-from searchkernel.models import ChunkResult
+from searchkernel.domain import ChunkResult, ScoredRef
 from searchkernel.search.orchestrator import SearchOrchestrator
 
 
@@ -59,8 +58,8 @@ class LocalSearchSource:
             source_kind="local",
             metadata={
                 "text": result.content,
-                "doc_id": result.doc_id,
-                "file_path": result.file_path,
-                "header_path": result.header_path,
+                "doc_id": result.record_id,
+                "file_path": result.metadata.get("file_path", ""),
+                "header_path": result.metadata.get("header_path", ""),
             },
         )

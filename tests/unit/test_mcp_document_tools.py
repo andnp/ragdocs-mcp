@@ -123,14 +123,17 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
                 [
                     SimpleNamespace(
                         chunk_id="plan_chunk_1",
-                        doc_id="plan",
-                        file_path="docs/plan.md",
-                        header_path="Overview",
+                        record_id="plan",
                         score=0.91,
                         content="Fast cold start contract.",
-                        project_id="docs-project",
                         parent_chunk_id=None,
+                        parent_content=None,
                         provenance=provenance,
+                        metadata={
+                            "file_path": "docs/plan.md",
+                            "header_path": "Overview",
+                            "project_id": "docs-project",
+                        },
                     )
                 ],
                 CompressionStats(
@@ -240,13 +243,17 @@ async def test_query_documents_returns_canonical_scope_and_meta() -> None:
                 [
                     SimpleNamespace(
                         chunk_id="auth_chunk_2",
-                        doc_id="auth-guide",
-                        file_path="docs/auth.md",
-                        header_path="Authentication > Tokens",
+                        record_id="auth-guide",
                         score=0.88,
                         content="Token exchange details.",
-                        project_id="proj-a",
                         parent_chunk_id="auth_parent_1",
+                        parent_content=None,
+                        provenance=None,
+                        metadata={
+                            "file_path": "docs/auth.md",
+                            "header_path": "Authentication > Tokens",
+                            "project_id": "proj-a",
+                        },
                     )
                 ],
                 CompressionStats(

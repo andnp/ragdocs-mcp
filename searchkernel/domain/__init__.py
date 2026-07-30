@@ -7,6 +7,7 @@ and the outside world. Types here are source-agnostic and I/O-free.
 from searchkernel.domain.models import (
     ChangeSignal,
     Chunk,
+    ChunkResult,
     CompressionStats,
     Cursor,
     Filters,
@@ -24,6 +25,7 @@ from searchkernel.domain.models import (
 __all__ = [
     "ChangeSignal",
     "Chunk",
+    "ChunkResult",
     "CompressionStats",
     "Cursor",
     "Filters",

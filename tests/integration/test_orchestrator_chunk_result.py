@@ -10,11 +10,11 @@ from searchkernel.config import (
     ProjectConfig,
     SearchConfig,
 )
+from searchkernel.domain import ChunkResult, SearchResultProvenance
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import ChunkResult, SearchResultProvenance
 from searchkernel.search.orchestrator import SearchOrchestrator
 from tests.conftest import create_test_document
 
@@ -98,10 +98,10 @@ async def test_query_returns_chunk_result_objects(config, manager, orchestrator)
     if results:
         result = results[0]
         assert isinstance(result.chunk_id, str)
-        assert isinstance(result.doc_id, str)
+        assert isinstance(result.record_id, str)
         assert isinstance(result.score, float)
-        assert isinstance(result.header_path, str)
-        assert isinstance(result.file_path, str)
+        assert isinstance(result.metadata.get("header_path", ""), str)
+        assert isinstance(result.metadata.get("file_path", ""), str)
 
         # Verify chunk_id format
         assert "_chunk_" in result.chunk_id or result.chunk_id
@@ -140,18 +140,19 @@ async def test_chunk_result_contains_metadata(config, manager, orchestrator):
     # Check that at least one result has metadata
     found_metadata = False
     for result in results:
-        # Verify doc_id is set
-        assert result.doc_id != ""
+        # Verify record_id is set
+        assert result.record_id != ""
 
         # Verify file_path is populated if available
-        if result.file_path:
-            assert result.file_path.endswith(".md")
+        file_path = result.metadata.get("file_path", "")
+        if file_path:
+            assert file_path.endswith(".md")
             found_metadata = True
 
-        # Verify chunk_id contains doc_id
-        if result.doc_id:
-            assert result.doc_id in result.chunk_id or result.chunk_id.startswith(
-                result.doc_id
+        # Verify chunk_id contains record_id
+        if result.record_id:
+            assert result.record_id in result.chunk_id or result.chunk_id.startswith(
+                result.record_id
             )
 
     # At least one result should have metadata
@@ -257,14 +258,14 @@ async def test_query_with_missing_chunk_fallback(
         assert 0.0 <= result.score <= 1.0
 
         # If metadata is missing, fields should be empty strings (not None)
-        assert isinstance(result.header_path, str)
-        assert isinstance(result.file_path, str)
+        assert isinstance(result.metadata.get("header_path", ""), str)
+        assert isinstance(result.metadata.get("file_path", ""), str)
 
-        # doc_id should be derivable from chunk_id even if chunk data is missing
-        if result.doc_id:
-            # Normal case: doc_id is set from chunk data
-            assert isinstance(result.doc_id, str)
-        # If doc_id is empty, fallback should have populated it from chunk_id parsing
+        # record_id should be derivable from chunk_id even if chunk data is missing
+        if result.record_id:
+            # Normal case: record_id is set from chunk data
+            assert isinstance(result.record_id, str)
+        # If record_id is empty, fallback should have populated it from chunk_id parsing
 
 
 @pytest.mark.asyncio
@@ -314,12 +315,12 @@ async def test_query_hydrates_from_keyword_when_vector_docstore_missing(
     )
     await orchestrator.drain_reindex(timeout=1.0)
 
-    hydrated = next(result for result in results if result.doc_id == "keyword_hydration")
+    hydrated = next(result for result in results if result.record_id == "keyword_hydration")
     assert hydrated.content.strip() != ""
     assert "Fallback hydration" in hydrated.content
-    assert hydrated.file_path.endswith("keyword_hydration.md")
-    assert hydrated.file_path != ""
-    assert hydrated.header_path != ""
+    assert hydrated.metadata.get("file_path", "").endswith("keyword_hydration.md")
+    assert hydrated.metadata.get("file_path", "") != ""
+    assert hydrated.metadata.get("header_path", "") != ""
     assert any(doc_id == "keyword_hydration" for doc_id, _ in reindex_calls)
 
 
@@ -384,13 +385,13 @@ async def test_query_enriches_incomplete_vector_chunk_from_keyword_metadata(
     await orchestrator.drain_reindex(timeout=1.0)
 
     hydrated = next(
-        result for result in results if result.doc_id == "partial_vector_hydration"
+        result for result in results if result.record_id == "partial_vector_hydration"
     )
     assert hydrated.content.strip() != ""
     assert "Keyword hydration should fill missing vector fields" in hydrated.content
-    assert hydrated.file_path.endswith("partial_vector_hydration.md")
-    assert hydrated.header_path != ""
-    assert hydrated.project_id == "vector-project"
+    assert hydrated.metadata.get("file_path", "").endswith("partial_vector_hydration.md")
+    assert hydrated.metadata.get("header_path", "") != ""
+    assert hydrated.metadata.get("project_id") == "vector-project"
     assert any(doc_id == "partial_vector_hydration" for doc_id, _ in reindex_calls)
 
 
@@ -422,8 +423,19 @@ async def test_chunk_result_serialization_in_pipeline(config, manager, orchestra
 
     assert len(results) > 0
 
-    # Serialize results
-    results_dict = [result.to_dict() for result in results]
+    # domain.ChunkResult carries source-specific fields inside `metadata`
+    # rather than via a to_dict() method; build the equivalent serialized
+    # shape from chunk_id/record_id/score/metadata directly.
+    results_dict = [
+        {
+            "chunk_id": result.chunk_id,
+            "doc_id": result.record_id,
+            "score": result.score,
+            "header_path": result.metadata.get("header_path", ""),
+            "file_path": result.metadata.get("file_path", ""),
+        }
+        for result in results
+    ]
 
     # Verify serialization format
     assert isinstance(results_dict, list)
@@ -494,10 +506,11 @@ Additional details.
 
     # At least one result should have a header_path with multiple levels
     for result in results:
-        if " > " in result.header_path or ">" in result.header_path:
+        header_path = result.metadata.get("header_path", "")
+        if " > " in header_path or ">" in header_path:
             # Verify header path structure
-            assert isinstance(result.header_path, str)
-            assert len(result.header_path) > 0
+            assert isinstance(header_path, str)
+            assert len(header_path) > 0
             break
 
     # Complex documents should have nested headers
@@ -526,9 +539,9 @@ async def test_chunk_result_contains_project_id(config, manager, orchestrator, t
     )
 
     assert results
-    assert any(result.project_id == "docs-project" for result in results)
+    assert any(result.metadata.get("project_id") == "docs-project" for result in results)
     assert any(
-        result.to_dict().get("project_id") == "docs-project" for result in results
+        result.metadata.get("project_id") == "docs-project" for result in results
     )
 
 
@@ -659,7 +672,7 @@ async def test_query_records_project_uplift_provenance(
         project_context="docs-project",
     )
 
-    uplifted = next(result for result in results if result.doc_id == "uplifted_doc")
+    uplifted = next(result for result in results if result.record_id == "uplifted_doc")
     assert uplifted.provenance is not None
     adjustments = uplifted.provenance.to_dict().get("adjustments", {})
     assert isinstance(adjustments, dict)
@@ -729,9 +742,9 @@ This extra content keeps the document above the parent chunk threshold.
     recovered = next(
         result for result in fallback_results if result.chunk_id == child_chunk_id
     )
-    assert recovered.file_path.endswith("parent_fallback.md")
+    assert recovered.metadata.get("file_path", "").endswith("parent_fallback.md")
     assert recovered.content.strip() != ""
-    assert recovered.doc_id == "parent_fallback"
+    assert recovered.record_id == "parent_fallback"
 
 
 @pytest.mark.asyncio
@@ -770,13 +783,15 @@ Additional notes keep the section large enough for parent expansion.
         top_n=5,
     )
 
-    matching_results = [result for result in results if result.doc_id == "clean_chunk_result"]
+    matching_results = [result for result in results if result.record_id == "clean_chunk_result"]
     assert matching_results
     assert any(
         "Authentication Details" in result.content and not result.content.startswith("#")
         for result in matching_results
     )
-    assert all("+" not in result.header_path for result in matching_results)
+    assert all(
+        "+" not in result.metadata.get("header_path", "") for result in matching_results
+    )
 
     child_result = next(
         (result for result in matching_results if "_parent_" not in result.chunk_id),

@@ -126,8 +126,8 @@ async def test_default_spec_matches_legacy_orchestrator(
     spec_results = spec_context.metadata["chunk_results"]
     spec_compression_stats = spec_context.metadata["compression_stats"]
 
-    assert [(r.chunk_id, r.doc_id, r.score) for r in spec_results] == [
-        (r.chunk_id, r.doc_id, r.score) for r in legacy_results
+    assert [(r.chunk_id, r.record_id, r.score) for r in spec_results] == [
+        (r.chunk_id, r.record_id, r.score) for r in legacy_results
     ]
     assert [r.content for r in spec_results] == [r.content for r in legacy_results]
     assert spec_compression_stats == legacy_compression_stats

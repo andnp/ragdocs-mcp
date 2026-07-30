@@ -155,7 +155,7 @@ class SearchEvaluationHarness:
                 else None,
             )
             ranked_doc_ids = tuple(
-                _dedupe_doc_ids([result.doc_id for result in chunk_results])
+                _dedupe_doc_ids([result.record_id for result in chunk_results])
             )
             ranked_paths = tuple(
                 self.doc_id_to_path.get(doc_id, f"<unknown:{doc_id}>")
