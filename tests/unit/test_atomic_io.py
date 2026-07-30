@@ -76,11 +76,14 @@ class TestAtomicWriteJson:
         original_data = {"original": "data"}
         target.write_text(json.dumps(original_data))
 
-        with patch(
-            "searchkernel.utils.atomic_io.os.replace", side_effect=OSError("Simulated failure")
+        with (
+            patch(
+                "searchkernel.utils.atomic_io.os.replace",
+                side_effect=OSError("Simulated failure"),
+            ),
+            pytest.raises(OSError),
         ):
-            with pytest.raises(OSError):
-                atomic_write_json(target, {"new": "data"})
+            atomic_write_json(target, {"new": "data"})
 
         with open(target) as f:
             loaded = json.load(f)

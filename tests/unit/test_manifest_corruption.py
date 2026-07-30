@@ -9,7 +9,7 @@ import json
 import pytest
 
 from searchkernel.indexing.manifest import IndexManifest, load_manifest, save_manifest
-from searchkernel.indexing.reconciler import reconcile_indices, build_indexed_files_map
+from searchkernel.indexing.reconciler import build_indexed_files_map, reconcile_indices
 
 
 @pytest.fixture

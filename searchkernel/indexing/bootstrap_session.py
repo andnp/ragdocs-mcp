@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-import logging
 from pathlib import Path
 
+from searchkernel.indexing import tasks as indexing_tasks
 from searchkernel.indexing.bootstrap_checkpoint import (
     BootstrapFileStamp,
     build_file_stamps,
@@ -20,7 +21,6 @@ from searchkernel.indexing.bootstrap_snapshot import (
     derive_loaded_index_state_snapshot,
 )
 from searchkernel.indexing.manifest import IndexManifest, load_manifest
-from searchkernel.indexing import tasks as indexing_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ class BootstrapSession:
     ) -> None:
         try:
             await self.load_persisted_indices()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- startup boundary; report and continue rather than crash
             self.report_failure(exc, durably_completed_targets, total_targets)
             return
 

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from searchkernel.indexing.bootstrap_checkpoint import BootstrapCheckpoint, BootstrapFileStamp
+from searchkernel.indexing.bootstrap_checkpoint import (
+    BootstrapCheckpoint,
+    BootstrapFileStamp,
+)
 from searchkernel.indexing.bootstrap_snapshot import (
     BootstrapReadinessSnapshot,
     PublicIndexStateSnapshot,

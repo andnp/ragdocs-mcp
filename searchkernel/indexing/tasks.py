@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
+import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-import logging
 from pathlib import Path
-import threading
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from searchkernel.coordination.task_submission import (
     coalesce_pending_first_args,
-    get_pending_task_count as get_shared_pending_task_count,
     get_pending_task_first_args,
     get_pending_task_values,
     is_backpressured,
     submit_coalesced_batch_task,
     submit_single_task,
+)
+from searchkernel.coordination.task_submission import (
+    get_pending_task_count as get_shared_pending_task_count,
 )
 from searchkernel.git.repository import get_git_ref_signature
 from searchkernel.indexing.bootstrap_checkpoint import (
@@ -32,8 +34,9 @@ from searchkernel.indexing.git_refresh_state import (
 from searchkernel.indexing.rebuild_service import run_rebuild
 
 if TYPE_CHECKING:
-    from searchkernel.domain import Record
     from huey import SqliteHuey
+
+    from searchkernel.domain import Record
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +110,7 @@ class IndexManagerLike(Protocol):
         persist: bool = False,
     ) -> None: ...
     def persist(self) -> None: ...
-    def index_record(self, record: "Record") -> None: ...
+    def index_record(self, record: Record) -> None: ...
 
 
 # Module-level references set during initialization
@@ -175,7 +178,7 @@ def register_tasks(
             logger.info("Task completed: indexed %s", file_path)
             return True
         except Exception:
-            logger.error("Task failed: index %s", file_path, exc_info=True)
+            logger.exception("Task failed: index %s", file_path)
             return False
 
     @huey.task()
@@ -210,20 +213,18 @@ def register_tasks(
                     completed_paths.append(file_path)
                 except Exception:
                     failures.append(file_path)
-                    logger.error(
+                    logger.exception(
                         "Task failed within batch: index %s",
                         file_path,
-                        exc_info=True,
                     )
 
             if completed_paths:
                 try:
                     _index_manager.persist()
                 except Exception:
-                    logger.error(
+                    logger.exception(
                         "Batch fallback persist failed for %d indexed document(s)",
                         len(completed_paths),
-                        exc_info=True,
                     )
                     return False
 
@@ -287,10 +288,9 @@ def register_tasks(
             try:
                 _index_manager.index_record(record)
             except Exception as exc:
-                logger.error(
+                logger.exception(
                     "Task failed within record batch at index %d",
                     index,
-                    exc_info=True,
                 )
                 return {
                     "status": "error",
@@ -303,7 +303,7 @@ def register_tasks(
         try:
             _index_manager.persist()
         except Exception as exc:
-            logger.error("Task failed to persist record batch", exc_info=True)
+            logger.exception("Task failed to persist record batch")
             return {
                 "status": "error",
                 "error": "record_indexing_failed",
@@ -326,7 +326,7 @@ def register_tasks(
             logger.info("Task completed: removed %s", doc_id)
             return True
         except Exception:
-            logger.error("Task failed: remove %s", doc_id, exc_info=True)
+            logger.exception("Task failed: remove %s", doc_id)
             return False
 
     @huey.task()
@@ -357,20 +357,18 @@ def register_tasks(
                     removed_doc_ids.append(doc_id)
                 except Exception:
                     failures.append(doc_id)
-                    logger.error(
+                    logger.exception(
                         "Task failed within batch: remove %s",
                         doc_id,
-                        exc_info=True,
                     )
 
             if removed_doc_ids:
                 try:
                     _index_manager.persist()
                 except Exception:
-                    logger.error(
+                    logger.exception(
                         "Batch fallback persist failed for %d removed document(s)",
                         len(removed_doc_ids),
-                        exc_info=True,
                     )
                     return False
 
@@ -417,7 +415,7 @@ def register_tasks(
             since = str(max(0, cursor - 1)) if cursor is not None else None
             latest_cursor = cursor
 
-            def _track_record(record: "Record") -> None:
+            def _track_record(record: Record) -> None:
                 nonlocal latest_cursor
                 timestamp = int(record.updated_at.timestamp())
                 latest_cursor = max(latest_cursor or timestamp, timestamp)
@@ -444,7 +442,7 @@ def register_tasks(
             )
             return True
         except Exception:
-            logger.error("Task failed: refresh git %s", git_dir_path, exc_info=True)
+            logger.exception("Task failed: refresh git %s", git_dir_path)
             return False
         finally:
             with _git_refresh_lock:
@@ -474,7 +472,7 @@ def register_tasks(
             )
             return payload.get("status") == "succeeded"
         except Exception:
-            logger.error("Task failed: rebuild index", exc_info=True)
+            logger.exception("Task failed: rebuild index")
             return False
 
     index_document_task = _index_document

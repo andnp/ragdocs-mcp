@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from searchkernel.search.time_scoring import (
     TierConfig,
@@ -21,7 +21,7 @@ def apply_recency_boost(
         return score
 
     modified_time = modified_times[doc_id]
-    timestamp = datetime.fromtimestamp(modified_time, timezone.utc)
+    timestamp = datetime.fromtimestamp(modified_time, UTC)
 
     config = TierConfig()
     if len(tiers) >= 1:

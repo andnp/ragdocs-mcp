@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from searchkernel.domain.models import Record
 from searchkernel.domain.timestamp_policy import (
@@ -6,8 +6,8 @@ from searchkernel.domain.timestamp_policy import (
     TimestampSelector,
 )
 
-_CREATED_AT = datetime(2020, 1, 1, tzinfo=timezone.utc)
-_UPDATED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_CREATED_AT = datetime(2020, 1, 1, tzinfo=UTC)
+_UPDATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _record() -> Record:

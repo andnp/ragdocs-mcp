@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 class ValidationError(ValueError):
     """Raised when MCP tool arguments fail validation."""
 
-    pass
 
 
 def validate_query(arguments: dict, param_name: str = "query") -> str:

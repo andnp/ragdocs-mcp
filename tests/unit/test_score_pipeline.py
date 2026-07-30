@@ -8,7 +8,7 @@ Tests the consolidated pipeline that handles:
 4. Optional time-based boosting
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -18,7 +18,6 @@ from searchkernel.search.score_pipeline import (
     rrf_score,
 )
 from searchkernel.search.time_scoring import DecayConfig, TierConfig
-
 
 # =============================================================================
 # RRF Score Calculation
@@ -309,7 +308,7 @@ class TestBoostStage:
         )
         pipeline = ScorePipeline(config)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         recent = now - timedelta(days=3)
 
         results = [("doc1", 0.5)]
@@ -333,7 +332,7 @@ class TestBoostStage:
         )
         pipeline = ScorePipeline(config)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         old = now - timedelta(days=60)
 
         results = [("doc1", 0.5)]
@@ -357,7 +356,7 @@ class TestBoostStage:
         )
         pipeline = ScorePipeline(config)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         recent = now - timedelta(days=3)
         old = now - timedelta(days=60)
 
@@ -385,7 +384,7 @@ class TestBoostStage:
         )
         pipeline = ScorePipeline(config)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         week_old = now - timedelta(days=7)
 
         results = [("doc1", 1.0)]
@@ -446,7 +445,7 @@ class TestFullPipeline:
             "semantic": [("doc1", 0.9), ("doc2", 0.7)],
         }
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamps = {"doc1": now - timedelta(days=3)}
 
         results = pipeline.run(strategy_results, timestamps)
@@ -519,7 +518,7 @@ class TestStageIsolation:
             time_scoring_config=TierConfig(),
         )
         pipeline_with_boost = ScorePipeline(config)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         boosted = pipeline_with_boost.boost(
             [("doc1", 0.5)],
             {"doc1": now - timedelta(days=3)},

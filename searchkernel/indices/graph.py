@@ -650,7 +650,7 @@ class GraphStore:
             current_count = conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[
                 0
             ]
-        except Exception:
+        except sqlite3.Error:
             return False
 
         last_count = self._last_community_node_count

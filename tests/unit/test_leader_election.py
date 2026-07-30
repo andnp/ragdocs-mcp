@@ -16,7 +16,6 @@ import pytest
 from searchkernel.lifecycle import LeaderElection, LifecycleCoordinator, LifecycleState
 from searchkernel.storage.db import DatabaseManager
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-import searchkernel.mcp.tools.document_tools  # noqa: F401 - registers handlers
 from mcp.types import TextContent
 
+import searchkernel.mcp.tools.document_tools  # noqa: F401 - registers handlers
 from searchkernel.mcp.handlers import HandlerContext, get_handler
 from searchkernel.mcp.tools.document_tools import get_document_tools
 

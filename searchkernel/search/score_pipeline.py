@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from searchkernel.search.calibration import calibrate_results
 from searchkernel.search.normalization import normalize_result_scores
@@ -129,7 +129,7 @@ class ScorePipeline:
         if config is None:
             config = TierConfig() if mode == TimeScoreMode.TIERS else DecayConfig()
 
-        reference_time = datetime.now(timezone.utc)
+        reference_time = datetime.now(UTC)
 
         boosted = []
         for doc_id, score in results:

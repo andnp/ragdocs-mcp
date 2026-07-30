@@ -5,8 +5,8 @@ import errno
 import json
 import logging
 import os
-import sys
 import signal
+import sys
 import time
 from pathlib import Path
 
@@ -18,29 +18,30 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TQDM_DISABLE", "1")
 
+from datetime import UTC
+
 import click
 import uvicorn
 from rich.console import Console
 from rich.table import Table
 
 from searchkernel.app.runtime import configure_runtime_threads
-from searchkernel.config import ensure_runtime_project_registered, load_config
-from searchkernel.daemon.queue_status import get_queue_stats
-from searchkernel.daemon import DaemonMetadata, RuntimePaths
-from searchkernel.daemon.health import (
-    request_daemon_socket,
+from searchkernel.cli_utils.formatters import print_debug_stats, print_result_panel
+from searchkernel.cli_utils.validators import (
+    validate_range,
+    validate_timestamp_range,
 )
+from searchkernel.config import ensure_runtime_project_registered, load_config
+from searchkernel.context import ApplicationContext
+from searchkernel.coordination.queue import get_huey
+from searchkernel.daemon import DaemonMetadata, RuntimePaths
 from searchkernel.daemon.client import (
     call_with_supported_kwargs,
     raise_daemon_request_error,
     request_daemon_json_with_dependencies,
 )
-from searchkernel.daemon.rebuild_commands import run_rebuild_command
-from searchkernel.daemon.runtime import create_daemon_runtime
-from searchkernel.daemon.status import (
-    build_daemon_status_payload,
-    format_daemon_startup_result,
-    request_daemon_overview,
+from searchkernel.daemon.health import (
+    request_daemon_socket,
 )
 from searchkernel.daemon.management import (
     DaemonInspection,
@@ -51,8 +52,14 @@ from searchkernel.daemon.management import (
     stop_daemon,
     wait_for_daemon_ready,
 )
-from searchkernel.context import ApplicationContext
-from searchkernel.coordination.queue import get_huey
+from searchkernel.daemon.queue_status import get_queue_stats
+from searchkernel.daemon.rebuild_commands import run_rebuild_command
+from searchkernel.daemon.runtime import create_daemon_runtime
+from searchkernel.daemon.status import (
+    build_daemon_status_payload,
+    format_daemon_startup_result,
+    request_daemon_overview,
+)
 from searchkernel.indexing.tasks import register_tasks
 from searchkernel.lifecycle import LifecycleCoordinator, LifecycleState
 from searchkernel.utils import should_include_file
@@ -61,11 +68,6 @@ from searchkernel.worker.process import (
     _worker_status_path,
     is_expected_daemon_parent,
 )
-from searchkernel.cli_utils.validators import (
-    validate_range,
-    validate_timestamp_range,
-)
-from searchkernel.cli_utils.formatters import print_result_panel, print_debug_stats
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -155,7 +157,7 @@ async def _run_worker_forever_async(
         def _schedule() -> None:
             try:
                 result.set_result(ctx.schedule_vocabulary_catch_up())
-            except Exception as exc:  # pragma: no cover - defensive handoff
+            except Exception as exc:  # noqa: BLE001 -- must forward any error to the awaiting future
                 result.set_exception(exc)
 
         worker_loop.call_soon_threadsafe(_schedule)
@@ -383,13 +385,17 @@ def worker_run(
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        logger.error(f"Failed to run worker: {e}", exc_info=True)
+        logger.exception("Failed to run worker")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
 def _apply_project_detection(config, project_override: str | None = None):
-    from searchkernel.config import detect_project, resolve_index_path, resolve_documents_path
+    from searchkernel.config import (
+        detect_project,
+        resolve_documents_path,
+        resolve_index_path,
+    )
 
     detected_project = detect_project(
         projects=config.projects, project_override=project_override
@@ -476,7 +482,7 @@ def mcp(project: str | None):
         asyncio.run(_run())
     except KeyboardInterrupt:
         pass  # Graceful shutdown handled
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to start MCP server: {e}")
         sys.exit(1)
 
@@ -669,7 +675,7 @@ def daemon_run(project: str | None):
         asyncio.run(_run_daemon_forever())
     except KeyboardInterrupt:
         pass
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to run daemon: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -717,7 +723,7 @@ def daemon_start(project: str | None, timeout: float):
             project_override=project,
             timeout_seconds=timeout,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to start daemon: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -789,7 +795,7 @@ def daemon_stop(timeout: float):
     """Stop the daemon if it is running."""
     try:
         metadata = stop_daemon(timeout_seconds=timeout)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to stop daemon: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -824,7 +830,7 @@ def daemon_restart(project: str | None, timeout: float):
             project_override=project,
             start_timeout_seconds=timeout,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to restart daemon: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -883,7 +889,7 @@ def index_stats(project: str | None, output_json: bool):
             click.echo(
                 f"Watcher events: {watcher_stats.get('events_received', 0)} received / {watcher_stats.get('events_processed', 0)} processed"
             )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to inspect index stats: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -945,7 +951,7 @@ def reindex_cmd(model: str, truncate_dim: int | None, project: str | None):
         )
         click.echo("Stages: expand → backfill → flip → contract")
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to initiate reindex: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -1112,7 +1118,7 @@ def queue_status(
                 )
         elif state.lower() in ("all", "failed"):
             click.echo("Recent failures: none")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to inspect queue status: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -1177,7 +1183,7 @@ def queue_purge(
         click.echo(f"Scheduled tasks: {payload['scheduled_count']}")
         click.echo(f"Failed tasks: {payload['failed_count']}")
         click.echo(f"Worker running: {'yes' if payload['worker_running'] else 'no'}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to purge queue state: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -1349,7 +1355,7 @@ def run(host: str, port: int, project: str | None):
             port=port,
             factory=True,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to start server: {e}")
         sys.exit(1)
 
@@ -1373,7 +1379,7 @@ def rebuild_index_cmd(project: str | None, all_projects: bool):
             emit=click.echo,
         )
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to rebuild index: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -1461,7 +1467,7 @@ def check_config_cmd(project: str | None):
                 f"📭 No index found (will be created on first run): {index_path}"
             )
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to load configuration: {e}")
         click.echo(f"❌ Configuration Error: {e}", err=True)
         sys.exit(1)
@@ -1574,7 +1580,7 @@ def query(
             err=True,
         )
         sys.exit(1)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Query failed: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -1668,10 +1674,10 @@ def search_commits(
         results = daemon_payload.get("results", [])
         if results:
             console.print(f"[bold]Found {len(results)} results:[/bold]\n")
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             for idx, commit in enumerate(results, 1):
-                commit_date = datetime.fromtimestamp(commit["timestamp"], timezone.utc)
+                commit_date = datetime.fromtimestamp(commit["timestamp"], UTC)
                 date_str = commit_date.strftime("%Y-%m-%d %H:%M:%S UTC")
                 panel_content = [
                     f"[yellow]Commit:[/yellow] {commit['hash'][:8]}",
@@ -1698,7 +1704,7 @@ def search_commits(
             console.print("[yellow]No results found.[/yellow]")
         return
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Git commit search failed: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)

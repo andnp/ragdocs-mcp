@@ -36,7 +36,7 @@ class SingletonGuard:
 
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError):
+            except OSError:
                 self._check_stale_lock_unix(fd)
                 os.close(fd)
                 raise RuntimeError(
@@ -67,8 +67,8 @@ class SingletonGuard:
             if fd is not None:
                 try:
                     os.close(fd)
-                except Exception:
-                    pass
+                except OSError:
+                    logger.debug("Failed to close lock fd during error cleanup", exc_info=True)
             raise RuntimeError(f"Failed to acquire singleton lock: {e}") from e
 
     def _acquire_windows(self) -> None:
@@ -114,8 +114,8 @@ class SingletonGuard:
             if fd is not None:
                 try:
                     os.close(fd)
-                except Exception:
-                    pass
+                except OSError:
+                    logger.debug("Failed to close lock fd during error cleanup", exc_info=True)
             raise RuntimeError(f"Failed to acquire singleton lock: {e}") from e
 
     def _check_stale_lock_unix(self, fd: int) -> None:
@@ -135,7 +135,7 @@ class SingletonGuard:
                 except ValueError:
                     logger.warning(f"Invalid lock file format: {self.lock_file_path}")
 
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             logger.debug(f"Failed to check stale lock: {e}")
 
     def _check_stale_lock_windows(self, fd: int) -> None:
@@ -155,7 +155,7 @@ class SingletonGuard:
                 except ValueError:
                     logger.warning(f"Invalid lock file format: {self.lock_file_path}")
 
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             logger.debug(f"Failed to check stale lock: {e}")
 
     def _is_process_alive(self, pid: int) -> bool:
@@ -188,7 +188,7 @@ class SingletonGuard:
 
                 try:
                     msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
-                except Exception as e:
+                except OSError as e:
                     logger.warning(f"Failed to unlock file descriptor: {e}")
 
             os.close(self._lock_fd)
@@ -202,7 +202,7 @@ class SingletonGuard:
             self._acquired = False
             logger.info(f"Singleton lock released: {self.lock_file_path}")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- lock release must never raise
             logger.error(f"Failed to release singleton lock: {e}")
 
     def __enter__(self):

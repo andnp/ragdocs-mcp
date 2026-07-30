@@ -13,8 +13,9 @@ os.environ.setdefault("TQDM_DISABLE", "1")
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
+import searchkernel.mcp.tools.document_tools  # noqa: F401 - registers handlers
 from searchkernel.daemon.health import (
     request_daemon_socket,
 )
@@ -23,7 +24,6 @@ from searchkernel.daemon.management import (
     start_daemon,
     wait_for_daemon_ready,
 )
-import searchkernel.mcp.tools.document_tools  # noqa: F401 - registers handlers
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ class MCPServer:
                 raise RuntimeError(str(response.get("details") or response.get("error")))
             tools = response.get("tools")
             if not isinstance(tools, list):
-                raise RuntimeError("Daemon returned an invalid MCP tool payload")
+                raise TypeError("Daemon returned an invalid MCP tool payload")
             return [
                 Tool(
                     name=str(tool.get("name", "")),
@@ -110,7 +110,7 @@ class MCPServer:
                 if isinstance(tool, dict)
             ]
         except Exception as exc:
-            logger.error("Failed to fetch tools from daemon", exc_info=True)
+            logger.exception("Failed to fetch tools from daemon")
             raise RuntimeError(f"Daemon unavailable for MCP tools: {exc}") from exc
 
     async def _call_remote_tool(
@@ -130,7 +130,7 @@ class MCPServer:
                 raise RuntimeError(str(response.get("details") or response.get("error")))
             contents = response.get("contents")
             if not isinstance(contents, list):
-                raise RuntimeError("Daemon returned an invalid MCP tool response")
+                raise TypeError("Daemon returned an invalid MCP tool response")
             return [
                 TextContent(
                     type=str(content.get("type", "text")),
@@ -140,7 +140,7 @@ class MCPServer:
                 if isinstance(content, dict)
             ]
         except Exception as exc:
-            logger.error("Failed to call daemon MCP tool %s", name, exc_info=True)
+            logger.exception("Failed to call daemon MCP tool %s", name)
             raise RuntimeError(f"Daemon unavailable for MCP tool '{name}': {exc}") from exc
 
     async def shutdown(self) -> None:

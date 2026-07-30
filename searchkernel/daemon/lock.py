@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import fcntl
+import time
 from dataclasses import dataclass
 from pathlib import Path
-import time
-from typing import IO
+from typing import IO, Self
 
 
 class DaemonLockTimeoutError(TimeoutError):
@@ -48,7 +48,7 @@ class FilesystemLock:
         finally:
             handle.close()
 
-    def __enter__(self) -> FilesystemLock:
+    def __enter__(self) -> Self:
         self.acquire()
         return self
 

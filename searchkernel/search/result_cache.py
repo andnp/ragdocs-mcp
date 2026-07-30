@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 
 @dataclass(frozen=True)
@@ -26,7 +26,7 @@ class QueryResultCacheKey:
 ValueT = TypeVar("ValueT")
 
 
-class QueryResultCache(Generic[ValueT]):
+class QueryResultCache[ValueT]:
     def __init__(self, max_entries: int = 64):
         self._max_entries = max(1, max_entries)
         self._entries: OrderedDict[QueryResultCacheKey, ValueT] = OrderedDict()

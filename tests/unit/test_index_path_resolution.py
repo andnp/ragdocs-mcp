@@ -1,5 +1,7 @@
-import pytest
 from pathlib import Path
+
+import pytest
+
 from searchkernel.config import Config, IndexingConfig, resolve_index_path
 
 

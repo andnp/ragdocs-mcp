@@ -1,8 +1,14 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.domain import Record, RecordStatus
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
@@ -36,7 +42,7 @@ def manager(tmp_path, shared_embedding_model):
 
 
 def _make_commit_record(source_id="git:abc123", body="Fix the login bug in the API handler."):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Record(
         source_kind="git_commit",
         source_id=source_id,

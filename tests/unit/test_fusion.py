@@ -6,7 +6,7 @@ Tests cover:
 - Recency boost tier application
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -56,7 +56,7 @@ class TestRecencyBoost:
         - >30 days: 1.0x (no boost)
         """
         base_score = 1.0
-        now = datetime.now(timezone.utc).timestamp()
+        now = datetime.now(UTC).timestamp()
 
         # 7 days tier (1.2x boost)
         modified_times_7days = {"doc1": now - (5 * 86400)}  # 5 days ago
@@ -80,7 +80,7 @@ class TestRecencyBoost:
         Should return original score without modification.
         """
         base_score = 1.0
-        modified_times = {"doc1": datetime.now(timezone.utc).timestamp()}
+        modified_times = {"doc1": datetime.now(UTC).timestamp()}
         tiers = [(7, 1.2), (30, 1.1)]
 
         # Document not in modified_times
@@ -93,7 +93,7 @@ class TestRecencyBoost:
         Ensures correct tier selection near 7 and 30 day boundaries.
         """
         base_score = 1.0
-        now = datetime.now(timezone.utc).timestamp()
+        now = datetime.now(UTC).timestamp()
         tiers = [(7, 1.2), (30, 1.1)]
 
         # Just under 7 days ago (should get 1.2x boost)

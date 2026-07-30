@@ -5,13 +5,13 @@ import pytest
 
 from searchkernel.config import (
     Config,
-    IndexingConfig,
     GitIndexingConfig,
+    IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.git.watcher import GitWatcher
 from searchkernel.git.repository import is_git_available
+from searchkernel.git.watcher import GitWatcher
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex

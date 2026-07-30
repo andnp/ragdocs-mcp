@@ -1,5 +1,5 @@
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.models import Chunk
@@ -17,7 +17,7 @@ def _create_test_chunk(index: int, doc_id: str = "test-doc") -> Chunk:
         metadata={},
         start_pos=0,
         end_pos=100,
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
 
@@ -58,7 +58,7 @@ def test_parallel_embedding_speedup(tmp_path, shared_embedding_model):
     # Log actual speedup (not an assertion, for observability)
     import logging
 
-    logging.info(
+    logging.getLogger(__name__).info(
         f"Parallel speedup: {speedup:.2f}x (seq: {sequential_time:.2f}s, par: {parallel_time:.2f}s)"
     )
 
@@ -234,7 +234,7 @@ def test_parallel_preserves_metadata(tmp_path, shared_embedding_model):
         metadata={"tags": ["test", "parallel"], "custom_field": "value"},
         start_pos=0,
         end_pos=100,
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     vector.add_chunks([chunk])

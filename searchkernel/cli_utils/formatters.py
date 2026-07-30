@@ -31,7 +31,7 @@ def print_debug_stats(
     compression_stats,
     min_confidence: float,
 ) -> None:
-    from searchkernel.models import SearchStrategyStats, CompressionStats
+    from searchkernel.models import CompressionStats, SearchStrategyStats
 
     if isinstance(strategy_stats, SearchStrategyStats):
         strategy_table = Table(

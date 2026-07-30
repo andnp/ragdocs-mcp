@@ -4,18 +4,18 @@ This module tests the document pruning logic that removes documents
 from all indices (vector, keyword, graph) and updates the manifest.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from searchkernel.config import Config, IndexingConfig
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indexing.manifest import IndexManifest, save_manifest
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indexing.manifest import IndexManifest, save_manifest
 from searchkernel.models import Chunk
 
 
@@ -31,7 +31,7 @@ def make_chunk(chunk_id: str, doc_id: str, content: str, index: int) -> Chunk:
         start_pos=0,
         end_pos=len(content),
         file_path=f"/docs/{doc_id}.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
 

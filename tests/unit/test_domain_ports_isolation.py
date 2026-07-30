@@ -82,7 +82,8 @@ def test_ports_embedding_provider_is_protocol():
 
 def test_record_serialization():
     """Verify Record can be serialized and deserialized."""
-    from datetime import datetime
+    from datetime import UTC, datetime
+
     from searchkernel.domain import Record, RecordStatus
 
     original = Record(
@@ -90,8 +91,8 @@ def test_record_serialization():
         source_id="test:123",
         title="Test Record",
         body="This is a test record.",
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
         status=RecordStatus.ACTIVE,
         metadata={"key": "value"},
         uri="test://record/123",

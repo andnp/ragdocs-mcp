@@ -210,22 +210,21 @@ class LifecycleCoordinator:
                 ctx.config.git_indexing.enabled
                 and ctx.config.git_indexing.watch_enabled
                 and huey_worker is None
-            ):
-                if ctx.git_indexing_enabled:
-                    repos = await asyncio.to_thread(ctx.discover_git_repositories)
+            ) and ctx.git_indexing_enabled:
+                repos = await asyncio.to_thread(ctx.discover_git_repositories)
 
-                    if repos:
-                        self._git_watcher = GitWatcher(
-                            git_repos=repos,
-                            index_manager=ctx.index_manager,
-                            config=ctx.config,
-                            poll_interval=ctx.config.git_indexing.poll_interval_seconds,
-                            use_tasks=huey_worker is not None,
-                        )
-                        self._git_watcher.start()
-                        logger.info(
-                            f"Git watcher started for {len(repos)} repositories"
-                        )
+                if repos:
+                    self._git_watcher = GitWatcher(
+                        git_repos=repos,
+                        index_manager=ctx.index_manager,
+                        config=ctx.config,
+                        poll_interval=ctx.config.git_indexing.poll_interval_seconds,
+                        use_tasks=huey_worker is not None,
+                    )
+                    self._git_watcher.start()
+                    logger.info(
+                        f"Git watcher started for {len(repos)} repositories"
+                    )
 
             if background_index:
                 self._state = LifecycleState.INITIALIZING
@@ -252,7 +251,7 @@ class LifecycleCoordinator:
                 self._write_daemon_metadata()
                 logger.info("Lifecycle: READY")
         except Exception:
-            logger.error("Startup failed, cleaning up resources", exc_info=True)
+            logger.exception("Startup failed, cleaning up resources")
             await self._cleanup_resources()
             self._state = LifecycleState.TERMINATED
             self._remove_daemon_metadata()
@@ -347,12 +346,12 @@ class LifecycleCoordinator:
     def _close_stdin(self) -> None:
         try:
             sys.stdin.close()
-        except Exception:
-            pass
+        except OSError:
+            logger.debug("Failed to close stdin stream", exc_info=True)
         try:
             os.close(0)
-        except Exception:
-            pass
+        except OSError:
+            logger.debug("Failed to close stdin fd", exc_info=True)
 
     def _start_emergency_timer(self) -> None:
         def emergency_exit():
@@ -417,7 +416,7 @@ class LifecycleCoordinator:
             await self._ctx.ensure_ready()
         except asyncio.CancelledError:
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- startup boundary; must not crash the process
             self.record_init_error(e)
             return
 
@@ -534,7 +533,7 @@ class LifecycleCoordinator:
             try:
                 leader_election.heartbeat()
             except Exception:
-                logger.error("Failed to refresh leader heartbeat", exc_info=True)
+                logger.exception("Failed to refresh leader heartbeat")
                 return
 
     async def _cleanup_resources(self) -> None:
@@ -563,32 +562,32 @@ class LifecycleCoordinator:
         if self._huey_worker is not None:
             try:
                 self._huey_worker.stop()
-            except Exception as e:
-                logger.error(f"Error stopping Huey worker: {e}", exc_info=True)
+            except Exception:
+                logger.exception("Error stopping Huey worker")
             self._huey_worker = None
 
         if self._leader_election is not None:
             try:
                 self._leader_election.release()
-            except Exception as e:
-                logger.error(f"Error releasing leader lock: {e}", exc_info=True)
+            except Exception:
+                logger.exception("Error releasing leader lock")
             self._leader_election = None
 
         if self._git_watcher:
             try:
                 await self._git_watcher.stop()
-            except Exception as e:
-                logger.error(f"Error stopping git watcher: {e}", exc_info=True)
+            except Exception:
+                logger.exception("Error stopping git watcher")
             self._git_watcher = None
 
         if self._ctx:
             try:
                 async with asyncio.timeout(self._graceful_timeout):
                     await self._ctx.stop()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Graceful shutdown timed out")
-            except Exception as e:
-                logger.error(f"Error during context cleanup: {e}", exc_info=True)
+            except Exception:
+                logger.exception("Error during context cleanup")
 
     async def _supervise_worker_health(self) -> None:
         while True:
@@ -611,7 +610,7 @@ class LifecycleCoordinator:
             try:
                 await asyncio.to_thread(worker.restart)
             except Exception:
-                logger.error("Failed to restart Huey worker subprocess", exc_info=True)
+                logger.exception("Failed to restart Huey worker subprocess")
 
     def install_signal_handlers(self, loop: asyncio.AbstractEventLoop) -> None:
         for sig in (signal.SIGINT, signal.SIGTERM):

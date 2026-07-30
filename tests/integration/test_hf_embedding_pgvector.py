@@ -9,14 +9,14 @@ is marked slow + serial. Set SEARCHKERNEL_PG_DSN to run it.
 """
 
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
 from searchkernel.adapters.embedding import HuggingFaceEmbeddingProvider
 from searchkernel.adapters.stores.pgvector import (
-    PostgresConnection,
     PGVectorStore,
+    PostgresConnection,
     _create_schema,
 )
 from searchkernel.domain import Record, RecordStatus
@@ -55,7 +55,7 @@ def pg_conn():
 
 
 def _doc(source_id: str, title: str, body: str) -> Record:
-    now = datetime.now()
+    now = datetime.now(UTC)
     return Record(
         source_kind="test",
         source_id=source_id,

@@ -7,12 +7,18 @@ Uses real indices and async query methods.
 """
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig, ChunkingConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
@@ -95,7 +101,7 @@ def create_test_corpus(config, manager):
     - doc5: Contains both keyword and semantic matches
     """
     docs_path = Path(config.indexing.documents_path)
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
 
     # Document 1: Keyword-rich document
     doc1 = docs_path / "authentication.md"
@@ -286,7 +292,7 @@ async def test_graph_expansion_prefers_precise_non_hub_neighbor(
     noisy_doc.write_text("# Noisy Hub\n\nGeneric related notes.")
     manager.index_document(str(noisy_doc))
 
-    vector, _keyword, graph = indices
+    _vector, _keyword, graph = indices
     graph.add_edge("seed", "precise_impl", "implements")
     graph.add_edge("seed", "noisy_hub", "links_to")
     for index in range(6):

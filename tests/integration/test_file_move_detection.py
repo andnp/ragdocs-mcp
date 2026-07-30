@@ -3,14 +3,15 @@
 Tests end-to-end move detection workflow with real indices and files.
 """
 
-import pytest
 from pathlib import Path
 
-from searchkernel.config import Config, IndexingConfig, ChunkingConfig
+import pytest
+
+from searchkernel.config import ChunkingConfig, Config, IndexingConfig
 from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.orchestrator import SearchOrchestrator
 
 

@@ -3,8 +3,9 @@
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from searchkernel.ports.stores import CacheStore
 

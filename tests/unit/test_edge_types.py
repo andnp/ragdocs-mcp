@@ -10,13 +10,12 @@ Tests cover:
 
 from searchkernel.search.edge_types import (
     EDGE_TYPE_WEIGHTS,
-    EdgeType,
     HEADER_TO_EDGE_TYPE,
+    EdgeType,
     edge_type_weight,
     infer_edge_type,
     normalize_edge_type,
 )
-
 
 # ============================================================================
 # EdgeType Enum Tests

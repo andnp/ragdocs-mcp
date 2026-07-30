@@ -356,7 +356,7 @@ def test_get_neighbors_thread_safe_with_concurrent_modifications(graph_store):
             try:
                 graph_store.get_neighbors(node_id, depth=2)
                 iterations += 1
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- concurrency stress test captures any error
                 errors.append(f"Reader error on {node_id}: {e}")
                 break
 
@@ -371,7 +371,7 @@ def test_get_neighbors_thread_safe_with_concurrent_modifications(graph_store):
                 # Connect to existing nodes
                 graph_store.add_edge(node_id, f"node_{i % 20}", "link")
                 graph_store.remove_node(node_id)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- concurrency stress test captures any error
                 errors.append(f"Writer error: {e}")
                 break
 

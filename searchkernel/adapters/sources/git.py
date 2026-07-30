@@ -5,9 +5,9 @@ suitable for indexing into the kernel's vector/keyword stores.
 """
 
 import logging
-from datetime import datetime
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 from searchkernel.domain import ChangeSignal, Cursor, Record, RecordStatus
 from searchkernel.git.commit_parser import build_commit_document, parse_commit
@@ -86,10 +86,9 @@ class GitContentSource:
                 record = self._commit_to_record(commit_hash)
                 if record is not None:
                     yield record
-            except Exception as e:
-                logger.error(
-                    f"Failed to convert commit {commit_hash[:8]} to Record: {e}",
-                    exc_info=True,
+            except Exception:
+                logger.exception(
+                    f"Failed to convert commit {commit_hash[:8]} to Record"
                 )
                 continue
 
@@ -124,7 +123,7 @@ class GitContentSource:
         body = build_commit_document(commit_data)
 
         # Convert unix timestamp to datetime
-        commit_dt = datetime.fromtimestamp(commit_data.timestamp)
+        commit_dt = datetime.fromtimestamp(commit_data.timestamp, tz=UTC)
 
         # Build metadata dict
         metadata = {

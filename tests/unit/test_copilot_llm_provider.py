@@ -92,9 +92,11 @@ async def test_copilot_not_found_on_first_use():
     provider = CopilotLLMProvider()
     # _copilot_path and _checked_copilot are initially None/False
 
-    with mock.patch("shutil.which", return_value=None):
-        with pytest.raises(RuntimeError, match="copilot CLI not found"):
-            await provider.complete("Test prompt")
+    with (
+        mock.patch("shutil.which", return_value=None),
+        pytest.raises(RuntimeError, match="copilot CLI not found"),
+    ):
+        await provider.complete("Test prompt")
 
 
 @pytest.mark.asyncio

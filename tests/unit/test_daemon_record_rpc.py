@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -16,8 +16,8 @@ def _record() -> Record:
         source_id="gmail:message-1",
         title="Hello",
         body="Message body",
-        created_at=datetime(2026, 7, 29, 12, 30, 1, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 7, 29, 12, 31, 2, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 29, 12, 30, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 29, 12, 31, 2, tzinfo=UTC),
         status=RecordStatus.ACTIVE,
         metadata={"labels": ["inbox"]},
         uri="https://example.test/message-1",
@@ -47,8 +47,8 @@ def test_deserialize_record_accepts_utc_z_suffix() -> None:
 
     restored = deserialize_record(payload)
 
-    assert restored.created_at == datetime(2026, 7, 29, 12, 30, 1, tzinfo=timezone.utc)
-    assert restored.updated_at == datetime(2026, 7, 29, 12, 31, 2, tzinfo=timezone.utc)
+    assert restored.created_at == datetime(2026, 7, 29, 12, 30, 1, tzinfo=UTC)
+    assert restored.updated_at == datetime(2026, 7, 29, 12, 31, 2, tzinfo=UTC)
 
 
 @pytest.mark.parametrize(

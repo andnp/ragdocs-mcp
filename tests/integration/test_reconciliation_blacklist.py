@@ -99,8 +99,9 @@ def test_reconciliation_removes_newly_blacklisted_venv_files(
     (venv_dir / "orbax" / "README.md").write_text("# Orbax\n\nCheckpointing.")
 
     # Discover files (will not include .venv due to exclude patterns)
-    from searchkernel.utils import should_include_file
     import glob
+
+    from searchkernel.utils import should_include_file
 
     pattern = str(docs_path / "**" / "*.md")
     all_files = glob.glob(pattern, recursive=True)
@@ -180,9 +181,9 @@ def test_reconciliation_handles_blacklist_config_change(base_config, manager, tm
     )
 
     # Create new manager with updated config
-    from searchkernel.indices.vector import VectorIndex
-    from searchkernel.indices.keyword import KeywordIndex
     from searchkernel.indices.graph import GraphStore
+    from searchkernel.indices.keyword import KeywordIndex
+    from searchkernel.indices.vector import VectorIndex
 
     vector_new = VectorIndex()
     keyword_new = KeywordIndex()
@@ -191,8 +192,9 @@ def test_reconciliation_handles_blacklist_config_change(base_config, manager, tm
     manager_new.load()
 
     # Discover files with new config
-    from searchkernel.utils import should_include_file
     import glob
+
+    from searchkernel.utils import should_include_file
 
     pattern = str(docs_path / "**" / "*.md")
     all_files = glob.glob(pattern, recursive=True)
@@ -260,8 +262,9 @@ def test_reconciliation_respects_exclude_hidden_dirs_change(
     (cache_dir / "data.md").write_text("# Cache Data\n\nTemporary data.")
 
     # Discover files (hidden dirs excluded by default config)
-    from searchkernel.utils import should_include_file
     import glob
+
+    from searchkernel.utils import should_include_file
 
     pattern = str(docs_path / "**" / "*.md")
     all_files = glob.glob(pattern, recursive=True)
@@ -334,8 +337,9 @@ def test_reconciliation_logs_distinct_messages_for_excluded_vs_missing(
     # Note: "deleted.md" doesn't exist - simulates deleted file
 
     # Discover files
-    from searchkernel.utils import should_include_file
     import glob
+
+    from searchkernel.utils import should_include_file
 
     pattern = str(docs_path / "**" / "*.md")
     all_files = glob.glob(pattern, recursive=True)

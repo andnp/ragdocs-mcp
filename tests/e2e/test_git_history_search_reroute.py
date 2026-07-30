@@ -11,7 +11,13 @@ from pathlib import Path
 import pytest
 
 from searchkernel.adapters.sources.git import GitContentSource
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.indexing.git_ingestion import ingest_git_source
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore

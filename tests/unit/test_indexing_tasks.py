@@ -6,33 +6,38 @@ Commit 3.3: Verifies indexing operations work as Huey tasks.
 
 from __future__ import annotations
 
-from datetime import datetime
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from huey import SqliteHuey
-from searchkernel.domain import Record
 
 import searchkernel.indexing.tasks as tasks_mod
 from searchkernel.daemon.queue_status import get_queue_stats
-from searchkernel.indexing.bootstrap_checkpoint import BootstrapCheckpoint, BootstrapFileStamp, load_bootstrap_checkpoint, save_bootstrap_checkpoint
+from searchkernel.domain import Record
+from searchkernel.indexing.bootstrap_checkpoint import (
+    BootstrapCheckpoint,
+    BootstrapFileStamp,
+    load_bootstrap_checkpoint,
+    save_bootstrap_checkpoint,
+)
 from searchkernel.indexing.git_refresh_state import get_cursor, save_cursor, save_head
 from searchkernel.indexing.tasks import (
+    GIT_REFRESH_TASK_PRIORITY,
+    RECORD_BATCH_TASK_PRIORITY,
     enqueue_index,
     enqueue_index_batch,
-    enqueue_remove,
     enqueue_refresh_git,
     enqueue_refresh_git_batch,
-    GIT_REFRESH_TASK_PRIORITY,
+    enqueue_remove,
     get_pending_index_document_count,
     register_tasks,
-    RECORD_BATCH_TASK_PRIORITY,
     submit_index_batch,
     submit_index_request_batch,
     submit_record_batch,
-    submit_remove_request_batch,
     submit_refresh_git_request,
+    submit_remove_request_batch,
 )
 
 
@@ -150,8 +155,8 @@ class TestTaskRegistration:
             source_id="note:1",
             title="A note",
             body="Body",
-            created_at=datetime(2026, 1, 1),
-            updated_at=datetime(2026, 1, 1),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         ).to_dict()
 
         result = submit_record_batch([payload])
@@ -199,8 +204,8 @@ class TestTaskRegistration:
             source_id="note:priority",
             title="A note",
             body="Body",
-            created_at=datetime(2026, 1, 1),
-            updated_at=datetime(2026, 1, 1),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         ).to_dict()
         assert submit_record_batch([payload]) is not None
 
@@ -758,8 +763,8 @@ class TestTaskExecution:
             source_id="git:abc",
             title="Commit",
             body="Body",
-            created_at=datetime.fromtimestamp(124),
-            updated_at=datetime.fromtimestamp(124),
+            created_at=datetime.fromtimestamp(124, tz=UTC),
+            updated_at=datetime.fromtimestamp(124, tz=UTC),
         )
 
         def _fake_ingest_git_source(index_manager, source, since=None, on_record=None):

@@ -203,8 +203,7 @@ def build_commit_document(commit: CommitData) -> str:
 
     if commit.files_changed:
         parts.append("Files changed:")
-        for file_path in commit.files_changed:
-            parts.append(file_path)
+        parts.extend(commit.files_changed)
         parts.append("")
 
     if commit.delta_truncated:

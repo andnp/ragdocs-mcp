@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from searchkernel.daemon.paths import RuntimePaths
 from searchkernel.worker.process import HueyWorkerProcess, is_expected_daemon_parent

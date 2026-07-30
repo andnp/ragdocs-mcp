@@ -50,6 +50,7 @@ print("PASS: cli module sets TOKENIZERS_PARALLELISM=false")
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[2],
+            check=False,
         )
 
         assert result.returncode == 0, (
@@ -78,6 +79,7 @@ print("PASS: mcp.server module sets TOKENIZERS_PARALLELISM=false")
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[2],
+            check=False,
         )
 
         assert result.returncode == 0, (
@@ -109,6 +111,7 @@ print("PASS: setdefault preserves user override")
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[2],
+            check=False,
         )
 
         assert result.returncode == 0, (
@@ -167,6 +170,7 @@ print("PASS: env var set during cli import")
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[2],
+            check=False,
         )
 
         assert result.returncode == 0, (

@@ -129,7 +129,7 @@ async def test_parallel_vs_sequential_throughput(tmp_path, shared_embedding_mode
     if speedup < 1.2:
         import logging
 
-        logging.info(
+        logging.getLogger(__name__).info(
             f"Low speedup observed: {speedup:.2f}x. "
             f"This is expected with small documents or high system load."
         )

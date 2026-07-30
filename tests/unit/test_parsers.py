@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -22,7 +22,7 @@ class ConcreteTestParser(DocumentParser):
             links=[],
             tags=["test"],
             file_path=file_path,
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
 
 
@@ -38,7 +38,7 @@ def test_document_dataclass_instantiation():
         links=["link1", "link2"],
         tags=["tag1", "tag2"],
         file_path="/path/to/file.md",
-        modified_time=datetime(2025, 12, 22, 10, 30),
+        modified_time=datetime(2025, 12, 22, 10, 30, tzinfo=UTC),
     )
 
     assert doc.id == "doc-123"

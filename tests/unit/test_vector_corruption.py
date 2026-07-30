@@ -5,12 +5,12 @@ GAP #14: VectorIndex persistence with corrupted files (High/Low, Score 4.0)
 """
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.models import Chunk
-from datetime import datetime
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def sample_chunk():
         start_pos=0,
         end_pos=45,
         file_path="/test/doc.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
 
@@ -196,7 +196,7 @@ def test_vector_index_persist_recovers_from_partial_write(
         start_pos=0,
         end_pos=30,
         file_path="/test/doc2.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     index.add_chunk(chunk2)
 
@@ -281,7 +281,7 @@ def test_vector_index_vocabulary_building_with_single_chunk(shared_embedding_mod
         start_pos=0,
         end_pos=16,
         file_path="/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     index.add_chunk(chunk)

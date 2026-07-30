@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -13,7 +13,7 @@ def _candidates():
 
 
 def _timestamps():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return {
         "chunk_a": now - timedelta(days=1),
         "chunk_b": now - timedelta(days=90),

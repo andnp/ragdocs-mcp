@@ -5,7 +5,7 @@ Tests the hash-based file move detection that avoids re-embedding when
 a file is renamed but content remains the same.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -36,7 +36,7 @@ def make_chunk(
         start_pos=0,
         end_pos=len(content),
         file_path=f"/docs/{doc_id}.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
     # Override computed hash if needed for test control
     if content_hash is not None:

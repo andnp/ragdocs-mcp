@@ -8,14 +8,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from searchkernel.indexing.discovery import is_excluded_dir, walk_included_dirs
 import searchkernel.indexing.tasks as tasks_mod
+from searchkernel.indexing.discovery import is_excluded_dir, walk_included_dirs
 from searchkernel.indexing.watcher import (
-    FileWatcher,
-    _DocumentEventHandler,
     MAX_QUEUE_SIZE,
     RECURSIVE_ROOT_WATCH_RATIO,
     RECURSIVE_ROOT_WATCH_THRESHOLD,
+    FileWatcher,
+    _DocumentEventHandler,
 )
 
 

@@ -1,7 +1,8 @@
 """Unit tests for search_anything: fan-out timeouts + retrieve-then-rerank-once."""
 
 import asyncio
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import pytest
 

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-import logging
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import uuid4
 
 from searchkernel.coordination.queue import get_huey
-from searchkernel.daemon.mcp_requests import build_mcp_tools_payload, handle_mcp_tool_call
+from searchkernel.daemon.mcp_requests import (
+    build_mcp_tools_payload,
+    handle_mcp_tool_call,
+)
 from searchkernel.daemon.queue_status import purge_queue_state
 from searchkernel.daemon.record_rpc import RecordSerializationError, deserialize_record
 from searchkernel.domain import Record
@@ -21,7 +24,6 @@ from searchkernel.indexing.rebuild_service import (
     write_rebuild_status,
 )
 from searchkernel.indexing.tasks import submit_rebuild_request
-
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ def _index_records(ctx: _RecordIndexContext, payload: dict[str, object]) -> dict
     for index, record in enumerate(records):
         try:
             ctx.index_manager.index_record(record)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- indexing pipeline errors vary; report per-record failure
             return {
                 "status": "error",
                 "error": "record_indexing_failed",

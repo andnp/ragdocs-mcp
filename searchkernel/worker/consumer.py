@@ -82,11 +82,11 @@ class _HueyConsumerThread(threading.Thread):
                     try:
                         self._huey.execute(task)
                     except Exception:
-                        logger.error("Task execution failed", exc_info=True)
+                        logger.exception("Task execution failed")
                 else:
                     # No task available, wait briefly
                     self._stop_event.wait(timeout=0.5)
         except Exception:
-            logger.error("Huey consumer thread error", exc_info=True)
+            logger.exception("Huey consumer thread error")
         finally:
             logger.info("Huey consumer thread exiting")

@@ -18,7 +18,6 @@ import pytest
 from searchkernel.lifecycle import LifecycleCoordinator, LifecycleState
 from searchkernel.storage.db import DatabaseManager
 
-
 # ---------------------------------------------------------------------------
 # Lightweight stubs (no mock library — real objects with minimal behavior)
 # ---------------------------------------------------------------------------
@@ -334,9 +333,11 @@ class TestWorkerSupervision:
             if sleep_calls > 1:
                 raise asyncio.CancelledError
 
-        with patch("searchkernel.lifecycle.asyncio.sleep", _fake_sleep):
-            with pytest.raises(asyncio.CancelledError):
-                await coord._supervise_worker_health()
+        with (
+            patch("searchkernel.lifecycle.asyncio.sleep", _fake_sleep),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await coord._supervise_worker_health()
 
         assert worker.restart_calls == 1
 

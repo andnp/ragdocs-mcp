@@ -15,7 +15,6 @@ from searchkernel.search.variance import (
     compute_dynamic_weights,
 )
 
-
 # ============================================================================
 # Variance Calculation Tests
 # ============================================================================
@@ -198,7 +197,7 @@ class TestComputeDynamicWeights:
         vector_scores = []
         keyword_scores = [0.1, 0.5, 0.9]
 
-        vector_w, keyword_w = compute_dynamic_weights(
+        _vector_w, keyword_w = compute_dynamic_weights(
             vector_scores,
             keyword_scores,
             base_vector_weight=1.0,
@@ -215,7 +214,7 @@ class TestComputeDynamicWeights:
         vector_scores = [0.1, 0.5, 0.9]
         keyword_scores = []
 
-        vector_w, keyword_w = compute_dynamic_weights(
+        vector_w, _keyword_w = compute_dynamic_weights(
             vector_scores,
             keyword_scores,
             base_vector_weight=1.0,
@@ -271,7 +270,7 @@ class TestComputeDynamicWeightsNormalization:
         """
         scores = [0.1, 0.5, 0.9]
 
-        v_w_equal, k_w_equal = compute_dynamic_weights(
+        _v_w_equal, _k_w_equal = compute_dynamic_weights(
             scores,
             scores,
             base_vector_weight=1.0,
@@ -318,7 +317,7 @@ class TestComputeDynamicWeightsParameters:
         identical_scores = [0.5, 0.5, 0.5]
         varied_scores = [0.0, 1.0]
 
-        vector_w, keyword_w = compute_dynamic_weights(
+        vector_w, _keyword_w = compute_dynamic_weights(
             identical_scores,
             varied_scores,
             base_vector_weight=1.0,

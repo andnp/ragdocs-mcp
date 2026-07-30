@@ -6,9 +6,10 @@ of two flavors:
   - Searchable: the source runs its own search; kernel fuses results
 """
 
-from typing import Any, Iterable, Protocol, runtime_checkable
+from collections.abc import Iterable
+from typing import Any, Protocol, runtime_checkable
 
-from searchkernel.domain import Cursor, ChangeSignal, Record, ScoredRef
+from searchkernel.domain import ChangeSignal, Cursor, Record, ScoredRef
 
 
 @runtime_checkable

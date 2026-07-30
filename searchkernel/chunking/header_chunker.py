@@ -563,8 +563,7 @@ class HeaderBasedChunker(ChunkingStrategy):
 
                     parent_index += 1
                 else:
-                    for child_chunk in current_parent_chunks:
-                        children.append(child_chunk)
+                    children.extend(current_parent_chunks)
 
                 current_parent_chunks = [chunk]
                 current_parent_content = chunk.content
@@ -602,7 +601,6 @@ class HeaderBasedChunker(ChunkingStrategy):
                     )
                     children.append(child)
             else:
-                for child_chunk in current_parent_chunks:
-                    children.append(child_chunk)
+                children.extend(current_parent_chunks)
 
         return parents + children

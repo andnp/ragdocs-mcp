@@ -51,7 +51,7 @@ def infer_edge_type(header_context: str, target: str):
         if keyword in header_lower:
             return edge_type
 
-    if target.startswith("tests/") or target.startswith("test_"):
+    if target.startswith(("tests/", "test_")):
         return EdgeType.TESTS
 
     return EdgeType.LINKS_TO

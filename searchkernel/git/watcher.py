@@ -14,8 +14,8 @@ from pathlib import Path
 
 from searchkernel.config import Config
 from searchkernel.git.repository import get_git_ref_signature
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.indexing.git_refresh_state import get_head
+from searchkernel.indexing.manager import IndexManager
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class GitWatcher:
             self._task.cancel()
             try:
                 await asyncio.wait_for(self._task, timeout=1.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass
             self._task = None
 
@@ -155,7 +155,5 @@ class GitWatcher:
                         indexed,
                     )
 
-            except Exception as e:
-                logger.error(
-                    "Failed to update commits for %s: %s", git_dir, e, exc_info=True
-                )
+            except Exception:
+                logger.exception("Failed to update commits for %s", git_dir)

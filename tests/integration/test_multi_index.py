@@ -5,13 +5,14 @@ Tests the IndexManager's ability to coordinate updates across vector, keyword,
 and graph indices. Uses real index implementations with temporary storage.
 """
 
-from datetime import datetime
-from pathlib import Path
+import contextlib
 import sqlite3
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
-from searchkernel.config import Config, IndexingConfig, SearchConfig, LLMConfig
+from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
@@ -73,7 +74,7 @@ def sample_document():
         links=["linked-note"],
         tags=["test", "integration"],
         file_path="/test/doc1.md",
-        modified_time=datetime(2025, 12, 22, 10, 0, 0),
+        modified_time=datetime(2025, 12, 22, 10, 0, 0, tzinfo=UTC),
     )
 
 
@@ -232,10 +233,8 @@ def test_error_handling_malformed_file_continues_processing(manager, tmp_path):
     valid_path.write_text("# Valid Document\n\nThis is valid content.")
 
     # Attempt to index malformed file (should log error but not raise)
-    try:
+    with contextlib.suppress(Exception):
         manager.index_document(str(malformed_path))
-    except Exception:
-        pass  # Expected to fail
 
     # Index valid file
     manager.index_document(str(valid_path))

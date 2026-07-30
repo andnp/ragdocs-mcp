@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from searchkernel.models import Document
@@ -37,7 +37,7 @@ class PlainTextParser(DocumentParser):
         if encoding_used != "utf-8":
             logger.warning(f"File {file_path} decoded with {encoding_used} encoding")
 
-        modified_time = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        modified_time = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
 
         metadata: dict[str, str | list[str] | int | float | bool] = {
             "source": str(path)

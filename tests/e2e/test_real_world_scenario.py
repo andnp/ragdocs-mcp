@@ -8,7 +8,7 @@ traversal, and LLM synthesis.
 
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -234,7 +234,7 @@ Review [[authentication]] setup for production environments.
 Set up monitoring and alerting for production systems.
 """)
     # Set modified time to 2 days ago for recency testing
-    two_days_ago = datetime.now(timezone.utc) - timedelta(days=2)
+    two_days_ago = datetime.now(UTC) - timedelta(days=2)
     os.utime(deployment_path, (two_days_ago.timestamp(), two_days_ago.timestamp()))
 
     # 6. Advanced Topics - Technical deep dive

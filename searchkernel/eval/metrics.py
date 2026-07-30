@@ -5,7 +5,7 @@ These are pure functions with no I/O or dependencies on indices/models.
 """
 
 import math
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def recall_at_k(ranked_ids: Sequence[str], relevant_ids: set[str] | Sequence[str], k: int) -> float:

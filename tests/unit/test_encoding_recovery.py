@@ -4,15 +4,16 @@ Unit tests for IndexManager encoding error recovery.
 GAP #7: IndexManager encoding error recovery (Medium/Low, Score 3.33)
 """
 
+import contextlib
 from pathlib import Path
 
 import pytest
 
 from searchkernel.config import Config, IndexingConfig
 from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 
 
 @pytest.fixture
@@ -105,7 +106,7 @@ def test_index_document_with_mixed_encodings(manager, manager_config):
     # Try to index invalid file
     try:
         manager.index_document(str(invalid_file))
-    except (UnicodeDecodeError, Exception):
+    except Exception:  # noqa: BLE001 -- resilience test; any failure should be tracked, not raised
         # Should be tracked in failed files
         failed = manager.get_failed_files()
         assert any(str(invalid_file) in f["path"] for f in failed)
@@ -181,7 +182,7 @@ def test_index_document_with_null_bytes(manager, manager_config):
     try:
         manager.index_document(str(file_path))
         assert True
-    except Exception:
+    except Exception:  # noqa: BLE001 -- resilience test; any failure should be tracked, not raised
         # If it fails, should track it
         assert len(manager.get_failed_files()) >= 1
 
@@ -199,10 +200,8 @@ def test_failed_files_tracking_after_encoding_error(manager, manager_config):
     with open(bad_file, "wb") as f:
         f.write(b"\xff\xfe# Invalid UTF-8")
 
-    try:
+    with contextlib.suppress(Exception):
         manager.index_document(str(bad_file))
-    except Exception:
-        pass
 
     failed = manager.get_failed_files()
 
@@ -228,10 +227,8 @@ def test_index_document_retries_after_encoding_error(manager, manager_config):
     with open(file_path, "wb") as f:
         f.write(b"\xff\xfe# Invalid")
 
-    try:
+    with contextlib.suppress(Exception):
         manager.index_document(str(file_path))
-    except Exception:
-        pass
 
     # Fix the file
     file_path.write_text("# Valid Document Now")

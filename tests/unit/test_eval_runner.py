@@ -1,7 +1,7 @@
 """Unit tests for evaluation runner."""
 
-from searchkernel.eval.golden import GoldenSet, GoldenEntry
-from searchkernel.eval.runner import run_eval, ab_eval
+from searchkernel.eval.golden import GoldenEntry, GoldenSet
+from searchkernel.eval.runner import ab_eval, run_eval
 
 
 def test_run_eval_perfect_search():

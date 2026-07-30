@@ -2,14 +2,15 @@
 
 import asyncio
 import logging
-from typing import Awaitable, Callable, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 
-async def gather_with_timeout(
+async def gather_with_timeout[T](
     coros_or_factories: list[Awaitable[T] | Callable[[], Awaitable[T]]],
     per_timeout_s: float,
 ) -> list[T | None]:
@@ -55,12 +56,12 @@ async def gather_with_timeout(
         ) -> T | None:
             try:
                 return await asyncio.wait_for(c, timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.debug(
                     f"Task timed out after {timeout}s"
                 )
                 return None
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- generic fan-out executor over heterogeneous tasks
                 logger.debug(
                     f"Task failed with exception: {type(e).__name__}: {e}"
                 )

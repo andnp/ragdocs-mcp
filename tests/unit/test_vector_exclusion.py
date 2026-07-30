@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -29,7 +29,7 @@ def test_vector_search_without_exclusions(vector_index, docs_root):
         start_pos=0,
         end_pos=50,
         file_path=str(docs_root / "docs" / "api.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(chunk1)
@@ -50,7 +50,7 @@ def test_vector_search_with_exclusions_exact_match(vector_index, docs_root):
         start_pos=0,
         end_pos=50,
         file_path=str(docs_root / "docs" / "api.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     chunk2 = Chunk(
@@ -63,7 +63,7 @@ def test_vector_search_with_exclusions_exact_match(vector_index, docs_root):
         start_pos=0,
         end_pos=50,
         file_path=str(docs_root / "docs" / "guide.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(chunk1)
@@ -90,7 +90,7 @@ def test_vector_search_with_exclusions_filename_match(vector_index, docs_root):
         start_pos=0,
         end_pos=50,
         file_path=str(docs_root / "docs" / "README.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     chunk2 = Chunk(
@@ -103,7 +103,7 @@ def test_vector_search_with_exclusions_filename_match(vector_index, docs_root):
         start_pos=0,
         end_pos=50,
         file_path=str(docs_root / "docs" / "guide.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(chunk1)
@@ -130,7 +130,7 @@ def test_vector_search_with_empty_exclusion_set(vector_index, docs_root):
         start_pos=0,
         end_pos=50,
         file_path=str(docs_root / "docs" / "api.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(chunk1)
@@ -156,7 +156,7 @@ def test_vector_search_over_fetching(vector_index, docs_root):
             start_pos=0,
             end_pos=50,
             file_path=str(docs_root / "docs" / f"file{i}.md"),
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         chunks.append(chunk)
         vector_index.add_chunk(chunk)
@@ -184,7 +184,7 @@ def test_vector_search_with_multiple_exclusions(vector_index, docs_root):
             start_pos=0,
             end_pos=50,
             file_path=str(docs_root / "docs" / f"{name}.md"),
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         chunks.append(chunk)
         vector_index.add_chunk(chunk)

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from dataclasses import asdict, dataclass
 import logging
 import queue
 import threading
 import time
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
@@ -20,7 +20,7 @@ from searchkernel.utils import should_include_file
 
 logger = logging.getLogger(__name__)
 
-EventType: TypeAlias = Literal["created", "modified", "deleted"]
+type EventType = Literal["created", "modified", "deleted"]
 
 # Maximum queue size to prevent memory exhaustion under load
 MAX_QUEUE_SIZE = 1000
@@ -106,7 +106,10 @@ class FileWatcher:
                 self._observer.unschedule_all()
                 self._observer.stop()
                 self._observer = None
-        except Exception:
+        except Exception:  # noqa: S110, BLE001 -- __del__ runs during GC/interpreter
+            # shutdown, when the logging module itself may already be torn
+            # down; swallowing silently here is safer than risking a
+            # secondary exception from logging.
             pass
 
     def start(self):
@@ -275,7 +278,7 @@ class FileWatcher:
                     asyncio.to_thread(self._observer.join, timeout=1.0),
                     timeout=1.5,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._stopped_cleanly = False
                 logger.warning(
                     "Observer thread did not stop within timeout, forcing unschedule"
@@ -284,7 +287,9 @@ class FileWatcher:
                 try:
                     self._observer.unschedule_all()
                 except Exception:
-                    pass
+                    logger.debug(
+                        "Forced unschedule_all also failed", exc_info=True
+                    )
 
             # Mark for garbage collection
             self._observer = None
@@ -292,7 +297,7 @@ class FileWatcher:
         # Drain remaining events from queue (with timeout)
         try:
             await asyncio.wait_for(self._drain_queue(), timeout=2.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             remaining = self._event_queue.qsize()
             if remaining > 0:
                 logger.warning(f"Queue drain timed out, {remaining} events lost")
@@ -302,7 +307,7 @@ class FileWatcher:
             self._task.cancel()
             try:
                 await asyncio.wait_for(self._task, timeout=1.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass
             self._task = None
 
@@ -362,7 +367,7 @@ class FileWatcher:
                         self._pending_debounce_count = len(pending_events)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- background loop must not crash the watcher
                 logger.error(f"Error in event processing: {e}")
 
         # Process remaining events with timeout
@@ -379,7 +384,7 @@ class FileWatcher:
                     timeout=1.0,
                 )
                 self._pending_debounce_count = 0
-            except (asyncio.TimeoutError, Exception) as e:
+            except Exception as e:  # noqa: BLE001 -- final shutdown drain must not crash the watcher
                 logger.warning(f"Failed to process final events: {e}")
 
     async def _batch_process(self, events: dict[str, EventType]):
@@ -416,7 +421,7 @@ class FileWatcher:
                         deleted_paths_by_doc_id.setdefault(doc_id, file_path)
                         continue
                     direct_remove_doc_ids.append(doc_id)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- per-file processing must not crash the batch
                 logger.error(f"Failed to process {file_path}: {e}")
 
         if self._use_tasks:
@@ -458,7 +463,7 @@ class FileWatcher:
             remove_doc_ids=direct_remove_doc_ids,
         )
 
-        self._last_sync_time = datetime.now(timezone.utc).isoformat()
+        self._last_sync_time = datetime.now(UTC).isoformat()
 
         for file_path, event_type in deferred_events.items():
             try:
@@ -502,7 +507,7 @@ class FileWatcher:
                         )
                         mutated = True
                         logger.info(f"Indexed: {file_path}")
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 -- per-file processing must not crash the batch
                         logger.error(f"Failed to process {file_path}: {e}")
 
         if remove_doc_ids:
@@ -530,13 +535,13 @@ class FileWatcher:
                             doc_id,
                         )
                         mutated = True
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 -- per-doc removal must not crash the batch
                         logger.error(f"Failed to remove {doc_id}: {e}")
 
         if mutated:
             try:
                 await asyncio.to_thread(self._index_manager.persist)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- burst persist must not crash the watcher
                 logger.error(f"Failed to persist watcher burst changes: {e}")
 
     def get_stats(self) -> WatcherStats:
@@ -557,7 +562,7 @@ class FileWatcher:
     def _compute_doc_id_for_event(self, file_path: str) -> str:
         try:
             return compute_doc_id_multi_root(Path(file_path).resolve(), self._documents_paths)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- fall back to stem for any path-resolution failure
             return Path(file_path).stem
 
     def get_pending_queue_size(self) -> int:

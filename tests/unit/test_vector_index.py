@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -27,7 +27,7 @@ def sample_document():
         links=["AI"],
         tags=["ml", "ai"],
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
 
@@ -149,7 +149,7 @@ def test_vector_index_multiple_documents(vector_index):
         links=[],
         tags=["python"],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     doc2 = Document(
@@ -159,7 +159,7 @@ def test_vector_index_multiple_documents(vector_index):
         links=[],
         tags=["javascript"],
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add(doc1)
@@ -182,7 +182,7 @@ def test_vector_index_search_returns_unique_doc_ids(vector_index):
         links=[],
         tags=[],
         file_path="/tmp/long.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add(doc)
@@ -206,7 +206,7 @@ def test_vector_index_load_nonexistent_path(tmp_path, shared_embedding_model):
         links=[],
         tags=[],
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     index.add(doc)
     results = index.search("test content", top_k=5)
@@ -232,7 +232,7 @@ def test_vector_index_very_long_document(vector_index):
         links=[],
         tags=["long", "test"],
         file_path="/tmp/long_doc.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add(doc)
@@ -270,7 +270,7 @@ Special: €, £, ¥, ©, ®, ™, §, ¶, †, ‡, …
         links=[],
         tags=["unicode", "symbols"],
         file_path="/tmp/special.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add(doc)
@@ -310,7 +310,7 @@ def test_vector_index_chunk_with_header_path_includes_header_in_embedding(
         start_pos=0,
         end_pos=100,
         file_path="/tmp/ml.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(chunk)
@@ -346,7 +346,7 @@ def test_vector_index_chunk_without_header_path_uses_content_only(
         start_pos=0,
         end_pos=80,
         file_path="/tmp/python.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(chunk)
@@ -378,7 +378,7 @@ def test_vector_index_header_weighted_improves_relevance(shared_embedding_model)
         start_pos=0,
         end_pos=60,
         file_path="/tmp/api.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     # Chunk without relevant header
@@ -392,7 +392,7 @@ def test_vector_index_header_weighted_improves_relevance(shared_embedding_model)
         start_pos=0,
         end_pos=60,
         file_path="/tmp/general.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(chunk_with_header)
@@ -435,7 +435,7 @@ def test_stale_chunk_ref_cleaned_on_lookup(shared_embedding_model):
         start_pos=0,
         end_pos=50,
         file_path="/tmp/real.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     vector_index.add_chunk(chunk)
 
@@ -529,7 +529,7 @@ def test_reconcile_mappings_removes_stale_refs(shared_embedding_model):
             start_pos=0,
             end_pos=30,
             file_path=f"/tmp/real_{i}.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         vector_index.add_chunk(chunk)
 
@@ -594,7 +594,7 @@ def test_warned_set_cleared_on_load(shared_embedding_model, tmp_path):
         start_pos=0,
         end_pos=30,
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     vector_index.add_chunk(chunk)
 
@@ -650,7 +650,7 @@ def test_term_counts_and_vocabulary_loaded_as_ordereddict(
             start_pos=0,
             end_pos=100,
             file_path=f"/tmp/doc_{i}.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         vector_index.add_chunk(chunk)
 
@@ -698,7 +698,7 @@ def test_term_counts_and_vocabulary_loaded_as_ordereddict(
         start_pos=0,
         end_pos=60,
         file_path="/tmp/new.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     vector_index2.add_chunk(chunk)  # Should not raise AttributeError
 
@@ -735,7 +735,7 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(
         start_pos=0,
         end_pos=100,
         file_path="/tmp/doc_1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     vector_index.add_chunk(chunk1)
 
@@ -780,7 +780,7 @@ def test_ordered_dict_preserved_after_persist_and_load_regression(
         start_pos=0,
         end_pos=100,
         file_path="/tmp/doc_2.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     # This should NOT raise AttributeError: 'dict' object has no attribute 'move_to_end'
@@ -816,7 +816,7 @@ def test_remove_chunk_removes_from_all_mappings(vector_index, shared_embedding_m
         start_pos=0,
         end_pos=20,
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     chunk2 = Chunk(
         chunk_id="doc1#chunk#1",
@@ -828,7 +828,7 @@ def test_remove_chunk_removes_from_all_mappings(vector_index, shared_embedding_m
         start_pos=21,
         end_pos=42,
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(chunk1)
@@ -871,7 +871,7 @@ def test_remove_chunk_removes_last_chunk_cleans_doc_mapping(vector_index):
         start_pos=0,
         end_pos=11,
         file_path="/tmp/single.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(chunk)
@@ -888,6 +888,7 @@ def test_remove_chunk_removes_last_chunk_cleans_doc_mapping(vector_index):
 def test_remove_chunk_thread_safe(vector_index):
     """Test that remove_chunk() is thread-safe with concurrent operations."""
     from concurrent.futures import ThreadPoolExecutor
+
     from searchkernel.models import Chunk
 
     # Add multiple chunks
@@ -903,7 +904,7 @@ def test_remove_chunk_thread_safe(vector_index):
             start_pos=i * 20,
             end_pos=(i + 1) * 20,
             file_path="/tmp/concurrent.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         chunks.append(chunk)
         vector_index.add_chunk(chunk)
@@ -950,7 +951,7 @@ def test_vocabulary_lifecycle_marks_stale_on_authoritative_mutation(
         start_pos=0,
         end_pos=40,
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(chunk)
@@ -975,7 +976,7 @@ def test_vocabulary_lifecycle_reports_building_and_finishes_ready(
         start_pos=0,
         end_pos=60,
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     vector_index.add_chunk(chunk)
 
@@ -1007,7 +1008,7 @@ def test_vocabulary_incremental_catch_up_returns_to_ready(shared_embedding_model
         start_pos=0,
         end_pos=55,
         file_path="/tmp/doc3.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     second_chunk = Chunk(
         chunk_id="doc4_chunk_0",
@@ -1019,7 +1020,7 @@ def test_vocabulary_incremental_catch_up_returns_to_ready(shared_embedding_model
         start_pos=0,
         end_pos=58,
         file_path="/tmp/doc4.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector_index.add_chunk(first_chunk)
@@ -1056,7 +1057,7 @@ def test_vocabulary_lifecycle_persists_stale_state_without_materialized_terms(
         start_pos=0,
         end_pos=75,
         file_path="/tmp/doc5.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     vector_index.add_chunk(chunk)
 

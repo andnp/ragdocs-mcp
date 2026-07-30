@@ -5,9 +5,10 @@ context managers. No external dependencies.
 """
 
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Generator
+from typing import Any
 
 
 @dataclass
@@ -83,7 +84,7 @@ class QueryTrace:
         self.spans[name] = span
 
     @contextmanager
-    def span(self, name: str) -> Generator[Span, None, None]:
+    def span(self, name: str) -> Generator[Span]:
         """Context manager for timing a named span.
 
         Usage:

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from searchkernel.chunking.header_chunker import HeaderBasedChunker
 from searchkernel.config import ChunkingConfig
@@ -35,7 +35,7 @@ Rotate credentials every 24 hours and revoke compromised tokens immediately.
             links=[],
             tags=[],
             file_path="/test/doc.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
 
         chunks = chunker.chunk_document(doc)
@@ -87,7 +87,7 @@ Bearer tokens must be rotated every 24 hours. Include scopes and issuer validati
             links=[],
             tags=[],
             file_path="/test/doc.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
 
         chunks = chunker.chunk_document(doc)
@@ -130,7 +130,7 @@ CLI cheatsheet.
             links=[],
             tags=[],
             file_path="/test/doc.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
 
         chunks = chunker.chunk_document(doc)
@@ -179,7 +179,7 @@ More text to ensure this section is substantial enough for chunking.
             links=[],
             tags=[],
             file_path="/test/doc.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
 
         chunks = chunker.chunk_document(doc)
@@ -230,7 +230,7 @@ Content for section three with more text for the chunk.
             links=[],
             tags=[],
             file_path="/test/doc.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
 
         chunks = chunker.chunk_document(doc)
@@ -274,7 +274,7 @@ Content for section B with enough text.
             links=[],
             tags=[],
             file_path="/test/doc.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
 
         chunks = chunker.chunk_document(doc)

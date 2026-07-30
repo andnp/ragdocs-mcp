@@ -15,7 +15,7 @@ relying on wiping shared Postgres state between tests.
 
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -64,7 +64,7 @@ def _chunk(chunk_id: str, doc_id: str, content: str, chunk_index: int = 0) -> Ch
         start_pos=0,
         end_pos=len(content),
         file_path=f"{doc_id}.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
 

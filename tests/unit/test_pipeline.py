@@ -161,7 +161,7 @@ class TestSearchPipelineThresholdFilter:
         def get_content(chunk_id: str):
             return f"unique content {chunk_id}"
 
-        results, stats = pipeline.process(
+        _results, stats = pipeline.process(
             fused, get_embedding, get_content, "query", top_n=10
         )
 
@@ -218,7 +218,7 @@ class TestSearchPipelineDocLimit:
         def get_content(chunk_id: str):
             return _diverse_content(chunk_id)
 
-        results, stats = pipeline.process(
+        results, _stats = pipeline.process(
             fused, get_embedding, get_content, "query", top_n=10
         )
 
@@ -317,7 +317,7 @@ class TestSearchPipelineTopN:
         def get_content(chunk_id: str):
             return f"unique content {chunk_id}"
 
-        results, stats = pipeline.process(
+        results, _stats = pipeline.process(
             fused, get_embedding, get_content, "query", top_n=3
         )
 
@@ -355,7 +355,7 @@ class TestSearchPipelineCompressionStats:
             ("doc_b_chunk_0", 0.1),
         ]
 
-        results, stats = pipeline.process(
+        _results, stats = pipeline.process(
             fused, get_embedding, get_content, "query", top_n=10
         )
 
@@ -387,7 +387,7 @@ class TestSearchPipelineCompressionStats:
         def get_content(chunk_id: str):
             return _diverse_content(chunk_id)
 
-        results, stats = pipeline.process(
+        results, _stats = pipeline.process(
             fused, get_embedding, get_content, "query", top_n=10
         )
 

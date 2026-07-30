@@ -1,6 +1,13 @@
-import pytest
 from pathlib import Path
-from searchkernel.config import Config, IndexingConfig, ProjectConfig, resolve_documents_path
+
+import pytest
+
+from searchkernel.config import (
+    Config,
+    IndexingConfig,
+    ProjectConfig,
+    resolve_documents_path,
+)
 
 
 @pytest.fixture

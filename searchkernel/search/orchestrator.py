@@ -4,22 +4,16 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from searchkernel.config import Config
+from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.models import (
     ChunkResult,
     CompressionStats,
     SearchResultProvenance,
     SearchStrategyStats,
 )
-from searchkernel.search.base_orchestrator import BaseSearchOrchestrator
-from searchkernel.search.chunk_hydrator import ChunkHydrator
-from searchkernel.search.classifier import QueryType
-from searchkernel.search.filters import normalize_project_filter
-from searchkernel.search.graph_expansion import build_graph_chunk_candidates
-from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
 from searchkernel.pipeline.default_query_spec import DEFAULT_QUERY_SPEC
 from searchkernel.pipeline.executor import PipelineExecutor
 from searchkernel.pipeline.registry import DEFAULT_QUERY_STAGE_REGISTRY, StageDeps
@@ -28,6 +22,12 @@ from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.seed_bookkeeping import (
     should_skip_expensive_factual_enrichments,
 )
+from searchkernel.search.base_orchestrator import BaseSearchOrchestrator
+from searchkernel.search.chunk_hydrator import ChunkHydrator
+from searchkernel.search.classifier import QueryType
+from searchkernel.search.filters import normalize_project_filter
+from searchkernel.search.graph_expansion import build_graph_chunk_candidates
+from searchkernel.search.path_utils import extract_doc_id_from_chunk_id
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.query_execution import QueryExecutionContext
 from searchkernel.search.result_cache import QueryResultCache, QueryResultCacheKey

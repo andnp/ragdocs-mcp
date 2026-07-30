@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from typing import Any
+
 import psycopg2
 import psycopg2.pool
 from psycopg2 import sql

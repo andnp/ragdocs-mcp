@@ -1,7 +1,7 @@
 """Unit tests for ChunkHashStore."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -29,7 +29,7 @@ def sample_chunk():
         start_pos=0,
         end_pos=14,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
 
@@ -103,7 +103,7 @@ def test_hash_store_has_changed_modified_chunk(temp_hash_store):
         start_pos=0,
         end_pos=16,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     # Store original hash
@@ -120,7 +120,7 @@ def test_hash_store_has_changed_modified_chunk(temp_hash_store):
         start_pos=0,
         end_pos=16,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     assert temp_hash_store.has_changed(chunk_v2) is True
@@ -299,7 +299,7 @@ def test_hash_store_persist_io_error_handling(tmp_path, monkeypatch):
     # persist should log error but not crash
     try:
         store.persist()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- asserting persist() never raises, regardless of error type
         pytest.fail("persist() should not raise exception on I/O error")
     finally:
         # Restore permissions

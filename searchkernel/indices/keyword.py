@@ -142,7 +142,7 @@ class KeywordIndex:
         try:
             self._db.close()
         except Exception:
-            pass
+            logger.debug("Failed to close keyword index db", exc_info=True)
         for suffix in ("", "-wal", "-shm"):
             p = corrupt_path.with_suffix(".db" + suffix) if suffix else corrupt_path
             try:
@@ -553,8 +553,9 @@ class KeywordIndex:
                     continue
 
                 if excluded_files and docs_root:
-                    from searchkernel.search.path_utils import normalize_path
                     from pathlib import Path as PathLib
+
+                    from searchkernel.search.path_utils import normalize_path
 
                     normalized = normalize_path(doc_id, docs_root)
                     if normalized in excluded_files:
@@ -754,7 +755,7 @@ class KeywordIndex:
                 try:
                     self._conn().execute("PRAGMA wal_checkpoint(FULL)")
                 except Exception:
-                    pass
+                    logger.debug("WAL checkpoint before copy failed", exc_info=True)
                 shutil.copy2(src, dest)
 
     def persist_to(self, snapshot_dir: Path) -> None:
@@ -795,7 +796,7 @@ class KeywordIndex:
                 try:
                     candidate.close()
                 except Exception:
-                    pass
+                    logger.debug("Failed to close stale db candidate", exc_info=True)
             db_file.unlink(missing_ok=True)
             return  # self._db remains the existing clean temp DB
         self._db.close()
@@ -864,5 +865,5 @@ class KeywordIndex:
                     self._conn().execute("SELECT COUNT(*) FROM search_index").fetchone()
                 )
                 return row[0] if row else 0
-            except Exception:
+            except sqlite3.Error:
                 return 0

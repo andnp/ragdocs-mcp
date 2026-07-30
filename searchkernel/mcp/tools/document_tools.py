@@ -3,24 +3,17 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
 from searchkernel.mcp.handlers import (
+    MAX_TOP_N,
+    MIN_TOP_N,
     HandlerContext,
     format_search_status_text,
     tool_handler,
-    MIN_TOP_N,
-    MAX_TOP_N,
-)
-from searchkernel.mcp.validation import (
-    ValidationError,
-    validate_query,
-    validate_integer_range,
-    validate_string_list,
-    validate_optional_string,
 )
 from searchkernel.mcp.tools.document_request import (
     NormalizedQueryDocumentsRequest,
@@ -30,6 +23,13 @@ from searchkernel.mcp.tools.document_response import (
     build_query_documents_response_envelope,
     build_query_documents_status_envelope,
     build_query_documents_validation_error,
+)
+from searchkernel.mcp.validation import (
+    ValidationError,
+    validate_integer_range,
+    validate_optional_string,
+    validate_query,
+    validate_string_list,
 )
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.utils import classify_query_type
@@ -417,7 +417,7 @@ async def handle_search_git_history(
         commit_hash = result.doc_id.removeprefix("git:")
         timestamp = metadata.get("timestamp")
         commit_date = (
-            datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            datetime.fromtimestamp(timestamp, UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
             if isinstance(timestamp, (int, float))
             else "unknown"
         )

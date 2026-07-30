@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
 import importlib
 import json
 import logging
 import os
-from pathlib import Path
-from typing import Awaitable, Callable, Protocol
 import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict
+from pathlib import Path
+from typing import Protocol
 
 from searchkernel.daemon.metadata import DaemonMetadata
-
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class ZMQTransportServer:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.error("Daemon transport receive failed", exc_info=True)
+                logger.exception("Daemon transport receive failed")
                 continue
 
             if len(frames) < 2:
@@ -163,7 +163,7 @@ class ZMQTransportServer:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.error("Daemon transport send failed", exc_info=True)
+            logger.exception("Daemon transport send failed")
 
     async def _dispatch_request(self, request_line: bytes) -> dict[str, object]:
         request_id: str | None = None
@@ -219,7 +219,7 @@ class ZMQTransportServer:
             response = await self._request_handler(path, payload)
             return _attach_request_id(response, request_id)
         except Exception as exc:
-            logger.error("Daemon request handler failed", exc_info=True)
+            logger.exception("Daemon request handler failed")
             return _attach_request_id(
                 {
                     "status": "error",
@@ -271,7 +271,7 @@ class ZMQTransportClient:
 
             frames = client.recv_multipart()
             data = frames[-1] if frames else b""
-        except Exception:
+        except Exception:  # noqa: BLE001 -- zmq/network transport errors vary
             return {"status": "error", "error": "daemon_socket_unavailable"}
         finally:
             if client is not None:

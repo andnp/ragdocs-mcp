@@ -12,19 +12,24 @@ This caused queries to use the wrong project context when:
 2. Config was modified after orchestrator construction
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from searchkernel.config import Config, IndexingConfig, SearchConfig, ChunkingConfig, LLMConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.models import Chunk
 from searchkernel.search.orchestrator import SearchOrchestrator
-
 
 # ============================================================================
 # Fixtures
@@ -284,7 +289,7 @@ async def test_query_uses_orchestrator_documents_path(base_config, indices, tmp_
         start_pos=0,
         end_pos=50,
         file_path=str(explicit_docs / "test" / "doc.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     vector.add_chunk(chunk)
     keyword.add_chunk(chunk)
@@ -295,7 +300,7 @@ async def test_query_uses_orchestrator_documents_path(base_config, indices, tmp_
     base_config.indexing.documents_path = str(wrong_path)
 
     # Query should still work because orchestrator uses its stored path
-    results, _, _ = await orchestrator.query("test content", top_k=5, top_n=5)
+    _results, _, _ = await orchestrator.query("test content", top_k=5, top_n=5)
 
     # The query completes without error, which means it used the correct path
     # (If it used the wrong path, file exclusion/normalization would fail)
@@ -330,7 +335,7 @@ async def test_query_with_hypothesis_uses_orchestrator_documents_path(
     base_config.indexing.documents_path = str(tmp_path / "different")
 
     # Should use orchestrator's path, not config's
-    results, _, _ = await orchestrator.query_with_hypothesis(
+    _results, _, _ = await orchestrator.query_with_hypothesis(
         "hypothesis about documentation",
         top_k=5,
         top_n=5,

@@ -9,7 +9,6 @@ from searchkernel.daemon.transport import (
     remove_transport_socket,
 )
 
-
 DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_DAEMON_HEALTH_TIMEOUT_SECONDS = 0.2
 

@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 class ReindexError(Exception):
     """Raised when reindex operation fails."""
 
-    pass
 
 
 @dataclass

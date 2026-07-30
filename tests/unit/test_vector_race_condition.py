@@ -8,7 +8,7 @@ during shutdown).
 
 import asyncio
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -33,7 +33,7 @@ class TestVectorRaceCondition:
         vector = VectorIndex(embedding_model=shared_embedding_model)
 
         # Create test chunks
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         chunks = [
             Chunk(
                 chunk_id=f"chunk_{i}",
@@ -66,7 +66,7 @@ class TestVectorRaceCondition:
                     vector.add_chunk(chunk)
                     # Small delay to increase chance of collision
                     threading.Event().wait(0.001)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- concurrency test captures any error for later assertion
                 exception_holder["exception"] = e
             finally:
                 add_complete.set()
@@ -77,7 +77,7 @@ class TestVectorRaceCondition:
                 # Wait a bit for add_chunks to start
                 threading.Event().wait(0.01)
                 vector.persist(tmp_path / "concurrent_test")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- concurrency test captures any error for later assertion
                 exception_holder["exception"] = e
             finally:
                 persist_complete.set()
@@ -117,7 +117,7 @@ class TestVectorRaceCondition:
         """
         vector = VectorIndex(embedding_model=shared_embedding_model)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         chunks = [
             Chunk(
                 chunk_id=f"chunk_{i}",
@@ -171,7 +171,7 @@ class TestVectorRaceCondition:
         """
         vector = VectorIndex(embedding_model=shared_embedding_model)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         chunks = [
             Chunk(
                 chunk_id=f"chunk_{i}",
@@ -203,7 +203,7 @@ class TestVectorRaceCondition:
                 for chunk in chunks[10:]:
                     vector.add_chunk(chunk)
                     threading.Event().wait(0.002)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- concurrency test captures any error for later assertion
                 exception_holder["exception"] = e
 
         def persist_multiple_times():
@@ -213,7 +213,7 @@ class TestVectorRaceCondition:
                 for i in range(5):
                     threading.Event().wait(0.02)
                     vector.persist(tmp_path / f"stress_test_{i}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- concurrency test captures any error for later assertion
                 exception_holder["exception"] = e
 
         add_thread = threading.Thread(target=add_chunks_continuously)

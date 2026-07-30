@@ -5,7 +5,6 @@ from typing import Any
 
 from searchkernel.utils.atomic_io import atomic_write_json
 
-
 CURRENT_MANIFEST_SPEC_VERSION = "1.1.0"
 
 

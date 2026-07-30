@@ -5,12 +5,18 @@ ScoredRefs carrying candidate text) that the federation rerank step depends
 on, over a real orchestrator against in-memory FAISS-backed indices.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
 from searchkernel.adapters.sources.local import LocalSearchSource
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.domain import ScoredRef
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
@@ -71,7 +77,7 @@ def _seed(indices):
         start_pos=0,
         end_pos=10,
         file_path="note_doc.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     indices["vector"].add_chunk(chunk)
     indices["keyword"].add_chunk(chunk)

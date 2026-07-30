@@ -190,7 +190,6 @@ async def test_none_is_distinguishable_from_timeout():
 
     async def returns_none() -> None:
         await asyncio.sleep(0.01)
-        return None
 
     async def slow_task() -> str:
         await asyncio.sleep(1.0)

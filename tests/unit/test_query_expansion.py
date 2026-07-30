@@ -14,13 +14,12 @@ Test strategies:
 - Verify expansion behavior with real embeddings
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
-from searchkernel.indices.vector import VectorIndex, STOPWORDS
+from searchkernel.indices.vector import STOPWORDS, VectorIndex
 from searchkernel.models import Chunk
-
 
 # ============================================================================
 # Fixtures
@@ -55,7 +54,7 @@ def vector_index_populated(shared_embedding_model):
             start_pos=0,
             end_pos=60,
             file_path="/docs/auth.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         ),
         Chunk(
             chunk_id="doc2_chunk_0",
@@ -67,7 +66,7 @@ def vector_index_populated(shared_embedding_model):
             start_pos=0,
             end_pos=60,
             file_path="/docs/authz.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         ),
         Chunk(
             chunk_id="doc3_chunk_0",
@@ -79,7 +78,7 @@ def vector_index_populated(shared_embedding_model):
             start_pos=0,
             end_pos=70,
             file_path="/docs/login.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         ),
     ]
 
@@ -346,7 +345,7 @@ class TestVocabularyPersistence:
             start_pos=0,
             end_pos=60,
             file_path="/docs/test.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         index1.add_chunk(chunk)
         index1.build_concept_vocabulary(min_frequency=1)
@@ -388,7 +387,7 @@ class TestVocabularyPersistence:
             start_pos=0,
             end_pos=30,
             file_path="/docs/test.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         index1.add_chunk(chunk)
         # Note: NOT calling build_concept_vocabulary()

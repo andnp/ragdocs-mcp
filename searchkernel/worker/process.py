@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 import logging
+import os
 import signal
 import subprocess
 import time
+from pathlib import Path
 
 from searchkernel.daemon.management import _resolve_daemon_python, _worker_log_path
 from searchkernel.daemon.paths import RuntimePaths
-
 
 logger = logging.getLogger(__name__)
 

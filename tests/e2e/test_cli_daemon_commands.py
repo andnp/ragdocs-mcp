@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from click.testing import CliRunner
 from pathlib import Path
+from typing import ClassVar
+
 import pytest
+from click.testing import CliRunner
 
 from searchkernel.cli import cli
-from searchkernel.lifecycle import LifecycleState
 from searchkernel.daemon import RuntimePaths
 from searchkernel.daemon.management import DaemonInspection
 from searchkernel.daemon.metadata import DaemonMetadata
+from searchkernel.lifecycle import LifecycleState
 
 
 def test_daemon_status_reports_not_running(monkeypatch):
@@ -723,7 +725,7 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
     class _FakeIndexingConfig:
         documents_path = str(docs_dir)
         index_path = str(index_dir)
-        exclude: list[str] = []
+        exclude: ClassVar[list[str]] = []
         exclude_hidden_dirs = True
 
     class _FakeConfig:
@@ -818,7 +820,7 @@ def test_index_stats_reports_per_root_breakdown(tmp_path):
     class _FakeIndexingConfig:
         documents_path = str(tmp_path)
         index_path = str(index_dir)
-        exclude: list[str] = []
+        exclude: ClassVar[list[str]] = []
         exclude_hidden_dirs = True
 
     class _FakeConfig:
@@ -919,7 +921,7 @@ def test_index_stats_uses_loaded_snapshot_when_refresh_lock_times_out(
     class _FakeIndexingConfig:
         documents_path = str(docs_dir)
         index_path = str(index_dir)
-        exclude: list[str] = []
+        exclude: ClassVar[list[str]] = []
         exclude_hidden_dirs = True
 
     class _FakeConfig:
@@ -1593,7 +1595,7 @@ def test_build_initializing_search_payload_for_query_includes_machine_readable_f
             }
 
     class _FakeContext:
-        documents_roots = [Path("/docs/a"), Path("/docs/b")]
+        documents_roots: ClassVar[list[Path]] = [Path("/docs/a"), Path("/docs/b")]
 
         def get_total_git_commits_indexed(self):
             return 0
@@ -1643,7 +1645,7 @@ def test_build_initializing_search_payload_for_git_history_includes_commit_count
             }
 
     class _FakeContext:
-        documents_roots = [Path("/docs")]
+        documents_roots: ClassVar[list[Path]] = [Path("/docs")]
 
         def get_total_git_commits_indexed(self):
             return 17

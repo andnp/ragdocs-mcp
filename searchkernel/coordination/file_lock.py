@@ -47,7 +47,7 @@ class IndexLock:
                 self._lock_mode = "exclusive"
                 logger.debug(f"Exclusive lock acquired: {self.lock_file_path}")
                 return
-            except (IOError, OSError):
+            except OSError:
                 elapsed = time.time() - start_time
                 if elapsed >= self.timeout_seconds:
                     os.close(fd)
@@ -73,7 +73,7 @@ class IndexLock:
                 self._lock_mode = "shared"
                 logger.debug(f"Shared lock acquired: {self.lock_file_path}")
                 return
-            except (IOError, OSError):
+            except OSError:
                 elapsed = time.time() - start_time
                 if elapsed >= self.timeout_seconds:
                     os.close(fd)
@@ -131,7 +131,7 @@ class IndexLock:
 
                 try:
                     msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
-                except Exception as e:
+                except OSError as e:
                     logger.warning(f"Failed to unlock file descriptor: {e}")
 
             os.close(self._lock_fd)
@@ -139,7 +139,7 @@ class IndexLock:
             logger.debug(f"Lock released ({self._lock_mode}): {self.lock_file_path}")
             self._lock_mode = None
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- lock release must never raise
             logger.error(f"Failed to release lock: {e}")
 
     def __enter__(self):

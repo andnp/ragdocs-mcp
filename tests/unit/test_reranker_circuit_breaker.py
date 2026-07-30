@@ -215,7 +215,7 @@ class TestCircuitBreakerIntegration:
                     content_provider=content_provider,
                     top_n=2,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- concurrency test captures any error for later assertion
                 errors.append(e)
 
         threads = [threading.Thread(target=try_rerank) for _ in range(5)]

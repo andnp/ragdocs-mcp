@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -23,7 +23,7 @@ def sample_document():
         links=["AI"],
         tags=["ml", "ai"],
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
 
@@ -103,7 +103,7 @@ def test_keyword_index_multiple_documents(keyword_index):
         links=[],
         tags=["python"],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     doc2 = Document(
@@ -113,7 +113,7 @@ def test_keyword_index_multiple_documents(keyword_index):
         links=[],
         tags=["javascript"],
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc1)
@@ -134,7 +134,7 @@ def test_keyword_index_exact_match_priority(keyword_index):
         links=[],
         tags=[],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     doc2 = Document(
@@ -144,7 +144,7 @@ def test_keyword_index_exact_match_priority(keyword_index):
         links=[],
         tags=[],
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc1)
@@ -169,7 +169,7 @@ def test_keyword_index_update_document(keyword_index):
         links=[],
         tags=["python"],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -184,7 +184,7 @@ def test_keyword_index_update_document(keyword_index):
         links=[],
         tags=["javascript"],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(updated_doc)
@@ -210,7 +210,7 @@ def test_keyword_index_load_nonexistent_path(tmp_path):
         links=[],
         tags=[],
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     index.add(doc)
     results = index.search("test content", top_k=5)
@@ -230,7 +230,7 @@ def test_keyword_index_special_characters(keyword_index):
         links=[],
         tags=["c++", "nodejs"],
         file_path="/tmp/special.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -250,7 +250,7 @@ def test_keyword_index_phrase_search(keyword_index):
         links=[],
         tags=[],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     doc2 = Document(
@@ -260,7 +260,7 @@ def test_keyword_index_phrase_search(keyword_index):
         links=[],
         tags=[],
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc1)
@@ -296,7 +296,7 @@ def test_keyword_index_get_chunk_by_id_returns_row_metadata(keyword_index):
         start_pos=0,
         end_pos=33,
         file_path="/tmp/lookup.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(chunk)
@@ -320,7 +320,7 @@ def test_keyword_index_aliases_as_string(keyword_index):
         links=[],
         tags=[],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -337,7 +337,7 @@ def test_keyword_index_no_aliases(keyword_index):
         links=[],
         tags=[],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -356,7 +356,7 @@ def test_keyword_index_concurrent_access(keyword_index):
         links=[],
         tags=[],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     doc2 = Document(
@@ -366,7 +366,7 @@ def test_keyword_index_concurrent_access(keyword_index):
         links=[],
         tags=[],
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     def add_doc1():
@@ -401,7 +401,7 @@ def test_keyword_index_empty_content(keyword_index):
         links=[],
         tags=["empty"],
         file_path="/tmp/empty.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -427,7 +427,7 @@ def test_keyword_index_very_large_document(keyword_index):
         links=[],
         tags=["large"],
         file_path="/tmp/large.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -465,7 +465,7 @@ def test_keyword_index_title_field_boosted():
         start_pos=0,
         end_pos=50,
         file_path="/tmp/auth.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     # Chunk with search term in content only
@@ -479,7 +479,7 @@ def test_keyword_index_title_field_boosted():
         start_pos=0,
         end_pos=70,
         file_path="/tmp/generic.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(chunk_with_title)
@@ -514,7 +514,7 @@ def test_keyword_index_headers_field_indexed():
         start_pos=0,
         end_pos=50,
         file_path="/tmp/api.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(chunk)
@@ -550,7 +550,7 @@ def test_keyword_index_keywords_field_indexed():
         start_pos=0,
         end_pos=50,
         file_path="/tmp/arch.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(chunk)
@@ -586,7 +586,7 @@ def test_keyword_index_description_field_indexed():
         start_pos=0,
         end_pos=30,
         file_path="/tmp/docker.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(chunk)
@@ -616,7 +616,7 @@ def test_keyword_index_author_field_indexed():
         start_pos=0,
         end_pos=40,
         file_path="/tmp/authored.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(chunk)
@@ -646,7 +646,7 @@ def test_keyword_index_category_field_indexed():
         start_pos=0,
         end_pos=25,
         file_path="/tmp/tutorial.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(chunk)
@@ -684,7 +684,7 @@ def test_keyword_index_all_boosted_fields_together():
         start_pos=0,
         end_pos=35,
         file_path="/tmp/k8s.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(chunk)
@@ -725,7 +725,7 @@ def test_keyword_index_prefers_exact_title_over_header_and_content_matches():
         start_pos=0,
         end_pos=47,
         file_path="/tmp/title-exact.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     header_match = Chunk(
         chunk_id="header_exact_chunk_0",
@@ -737,7 +737,7 @@ def test_keyword_index_prefers_exact_title_over_header_and_content_matches():
         start_pos=0,
         end_pos=47,
         file_path="/tmp/header-exact.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     content_match = Chunk(
         chunk_id="content_phrase_chunk_0",
@@ -749,7 +749,7 @@ def test_keyword_index_prefers_exact_title_over_header_and_content_matches():
         start_pos=0,
         end_pos=66,
         file_path="/tmp/content-phrase.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(title_match)
@@ -782,7 +782,7 @@ def test_keyword_index_prefers_exact_header_segment_over_content_match():
         start_pos=0,
         end_pos=42,
         file_path="/tmp/worker-config.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     content_match = Chunk(
         chunk_id="content_config_chunk_0",
@@ -794,7 +794,7 @@ def test_keyword_index_prefers_exact_header_segment_over_content_match():
         start_pos=0,
         end_pos=49,
         file_path="/tmp/runtime-flags.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(header_match)
@@ -820,7 +820,7 @@ def test_keyword_index_prefers_exact_title_over_interior_section_match_for_testi
         start_pos=0,
         end_pos=64,
         file_path="/tmp/specs/04-testing-strategy.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     broader_doc = Chunk(
         chunk_id="development_testing_strategy_chunk_0",
@@ -835,7 +835,7 @@ def test_keyword_index_prefers_exact_title_over_interior_section_match_for_testi
         start_pos=0,
         end_pos=112,
         file_path="/tmp/docs/development.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(dedicated_spec)
@@ -864,7 +864,7 @@ def test_keyword_index_prefers_primary_heading_over_deeper_header_match():
         start_pos=0,
         end_pos=42,
         file_path="/tmp/quality/testing-strategy.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     deeper_heading_match = Chunk(
         chunk_id="deeper_heading_chunk_0",
@@ -876,7 +876,7 @@ def test_keyword_index_prefers_primary_heading_over_deeper_header_match():
         start_pos=0,
         end_pos=39,
         file_path="/tmp/docs/development.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(primary_heading_match)
@@ -902,7 +902,7 @@ def test_keyword_index_prefers_exact_config_key_title_over_content_match():
         start_pos=0,
         end_pos=57,
         file_path="/tmp/config-reference.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     content_match = Chunk(
         chunk_id="body_config_chunk_0",
@@ -914,7 +914,7 @@ def test_keyword_index_prefers_exact_config_key_title_over_content_match():
         start_pos=0,
         end_pos=62,
         file_path="/tmp/testing-notes.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(title_match)
@@ -944,7 +944,7 @@ def test_keyword_index_artifact_lane_matches_dotted_source_file():
         start_pos=0,
         end_pos=37,
         file_path="/tmp/state/bootstrap.checkpoint.json",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(chunk)
@@ -973,7 +973,7 @@ def test_keyword_index_artifact_lane_prefers_path_match_over_content_only_match(
         start_pos=0,
         end_pos=37,
         file_path="/tmp/runtime/state/bootstrap.checkpoint.json",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     content_only = Chunk(
         chunk_id="content_chunk_1",
@@ -989,7 +989,7 @@ def test_keyword_index_artifact_lane_prefers_path_match_over_content_only_match(
         start_pos=0,
         end_pos=72,
         file_path="/tmp/notes/runtime-overview.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(path_match)
@@ -1022,7 +1022,7 @@ def test_keyword_index_artifact_lane_matches_exact_title_literal():
         start_pos=0,
         end_pos=46,
         file_path="/tmp/notes/runtime-artifacts.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(title_match)
@@ -1054,7 +1054,7 @@ def test_keyword_index_artifact_lane_matches_literal_in_body_content():
         start_pos=0,
         end_pos=90,
         file_path="/tmp/notes/restart-behavior.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(content_match)
@@ -1102,7 +1102,7 @@ def test_keyword_index_schema_mismatch_triggers_rebuild(tmp_path):
         start_pos=0,
         end_pos=13,
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     keyword_index.add_chunk(chunk)
 
@@ -1132,7 +1132,7 @@ def test_keyword_index_remove_handles_corrupted_db(tmp_path):
         start_pos=0,
         end_pos=30,
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     keyword_index.add_chunk(chunk)
 
@@ -1174,7 +1174,7 @@ def test_keyword_index_search_handles_corrupted_db(tmp_path):
         start_pos=0,
         end_pos=35,
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     keyword_index.add_chunk(chunk)
 
@@ -1218,7 +1218,7 @@ def test_keyword_index_recovery_allows_reindexing(tmp_path):
         start_pos=0,
         end_pos=40,
         file_path="/tmp/original.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     keyword_index.add_chunk(original_chunk)
 
@@ -1242,7 +1242,7 @@ def test_keyword_index_recovery_allows_reindexing(tmp_path):
         start_pos=0,
         end_pos=35,
         file_path="/tmp/new.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     keyword_index.add_chunk(new_chunk)
 
@@ -1272,7 +1272,7 @@ def test_remove_chunk_removes_from_index():
         start_pos=0,
         end_pos=36,
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     chunk2 = Chunk(
         chunk_id="doc1#chunk#1",
@@ -1284,7 +1284,7 @@ def test_remove_chunk_removes_from_index():
         start_pos=37,
         end_pos=72,
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add_chunk(chunk1)
@@ -1320,9 +1320,10 @@ def test_remove_chunk_handles_missing_chunk():
 def test_remove_chunk_handles_corruption(tmp_path):
     """Test that remove_chunk() handles index corruption gracefully."""
     pytest.importorskip("whoosh")
-    from searchkernel.models import Chunk
     import glob
     from pathlib import Path
+
+    from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
 
@@ -1336,7 +1337,7 @@ def test_remove_chunk_handles_corruption(tmp_path):
         start_pos=0,
         end_pos=29,
         file_path="/tmp/corrupt.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     keyword_index.add_chunk(chunk)
 
@@ -1364,7 +1365,7 @@ def test_remove_chunk_handles_corruption(tmp_path):
         start_pos=0,
         end_pos=27,
         file_path="/tmp/new.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     keyword_index.add_chunk(new_chunk)
 
@@ -1384,6 +1385,7 @@ def test_remove_chunk_before_initialization():
 def test_remove_chunk_thread_safe():
     """Test that remove_chunk() is thread-safe with concurrent operations."""
     from concurrent.futures import ThreadPoolExecutor
+
     from searchkernel.models import Chunk
 
     keyword_index = KeywordIndex()
@@ -1400,7 +1402,7 @@ def test_remove_chunk_thread_safe():
             start_pos=i * 30,
             end_pos=(i + 1) * 30,
             file_path="/tmp/concurrent.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         keyword_index.add_chunk(chunk)
 
@@ -1453,7 +1455,7 @@ def test_load_handles_missing_main_index(tmp_path):
         links=[],
         tags=[],
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     keyword_index.add(doc)
     results = keyword_index.search("test content", top_k=5)
@@ -1499,7 +1501,7 @@ def test_load_handles_empty_directory(tmp_path):
         links=[],
         tags=[],
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     keyword_index.add(doc)
     results = keyword_index.search("empty directory recovery", top_k=5)
@@ -1534,7 +1536,7 @@ def test_keyword_index_recovers_from_corrupt_sqlite(tmp_path):
         links=[],
         tags=[],
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     index.add(doc)
     index.persist(tmp_path)
@@ -1556,7 +1558,7 @@ def test_keyword_index_recovers_from_corrupt_sqlite(tmp_path):
         links=[],
         tags=[],
         file_path="/tmp/new.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     index2.add(new_doc)
     results = index2.search("reinforcement learning", top_k=5)
@@ -1582,7 +1584,7 @@ def test_keyword_index_search_recovers_from_malformed_mid_operation(tmp_path):
         links=[],
         tags=[],
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     index.add(doc)
 

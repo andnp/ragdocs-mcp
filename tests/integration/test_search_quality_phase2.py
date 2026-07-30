@@ -12,7 +12,6 @@ from searchkernel.search.orchestrator import SearchOrchestrator
 from searchkernel.search.pipeline import SearchPipelineConfig
 from tests.conftest import create_test_document
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -120,7 +119,7 @@ Permissions are granted based on user roles.
         vector.build_concept_vocabulary()
 
         # Query should work with expansion enabled
-        results, stats, _ = await orchestrator.query("auth", top_k=10, top_n=5)
+        results, _stats, _ = await orchestrator.query("auth", top_k=10, top_n=5)
 
         # Should find results
         assert len(results) > 0
@@ -296,7 +295,7 @@ It is used for web development and scripting.
             manager.index_document(str(doc_file))
 
         # Query with re-ranking enabled
-        results, stats, _ = await orchestrator.query(
+        results, _stats, _ = await orchestrator.query(
             "machine learning tutorial", top_k=10, top_n=3
         )
 
@@ -421,7 +420,7 @@ Authentication required for protected endpoints.
         vector.build_concept_vocabulary()
 
         # Query with short form (expansion) + reranking
-        results, stats, _ = await orchestrator.query("auth", top_k=10, top_n=3)
+        results, _stats, _ = await orchestrator.query("auth", top_k=10, top_n=3)
 
         # Should find results through expansion
         assert len(results) > 0

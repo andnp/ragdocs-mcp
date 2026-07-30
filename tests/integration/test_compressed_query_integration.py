@@ -11,14 +11,20 @@ Tests cover:
 These tests use real embeddings and indices, avoiding mocks.
 """
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import numpy as np
 import pytest
 
 from searchkernel.compression.thresholding import filter_by_score
-from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig, ChunkingConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
@@ -26,7 +32,6 @@ from searchkernel.indices.vector import VectorIndex
 from searchkernel.models import CompressionStats
 from searchkernel.search.orchestrator import SearchOrchestrator
 from searchkernel.search.pipeline import SearchPipelineConfig
-
 
 # ============================================================================
 # Fixtures
@@ -69,7 +74,7 @@ def embedding_model(shared_embedding_model):
 @pytest.fixture(scope="module")
 def integration_indices(
     embedding_model,
-) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
+) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore]]:
     """
     Create module-scoped indices for integration tests.
 
@@ -271,7 +276,7 @@ class TestCompressionPipeline:
         """
         pipeline_config = SearchPipelineConfig(min_confidence=0.0, dedup_threshold=0.85)
 
-        results, stats, _ = await integration_orchestrator.query(
+        _results, stats, _ = await integration_orchestrator.query(
             "Introduction to Python programming language",
             top_k=20,
             top_n=20,
@@ -304,7 +309,7 @@ class TestCompressionStats:
         """
         pipeline_config = SearchPipelineConfig(min_confidence=0.3, dedup_threshold=0.85)
 
-        results, stats, _ = await integration_orchestrator.query(
+        _results, stats, _ = await integration_orchestrator.query(
             "database query optimization",
             top_k=20,
             top_n=20,

@@ -5,11 +5,10 @@ not when the library is imported. This includes environment variable configurati
 for threading and numerical libraries.
 """
 
-import os
 import logging
+import os
 
 from searchkernel.config import Config, load_config
-
 
 logger = logging.getLogger(__name__)
 

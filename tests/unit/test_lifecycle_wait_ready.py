@@ -32,7 +32,7 @@ class MockApplicationContext:
             # This simulates real behavior where small delays succeed
             if self.ensure_ready_delay > timeout * 10:
                 await asyncio.sleep(timeout)
-                raise asyncio.TimeoutError(f"Mock timed out after {timeout}s")
+                raise TimeoutError(f"Mock timed out after {timeout}s")
             await asyncio.sleep(min(self.ensure_ready_delay, timeout))
         self._ready_event.set()
 

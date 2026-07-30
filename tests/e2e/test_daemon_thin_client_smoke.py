@@ -4,8 +4,8 @@ import asyncio
 import contextlib
 import json
 import os
-from pathlib import Path
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner

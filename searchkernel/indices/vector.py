@@ -18,7 +18,11 @@ from searchkernel.indices.vocabulary_state import VocabularyLifecycleState
 from searchkernel.models import Chunk, Document
 from searchkernel.search.types import SearchResultDict
 from searchkernel.utils.atomic_io import atomic_write_json, fsync_path
-from searchkernel.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen, CircuitState
+from searchkernel.utils.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerOpen,
+    CircuitState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +204,8 @@ class VectorIndex:
 
             from concurrent.futures import (
                 ThreadPoolExecutor,
+            )
+            from concurrent.futures import (
                 TimeoutError as FuturesTimeoutError,
             )
 
@@ -231,8 +237,8 @@ class VectorIndex:
                 )
                 logger.error(error_msg)
                 raise RuntimeError(error_msg) from None
-            except Exception as e:
-                logger.error(f"Failed to load embedding model: {e}", exc_info=True)
+            except Exception:
+                logger.exception("Failed to load embedding model")
                 raise
 
     def _configure_torch_threads(self) -> None:
@@ -397,10 +403,9 @@ class VectorIndex:
                     id_=chunk.chunk_id,
                 )
                 llama_docs.append((llama_doc, chunk))
-            except Exception as e:
-                logger.error(
-                    f"Failed to create document for chunk {chunk.chunk_id}: {e}",
-                    exc_info=True,
+            except Exception:
+                logger.exception(
+                    f"Failed to create document for chunk {chunk.chunk_id}"
                 )
 
         if not llama_docs:
@@ -562,16 +567,15 @@ class VectorIndex:
                     else new_chunk_id.split("#")[0],
                 )
 
-                if old_doc_id in self._doc_id_to_node_ids:
-                    if old_doc_id != new_doc_id:
-                        old_node_id = self._chunk_id_to_node_id.get(old_chunk_id)
-                        if old_node_id:
-                            try:
-                                self._doc_id_to_node_ids[old_doc_id].remove(old_node_id)
-                                if not self._doc_id_to_node_ids[old_doc_id]:
-                                    del self._doc_id_to_node_ids[old_doc_id]
-                            except ValueError:
-                                pass
+                if old_doc_id in self._doc_id_to_node_ids and old_doc_id != new_doc_id:
+                    old_node_id = self._chunk_id_to_node_id.get(old_chunk_id)
+                    if old_node_id:
+                        try:
+                            self._doc_id_to_node_ids[old_doc_id].remove(old_node_id)
+                            if not self._doc_id_to_node_ids[old_doc_id]:
+                                del self._doc_id_to_node_ids[old_doc_id]
+                        except ValueError:
+                            pass
 
                 if new_doc_id not in self._doc_id_to_node_ids:
                     self._doc_id_to_node_ids[new_doc_id] = []
@@ -581,7 +585,7 @@ class VectorIndex:
                 # Remove old chunk mappings and docstore entry
                 try:
                     docstore.delete_document(old_chunk_id)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- best-effort cleanup, docstore errors vary
                     logger.debug(
                         f"Could not delete old docstore entry {old_chunk_id}: {e}"
                     )
@@ -781,7 +785,7 @@ class VectorIndex:
                     )
                     self._log_stale_warning(chunk_id)
                 self._cleanup_stale_reference(chunk_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- docstore lookup errors vary; fall back to stale handling
             if chunk_id not in self._warned_stale_chunk_ids:
                 logger.warning(
                     f"get_chunk_by_id({chunk_id}): docstore lookup failed: {e}"
@@ -873,6 +877,9 @@ class VectorIndex:
                 try:
                     node = docstore.get_document(chunk_id)
                 except Exception:
+                    logger.debug(
+                        "Failed to fetch docstore node for chunk %s", chunk_id, exc_info=True
+                    )
                     continue
                 if node is None:
                     continue
@@ -956,7 +963,7 @@ class VectorIndex:
             )
         except Exception as e:
             self._vocabulary_state.mark_failed(str(e))
-            logger.error("Failed to build concept vocabulary: %s", e, exc_info=True)
+            logger.exception("Failed to build concept vocabulary")
             raise
 
     def extract_terms_from_text(
@@ -1073,7 +1080,7 @@ class VectorIndex:
             return embedded_count
         except Exception as e:
             self._vocabulary_state.mark_failed(str(e))
-            logger.error("Incremental vocabulary catch-up failed: %s", e, exc_info=True)
+            logger.exception("Incremental vocabulary catch-up failed")
             raise
 
     def _rebuild_vocab_index(self) -> None:
@@ -1212,7 +1219,7 @@ class VectorIndex:
             if not text:
                 return None
             return self.get_text_embedding(text)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- embedding backend errors vary; fall back to None
             return None
 
     def expand_query(
@@ -1632,7 +1639,7 @@ class VectorIndex:
                 if node is None:
                     self._cleanup_stale_reference(chunk_id)
                     removed += 1
-            except Exception:
+            except Exception:  # noqa: BLE001 -- docstore lookup errors vary; treat as stale reference
                 self._cleanup_stale_reference(chunk_id)
                 removed += 1
 
@@ -1685,7 +1692,7 @@ class VectorIndex:
     def save(self, path: Path) -> None:
         self.persist(path)
 
-    def save_to_db(self, db_manager: "DatabaseManager") -> None:
+    def save_to_db(self, db_manager: DatabaseManager) -> None:
         """Persist VectorIndex state to SQLite via DatabaseManager.
 
         Stores:
@@ -1742,7 +1749,7 @@ class VectorIndex:
             "VectorIndex saved to SQLite (%d chunks)", len(self._chunk_id_to_node_id)
         )
 
-    def load_from_db(self, db_manager: "DatabaseManager") -> None:
+    def load_from_db(self, db_manager: DatabaseManager) -> None:
         """Restore VectorIndex state from SQLite via DatabaseManager.
 
         Loads FAISS binary, docstore, and all JSON mappings from the database.

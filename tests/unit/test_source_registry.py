@@ -1,6 +1,7 @@
 """Unit tests for SourceRegistry: register/select/get named SearchableSources."""
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from searchkernel.domain import ScoredRef
 from searchkernel.runtime.registry import SourceRegistry

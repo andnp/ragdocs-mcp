@@ -1,6 +1,8 @@
 from click.testing import CliRunner
 
 from searchkernel import cli as cli_module
+
+
 def test_rebuild_index_cmd_delegates_to_shared_runner(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

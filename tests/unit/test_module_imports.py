@@ -14,8 +14,7 @@ def discover_modules(package_path: Path, package_name: str) -> list[str]:
         relative = item.relative_to(package_path.parent)
         module_path = str(relative.with_suffix("")).replace("/", ".")
 
-        if module_path.endswith(".__init__"):
-            module_path = module_path[:-9]
+        module_path = module_path.removesuffix(".__init__")
 
         modules.append(module_path)
 
@@ -34,7 +33,7 @@ def test_all_src_modules_importable(src_modules):
     for module_name in src_modules:
         try:
             importlib.import_module(module_name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- module-level code can raise anything at import time
             failed_imports.append((module_name, str(e)))
 
     if failed_imports:
@@ -60,7 +59,7 @@ def test_critical_modules_import_without_error():
     for module_name in critical_modules:
         try:
             importlib.import_module(module_name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- module-level code can raise anything at import time
             failed.append((module_name, type(e).__name__, str(e)))
 
     if failed:

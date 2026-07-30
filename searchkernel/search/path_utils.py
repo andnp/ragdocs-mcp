@@ -24,10 +24,7 @@ def matches_any_excluded(file_path: str, excluded_files: set[str], docs_root: Pa
         return True
 
     filename = Path(normalized).name
-    if filename in excluded_files:
-        return True
-
-    return False
+    return filename in excluded_files
 
 
 def compute_doc_id(file_path: Path, docs_root: Path) -> str:

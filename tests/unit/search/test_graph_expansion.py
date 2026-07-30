@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.models import Chunk
@@ -16,7 +16,7 @@ def _make_chunk(doc_id: str, chunk_index: int) -> Chunk:
         start_pos=0,
         end_pos=10,
         file_path=f"{doc_id}.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
 

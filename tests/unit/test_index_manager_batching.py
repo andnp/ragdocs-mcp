@@ -3,7 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indexing.manifest import load_manifest
 from searchkernel.indices.graph import GraphStore

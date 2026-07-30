@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.context import ApplicationContext
 from searchkernel.config import Config, IndexingConfig
+from searchkernel.context import ApplicationContext
 
 
 @pytest.fixture

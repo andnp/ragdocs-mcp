@@ -1,7 +1,7 @@
 """Tests for VectorIndex SQLite persistence (save_to_db / load_from_db)."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,7 @@ def _make_chunk(doc_id: str, index: int, content: str) -> Chunk:
         start_pos=0,
         end_pos=len(content),
         file_path=f"/docs/{doc_id}.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
 

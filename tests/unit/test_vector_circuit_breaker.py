@@ -1,7 +1,7 @@
 """Tests for VectorIndex circuit breaker functionality."""
 
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -286,6 +286,7 @@ class TestProtectedEmbed:
     def test_repeated_failures_trip_circuit(self, shared_embedding_model):
         """Repeated embedding failures trip the circuit breaker."""
         from unittest.mock import MagicMock
+
         from searchkernel.utils.circuit_breaker import CircuitBreakerOpen
 
         vector_index = VectorIndex(embedding_model=shared_embedding_model)
@@ -371,7 +372,7 @@ class TestSearchCircuitBreaker:
             metadata={},
             start_pos=0,
             end_pos=34,
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         vector_index.add_chunk(chunk)
 
@@ -413,7 +414,7 @@ class TestVocabularyCircuitBreaker:
             metadata={},
             start_pos=0,
             end_pos=37,
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         vector_index.add_chunk(chunk)
 

@@ -6,9 +6,9 @@ import pytest
 
 from searchkernel.indexing.manifest import IndexManifest
 from searchkernel.indexing.reconciler import (
-    reconcile_indices,
     build_indexed_files_map,
     find_excluded_indexed_files,
+    reconcile_indices,
 )
 
 

@@ -14,7 +14,6 @@ import pytest
 from searchkernel.compression.thresholding import filter_by_score
 from searchkernel.models import ChunkResult
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================

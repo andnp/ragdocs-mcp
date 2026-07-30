@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from searchkernel.indexing.bootstrap_checkpoint import BootstrapCheckpoint, BootstrapFileStamp
+from searchkernel.indexing.bootstrap_checkpoint import (
+    BootstrapCheckpoint,
+    BootstrapFileStamp,
+)
 from searchkernel.indexing.manifest import IndexManifest
 
 PublicIndexStatus = Literal["indexing", "partial", "ready"]

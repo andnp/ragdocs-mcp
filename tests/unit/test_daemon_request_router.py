@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from dataclasses import dataclass, field
-from pathlib import Path
 import threading
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -141,7 +141,7 @@ def _build_dependencies(
 
 
 def _record_payload(source_id: str = "note:1") -> dict[str, object]:
-    now = datetime(2026, 7, 29, 12, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 29, 12, 30, tzinfo=UTC)
     return Record(
         source_kind="note",
         source_id=source_id,
@@ -246,7 +246,7 @@ async def test_record_index_route_indexes_deserialized_records_through_live_mana
 
     assert payload == {"status": "ok", "indexed_count": 2}
     assert [record.source_id for record in ctx.indexed_records] == ["note:1", "note:2"]
-    assert all(record.created_at.tzinfo == timezone.utc for record in ctx.indexed_records)
+    assert all(record.created_at.tzinfo == UTC for record in ctx.indexed_records)
 
 
 @pytest.mark.asyncio

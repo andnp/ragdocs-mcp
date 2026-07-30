@@ -53,8 +53,8 @@ class ChunkHashStore:
                 json.dump(self._hashes, f)
             logger.debug(f"Persisted {len(self._hashes)} chunk hashes")
             self._dirty.clear()
-        except OSError as e:
-            logger.error(f"Failed to persist hash store: {e}", exc_info=True)
+        except OSError:
+            logger.exception("Failed to persist hash store")
 
     def get_hash(self, chunk_id: str) -> str | None:
         """Get stored hash for chunk_id."""
@@ -84,7 +84,7 @@ class ChunkHashStore:
         to_remove = [
             cid
             for cid in self._hashes
-            if cid.startswith(f"{doc_id}_chunk_") or cid.startswith(f"{doc_id}#")
+            if cid.startswith((f"{doc_id}_chunk_", f"{doc_id}#"))
         ]
         for cid in to_remove:
             # Remove from reverse lookup
@@ -146,8 +146,6 @@ class ChunkHashStore:
         """
         chunks = []
         for chunk_id, content_hash in self._hashes.items():
-            if chunk_id.startswith(f"{doc_id}_chunk_") or chunk_id.startswith(
-                f"{doc_id}#"
-            ):
+            if chunk_id.startswith((f"{doc_id}_chunk_", f"{doc_id}#")):
                 chunks.append((chunk_id, content_hash))
         return chunks

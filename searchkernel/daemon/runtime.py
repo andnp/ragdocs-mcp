@@ -17,7 +17,6 @@ from searchkernel.daemon.request_router import (
 from searchkernel.indexing.tasks import register_tasks, submit_record_batch
 from searchkernel.worker.process import HueyWorkerProcess
 
-
 BuildAdminOverviewPayload = Callable[[ApplicationContext, RuntimePaths, bool, int | None, str], dict[str, object]]
 BuildIndexStatsPayload = Callable[[object], dict[str, object]]
 BuildQueueStatusPayload = Callable[[Path, bool, int | None], dict[str, object]]

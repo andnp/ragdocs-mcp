@@ -1,10 +1,16 @@
 """Unit tests for delta detection logic in IndexManager."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
@@ -25,7 +31,7 @@ def make_chunk(chunk_id: str, doc_id: str, content: str, chunk_index: int = 0) -
         start_pos=0,
         end_pos=len(content),
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
 
@@ -235,7 +241,7 @@ def test_full_reindex_document_removes_all_old_chunks(manager, tmp_path):
     # Verify hash store updated
     new_hashes = manager._hash_store._hashes
     assert len(new_hashes) == 2
-    assert all(k.startswith("test_doc_chunk_") for k in new_hashes.keys())
+    assert all(k.startswith("test_doc_chunk_") for k in new_hashes)
 
     # Verify chunks are in indices
     vector_doc_ids = manager.vector.get_document_ids()

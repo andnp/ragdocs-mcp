@@ -14,9 +14,9 @@ from searchkernel.git.repository import (
     discover_git_repositories_multi_root,
     is_git_available,
 )
-from searchkernel.indexing.git_ingestion import ingest_git_source
 from searchkernel.indexing.discovery import discover_files as discover_files_single_root
 from searchkernel.indexing.discovery import discover_files_multi_root
+from searchkernel.indexing.git_ingestion import ingest_git_source
 from searchkernel.utils.atomic_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
@@ -421,7 +421,7 @@ def run_rebuild(
             completed_at=time.time(),
         )
     except Exception as exc:
-        logger.error("Daemon-owned rebuild failed: %s", exc, exc_info=True)
+        logger.exception("Daemon-owned rebuild failed")
         _append_message(runtime_root, f"❌ Rebuild failed: {exc}")
         return _update_rebuild_progress(
             runtime_root,

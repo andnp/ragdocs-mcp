@@ -29,7 +29,7 @@ class ImplicitGraphBuilder:
 
         for doc_id, metadata in nodes:
             # Skip if it's a memory or tag node
-            if doc_id.startswith("memory:") or doc_id.startswith("tag:"):
+            if doc_id.startswith(("memory:", "tag:")):
                 continue
 
             # Try to get path from metadata, fallback to doc_id if it looks like a path
@@ -41,11 +41,19 @@ class ImplicitGraphBuilder:
                     if parent_dir == ".":
                         parent_dir = ""  # Root
                 except Exception:
+                    logger.debug(
+                        "Failed to derive parent dir from doc_id %s", doc_id, exc_info=True
+                    )
                     continue
             else:
                 try:
                     parent_dir = str(Path(file_path).parent)
                 except Exception:
+                    logger.debug(
+                        "Failed to derive parent dir from file_path %s",
+                        file_path,
+                        exc_info=True,
+                    )
                     continue
 
             if parent_dir not in dir_groups:

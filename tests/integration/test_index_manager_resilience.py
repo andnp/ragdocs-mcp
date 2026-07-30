@@ -5,7 +5,7 @@ Tests that IndexManager continues processing remaining indices when one
 fails, and that startup reconciliation survives corrupted keyword index.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -58,7 +58,7 @@ def test_remove_document_continues_on_partial_failure(tmp_path, config):
         start_pos=0,
         end_pos=35,
         file_path="/tmp/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector.add_chunk(chunk)
@@ -103,7 +103,7 @@ def test_startup_reconciliation_survives_corrupted_keyword_index(tmp_path, confi
         start_pos=0,
         end_pos=45,
         file_path="/tmp/startup.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     vector.add_chunk(chunk)
     keyword.add_chunk(chunk)
@@ -132,7 +132,7 @@ def test_startup_reconciliation_survives_corrupted_keyword_index(tmp_path, confi
         start_pos=0,
         end_pos=40,
         file_path="/tmp/recovery.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     keyword.add_chunk(new_chunk)
 

@@ -1,20 +1,27 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
+from pathlib import Path
 
 from searchkernel.config import ensure_runtime_project_registered
-from searchkernel.daemon.health import probe_daemon_socket, remove_daemon_socket, request_daemon_socket
+from searchkernel.daemon.health import (
+    probe_daemon_socket,
+    remove_daemon_socket,
+    request_daemon_socket,
+)
 from searchkernel.daemon.lock import FilesystemLock
-from searchkernel.daemon.metadata import DaemonMetadata, read_daemon_metadata, remove_daemon_metadata
+from searchkernel.daemon.metadata import (
+    DaemonMetadata,
+    read_daemon_metadata,
+    remove_daemon_metadata,
+)
 from searchkernel.daemon.paths import RuntimePaths
-
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +206,7 @@ def _request_internal_shutdown(metadata: DaemonMetadata) -> bool:
             {},
             timeout_seconds=_INTERNAL_SHUTDOWN_TIMEOUT_SECONDS,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort IPC notification, many transport failure modes
         return False
 
     return response.get("status") == "ok"

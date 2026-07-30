@@ -14,7 +14,11 @@ from searchkernel.mcp.tools.document_tools import (
     handle_query_documents,
     handle_search_git_history,
 )
-from searchkernel.models import CompressionStats, SearchResultProvenance, SearchStrategyStats
+from searchkernel.models import (
+    CompressionStats,
+    SearchResultProvenance,
+    SearchStrategyStats,
+)
 
 
 class _FakeCoordinator:

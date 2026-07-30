@@ -1,6 +1,6 @@
 """Integration tests for delta indexing end-to-end scenarios."""
 
-import time
+import asyncio
 
 import pytest
 
@@ -131,7 +131,7 @@ Some test content here.
     initial_hashes = dict(manager._hash_store._hashes)
 
     # 2. Touch file (change mtime but not content)
-    time.sleep(0.1)  # Ensure mtime difference
+    await asyncio.sleep(0.1)  # Ensure mtime difference
     test_file.touch()
 
     # Write same content (triggers file change but content identical)

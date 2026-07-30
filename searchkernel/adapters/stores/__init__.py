@@ -1,19 +1,19 @@
 """Store adapter implementations."""
 
 from searchkernel.adapters.stores.pgvector import (
-    PostgresConnection,
-    PGVectorStore,
-    PGKeywordStore,
-    PGGraphStore,
     PGCacheStore,
+    PGGraphStore,
+    PGKeywordStore,
+    PGVectorStore,
+    PostgresConnection,
     _create_schema,
 )
 
 __all__ = [
-    "PostgresConnection",
-    "PGVectorStore",
-    "PGKeywordStore",
-    "PGGraphStore",
     "PGCacheStore",
+    "PGGraphStore",
+    "PGKeywordStore",
+    "PGVectorStore",
+    "PostgresConnection",
     "_create_schema",
 ]

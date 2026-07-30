@@ -114,13 +114,13 @@ class SearchEvaluationReport:
         ]
         for result in self.case_results:
             lines.append(
-                (
+                
                     f"- {result.case.case_id}: "
                     f"RR={result.metrics.reciprocal_rank:.3f}, "
                     f"Recall@3={result.metrics.recall_at_3:.3f}, "
                     f"Recall@5={result.metrics.recall_at_5:.3f}, "
                     f"top={list(result.ranked_paths[:3])}"
-                )
+                
             )
         return "\n".join(lines)
 

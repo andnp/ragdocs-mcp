@@ -128,7 +128,7 @@ async def test_query_latency_cold_start(config, orchestrator, indexed_corpus):
     query = "machine learning algorithms and neural networks"
 
     start_time = time.perf_counter()
-    results, compression_stats, _ = await orchestrator.query(query, top_k=10, top_n=10)
+    results, _compression_stats, _ = await orchestrator.query(query, top_k=10, top_n=10)
     end_time = time.perf_counter()
 
     latency = (end_time - start_time) * 1000  # Convert to milliseconds

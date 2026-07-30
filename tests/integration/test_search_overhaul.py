@@ -14,7 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig, ChunkingConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
@@ -22,7 +28,6 @@ from searchkernel.indices.vector import VectorIndex
 from searchkernel.parsers.markdown import MarkdownParser
 from searchkernel.search.edge_types import EdgeType, infer_edge_type
 from searchkernel.search.orchestrator import SearchOrchestrator
-
 
 # ============================================================================
 # Test Fixtures

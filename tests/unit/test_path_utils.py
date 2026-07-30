@@ -1,12 +1,13 @@
-import pytest
 from pathlib import Path
 
+import pytest
+
 from searchkernel.search.path_utils import (
-    normalize_path,
-    matches_any_excluded,
     compute_doc_id,
     compute_doc_id_multi_root,
     extract_doc_id_from_chunk_id,
+    matches_any_excluded,
+    normalize_path,
     resolve_doc_path,
     resolve_doc_path_multi_root,
 )

@@ -1,6 +1,6 @@
 """Integration tests for hash store integration with IndexManager."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -82,7 +82,7 @@ def test_hash_store_persisted_with_indices(tmp_path, manager):
         start_pos=0,
         end_pos=12,
         file_path=str(test_file),
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
     manager._hash_store.set_hash(test_chunk.chunk_id, test_chunk.content_hash)
 

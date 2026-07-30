@@ -6,7 +6,8 @@ perspective, fused the same way as any external source.
 """
 
 import asyncio
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from searchkernel.domain import ScoredRef
 from searchkernel.models import ChunkResult

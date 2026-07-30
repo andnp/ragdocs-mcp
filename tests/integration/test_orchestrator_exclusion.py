@@ -1,13 +1,19 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from searchkernel.config import Config, IndexingConfig, SearchConfig, ChunkingConfig, LLMConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.models import Chunk
 from searchkernel.search.orchestrator import SearchOrchestrator
 
@@ -59,13 +65,13 @@ async def test_orchestrator_query_without_exclusions(orchestrator, config):
         start_pos=0,
         end_pos=50,
         file_path=str(docs_path / "docs" / "api.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     orchestrator._vector.add_chunk(chunk1)
     orchestrator._keyword.add_chunk(chunk1)
 
-    results, stats, _ = await orchestrator.query("authentication", top_k=5, top_n=5)
+    results, _stats, _ = await orchestrator.query("authentication", top_k=5, top_n=5)
 
     assert len(results) > 0
     assert any("api" in r.chunk_id for r in results)
@@ -85,7 +91,7 @@ async def test_orchestrator_query_with_exclusions(orchestrator, config):
         start_pos=0,
         end_pos=50,
         file_path=str(docs_path / "docs" / "api.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     chunk2 = Chunk(
@@ -98,7 +104,7 @@ async def test_orchestrator_query_with_exclusions(orchestrator, config):
         start_pos=0,
         end_pos=50,
         file_path=str(docs_path / "docs" / "guide.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     orchestrator._vector.add_chunk(chunk1)
@@ -107,7 +113,7 @@ async def test_orchestrator_query_with_exclusions(orchestrator, config):
     orchestrator._keyword.add_chunk(chunk2)
 
     excluded = {"docs/api"}
-    results, stats, _ = await orchestrator.query(
+    results, _stats, _ = await orchestrator.query(
         "authentication", top_k=5, top_n=5, excluded_files=excluded
     )
 
@@ -134,7 +140,7 @@ async def test_orchestrator_query_compression_stats_with_exclusions(
             start_pos=0,
             end_pos=50,
             file_path=str(docs_path / "docs" / f"file{i}.md"),
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         chunks.append(chunk)
         orchestrator._vector.add_chunk(chunk)
@@ -167,14 +173,14 @@ async def test_orchestrator_query_multiple_exclusions(orchestrator, config):
             start_pos=0,
             end_pos=50,
             file_path=str(docs_path / "docs" / f"{name}.md"),
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         chunks.append(chunk)
         orchestrator._vector.add_chunk(chunk)
         orchestrator._keyword.add_chunk(chunk)
 
     excluded = {"docs/api", "docs/guide"}
-    results, stats, _ = await orchestrator.query(
+    results, _stats, _ = await orchestrator.query(
         "documentation", top_k=10, top_n=5, excluded_files=excluded
     )
 

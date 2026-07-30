@@ -8,8 +8,11 @@ from searchkernel.daemon.health import (
     DEFAULT_DAEMON_REQUEST_TIMEOUT_SECONDS,
     request_daemon_socket,
 )
-from searchkernel.daemon.management import inspect_daemon, start_daemon, wait_for_daemon_ready
-
+from searchkernel.daemon.management import (
+    inspect_daemon,
+    start_daemon,
+    wait_for_daemon_ready,
+)
 
 DAEMON_PENDING_READY_STATUSES = {"starting", "initializing"}
 DEFAULT_RECORD_REQUEST_TIMEOUT_SECONDS = 300.0

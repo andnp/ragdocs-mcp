@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 
@@ -25,7 +25,7 @@ class DecayConfig:
 
 def _normalize_timestamp(timestamp: datetime) -> datetime:
     if timestamp.tzinfo is None:
-        return timestamp.replace(tzinfo=timezone.utc)
+        return timestamp.replace(tzinfo=UTC)
     return timestamp
 
 
@@ -60,7 +60,7 @@ def calculate_time_score(
     reference_time: datetime | None = None,
 ) -> float:
     if reference_time is None:
-        reference_time = datetime.now(timezone.utc)
+        reference_time = datetime.now(UTC)
 
     if timestamp is None:
         # No penalty for missing timestamps (backward compatibility with legacy memories)

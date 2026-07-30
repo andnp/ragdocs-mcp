@@ -7,8 +7,7 @@ and the outside world. No I/O, no imports from adapters/runtime/stores.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
-
+from typing import Any
 
 # ===== Supporting types =====
 
@@ -106,16 +105,16 @@ class Record:
     metadata: dict[str, Any] = field(default_factory=dict)
     """Source-specific metadata (opaque to the core; preserved in results)."""
 
-    uri: Optional[str] = None
+    uri: str | None = None
     """Permalink or file path for citation/navigation."""
 
     status: RecordStatus = RecordStatus.ACTIVE
     """Lifecycle status: active, stale, or archived."""
 
-    embedding: Optional[Vector] = None
+    embedding: Vector | None = None
     """Pre-computed embedding (if the source brought its own vectors)."""
 
-    embedding_model: Optional[str] = None
+    embedding_model: str | None = None
     """Model name that produced the embedding (if embedding is set)."""
 
     def to_dict(self) -> dict[str, Any]:

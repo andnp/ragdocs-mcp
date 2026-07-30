@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, Mapping, cast
-
+from typing import Literal, cast
 
 type VocabularyLifecycleStatus = Literal[
     "absent",
@@ -85,8 +85,7 @@ class VocabularyLifecycleState:
             self.authoritative_revision = 1
         if has_materialized_terms and self.materialized_revision == 0:
             self.materialized_revision = 1
-        if self.authoritative_revision < self.materialized_revision:
-            self.authoritative_revision = self.materialized_revision
+        self.authoritative_revision = max(self.authoritative_revision, self.materialized_revision)
 
         if self.status == "building":
             self.status = "stale"

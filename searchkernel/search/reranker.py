@@ -16,7 +16,11 @@ import threading
 from collections.abc import Iterable
 from typing import Protocol
 
-from searchkernel.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen, CircuitState
+from searchkernel.utils.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerOpen,
+    CircuitState,
+)
 
 logger = logging.getLogger(__name__)
 

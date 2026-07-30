@@ -9,9 +9,9 @@ import pytest
 from searchkernel.config import Config, IndexingConfig
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indexing.manifest import IndexManifest, load_manifest, save_manifest
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 
 
 @pytest.fixture

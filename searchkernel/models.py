@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
 import hashlib
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -186,7 +186,7 @@ class Document:
     chunks: list[Chunk] | None = None
     project_id: str | None = None
 
-    def to_record(self) -> "Record":
+    def to_record(self) -> Record:
         """Convert a Document to a domain Record."""
         from searchkernel.domain import Record, RecordStatus
 
@@ -209,7 +209,7 @@ class Document:
         )
 
     @classmethod
-    def from_record(cls, record: "Record") -> "Document":
+    def from_record(cls, record: Record) -> Document:
         """Construct a Document from a domain Record."""
         # Extract metadata that Document expects
         metadata = dict(record.metadata)
@@ -247,11 +247,12 @@ class CommitResult:
 
     def to_record(self) -> Record:
         """Convert a CommitResult to a domain Record."""
+        from datetime import datetime
+
         from searchkernel.domain import Record, RecordStatus
-        from datetime import datetime, timezone
 
         # Create timestamp from Unix seconds
-        created_at = datetime.fromtimestamp(self.timestamp, tz=timezone.utc)
+        created_at = datetime.fromtimestamp(self.timestamp, tz=UTC)
 
         # Combine title and message for body
         body = f"{self.title}\n\n{self.message}\n\nDelta:\n{self.delta_truncated}"

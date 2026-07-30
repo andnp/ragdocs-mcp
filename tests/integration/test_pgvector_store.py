@@ -5,21 +5,21 @@ against a live Postgres database with pgvector extension.
 """
 
 import os
-import pytest
-from datetime import datetime
-import numpy as np
+from datetime import UTC, datetime
 
-from searchkernel.domain import Record, RecordStatus, Vector
+import numpy as np
+import pytest
+
 from searchkernel.adapters.stores.pgvector import (
-    PostgresConnection,
-    PGVectorStore,
-    PGKeywordStore,
-    PGGraphStore,
     PGCacheStore,
+    PGGraphStore,
+    PGKeywordStore,
+    PGVectorStore,
+    PostgresConnection,
     _create_schema,
     _vector_table_name,
 )
-
+from searchkernel.domain import Record, RecordStatus, Vector
 from tests.integration.conftest import pg_dsn_for_schema, pg_worker_schema
 
 
@@ -82,7 +82,7 @@ def pg_conn(pg_dsn, request):
 @pytest.fixture
 def fixture_records():
     """Create fixture records for testing."""
-    now = datetime.now()
+    now = datetime.now(UTC)
     return [
         Record(
             source_kind="test",
@@ -180,8 +180,8 @@ class TestVectorStore:
             source_id="test:bad",
             title="Bad Embedding",
             body="This has wrong dimension",
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
             embedding=[1.0, 0.0, 0.0, 0.0, 0.0],  # 5 dims
         )
 
@@ -272,7 +272,7 @@ class TestVectorStore:
         norms = np.linalg.norm(raw_vectors, axis=1, keepdims=True)
         vectors = raw_vectors / norms
 
-        now = datetime.now()
+        now = datetime.now(UTC)
         records = [
             Record(
                 source_kind="test",

@@ -20,7 +20,7 @@ doc_id/header_path/file_path/parent_chunk_id/project_id rides in
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -296,8 +296,8 @@ class PGVectorIndex:
             source_id=new_chunk_id,
             title=new_metadata.get("header_path") or new_metadata.get("file_path", ""),
             body=body,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
             metadata=dict(new_metadata),
             uri=new_metadata.get("file_path"),
             status=RecordStatus.ACTIVE,

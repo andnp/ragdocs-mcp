@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -10,7 +10,6 @@ from searchkernel.search.time_scoring import (
     calculate_time_score,
 )
 
-
 # --- Tier Mode Tests ---
 
 
@@ -19,7 +18,7 @@ class TestTierMode:
         """
         Documents within the recent window get the highest boost.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=3)
         config = TierConfig(recent_days=7, recent_boost=1.2)
 
@@ -33,7 +32,7 @@ class TestTierMode:
         """
         Documents between recent and moderate windows get moderate boost.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=15)
         config = TierConfig(
             recent_days=7, recent_boost=1.2, moderate_days=30, moderate_boost=1.1
@@ -49,7 +48,7 @@ class TestTierMode:
         """
         Documents older than moderate window get no boost (1.0).
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=60)
         config = TierConfig(recent_days=7, moderate_days=30)
 
@@ -71,7 +70,7 @@ class TestTierMode:
         """
         Documents exactly at the recent boundary are included in recent tier.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=7)
         config = TierConfig(recent_days=7, recent_boost=1.2)
 
@@ -85,7 +84,7 @@ class TestTierMode:
         """
         Documents exactly at the moderate boundary are included in moderate tier.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=30)
         config = TierConfig(recent_days=7, moderate_days=30, moderate_boost=1.1)
 
@@ -104,7 +103,7 @@ class TestDecayMode:
         """
         Documents at time 0 should have score of 1.0.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         config = DecayConfig(half_life_days=7.0)
 
         score = calculate_time_score(
@@ -117,7 +116,7 @@ class TestDecayMode:
         """
         Documents at exactly half-life should have score of 0.5.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=7)
         config = DecayConfig(half_life_days=7.0, min_score=0.0)
 
@@ -131,7 +130,7 @@ class TestDecayMode:
         """
         Documents at 2x half-life should have score of 0.25.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=14)
         config = DecayConfig(half_life_days=7.0, min_score=0.0)
 
@@ -145,7 +144,7 @@ class TestDecayMode:
         """
         Decay never goes below the configured minimum.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=365)
         config = DecayConfig(half_life_days=7.0, min_score=0.1)
 
@@ -167,7 +166,7 @@ class TestDecayMode:
         """
         Zero or negative half-life returns minimum score.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=1)
         config = DecayConfig(half_life_days=0.0, min_score=0.1)
 
@@ -181,7 +180,7 @@ class TestDecayMode:
         """
         Very short half-life decays rapidly but respects floor.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=10)
         config = DecayConfig(half_life_days=1.0, min_score=0.05)
 
@@ -201,7 +200,7 @@ class TestTimezoneHandling:
         """
         Naive datetimes are treated as UTC.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         naive_timestamp = now.replace(tzinfo=None) - timedelta(days=3)
         config = TierConfig(recent_days=7, recent_boost=1.2)
 
@@ -217,7 +216,7 @@ class TestTimezoneHandling:
         """
         from datetime import timezone as tz
 
-        utc_now = datetime.now(tz.utc)
+        utc_now = datetime.now(UTC)
         est = tz(timedelta(hours=-5))
         est_timestamp = (utc_now - timedelta(days=3)).astimezone(est)
         config = TierConfig(recent_days=7, recent_boost=1.2)
@@ -237,7 +236,7 @@ class TestApplyTimeBoost:
         """
         apply_time_boost correctly multiplies score by tier boost.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=3)
         config = TierConfig(recent_days=7, recent_boost=1.2)
 
@@ -251,7 +250,7 @@ class TestApplyTimeBoost:
         """
         apply_time_boost correctly multiplies score by decay factor.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=7)
         config = DecayConfig(half_life_days=7.0, min_score=0.0)
 
@@ -265,7 +264,7 @@ class TestApplyTimeBoost:
         """
         Boosting a zero score still results in zero.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=1)
         config = TierConfig(recent_boost=1.5)
 
@@ -284,7 +283,7 @@ class TestConfigValidation:
         """
         Using DecayConfig with TIERS mode raises TypeError.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=3)
         wrong_config = DecayConfig()
 
@@ -297,7 +296,7 @@ class TestConfigValidation:
         """
         Using TierConfig with DECAY mode raises TypeError.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=3)
         wrong_config = TierConfig()
 
@@ -310,7 +309,7 @@ class TestConfigValidation:
         """
         When config is None in TIERS mode, default TierConfig is used.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=3)
 
         score = calculate_time_score(timestamp, TimeScoreMode.TIERS, reference_time=now)
@@ -321,7 +320,7 @@ class TestConfigValidation:
         """
         When config is None in DECAY mode, default DecayConfig is used.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = now - timedelta(days=7)
 
         score = calculate_time_score(timestamp, TimeScoreMode.DECAY, reference_time=now)
@@ -337,7 +336,7 @@ class TestEdgeCases:
         """
         Future timestamps (clock skew) are treated as age 0.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         future = now + timedelta(days=5)
         config = DecayConfig(half_life_days=7.0)
 
@@ -351,7 +350,7 @@ class TestEdgeCases:
         """
         Very old documents decay to the floor.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ancient = now - timedelta(days=3650)
         config = DecayConfig(half_life_days=7.0, min_score=0.05)
 

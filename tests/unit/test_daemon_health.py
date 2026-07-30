@@ -7,7 +7,11 @@ import pytest
 
 pytest.importorskip("zmq")
 
-from searchkernel.daemon.health import DaemonHealthServer, probe_daemon_socket, request_daemon_socket
+from searchkernel.daemon.health import (
+    DaemonHealthServer,
+    probe_daemon_socket,
+    request_daemon_socket,
+)
 from searchkernel.daemon.metadata import DaemonMetadata
 
 

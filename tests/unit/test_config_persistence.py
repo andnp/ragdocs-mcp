@@ -1,14 +1,16 @@
-import pytest
 import tomllib
 from pathlib import Path
+
+import pytest
+
 import searchkernel.config
 from searchkernel.config import (
     ProjectConfig,
+    _generate_unique_project_name,
     derive_auto_registration_root,
     detect_project,
     ensure_runtime_project_registered,
     persist_project_to_config,
-    _generate_unique_project_name,
 )
 
 

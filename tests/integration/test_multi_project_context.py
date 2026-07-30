@@ -11,27 +11,26 @@ Config object on every query. This caused queries on one project's context
 to potentially return results from a different project if Config was modified.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from searchkernel.config import (
+    ChunkingConfig,
     Config,
     IndexingConfig,
-    SearchConfig,
-    ChunkingConfig,
     LLMConfig,
     ProjectConfig,
+    SearchConfig,
 )
 from searchkernel.context import ApplicationContext
+from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.models import Chunk
 from searchkernel.search.orchestrator import SearchOrchestrator
-
 
 # ============================================================================
 # Fixtures
@@ -186,7 +185,7 @@ async def test_queries_return_results_from_correct_project(
         start_pos=0,
         end_pos=30,
         file_path=str(two_projects["project_a_docs"] / "readme.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     vector_a.add_chunk(chunk_a)
     keyword_a.add_chunk(chunk_a)
@@ -216,7 +215,7 @@ async def test_queries_return_results_from_correct_project(
         start_pos=0,
         end_pos=30,
         file_path=str(two_projects["project_b_docs"] / "readme.md"),
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     vector_b.add_chunk(chunk_b)
     keyword_b.add_chunk(chunk_b)
@@ -503,7 +502,7 @@ async def test_file_exclusions_resolve_against_orchestrator_path(
             start_pos=0,
             end_pos=50,
             file_path=str(two_projects["project_a_docs"] / f"{name}.md"),
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         vector.add_chunk(chunk)
         keyword.add_chunk(chunk)

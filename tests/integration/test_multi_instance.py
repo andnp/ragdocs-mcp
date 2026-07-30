@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import multiprocessing
 import tempfile
 import time
@@ -17,10 +18,10 @@ def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
         index_path=index_path,
     )
 
-    from searchkernel.indices.vector import VectorIndex
-    from searchkernel.indices.keyword import KeywordIndex
-    from searchkernel.indices.graph import GraphStore
     from searchkernel.indexing.manager import IndexManager
+    from searchkernel.indices.graph import GraphStore
+    from searchkernel.indices.keyword import KeywordIndex
+    from searchkernel.indices.vector import VectorIndex
     from searchkernel.search.orchestrator import SearchOrchestrator
 
     vector = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
@@ -40,13 +41,11 @@ def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
         asyncio.run(ctx.start(background_index=False))
         ready_queue.put("ready")
         time.sleep(2)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- cross-process harness must report any failure
         error_queue.put(str(e))
     finally:
-        try:
+        with contextlib.suppress(Exception):
             asyncio.run(ctx.stop())
-        except Exception:
-            pass
 
 
 @pytest.mark.integration

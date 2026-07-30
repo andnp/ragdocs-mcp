@@ -1,14 +1,15 @@
 """Unit tests for file move detection functionality."""
 
-import pytest
-from datetime import datetime
+from datetime import UTC, datetime
 
-from searchkernel.config import Config, IndexingConfig, ChunkingConfig
-from searchkernel.indices.hash_store import ChunkHashStore
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.graph import GraphStore
+import pytest
+
+from searchkernel.config import ChunkingConfig, Config, IndexingConfig
 from searchkernel.indexing.manager import IndexManager
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.hash_store import ChunkHashStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 from searchkernel.models import Chunk
 
 
@@ -31,7 +32,7 @@ def sample_chunks():
             start_pos=0,
             end_pos=50,
             file_path="/docs/test.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         ),
         Chunk(
             chunk_id="docs/test_chunk_1",
@@ -43,7 +44,7 @@ def sample_chunks():
             start_pos=51,
             end_pos=100,
             file_path="/docs/test.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         ),
     ]
 
@@ -171,7 +172,7 @@ def test_vector_index_update_chunk_path(shared_embedding_model):
         start_pos=0,
         end_pos=50,
         file_path="/old/path.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     vector.add_chunk(chunk)
@@ -228,7 +229,7 @@ def test_keyword_index_move_chunk():
         start_pos=0,
         end_pos=50,
         file_path="/old/path.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     keyword.add_chunk(chunk)
@@ -244,7 +245,7 @@ def test_keyword_index_move_chunk():
         start_pos=0,
         end_pos=50,
         file_path="/new/path.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     success = keyword.move_chunk("old_path_chunk_0", new_chunk)
@@ -272,7 +273,7 @@ def test_keyword_index_move_chunk_not_found():
         start_pos=0,
         end_pos=10,
         file_path="/test.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
     result = keyword.move_chunk("nonexistent_chunk", new_chunk)
@@ -372,7 +373,7 @@ def test_detect_file_moves_simple_rename(manager, sample_chunks):
             start_pos=0,
             end_pos=50,
             file_path="/docs/renamed.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         ),
         Chunk(
             chunk_id="docs/renamed_chunk_1",
@@ -384,7 +385,7 @@ def test_detect_file_moves_simple_rename(manager, sample_chunks):
             start_pos=51,
             end_pos=100,
             file_path="/docs/renamed.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         ),
     ]
 
@@ -416,7 +417,7 @@ def test_detect_file_moves_with_edit(manager, sample_chunks):
             start_pos=0,
             end_pos=50,
             file_path="/docs/moved.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         ),
         Chunk(
             chunk_id="docs/moved_chunk_1",
@@ -428,7 +429,7 @@ def test_detect_file_moves_with_edit(manager, sample_chunks):
             start_pos=51,
             end_pos=100,
             file_path="/docs/moved.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         ),
     ]
 
@@ -455,7 +456,7 @@ def test_detect_file_moves_threshold(manager):
             start_pos=i * 100,
             end_pos=(i + 1) * 100,
             file_path="/old/doc.md",
-            modified_time=datetime.now(),
+            modified_time=datetime.now(UTC),
         )
         manager._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
         old_chunks.append(chunk)
@@ -476,7 +477,7 @@ def test_detect_file_moves_threshold(manager):
                 start_pos=i * 100,
                 end_pos=(i + 1) * 100,
                 file_path="/new/doc.md",
-                modified_time=datetime.now(),
+                modified_time=datetime.now(UTC),
             )
         )
 
@@ -493,7 +494,7 @@ def test_detect_file_moves_threshold(manager):
                 start_pos=i * 100,
                 end_pos=(i + 1) * 100,
                 file_path="/new/doc.md",
-                modified_time=datetime.now(),
+                modified_time=datetime.now(UTC),
             )
         )
 

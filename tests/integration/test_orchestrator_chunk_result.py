@@ -1,7 +1,15 @@
-import pytest
 from pathlib import Path
 
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, ProjectConfig, SearchConfig
+import pytest
+
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    ProjectConfig,
+    SearchConfig,
+)
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex

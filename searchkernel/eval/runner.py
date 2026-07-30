@@ -4,8 +4,9 @@ The runner is decoupled from SearchOrchestrator; it takes a plain search callabl
 This enables testing without a live index.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from searchkernel.eval.golden import GoldenSet
 from searchkernel.eval.metrics import average_precision, mrr, ndcg_at_k, recall_at_k

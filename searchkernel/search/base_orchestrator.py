@@ -3,7 +3,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 from searchkernel.config import Config
 from searchkernel.indices.graph import GraphStore
@@ -33,7 +33,7 @@ class HybridSearchContext:
             self.chunk_id_to_doc_id[chunk_id] = doc_id
 
 
-class BaseSearchOrchestrator(ABC, Generic[ResultT]):
+class BaseSearchOrchestrator[ResultT](ABC):
     def __init__(
         self,
         vector: VectorIndex,

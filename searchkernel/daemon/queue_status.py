@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -8,6 +9,8 @@ from huey.utils import Error
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -168,7 +171,7 @@ def _decode_task_name(huey: SqliteHuey, raw_item: bytes) -> str:
         if task_name is not None:
             return task_name
     except Exception:
-        pass
+        logger.debug("Failed to decode task name", exc_info=True)
     return "unknown"
 
 
@@ -181,7 +184,7 @@ def _decode_task_summary(
 ) -> QueueTaskSummary | None:
     try:
         message = huey.serializer.deserialize(raw_item)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- serializer backend errors vary; deserializing untrusted queue data
         return None
 
     task_id = _coerce_optional_str(getattr(message, "id", None))
@@ -202,14 +205,14 @@ def _decode_task_summary(
 def _decode_failure(huey: SqliteHuey, task_id: str) -> QueueFailure | None:
     try:
         raw_item = huey.storage.peek_data(task_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- storage backend errors vary
         return None
     if raw_item is None:
         return None
 
     try:
         payload = huey.serializer.deserialize(raw_item)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- serializer backend errors vary; deserializing untrusted queue data
         return None
     if not isinstance(payload, Error):
         return None

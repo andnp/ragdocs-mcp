@@ -228,7 +228,7 @@ class TestConcurrentWAL:
                         (f"thread{thread_id}_key{i}", f"value{i}"),
                     )
                     conn.commit()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- concurrency test captures any error for later assertion
                 errors.append(e)
 
         threads = [threading.Thread(target=writer, args=(t,)) for t in range(5)]
@@ -256,7 +256,7 @@ class TestConcurrentWAL:
                         (f"key{i}", f"value{i}"),
                     )
                     conn.commit()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- concurrency test captures any error for later assertion
                 write_errors.append(e)
 
         def reader(thread_id: int) -> None:
@@ -264,7 +264,7 @@ class TestConcurrentWAL:
                 conn = db.get_connection()
                 for _ in range(500):
                     conn.execute("SELECT COUNT(*) FROM kv_store").fetchone()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- concurrency test captures any error for later assertion
                 read_errors.append(e)
 
         writer_t = threading.Thread(target=writer)

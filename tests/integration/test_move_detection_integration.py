@@ -4,16 +4,17 @@ Tests that move detection is properly integrated into the reconciliation workflo
 and works end-to-end with real indices and filesystem operations.
 """
 
-import pytest
 from pathlib import Path
 
-from searchkernel.config import Config, IndexingConfig, ChunkingConfig
+import pytest
+
+from searchkernel.config import ChunkingConfig, Config, IndexingConfig
 from searchkernel.indexing.manager import IndexManager
-from searchkernel.indexing.manifest import save_manifest, IndexManifest
+from searchkernel.indexing.manifest import IndexManifest, save_manifest
 from searchkernel.indexing.reconciler import build_indexed_files_map
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.orchestrator import SearchOrchestrator
 
 

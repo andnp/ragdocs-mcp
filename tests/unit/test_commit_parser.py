@@ -4,8 +4,8 @@ from pathlib import Path
 
 from searchkernel.git.commit_parser import (
     CommitData,
-    parse_commit,
     build_commit_document,
+    parse_commit,
     truncate_delta,
 )
 

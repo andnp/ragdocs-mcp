@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.models import ChunkResult
-from searchkernel.search.path_utils import extract_doc_id_from_chunk_id, resolve_doc_path
+from searchkernel.search.path_utils import (
+    extract_doc_id_from_chunk_id,
+    resolve_doc_path,
+)
 
 if TYPE_CHECKING:
     from searchkernel.search.query_execution import QueryExecutionContext

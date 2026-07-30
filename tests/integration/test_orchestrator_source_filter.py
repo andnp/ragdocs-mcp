@@ -5,11 +5,17 @@ matching source_kind (e.g. "git_commit"), letting callers scope a query
 to one ContentSource without a separate storage/search stack per source.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
@@ -63,7 +69,7 @@ def _make_chunk(chunk_id: str, doc_id: str, content: str, source_kind: str) -> C
         start_pos=0,
         end_pos=len(content),
         file_path="",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
 
 

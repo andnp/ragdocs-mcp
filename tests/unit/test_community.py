@@ -10,7 +10,6 @@ from searchkernel.search.community import (
     get_community_members,
 )
 
-
 # ============================================================================
 # Community Boost Calculation Tests
 # ============================================================================

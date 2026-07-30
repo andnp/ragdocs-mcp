@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from searchkernel.models import Chunk
 from searchkernel.pipeline.stage import SearchContext
@@ -40,7 +40,7 @@ def _chunk(chunk_id: str) -> Chunk:
         start_pos=0,
         end_pos=11,
         file_path="doc-1.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
 

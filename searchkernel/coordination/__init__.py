@@ -1,7 +1,7 @@
 from enum import Enum
 
-from searchkernel.coordination.singleton import SingletonGuard
 from searchkernel.coordination.file_lock import IndexLock
+from searchkernel.coordination.singleton import SingletonGuard
 
 
 class CoordinationMode(Enum):
@@ -9,4 +9,4 @@ class CoordinationMode(Enum):
     FILE_LOCK = "file_lock"
 
 
-__all__ = ["CoordinationMode", "SingletonGuard", "IndexLock"]
+__all__ = ["CoordinationMode", "IndexLock", "SingletonGuard"]

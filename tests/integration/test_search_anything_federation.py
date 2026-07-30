@@ -3,13 +3,20 @@ federated source, through the SourceRegistry -- the W4 acceptance surface:
 one fused ranked list spanning the local corpus and >=1 external source.
 """
 
-from datetime import datetime
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from searchkernel.adapters.sources.local import LocalSearchSource
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.domain import ScoredRef
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
@@ -104,7 +111,7 @@ def _seed(indices):
         start_pos=0,
         end_pos=10,
         file_path="note_doc.md",
-        modified_time=datetime.now(),
+        modified_time=datetime.now(UTC),
     )
     indices["vector"].add_chunk(chunk)
     indices["keyword"].add_chunk(chunk)

@@ -374,6 +374,7 @@ def test_query_command_subprocess_execution(test_env):
             ["uv", "run", "mcp-markdown-ragdocs", "query", "authentication", "--json"],
             capture_output=True,
             text=True,
+            check=False,
         )
 
         # Verify execution

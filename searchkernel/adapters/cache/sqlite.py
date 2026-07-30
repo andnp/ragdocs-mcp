@@ -89,8 +89,8 @@ class SQLiteCacheStore:
                     (key, value_json, epoch),
                 )
                 conn.commit()
-        except (sqlite3.DatabaseError, TypeError) as e:
-            logger.error(f"Error storing cache key {key}: {e}", exc_info=True)
+        except (sqlite3.DatabaseError, TypeError):
+            logger.exception(f"Error storing cache key {key}")
 
     def invalidate_epoch(self, epoch: int) -> None:
         """Invalidate all entries from an epoch or earlier.
@@ -109,5 +109,5 @@ class SQLiteCacheStore:
                     f"Invalidated cache entries for epochs <= {epoch} "
                     f"({cursor.rowcount} entries deleted)"
                 )
-        except sqlite3.DatabaseError as e:
-            logger.error(f"Error invalidating cache epoch {epoch}: {e}", exc_info=True)
+        except sqlite3.DatabaseError:
+            logger.exception(f"Error invalidating cache epoch {epoch}")

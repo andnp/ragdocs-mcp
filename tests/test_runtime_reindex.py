@@ -4,14 +4,13 @@ Tests the expand → backfill → flip → contract pipeline for safe embedding
 model migration, including rollback and mixed-dimension guards.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 from searchkernel.domain import Record, Vector
-from searchkernel.runtime.reindex import ReindexRoutine, ReindexError
-
+from searchkernel.runtime.reindex import ReindexError, ReindexRoutine
 
 # ===== Test fixtures =====
 
@@ -95,40 +94,40 @@ def sample_records():
             source_id="test:1",
             title="Record 1",
             body="This is the first test record with some content.",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         ),
         Record(
             source_kind="test",
             source_id="test:2",
             title="Record 2",
             body="Second record has a different body.",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         ),
         Record(
             source_kind="test",
             source_id="test:3",
             title="Record 3",
             body="The third record is here.",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         ),
         Record(
             source_kind="test",
             source_id="test:4",
             title="Record 4",
             body="Fourth record follows.",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         ),
         Record(
             source_kind="test",
             source_id="test:5",
             title="Record 5",
             body="Fifth and final record.",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         ),
     ]
     return records
@@ -415,7 +414,7 @@ class TestReindexMixedDimensionGuard:
 
         # Check that embeddings were truncated
         table_key = ("new-model-v1", 512)  # Note: using target_dim, not provider.dim
-        for record_id, embedding in vector_store.tables[table_key].items():
+        for embedding in vector_store.tables[table_key].values():
             assert len(embedding) == 512
 
 

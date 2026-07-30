@@ -1,7 +1,7 @@
 """Unit tests for chunk content hashing."""
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from searchkernel.models import Chunk
 
@@ -18,7 +18,7 @@ def test_chunk_hash_computed_on_init():
         start_pos=0,
         end_pos=20,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     assert chunk.content_hash != ""
@@ -39,7 +39,7 @@ def test_chunk_hash_consistency():
         start_pos=0,
         end_pos=33,
         file_path="test1.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     chunk2 = Chunk(
@@ -52,7 +52,7 @@ def test_chunk_hash_consistency():
         start_pos=100,
         end_pos=133,
         file_path="test2.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     assert chunk1.content_hash == chunk2.content_hash
@@ -70,7 +70,7 @@ def test_chunk_hash_uniqueness():
         start_pos=0,
         end_pos=13,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     chunk2 = Chunk(
@@ -83,7 +83,7 @@ def test_chunk_hash_uniqueness():
         start_pos=14,
         end_pos=28,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     assert chunk1.content_hash != chunk2.content_hash
@@ -103,7 +103,7 @@ def test_chunk_hash_matches_manual_computation():
         start_pos=0,
         end_pos=41,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     expected_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -122,7 +122,7 @@ def test_chunk_hash_whitespace_sensitivity():
         start_pos=0,
         end_pos=30,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     chunk2 = Chunk(
@@ -135,7 +135,7 @@ def test_chunk_hash_whitespace_sensitivity():
         start_pos=31,
         end_pos=62,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     assert chunk1.content_hash != chunk2.content_hash
@@ -153,7 +153,7 @@ def test_chunk_hash_empty_content():
         start_pos=0,
         end_pos=0,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     # Empty string should produce a valid hash
@@ -176,7 +176,7 @@ def test_chunk_hash_unicode_content():
         start_pos=0,
         end_pos=len(content),
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     # Should handle UTF-8 encoding correctly
@@ -196,7 +196,7 @@ def test_chunk_hash_newline_sensitivity():
         start_pos=0,
         end_pos=17,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     chunk2 = Chunk(
@@ -209,7 +209,7 @@ def test_chunk_hash_newline_sensitivity():
         start_pos=18,
         end_pos=36,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     assert chunk1.content_hash != chunk2.content_hash
@@ -227,7 +227,7 @@ def test_chunk_compute_content_hash_method():
         start_pos=0,
         end_pos=16,
         file_path="test.md",
-        modified_time=datetime.now(timezone.utc),
+        modified_time=datetime.now(UTC),
     )
 
     original_hash = chunk.content_hash

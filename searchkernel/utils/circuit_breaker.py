@@ -12,9 +12,10 @@ States:
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,6 @@ class CircuitBreakerConfig:
 class CircuitBreakerOpen(Exception):
     """Raised when circuit breaker is open (service unavailable)."""
 
-    pass
 
 
 class CircuitBreaker:

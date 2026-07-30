@@ -5,8 +5,8 @@ import pytest
 
 from searchkernel.config import (
     Config,
-    IndexingConfig,
     GitIndexingConfig,
+    IndexingConfig,
     LLMConfig,
     SearchConfig,
 )

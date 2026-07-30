@@ -2,11 +2,11 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import yaml
-from tree_sitter import Language, Parser, Node
+from tree_sitter import Language, Node, Parser
 from tree_sitter_markdown import language
 
 from searchkernel.models import Document
@@ -116,15 +116,13 @@ class MarkdownParser(DocumentParser):
         all_tags = sorted(set(frontmatter_tags + inline_tags))
 
         file_stat = os.stat(file_path)
-        modified_time = datetime.fromtimestamp(file_stat.st_mtime)
+        modified_time = datetime.fromtimestamp(file_stat.st_mtime, tz=UTC)
 
         doc_id = Path(file_path).stem
 
         metadata = dict(frontmatter_metadata)
-        if "aliases" in metadata:
-            del metadata["aliases"]
-        if "tags" in metadata:
-            del metadata["tags"]
+        metadata.pop("aliases", None)
+        metadata.pop("tags", None)
         if transclusions:
             metadata["transclusions"] = transclusions
 

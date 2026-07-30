@@ -28,13 +28,20 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TQDM_DISABLE"] = "1"
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 import pytest
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from searchkernel.config import (
+    ChunkingConfig,
+    Config,
+    IndexingConfig,
+    LLMConfig,
+    SearchConfig,
+)
 from searchkernel.daemon.management import inspect_daemon, stop_daemon
 from searchkernel.daemon.paths import RuntimePaths
 from searchkernel.indexing.manager import IndexManager
@@ -266,7 +273,7 @@ def persistent_config(
 @pytest.fixture(scope="module")
 def persistent_indices_module(
     shared_embedding_model, tmp_path_factory
-) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
+) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore]]:
     """
     Create module-scoped indices that persist across tests in a module.
 
@@ -307,7 +314,7 @@ def persistent_manager_module(
 @pytest.fixture
 def persistent_indices_isolated(
     shared_embedding_model, tmp_path
-) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore], None, None]:
+) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore]]:
     """
     Create function-scoped indices that can use persistent storage.
 
@@ -399,7 +406,7 @@ def persistent_manager_with_module_config(
 @pytest.fixture
 def cleanup_persistent_indices(
     persistent_index_path: Path,
-) -> Generator[None, None, None]:
+) -> Generator[None]:
     """
     Clean up persistent indices after test execution.
 
@@ -428,7 +435,7 @@ def cleanup_persistent_indices(
 
 
 @pytest.fixture
-def cleanup_persistent_docs(persistent_docs_path: Path) -> Generator[None, None, None]:
+def cleanup_persistent_docs(persistent_docs_path: Path) -> Generator[None]:
     """
     Clean up persistent documents after test execution.
 
@@ -464,7 +471,7 @@ def cleanup_persistent_docs(persistent_docs_path: Path) -> Generator[None, None,
 def pytest_xdist_auto_num_workers(config):
     """Hook to configure pytest-xdist behavior for serial tests."""
     # Let pytest-xdist determine worker count automatically
-    return None
+    return
 
 
 def pytest_collection_modifyitems(config, items):

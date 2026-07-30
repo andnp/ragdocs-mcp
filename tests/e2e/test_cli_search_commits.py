@@ -117,7 +117,7 @@ def indexed_repo(tmp_path, git_repo):
     """
     import os
 
-    repo_path, commits = git_repo
+    repo_path, _commits = git_repo
 
     # Create config with git_indexing enabled
     config_dir = tmp_path / ".mcp-markdown-ragdocs"
@@ -455,7 +455,7 @@ def test_search_commits_git_disabled_error(runner, tmp_path, git_repo):
     """
     import os
 
-    repo_path, commits = git_repo
+    repo_path, _commits = git_repo
 
     # Create config with git_indexing disabled
     config_dir = tmp_path / ".mcp-markdown-ragdocs"
@@ -494,7 +494,7 @@ def test_search_commits_no_index_error(runner, tmp_path, git_repo):
     """
     import os
 
-    repo_path, commits = git_repo
+    repo_path, _commits = git_repo
 
     # Create config with git_indexing enabled but don't run rebuild-index
     config_dir = tmp_path / ".mcp-markdown-ragdocs"

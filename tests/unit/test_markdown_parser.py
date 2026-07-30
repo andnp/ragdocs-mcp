@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -204,7 +204,7 @@ def test_modified_time_reflects_file_stat(tmp_path):
     parser = MarkdownParser()
     doc = parser.parse(str(md_file))
 
-    file_mtime = datetime.fromtimestamp(md_file.stat().st_mtime)
+    file_mtime = datetime.fromtimestamp(md_file.stat().st_mtime, tz=UTC)
 
     assert abs((doc.modified_time - file_mtime).total_seconds()) < 1
 

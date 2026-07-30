@@ -1,4 +1,8 @@
-from searchkernel.domain.graph_policy import DEFAULT_GRAPH_PROVIDER, EdgeType, GraphProvider
+from searchkernel.domain.graph_policy import (
+    DEFAULT_GRAPH_PROVIDER,
+    EdgeType,
+    GraphProvider,
+)
 
 
 def test_default_graph_provider_prioritizes_precise_links():

@@ -2,7 +2,7 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -12,12 +12,17 @@ from searchkernel.config import Config, resolve_project_id_for_path
 from searchkernel.coordination import IndexLock
 from searchkernel.domain import Record
 from searchkernel.indexing.discovery import get_parser_suffixes
+from searchkernel.indexing.implicit_graph import ImplicitGraphBuilder
+from searchkernel.indexing.manifest import (
+    CURRENT_MANIFEST_SPEC_VERSION,
+    IndexManifest,
+    load_manifest,
+    save_manifest,
+)
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.hash_store import ChunkHashStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.indexing.implicit_graph import ImplicitGraphBuilder
-from searchkernel.indexing.manifest import CURRENT_MANIFEST_SPEC_VERSION, IndexManifest, load_manifest, save_manifest
 from searchkernel.models import Chunk, Document
 from searchkernel.parsers.dispatcher import dispatch_parser
 from searchkernel.pipeline.stage import SearchContext
@@ -234,8 +239,8 @@ class IndexManager:
             else:
                 logger.info("Reindexed %s from %s", doc_id, resolved_path)
             return True
-        except Exception as e:
-            logger.error("Failed to reindex %s: %s", doc_id, e, exc_info=True)
+        except Exception:
+            logger.exception("Failed to reindex %s", doc_id)
             return False
 
     def prune_document(self, doc_id: str, reason: str | None = None):
@@ -264,8 +269,8 @@ class IndexManager:
             self._mark_derived_graph_state_dirty()
             self._bump_state_version()
             return True
-        except Exception as e:
-            logger.error("Failed to prune %s: %s", doc_id, e, exc_info=True)
+        except Exception:
+            logger.exception("Failed to prune %s", doc_id)
             return False
 
     def _detect_changed_chunks(
@@ -579,12 +584,15 @@ class IndexManager:
                     logger.warning(f"Skipping file with encoding issues: {file_path}")
                     break
                 except Exception:
+                    logger.debug(
+                        "Retry with %s encoding failed for %s", encoding, file_path, exc_info=True
+                    )
                     continue
 
             failed = FailedFile(
                 path=file_path,
-                error=f"Encoding error: {str(e)}",
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                error=f"Encoding error: {e!s}",
+                timestamp=datetime.now(UTC).isoformat(),
             )
             self._failed_files = [
                 f for f in self._failed_files if f.path != file_path
@@ -594,11 +602,11 @@ class IndexManager:
                 f"Continuing with remaining files after encoding error in {file_path}"
             )
         except Exception as e:
-            logger.error(f"Failed to index document {file_path}: {e}", exc_info=True)
+            logger.exception(f"Failed to index document {file_path}")
             failed = FailedFile(
                 path=file_path,
                 error=str(e),
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                timestamp=datetime.now(UTC).isoformat(),
             )
             self._failed_files = [
                 f for f in self._failed_files if f.path != file_path
@@ -655,9 +663,7 @@ class IndexManager:
             try:
                 remove_fn()
             except Exception as e:
-                logger.error(
-                    f"Failed to remove {doc_id} from {index_name}: {e}", exc_info=True
-                )
+                logger.exception(f"Failed to remove {doc_id} from {index_name}")
                 errors.append((index_name, e))
 
         if errors:
@@ -773,8 +779,8 @@ class IndexManager:
             # Persist hash store for delta indexing
             self._hash_store.persist()
             self._persist_manifest_updates(index_path)
-        except Exception as e:
-            logger.error(f"Failed to persist checkpoint state: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Failed to persist checkpoint state")
             raise
 
     def _finalize_derived_graph_state_locked(self, _index_path: Path):
@@ -786,8 +792,8 @@ class IndexManager:
             implicit_builder.build_implicit_edges()
             self.graph.refresh_communities(force=True)
             self._derived_graph_state_dirty = False
-        except Exception as e:
-            logger.error(f"Failed to finalize derived graph state: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Failed to finalize derived graph state")
             raise
 
     def load(self):
@@ -806,8 +812,8 @@ class IndexManager:
             self.vector.load(index_path / "vector")
             self.keyword.load(index_path / "keyword")
             self.graph.load(index_path / "graph")
-        except Exception as e:
-            logger.error(f"Failed to load indices: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Failed to load indices")
             raise
 
     def get_document_count(self) -> int:
@@ -883,7 +889,7 @@ class IndexManager:
                     document.id = doc_id
                     chunks = self._chunk_document(document)
                     added_docs[doc_id] = chunks
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- parser errors vary by document format/encoding
                     logger.warning(
                         f"Failed to parse {file_path} for move detection: {e}"
                     )
@@ -935,8 +941,8 @@ class IndexManager:
             try:
                 self.remove_document(doc_id)
                 result.removed_count += 1
-            except Exception as e:
-                logger.error(f"Failed to remove {doc_id}: {e}", exc_info=True)
+            except Exception:
+                logger.exception(f"Failed to remove {doc_id}")
                 result.failed_count += 1
 
         # Process remaining additions
@@ -944,8 +950,8 @@ class IndexManager:
             try:
                 self.index_document(file_path)
                 result.added_count += 1
-            except Exception as e:
-                logger.error(f"Failed to index {file_path}: {e}", exc_info=True)
+            except Exception:
+                logger.exception(f"Failed to index {file_path}")
                 result.failed_count += 1
 
         logger.info(

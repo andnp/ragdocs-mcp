@@ -59,9 +59,7 @@ def _has_factual_signals(query: str) -> bool:
         return True
     if _VERSION_PATTERN.search(query):
         return True
-    if _QUOTED_PHRASE_PATTERN.search(query):
-        return True
-    return False
+    return bool(_QUOTED_PHRASE_PATTERN.search(query))
 
 
 def _has_navigational_signals(query: str) -> bool:
@@ -80,9 +78,7 @@ def _has_exploratory_signals(query: str) -> bool:
         return False
     if words[0] in _QUESTION_WORDS:
         return True
-    if query.strip().endswith("?"):
-        return True
-    return False
+    return bool(query.strip().endswith("?"))
 
 
 def classify_query(query: str) -> QueryType:

@@ -3,4 +3,4 @@ from searchkernel.chunking.factory import get_chunker
 from searchkernel.chunking.header_chunker import HeaderBasedChunker
 from searchkernel.models import Chunk
 
-__all__ = ["Chunk", "ChunkingStrategy", "get_chunker", "HeaderBasedChunker"]
+__all__ = ["Chunk", "ChunkingStrategy", "HeaderBasedChunker", "get_chunker"]

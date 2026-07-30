@@ -13,20 +13,20 @@ if TYPE_CHECKING:
 
 from searchkernel.config import (
     Config,
-    load_config,
     detect_project,
-    resolve_index_path,
+    load_config,
     resolve_documents_path,
+    resolve_index_path,
 )
 from searchkernel.indexing.bootstrap_checkpoint import (
-    has_incomplete_bootstrap_checkpoint,
     build_file_stamps,
+    has_incomplete_bootstrap_checkpoint,
 )
+from searchkernel.indexing.bootstrap_session import BootstrapSession
 from searchkernel.indexing.bootstrap_snapshot import (
     PublicIndexStateSnapshot,
     derive_loaded_index_state_snapshot,
 )
-from searchkernel.indexing.bootstrap_session import BootstrapSession
 from searchkernel.indexing.discovery import get_parser_suffixes
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indexing.manifest import (
@@ -36,14 +36,16 @@ from searchkernel.indexing.manifest import (
     save_manifest,
     should_rebuild,
 )
-from searchkernel.indexing.runtime_readiness import (
-    can_refresh_loaded_indices,
-    can_serve_queries,
-    is_fully_ready as runtime_is_fully_ready,
-)
 from searchkernel.indexing.reconciler import (
     build_indexed_files_map,
     reconcile_indices,
+)
+from searchkernel.indexing.runtime_readiness import (
+    can_refresh_loaded_indices,
+    can_serve_queries,
+)
+from searchkernel.indexing.runtime_readiness import (
+    is_fully_ready as runtime_is_fully_ready,
 )
 from searchkernel.indexing.watcher import FileWatcher
 from searchkernel.indices.graph import GraphStore
@@ -312,7 +314,10 @@ class ApplicationContext:
         return context.metadata["discovered_files"]
 
     def discover_git_repositories(self) -> list[Path]:
-        from searchkernel.git.repository import discover_git_repositories, discover_git_repositories_multi_root
+        from searchkernel.git.repository import (
+            discover_git_repositories,
+            discover_git_repositories_multi_root,
+        )
 
         if len(self.documents_roots) <= 1:
             return discover_git_repositories(
@@ -721,10 +726,9 @@ class ApplicationContext:
                     )
                     await asyncio.sleep(delay)
                 else:
-                    logger.error(
+                    logger.exception(
                         f"Background indexing failed after {indexed_count}/{len(files_to_index)} files "
-                        f"(exhausted {max_retries} retries): {e}",
-                        exc_info=True,
+                        f"(exhausted {max_retries} retries)"
                     )
                     self._init_error = e
                     self._ready_event.set()  # Unblock waiters so they can see the error
@@ -740,7 +744,7 @@ class ApplicationContext:
 
             self._index_state = IndexState(status="ready")
             self._ready_event.set()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- startup boundary; must not crash the process
             self._index_state = IndexState(
                 status="failed",
                 last_error=str(e),
@@ -752,10 +756,9 @@ class ApplicationContext:
         try:
             await self._startup_reconciliation()
             self.schedule_vocabulary_catch_up()
-        except Exception as e:
-            logger.error(
-                f"Startup reconciliation failed after loading existing indices: {e}",
-                exc_info=True,
+        except Exception:
+            logger.exception(
+                "Startup reconciliation failed after loading existing indices"
             )
 
     async def _startup_reconciliation(self) -> None:
@@ -912,10 +915,8 @@ class ApplicationContext:
             except asyncio.CancelledError:
                 logger.info("Periodic reconciliation task cancelled")
                 raise
-            except Exception as e:
-                logger.error(
-                    f"Error during periodic reconciliation: {e}", exc_info=True
-                )
+            except Exception:
+                logger.exception("Error during periodic reconciliation")
 
     async def _update_vocabulary_incremental(self) -> None:
         """Catch up concept vocabulary without blocking search readiness."""
@@ -978,8 +979,8 @@ class ApplicationContext:
             logger.info("Concept vocabulary built and persisted")
         except asyncio.CancelledError:
             logger.info("Vocabulary building cancelled")
-        except Exception as e:
-            logger.error(f"Failed to build vocabulary: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Failed to build vocabulary")
 
     def is_ready(self) -> bool:
         """Check if initialization is complete and indices are ready.
@@ -1018,7 +1019,7 @@ class ApplicationContext:
         """Wait for initialization to complete. Call before first query."""
         try:
             await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RuntimeError(
                 f"Index initialization timed out after {timeout}s"
             ) from None
@@ -1158,13 +1159,13 @@ class ApplicationContext:
         if self.watcher:
             try:
                 await asyncio.wait_for(self.watcher.stop(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("FileWatcher stop timed out")
 
         try:
             await asyncio.to_thread(self.index_manager.persist)
             self._mark_index_state_loaded()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- shutdown boundary; must not crash the process
             logger.error(f"Failed to persist indices during stop: {e}")
 
         logger.info("ApplicationContext stopped")
@@ -1198,10 +1199,9 @@ class ApplicationContext:
             try:
                 source = GitContentSource(repo_path)
                 ingest_git_source(self.index_manager, source)
-            except Exception as e:
-                logger.error(
-                    f"Failed to ingest git records for {repo_path} into kernel index: {e}",
-                    exc_info=True,
+            except Exception:
+                logger.exception(
+                    f"Failed to ingest git records for {repo_path} into kernel index"
                 )
 
     async def _index_git_commits_initial(self) -> None:
@@ -1216,10 +1216,10 @@ class ApplicationContext:
         """
         try:
             await asyncio.wait_for(self._index_git_commits_initial(), timeout=30.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Git commit indexing timed out after 30s. "
                 "Consider reducing repository size or increasing timeout."
             )
-        except Exception as e:
-            logger.error(f"Git commit indexing failed: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Git commit indexing failed")

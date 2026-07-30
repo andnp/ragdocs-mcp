@@ -53,19 +53,20 @@ def modify_sections(doc: str, section_indices: list[int]) -> str:
             if i > 0:
                 prev_line = lines[i - 1].strip()
                 for idx in section_indices:
-                    if prev_line == f"## Section {idx}":
-                        # Replace content
-                        if line.strip().startswith("Content for section"):
-                            result.append(
-                                f"MODIFIED content for section {idx}. "
-                                f"This section has been completely rewritten with new content. "
-                                f"The modified content is significantly different from the original. "
-                                f"Each modified section has unique identifiable modified content. "
-                                f"Section {idx} now contains updated explanations. "
-                                f"This ensures the delta indexing can detect the changes.\n"
-                            )
-                            modified = True
-                            break
+                    # Replace content
+                    if prev_line == f"## Section {idx}" and line.strip().startswith(
+                        "Content for section"
+                    ):
+                        result.append(
+                            f"MODIFIED content for section {idx}. "
+                            f"This section has been completely rewritten with new content. "
+                            f"The modified content is significantly different from the original. "
+                            f"Each modified section has unique identifiable modified content. "
+                            f"Section {idx} now contains updated explanations. "
+                            f"This ensures the delta indexing can detect the changes.\n"
+                        )
+                        modified = True
+                        break
 
             if not modified:
                 result.append(line)

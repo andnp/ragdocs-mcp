@@ -5,7 +5,10 @@ from types import SimpleNamespace
 import pytest
 from mcp.types import TextContent
 
-from searchkernel.daemon.mcp_requests import build_mcp_tools_payload, handle_mcp_tool_call
+from searchkernel.daemon.mcp_requests import (
+    build_mcp_tools_payload,
+    handle_mcp_tool_call,
+)
 from searchkernel.lifecycle import LifecycleState
 
 

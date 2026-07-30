@@ -52,7 +52,7 @@ def should_include_file(
 
 
 __all__ = [
-    "should_include_file",
     "cosine_similarity",
     "cosine_similarity_lists",
+    "should_include_file",
 ]
