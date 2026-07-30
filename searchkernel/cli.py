@@ -320,7 +320,6 @@ def _build_queue_status_payload(
 
 def _build_admin_overview_payload(
     ctx: ApplicationContext,
-    *,
     runtime_paths: RuntimePaths,
     worker_running: bool,
     worker_pid: int | None,
