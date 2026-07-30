@@ -132,11 +132,7 @@ class ApplyMoveStage:
         for chunk in new_chunks:
             self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
 
-        applied = True
-        failed_count = len(new_chunks) - moved_count
-        if failed_count:
-            failure_ratio = failed_count / len(new_chunks)
-            if failure_ratio > (1.0 - self._threshold):
-                applied = False
+        success_ratio = moved_count / len(new_chunks)
+        applied = success_ratio >= self._threshold
 
         return applied, moved_count, True
