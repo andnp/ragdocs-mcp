@@ -6,8 +6,7 @@ from tree_sitter_markdown import language
 
 from searchkernel.chunking.base import ChunkingStrategy
 from searchkernel.config import ChunkingConfig
-from searchkernel.domain import Chunk
-from searchkernel.models import Document
+from searchkernel.domain import Chunk, Record
 
 
 @dataclass
@@ -23,22 +22,22 @@ class HeaderBasedChunker(ChunkingStrategy):
         self.config = config
         self.parser = Parser(Language(language()))
 
-    def chunk_document(self, document: Document) -> list[Chunk]:
-        content_bytes = bytes(document.content, "utf8")
+    def chunk_document(self, record: Record) -> list[Chunk]:
+        content_bytes = bytes(record.body, "utf8")
         tree = self.parser.parse(content_bytes)
         root_node = tree.root_node
 
         headers = self._extract_headers(root_node, content_bytes)
 
         if not headers:
-            return self._chunk_plain_text(document)
+            return self._chunk_plain_text(record)
 
-        initial_chunks = self._create_initial_chunks(document, headers)
+        initial_chunks = self._create_initial_chunks(record, headers)
         merged_chunks = self._merge_small_chunks(initial_chunks)
         split_chunks = self._split_large_chunks(merged_chunks)
         final_chunks = self._apply_overlap(split_chunks)
 
-        final_chunks = self._create_parent_child_chunks(document, final_chunks)
+        final_chunks = self._create_parent_child_chunks(record, final_chunks)
 
         return final_chunks
 
@@ -167,10 +166,10 @@ class HeaderBasedChunker(ChunkingStrategy):
         return headers
 
     def _create_initial_chunks(
-        self, document: Document, headers: list[HeaderNode]
+        self, record: Record, headers: list[HeaderNode]
     ) -> list[Chunk]:
         chunks = []
-        content = document.content
+        content = record.body
 
         for i, header in enumerate(headers):
             start_pos = header.start_pos
@@ -180,24 +179,20 @@ class HeaderBasedChunker(ChunkingStrategy):
             section_body = content[header.end_pos:end_pos].strip()
             chunk_content = self._compose_chunk_content(header_path, section_body)
 
-            chunk_id = f"{document.id}_chunk_{i}"
+            chunk_id = f"{record.source_id}_chunk_{i}"
 
             chunks.append(
                 self._build_chunk(
                     chunk_id=chunk_id,
-                    record_id=document.id,
+                    record_id=record.source_id,
                     content=chunk_content,
-                    metadata={
-                        **document.metadata,
-                        "tags": document.tags,
-                        "links": document.links,
-                    },
+                    metadata=dict(record.metadata),
                     chunk_index=i,
                     header_path=header_path,
                     start_pos=start_pos,
                     end_pos=end_pos,
-                    file_path=document.file_path,
-                    modified_time=document.modified_time,
+                    file_path=record.metadata.get("file_path", ""),
+                    modified_time=record.updated_at,
                 )
             )
 
@@ -502,25 +497,21 @@ class HeaderBasedChunker(ChunkingStrategy):
 
         return result
 
-    def _chunk_plain_text(self, document: Document) -> list[Chunk]:
-        content = document.content
+    def _chunk_plain_text(self, record: Record) -> list[Chunk]:
+        content = record.body
         if len(content) <= self.config.max_chunk_chars:
             return [
                 self._build_chunk(
-                    chunk_id=f"{document.id}_chunk_0",
-                    record_id=document.id,
+                    chunk_id=f"{record.source_id}_chunk_0",
+                    record_id=record.source_id,
                     content=content,
-                    metadata={
-                        **document.metadata,
-                        "tags": document.tags,
-                        "links": document.links,
-                    },
+                    metadata=dict(record.metadata),
                     chunk_index=0,
                     header_path="",
                     start_pos=0,
                     end_pos=len(content),
-                    file_path=document.file_path,
-                    modified_time=document.modified_time,
+                    file_path=record.metadata.get("file_path", ""),
+                    modified_time=record.updated_at,
                 )
             ]
 
@@ -539,20 +530,16 @@ class HeaderBasedChunker(ChunkingStrategy):
                 end_pos = start_pos + len(current_content)
                 chunks.append(
                     self._build_chunk(
-                        chunk_id=f"{document.id}_chunk_{chunk_index}",
-                        record_id=document.id,
+                        chunk_id=f"{record.source_id}_chunk_{chunk_index}",
+                        record_id=record.source_id,
                         content=current_content,
-                        metadata={
-                            **document.metadata,
-                            "tags": document.tags,
-                            "links": document.links,
-                        },
+                        metadata=dict(record.metadata),
                         chunk_index=chunk_index,
                         header_path="",
                         start_pos=start_pos,
                         end_pos=end_pos,
-                        file_path=document.file_path,
-                        modified_time=document.modified_time,
+                        file_path=record.metadata.get("file_path", ""),
+                        modified_time=record.updated_at,
                     )
                 )
                 start_pos = end_pos
@@ -563,27 +550,23 @@ class HeaderBasedChunker(ChunkingStrategy):
             end_pos = start_pos + len(current_content)
             chunks.append(
                 self._build_chunk(
-                    chunk_id=f"{document.id}_chunk_{chunk_index}",
-                    record_id=document.id,
+                    chunk_id=f"{record.source_id}_chunk_{chunk_index}",
+                    record_id=record.source_id,
                     content=current_content,
-                    metadata={
-                        **document.metadata,
-                        "tags": document.tags,
-                        "links": document.links,
-                    },
+                    metadata=dict(record.metadata),
                     chunk_index=chunk_index,
                     header_path="",
                     start_pos=start_pos,
                     end_pos=end_pos,
-                    file_path=document.file_path,
-                    modified_time=document.modified_time,
+                    file_path=record.metadata.get("file_path", ""),
+                    modified_time=record.updated_at,
                 )
             )
 
         return chunks
 
     def _create_parent_child_chunks(
-        self, document: Document, chunks: list[Chunk]
+        self, record: Record, chunks: list[Chunk]
     ) -> list[Chunk]:
         if not chunks:
             return chunks
@@ -607,10 +590,10 @@ class HeaderBasedChunker(ChunkingStrategy):
                 current_parent_content += "\n\n" + chunk.content
             else:
                 if len(current_parent_content) >= parent_min:
-                    parent_chunk_id = f"{document.id}_parent_{parent_index}"
+                    parent_chunk_id = f"{record.source_id}_parent_{parent_index}"
                     parent = self._build_chunk(
                         chunk_id=parent_chunk_id,
-                        record_id=document.id,
+                        record_id=record.source_id,
                         content=current_parent_content,
                         metadata=current_parent_chunks[0].metadata,
                         chunk_index=parent_index,
@@ -619,8 +602,8 @@ class HeaderBasedChunker(ChunkingStrategy):
                         ),
                         start_pos=self._chunk_start_pos(current_parent_chunks[0]),
                         end_pos=self._chunk_end_pos(current_parent_chunks[-1]),
-                        file_path=document.file_path,
-                        modified_time=document.modified_time,
+                        file_path=record.metadata.get("file_path", ""),
+                        modified_time=record.updated_at,
                     )
                     parents.append(parent)
 
@@ -649,18 +632,18 @@ class HeaderBasedChunker(ChunkingStrategy):
 
         if current_parent_chunks:
             if len(current_parent_content) >= parent_min:
-                parent_chunk_id = f"{document.id}_parent_{parent_index}"
+                parent_chunk_id = f"{record.source_id}_parent_{parent_index}"
                 parent = self._build_chunk(
                     chunk_id=parent_chunk_id,
-                    record_id=document.id,
+                    record_id=record.source_id,
                     content=current_parent_content,
                     metadata=current_parent_chunks[0].metadata,
                     chunk_index=parent_index,
                     header_path=self._select_parent_header_path(current_parent_chunks),
                     start_pos=self._chunk_start_pos(current_parent_chunks[0]),
                     end_pos=self._chunk_end_pos(current_parent_chunks[-1]),
-                    file_path=document.file_path,
-                    modified_time=document.modified_time,
+                    file_path=record.metadata.get("file_path", ""),
+                    modified_time=record.updated_at,
                 )
                 parents.append(parent)
 

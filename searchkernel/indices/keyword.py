@@ -7,8 +7,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from searchkernel.domain import Chunk
-from searchkernel.models import Document
+from searchkernel.domain import Chunk, Record
 from searchkernel.search.types import SearchResultDict
 from searchkernel.storage.db import DatabaseManager
 
@@ -160,33 +159,38 @@ class KeywordIndex:
     # Write methods
     # ------------------------------------------------------------------
 
-    def add(self, document: Document) -> None:
-        """Add a document as a single FTS5 entry."""
+    def add(self, record: Record) -> None:
+        """Add a record as a single FTS5 entry."""
         with self._lock:
             try:
-                title = str(document.metadata.get("title", ""))
-                tags_list = document.tags if document.tags else []
+                title = str(record.metadata.get("title", ""))
+                tags_list = record.metadata.get("tags") or []
                 tags = ",".join(tags_list)
-                source_file = str(document.metadata.get("source_file", document.id))
+                source_file = str(
+                    record.metadata.get(
+                        "source_file",
+                        record.metadata.get("file_path", record.source_id),
+                    )
+                )
                 # Include aliases, keywords, description, author, category in indexed headers field
-                aliases_list = document.metadata.get("aliases", [])
+                aliases_list = record.metadata.get("aliases", [])
                 aliases_text = (
                     " ".join(str(a) for a in aliases_list)
                     if isinstance(aliases_list, list)
                     else str(aliases_list)
                 )
-                keywords_list = document.metadata.get("keywords", [])
+                keywords_list = record.metadata.get("keywords", [])
                 keywords_text = (
                     " ".join(keywords_list)
                     if isinstance(keywords_list, list)
                     else str(keywords_list)
                 )
                 description = str(
-                    document.metadata.get("description", "")
-                    or document.metadata.get("summary", "")
+                    record.metadata.get("description", "")
+                    or record.metadata.get("summary", "")
                 )
-                author = str(document.metadata.get("author", ""))
-                category = str(document.metadata.get("category", ""))
+                author = str(record.metadata.get("author", ""))
+                category = str(record.metadata.get("category", ""))
                 extra = " ".join(
                     filter(
                         None,
@@ -196,7 +200,7 @@ class KeywordIndex:
                 conn = self._conn()
                 # FTS5 doesn't support real UPDATE; delete old entry first, then insert
                 conn.execute(
-                    "DELETE FROM search_index WHERE chunk_id = ?", (document.id,)
+                    "DELETE FROM search_index WHERE chunk_id = ?", (record.source_id,)
                 )
                 conn.execute(
                     """
@@ -205,9 +209,9 @@ class KeywordIndex:
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        document.id,
-                        document.id,
-                        document.content,
+                        record.source_id,
+                        record.source_id,
+                        record.body,
                         title,
                         extra,
                         tags,
@@ -220,7 +224,7 @@ class KeywordIndex:
                     self._reinitialize_after_corruption()
                     return
                 logger.warning(
-                    "Failed to add document %s: %s", document.id, e, exc_info=True
+                    "Failed to add document %s: %s", record.source_id, e, exc_info=True
                 )
                 raise
 

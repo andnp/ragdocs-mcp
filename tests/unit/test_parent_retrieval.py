@@ -2,7 +2,22 @@ from datetime import UTC, datetime
 
 from searchkernel.chunking.header_chunker import HeaderBasedChunker
 from searchkernel.config import ChunkingConfig
-from searchkernel.models import Document
+from searchkernel.domain import Record
+
+
+def _make_record(record_id: str, content: str) -> Record:
+    """Build a domain.Record matching the fixed test-fixture fields used below."""
+    now = datetime.now(UTC)
+    return Record(
+        source_kind="note",
+        source_id=record_id,
+        title=record_id,
+        body=content,
+        created_at=now,
+        updated_at=now,
+        metadata={"links": [], "tags": [], "file_path": "/test/doc.md"},
+        uri="file:///test/doc.md",
+    )
 
 
 class TestParentChildChunking:
@@ -28,15 +43,7 @@ Bearer tokens protect API calls and require issuer validation.
 Rotate credentials every 24 hours and revoke compromised tokens immediately.
 """
 
-        doc = Document(
-            id="clean_titles",
-            content=content,
-            metadata={},
-            links=[],
-            tags=[],
-            file_path="/test/doc.md",
-            modified_time=datetime.now(UTC),
-        )
+        doc = _make_record("clean_titles", content)
 
         chunks = chunker.chunk_document(doc)
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
@@ -80,15 +87,7 @@ Use token auth.
 Bearer tokens must be rotated every 24 hours. Include scopes and issuer validation.
 """
 
-        doc = Document(
-            id="parent_headers",
-            content=content,
-            metadata={},
-            links=[],
-            tags=[],
-            file_path="/test/doc.md",
-            modified_time=datetime.now(UTC),
-        )
+        doc = _make_record("parent_headers", content)
 
         chunks = chunker.chunk_document(doc)
         parent_chunks = [c for c in chunks if "_parent_" in c.chunk_id]
@@ -123,15 +122,7 @@ Alert routing must notify the on-call engineer and preserve incident context.
 CLI cheatsheet.
 """
 
-        doc = Document(
-            id="trailing_short",
-            content=content,
-            metadata={},
-            links=[],
-            tags=[],
-            file_path="/test/doc.md",
-            modified_time=datetime.now(UTC),
-        )
+        doc = _make_record("trailing_short", content)
 
         chunks = chunker.chunk_document(doc)
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
@@ -172,15 +163,7 @@ Third section content covering topic C. Further elaboration and examples.
 More text to ensure this section is substantial enough for chunking.
 """
 
-        doc = Document(
-            id="test_doc",
-            content=content,
-            metadata={},
-            links=[],
-            tags=[],
-            file_path="/test/doc.md",
-            modified_time=datetime.now(UTC),
-        )
+        doc = _make_record("test_doc", content)
 
         chunks = chunker.chunk_document(doc)
 
@@ -223,15 +206,7 @@ Content for section two with adequate length for testing.
 Content for section three with more text for the chunk.
 """
 
-        doc = Document(
-            id="test_doc",
-            content=content,
-            metadata={},
-            links=[],
-            tags=[],
-            file_path="/test/doc.md",
-            modified_time=datetime.now(UTC),
-        )
+        doc = _make_record("test_doc", content)
 
         chunks = chunker.chunk_document(doc)
 
@@ -267,15 +242,7 @@ Content for section A with enough text.
 Content for section B with enough text.
 """
 
-        doc = Document(
-            id="test_doc",
-            content=content,
-            metadata={},
-            links=[],
-            tags=[],
-            file_path="/test/doc.md",
-            modified_time=datetime.now(UTC),
-        )
+        doc = _make_record("test_doc", content)
 
         chunks = chunker.chunk_document(doc)
 

@@ -9,9 +9,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from searchkernel.domain import Chunk
+from searchkernel.domain import Chunk, Record
 from searchkernel.indexing.semantic import SemanticInput, semantic_input_for_chunk
-from searchkernel.models import Document
 from searchkernel.search.edge_types import infer_edge_type
 
 
@@ -19,7 +18,7 @@ from searchkernel.search.edge_types import infer_edge_type
 class PreparedIndexDocument:
     file_path: str
     parser: object
-    document: Document
+    record: Record
     chunks: list[Chunk]
     graph_metadata: dict
 
@@ -67,13 +66,13 @@ def build_graph_payload(
     nodes: list[tuple[str, dict]] = []
     edges: list[tuple[str, str, str, str]] = []
     for prepared in documents:
-        nodes.append((prepared.document.id, prepared.graph_metadata))
+        nodes.append((prepared.record.source_id, prepared.graph_metadata))
         nodes.extend((chunk.chunk_id, chunk.metadata) for chunk in prepared.chunks)
         if isinstance(prepared.parser, MarkdownParser):
             links = prepared.parser.extract_links_with_context(prepared.file_path)
             edges.extend(
                 (
-                    prepared.document.id,
+                    prepared.record.source_id,
                     link.target,
                     infer_edge_type(link.header_context, link.target).value,
                     link.header_context,
@@ -82,8 +81,8 @@ def build_graph_payload(
             )
         else:
             edges.extend(
-                (prepared.document.id, link, "links_to", "")
-                for link in prepared.document.links
+                (prepared.record.source_id, link, "links_to", "")
+                for link in prepared.record.metadata.get("links", [])
             )
     return nodes, edges
 

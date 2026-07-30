@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 
+from searchkernel.domain import Chunk, Record, RecordStatus
 from searchkernel.indexing.stages import (
     GraphStage,
     KeywordStage,
@@ -10,8 +11,6 @@ from searchkernel.indexing.stages import (
     SemanticStage,
     iter_prepared_index_batches,
 )
-from searchkernel.domain import Chunk
-from searchkernel.models import Document
 
 
 def _with_hash(chunk):
@@ -33,19 +32,22 @@ def _with_hash(chunk):
 
 def make_test_chunk(chunk_id: str = "chunk-1", doc_id: str = "doc-1") -> Chunk:
     """Create a test chunk with minimal required fields."""
-    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content="content", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 7, "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content="content", metadata={ "header_path": "", "start_pos": 0, "end_pos": 7, "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
 
-def make_test_document(doc_id: str = "doc-1", file_path: str = "/test.md") -> Document:
-    """Create a test document with minimal required fields."""
-    return Document(
-        id=doc_id,
-        content="test content",
-        metadata={},
-        links=[],
-        tags=[],
-        file_path=file_path,
-        modified_time=datetime.now(UTC),
+def make_test_record(doc_id: str = "doc-1", file_path: str = "/test.md") -> Record:
+    """Create a test record with minimal required fields."""
+    now = datetime.now(UTC)
+    return Record(
+        source_kind="note",
+        source_id=doc_id,
+        title=doc_id,
+        body="test content",
+        created_at=now,
+        updated_at=now,
+        metadata={"links": [], "tags": [], "file_path": file_path},
+        uri=f"file://{file_path}",
+        status=RecordStatus.ACTIVE,
     )
 
 
@@ -77,14 +79,13 @@ class TestPreparedIndexBatch:
     """Test batch preparation."""
 
     def test_prepared_batch_from_documents(self) -> None:
-        doc = make_test_document(doc_id="doc-1")
+        record = make_test_record(doc_id="doc-1")
         chunk = make_test_chunk(chunk_id="chunk-1", doc_id="doc-1")
-        doc.chunks = [chunk]
 
         prepared = PreparedIndexDocument(
             file_path="/test.md",
             parser=object(),
-            document=doc,
+            record=record,
             chunks=[chunk],
             graph_metadata={"tags": []},
         )
@@ -99,7 +100,7 @@ class TestPreparedIndexBatch:
     def test_prepared_batch_from_multiple_documents(self) -> None:
         prepared_docs = []
         for i in range(3):
-            doc = make_test_document(doc_id=f"doc-{i}", file_path=f"/test-{i}.md")
+            record = make_test_record(doc_id=f"doc-{i}", file_path=f"/test-{i}.md")
             chunks = [
                 make_test_chunk(
                     chunk_id=f"chunk-{i}-{j}",
@@ -107,13 +108,12 @@ class TestPreparedIndexBatch:
                 )
                 for j in range(2)
             ]
-            doc.chunks = chunks
 
             prepared_docs.append(
                 PreparedIndexDocument(
                     file_path=f"/test-{i}.md",
                     parser=object(),
-                    document=doc,
+                    record=record,
                     chunks=chunks,
                     graph_metadata={},
                 )
@@ -132,15 +132,14 @@ class TestIterPreparedIndexBatches:
     def test_batch_iterator_respects_document_limit(self) -> None:
         prepared_docs = []
         for i in range(5):
-            doc = make_test_document(doc_id=f"doc-{i}", file_path=f"/test-{i}.md")
+            record = make_test_record(doc_id=f"doc-{i}", file_path=f"/test-{i}.md")
             chunk = make_test_chunk(chunk_id=f"chunk-{i}", doc_id=f"doc-{i}")
-            doc.chunks = [chunk]
 
             prepared_docs.append(
                 PreparedIndexDocument(
                     file_path=f"/test-{i}.md",
                     parser=object(),
-                    document=doc,
+                    record=record,
                     chunks=[chunk],
                     graph_metadata={},
                 )
@@ -156,7 +155,7 @@ class TestIterPreparedIndexBatches:
     def test_batch_iterator_respects_chunk_limit(self) -> None:
         prepared_docs = []
         for i in range(3):
-            doc = make_test_document(doc_id=f"doc-{i}", file_path=f"/test-{i}.md")
+            record = make_test_record(doc_id=f"doc-{i}", file_path=f"/test-{i}.md")
             # Each document has 3 chunks
             chunks = [
                 make_test_chunk(
@@ -165,13 +164,12 @@ class TestIterPreparedIndexBatches:
                 )
                 for j in range(3)
             ]
-            doc.chunks = chunks
 
             prepared_docs.append(
                 PreparedIndexDocument(
                     file_path=f"/test-{i}.md",
                     parser=object(),
-                    document=doc,
+                    record=record,
                     chunks=chunks,
                     graph_metadata={},
                 )

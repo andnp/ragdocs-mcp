@@ -2,8 +2,36 @@ from datetime import UTC, datetime
 
 import pytest
 
+from searchkernel.domain import Record
 from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.models import Document
+
+
+def _make_record(
+    record_id: str,
+    content: str,
+    *,
+    metadata: dict | None = None,
+    tags: list[str] | None = None,
+    links: list[str] | None = None,
+    file_path: str = "",
+) -> Record:
+    """Build a domain.Record matching the fields the old Document fixtures used."""
+    now = datetime.now(UTC)
+    return Record(
+        source_kind="note",
+        source_id=record_id,
+        title=record_id,
+        body=content,
+        created_at=now,
+        updated_at=now,
+        metadata={
+            "links": links or [],
+            "tags": tags or [],
+            "file_path": file_path,
+            **(metadata or {}),
+        },
+        uri=f"file://{file_path}",
+    )
 
 
 def _with_hash(chunk):
@@ -33,14 +61,13 @@ def _extract_chunk_ids(results: list) -> list[str]:
 
 @pytest.fixture
 def sample_document():
-    return Document(
-        id="test-doc",
-        content="Machine learning is a subset of artificial intelligence.",
+    return _make_record(
+        "test-doc",
+        "Machine learning is a subset of artificial intelligence.",
         metadata={"title": "ML Intro", "aliases": ["AI Intro", "ML Basics"]},
-        links=["AI"],
         tags=["ml", "ai"],
+        links=["AI"],
         file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
     )
 
 
@@ -113,24 +140,18 @@ def test_keyword_index_persist_and_load(tmp_path, sample_document):
 
 
 def test_keyword_index_multiple_documents(keyword_index):
-    doc1 = Document(
-        id="doc1",
-        content="Python is a programming language.",
-        metadata={},
-        links=[],
+    doc1 = _make_record(
+        "doc1",
+        "Python is a programming language.",
         tags=["python"],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
     )
 
-    doc2 = Document(
-        id="doc2",
-        content="JavaScript is used for web development.",
-        metadata={},
-        links=[],
+    doc2 = _make_record(
+        "doc2",
+        "JavaScript is used for web development.",
         tags=["javascript"],
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc1)
@@ -144,24 +165,16 @@ def test_keyword_index_multiple_documents(keyword_index):
 
 
 def test_keyword_index_exact_match_priority(keyword_index):
-    doc1 = Document(
-        id="doc1",
-        content="BM25 is a ranking function used in information retrieval.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc1 = _make_record(
+        "doc1",
+        "BM25 is a ranking function used in information retrieval.",
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
     )
 
-    doc2 = Document(
-        id="doc2",
-        content="Information retrieval is important for search engines.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc2 = _make_record(
+        "doc2",
+        "Information retrieval is important for search engines.",
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc1)
@@ -179,14 +192,11 @@ def test_keyword_index_exact_match_priority(keyword_index):
 
 
 def test_keyword_index_update_document(keyword_index):
-    doc = Document(
-        id="doc1",
-        content="Original content about Python.",
-        metadata={},
-        links=[],
+    doc = _make_record(
+        "doc1",
+        "Original content about Python.",
         tags=["python"],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -194,14 +204,11 @@ def test_keyword_index_update_document(keyword_index):
     results = keyword_index.search("python", top_k=5)
     assert "doc1" in _extract_chunk_ids(results)
 
-    updated_doc = Document(
-        id="doc1",
-        content="Updated content about JavaScript.",
-        metadata={},
-        links=[],
+    updated_doc = _make_record(
+        "doc1",
+        "Updated content about JavaScript.",
         tags=["javascript"],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(updated_doc)
@@ -220,14 +227,10 @@ def test_keyword_index_load_nonexistent_path(tmp_path):
     index.load(nonexistent_path)
 
     # Verify index is functional by adding and searching a document
-    doc = Document(
-        id="test-doc",
-        content="Test content for initialization.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc = _make_record(
+        "test-doc",
+        "Test content for initialization.",
         file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
     )
     index.add(doc)
     results = index.search("test content", top_k=5)
@@ -240,14 +243,11 @@ def test_keyword_index_load_nonexistent_path(tmp_path):
     "Would require custom analyzer configuration to preserve such tokens."
 )
 def test_keyword_index_special_characters(keyword_index):
-    doc = Document(
-        id="special-doc",
-        content="C++ is a programming language. Node.js is a runtime.",
-        metadata={},
-        links=[],
+    doc = _make_record(
+        "special-doc",
+        "C++ is a programming language. Node.js is a runtime.",
         tags=["c++", "nodejs"],
         file_path="/tmp/special.md",
-        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -260,24 +260,16 @@ def test_keyword_index_special_characters(keyword_index):
 
 
 def test_keyword_index_phrase_search(keyword_index):
-    doc1 = Document(
-        id="doc1",
-        content="The quick brown fox jumps over the lazy dog.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc1 = _make_record(
+        "doc1",
+        "The quick brown fox jumps over the lazy dog.",
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
     )
 
-    doc2 = Document(
-        id="doc2",
-        content="A lazy fox and a quick dog.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc2 = _make_record(
+        "doc2",
+        "A lazy fox and a quick dog.",
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc1)
@@ -319,14 +311,11 @@ def test_keyword_index_get_chunk_by_id_returns_row_metadata(keyword_index):
 
 
 def test_keyword_index_aliases_as_string(keyword_index):
-    doc = Document(
-        id="doc1",
-        content="Content about AI.",
+    doc = _make_record(
+        "doc1",
+        "Content about AI.",
         metadata={"aliases": "Artificial Intelligence"},
-        links=[],
-        tags=[],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -336,14 +325,10 @@ def test_keyword_index_aliases_as_string(keyword_index):
 
 
 def test_keyword_index_no_aliases(keyword_index):
-    doc = Document(
-        id="doc1",
-        content="Content without aliases.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc = _make_record(
+        "doc1",
+        "Content without aliases.",
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -355,24 +340,16 @@ def test_keyword_index_no_aliases(keyword_index):
 def test_keyword_index_concurrent_access(keyword_index):
     import threading
 
-    doc1 = Document(
-        id="doc1",
-        content="First document.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc1 = _make_record(
+        "doc1",
+        "First document.",
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
     )
 
-    doc2 = Document(
-        id="doc2",
-        content="Second document.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc2 = _make_record(
+        "doc2",
+        "Second document.",
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(UTC),
     )
 
     def add_doc1():
@@ -400,14 +377,12 @@ def test_keyword_index_empty_content(keyword_index):
     Validates graceful handling of documents with empty content.
     Prevents indexing crashes on placeholder or metadata-only files.
     """
-    doc = Document(
-        id="empty-doc",
-        content="",
+    doc = _make_record(
+        "empty-doc",
+        "",
         metadata={"title": "Empty File"},
-        links=[],
         tags=["empty"],
         file_path="/tmp/empty.md",
-        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -426,14 +401,11 @@ def test_keyword_index_very_large_document(keyword_index):
     )
     assert len(large_content) > 10000
 
-    doc = Document(
-        id="large-doc",
-        content=large_content,
-        metadata={},
-        links=[],
+    doc = _make_record(
+        "large-doc",
+        large_content,
         tags=["large"],
         file_path="/tmp/large.md",
-        modified_time=datetime.now(UTC),
     )
 
     keyword_index.add(doc)
@@ -1076,14 +1048,10 @@ def test_load_handles_missing_main_index(tmp_path):
     keyword_index.load(index_dir)
 
     # Should have reinitialized - verify by adding and searching
-    doc = Document(
-        id="test-doc",
-        content="Test content after recovery from missing MAIN.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc = _make_record(
+        "test-doc",
+        "Test content after recovery from missing MAIN.",
         file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
     )
     keyword_index.add(doc)
     results = keyword_index.search("test content", top_k=5)
@@ -1122,14 +1090,10 @@ def test_load_handles_empty_directory(tmp_path):
     keyword_index.load(empty_dir)
 
     # Should work normally after reinitialization
-    doc = Document(
-        id="empty-recovery",
-        content="Content indexed after empty directory recovery.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc = _make_record(
+        "empty-recovery",
+        "Content indexed after empty directory recovery.",
         file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
     )
     keyword_index.add(doc)
     results = keyword_index.search("empty directory recovery", top_k=5)
@@ -1157,14 +1121,10 @@ def test_keyword_index_recovers_from_corrupt_sqlite(tmp_path):
     file in an inconsistent state. The index should reinitialize clean.
     """
     index = KeywordIndex()
-    doc = Document(
-        id="original-doc",
-        content="Machine learning and AI research.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc = _make_record(
+        "original-doc",
+        "Machine learning and AI research.",
         file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
     )
     index.add(doc)
     index.persist(tmp_path)
@@ -1179,14 +1139,10 @@ def test_keyword_index_recovers_from_corrupt_sqlite(tmp_path):
     # Should reinitialize cleanly — not raise
     assert not corrupt_db.exists() or True  # corrupt file deleted or replaced
     # Should be usable after recovery
-    new_doc = Document(
-        id="new-doc",
-        content="Reinforcement learning agents.",
-        metadata={},
-        links=[],
-        tags=[],
+    new_doc = _make_record(
+        "new-doc",
+        "Reinforcement learning agents.",
         file_path="/tmp/new.md",
-        modified_time=datetime.now(UTC),
     )
     index2.add(new_doc)
     results = index2.search("reinforcement learning", top_k=5)
@@ -1205,14 +1161,10 @@ def test_keyword_index_search_recovers_from_malformed_mid_operation(tmp_path):
     from unittest.mock import patch
 
     index = KeywordIndex()
-    doc = Document(
-        id="some-doc",
-        content="Reinforcement learning with neural networks.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc = _make_record(
+        "some-doc",
+        "Reinforcement learning with neural networks.",
         file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
     )
     index.add(doc)
 

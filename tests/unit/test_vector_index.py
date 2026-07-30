@@ -5,9 +5,52 @@ import pytest
 
 from searchkernel.chunking.header_chunker import HeaderBasedChunker
 from searchkernel.config import ChunkingConfig
+from searchkernel.domain import Record
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.models import Document
 from searchkernel.parsers.markdown import MarkdownParser
+
+
+def _document_to_record(doc: Document) -> Record:
+    """Adapt a parser-produced models.Document into a domain.Record for chunk_document()."""
+    return Record(
+        source_kind="note",
+        source_id=doc.id,
+        title=doc.id,
+        body=doc.content,
+        created_at=doc.modified_time,
+        updated_at=doc.modified_time,
+        metadata={"links": doc.links, "tags": doc.tags, "file_path": doc.file_path, **doc.metadata},
+        uri=f"file://{doc.file_path}",
+    )
+
+
+def _make_record(
+    record_id: str,
+    content: str,
+    *,
+    metadata: dict | None = None,
+    tags: list[str] | None = None,
+    links: list[str] | None = None,
+    file_path: str = "",
+) -> Record:
+    """Build a domain.Record matching the fields the old Document fixtures used."""
+    now = datetime.now(UTC)
+    return Record(
+        source_kind="note",
+        source_id=record_id,
+        title=record_id,
+        body=content,
+        created_at=now,
+        updated_at=now,
+        metadata={
+            "links": links or [],
+            "tags": tags or [],
+            "file_path": file_path,
+            **(metadata or {}),
+        },
+        uri=f"file://{file_path}",
+    )
 
 
 def _with_hash(chunk):
@@ -37,14 +80,13 @@ def _extract_chunk_ids(results: list) -> list[str]:
 
 @pytest.fixture
 def sample_document():
-    return Document(
-        id="test-doc",
-        content="# Machine Learning\n\nMachine learning is a subset of artificial intelligence.",
+    return _make_record(
+        "test-doc",
+        "# Machine Learning\n\nMachine learning is a subset of artificial intelligence.",
         metadata={"title": "ML Intro"},
         links=["AI"],
         tags=["ml", "ai"],
         file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
     )
 
 
@@ -142,7 +184,7 @@ Important body text.
             parent_chunk_max_chars=20_000,
         )
     )
-    chunks = chunker.chunk_document(document)
+    chunks = chunker.chunk_document(_document_to_record(document))
 
     index = VectorIndex(embedding_model=shared_embedding_model)
     index.add_chunks(chunks)
@@ -159,24 +201,18 @@ Important body text.
 
 
 def test_vector_index_multiple_documents(vector_index):
-    doc1 = Document(
-        id="doc1",
-        content="Python is a programming language.",
-        metadata={},
-        links=[],
+    doc1 = _make_record(
+        "doc1",
+        "Python is a programming language.",
         tags=["python"],
         file_path="/tmp/doc1.md",
-        modified_time=datetime.now(UTC),
     )
 
-    doc2 = Document(
-        id="doc2",
-        content="JavaScript is used for web development.",
-        metadata={},
-        links=[],
+    doc2 = _make_record(
+        "doc2",
+        "JavaScript is used for web development.",
         tags=["javascript"],
         file_path="/tmp/doc2.md",
-        modified_time=datetime.now(UTC),
     )
 
     vector_index.add(doc1)
@@ -189,17 +225,13 @@ def test_vector_index_multiple_documents(vector_index):
 
 
 def test_vector_index_search_returns_unique_doc_ids(vector_index):
-    doc = Document(
-        id="long-doc",
-        content="# Chapter 1\n\n"
+    doc = _make_record(
+        "long-doc",
+        "# Chapter 1\n\n"
         + "Content paragraph. " * 100
         + "\n\n# Chapter 2\n\n"
         + "More content here. " * 100,
-        metadata={},
-        links=[],
-        tags=[],
         file_path="/tmp/long.md",
-        modified_time=datetime.now(UTC),
     )
 
     vector_index.add(doc)
@@ -216,14 +248,10 @@ def test_vector_index_load_nonexistent_path(tmp_path, shared_embedding_model):
     index.load(nonexistent_path)
 
     # Verify index is functional by adding and searching a document
-    doc = Document(
-        id="test-doc",
-        content="Test content for initialization.",
-        metadata={},
-        links=[],
-        tags=[],
+    doc = _make_record(
+        "test-doc",
+        "Test content for initialization.",
         file_path="/tmp/test.md",
-        modified_time=datetime.now(UTC),
     )
     index.add(doc)
     results = index.search("test content", top_k=5)
@@ -242,14 +270,12 @@ def test_vector_index_very_long_document(vector_index):
         "More content here with searchable terms like embeddings and vectors. " * 100
     )
 
-    doc = Document(
-        id="long-doc",
-        content=long_content,
+    doc = _make_record(
+        "long-doc",
+        long_content,
         metadata={"title": "Long Document"},
-        links=[],
         tags=["long", "test"],
         file_path="/tmp/long_doc.md",
-        modified_time=datetime.now(UTC),
     )
 
     vector_index.add(doc)
@@ -280,14 +306,12 @@ Quotes: "smart quotes" 'apostrophes' «guillemets» ‹single›
 Special: €, £, ¥, ©, ®, ™, §, ¶, †, ‡, …
 """
 
-    doc = Document(
-        id="special-chars",
-        content=content,
+    doc = _make_record(
+        "special-chars",
+        content,
         metadata={"type": "special"},
-        links=[],
         tags=["unicode", "symbols"],
         file_path="/tmp/special.md",
-        modified_time=datetime.now(UTC),
     )
 
     vector_index.add(doc)

@@ -14,9 +14,8 @@ if TYPE_CHECKING:
 
 import numpy as np
 
+from searchkernel.domain import Chunk, Record
 from searchkernel.indices.vocabulary_state import VocabularyLifecycleState
-from searchkernel.domain import Chunk
-from searchkernel.models import Document
 from searchkernel.search.types import SearchResultDict
 from searchkernel.utils.atomic_io import atomic_write_json, fsync_path
 from searchkernel.utils.circuit_breaker import (
@@ -291,13 +290,8 @@ class VectorIndex:
     def warm_up(self) -> None:
         self._ensure_model_loaded()
 
-    def add(self, document: Document) -> None:
+    def add(self, record: Record) -> None:
         from llama_index.core import Document as LlamaDocument
-
-        if document.chunks:
-            for chunk in document.chunks:
-                self.add_chunk(chunk)
-            return
 
         self._ensure_model_loaded()
         if self._index is None:
@@ -309,25 +303,25 @@ class VectorIndex:
             )
 
         llama_doc = LlamaDocument(
-            text=document.content,
+            text=record.body,
             metadata={
-                "doc_id": document.id,
-                "file_path": document.file_path,
-                "tags": document.tags,
-                "links": document.links,
+                "doc_id": record.source_id,
+                "file_path": record.metadata.get("file_path", ""),
+                "tags": record.metadata.get("tags", []),
+                "links": record.metadata.get("links", []),
             },
-            id_=document.id,
+            id_=record.source_id,
         )
 
         node_id = llama_doc.id_
-        self._tombstoned_docs.discard(document.id)
+        self._tombstoned_docs.discard(record.source_id)
 
         # Protect index operations with lock to prevent race condition during shutdown/persist
         with self._index_lock:
-            self._doc_id_to_node_ids[document.id] = [node_id]
+            self._doc_id_to_node_ids[record.source_id] = [node_id]
             self._index.insert_nodes([llama_doc])
 
-        self.register_document_terms(document.content)
+        self.register_document_terms(record.body)
         self._mark_vocabulary_stale()
 
     def add_chunk(self, chunk: Chunk) -> None:

@@ -8,11 +8,27 @@ from searchkernel.config import (
     LLMConfig,
     SearchConfig,
 )
+from searchkernel.domain import Record
 from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
+from searchkernel.models import Document
 from searchkernel.parsers.plaintext import PlainTextParser
+
+
+def _to_record(doc: Document) -> Record:
+    """Adapt a parser-produced models.Document into a domain.Record for chunk_document()."""
+    return Record(
+        source_kind="note",
+        source_id=doc.id,
+        title=doc.id,
+        body=doc.content,
+        created_at=doc.modified_time,
+        updated_at=doc.modified_time,
+        metadata={"links": doc.links, "tags": doc.tags, "file_path": doc.file_path, **doc.metadata},
+        uri=f"file://{doc.file_path}",
+    )
 
 
 @pytest.fixture
@@ -72,7 +88,7 @@ def test_txt_chunking_respects_size_limits(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(doc)
+    chunks = chunker.chunk_document(_to_record(doc))
 
     for chunk in chunks:
         assert len(chunk.content) >= config.chunking.min_chunk_chars
@@ -87,7 +103,7 @@ def test_txt_chunks_have_no_header_path(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(doc)
+    chunks = chunker.chunk_document(_to_record(doc))
 
     for chunk in chunks:
         assert chunk.metadata.get("header_path") == ""
@@ -101,7 +117,7 @@ def test_txt_small_content_single_chunk(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(doc)
+    chunks = chunker.chunk_document(_to_record(doc))
 
     assert len(chunks) == 1
     assert chunks[0].content == "This is a small text file with minimal content."
@@ -158,7 +174,7 @@ def test_txt_chunk_start_end_positions(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(doc)
+    chunks = chunker.chunk_document(_to_record(doc))
 
     for chunk in chunks:
         assert chunk.metadata.get("start_pos") >= 0
@@ -175,7 +191,7 @@ def test_txt_multiple_paragraphs_chunking(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(doc)
+    chunks = chunker.chunk_document(_to_record(doc))
 
     assert len(chunks) >= 1
 
@@ -206,7 +222,7 @@ def test_txt_empty_paragraphs_handled(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(doc)
+    chunks = chunker.chunk_document(_to_record(doc))
 
     assert len(chunks) >= 1
     for chunk in chunks:
@@ -221,7 +237,7 @@ def test_txt_metadata_preserved(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(doc)
+    chunks = chunker.chunk_document(_to_record(doc))
 
     for chunk in chunks:
         assert chunk.metadata.get("file_path") == str(txt_file)
@@ -238,7 +254,7 @@ def test_txt_chunk_ids_unique(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(doc)
+    chunks = chunker.chunk_document(_to_record(doc))
 
     chunk_ids = [c.chunk_id for c in chunks]
     assert len(chunk_ids) == len(set(chunk_ids))

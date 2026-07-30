@@ -9,13 +9,13 @@ manifest tracking, and task-submission concerns.
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 
 from searchkernel.domain import Chunk, Record
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.hash_store import ChunkHashStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import Document
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.chunk import ChunkStage
 from searchkernel.pipeline.stages.index import IndexStage
@@ -38,9 +38,9 @@ class IndexCore:
         self.graph = graph
         self._hash_store = hash_store
 
-    def chunk_document(self, document: Document) -> list[Chunk]:
+    def chunk_document(self, record: Record) -> list[Chunk]:
         context = ChunkStage(self._chunker).run(
-            SearchContext(query="", metadata={"document": document})
+            SearchContext(query="", metadata={"document": record})
         )
         return context.metadata["chunks"]
 
@@ -149,17 +149,16 @@ class IndexCore:
             True if the indices were mutated, False if the record was
             unchanged and skipped.
         """
-        document = Document(
-            id=record.source_id,
-            content=record.body,
-            metadata={**record.metadata, "title": record.title},
-            links=[],
-            tags=[],
-            file_path=record.uri or "",
-            modified_time=record.updated_at,
-        )
+        chunking_metadata = {
+            **record.metadata,
+            "title": record.title,
+            "tags": [],
+            "links": [],
+            "file_path": record.uri or "",
+        }
+        chunking_record = replace(record, metadata=chunking_metadata)
 
-        chunks = self.chunk_document(document)
+        chunks = self.chunk_document(chunking_record)
         for chunk in chunks:
             chunk.metadata = {
                 **chunk.metadata,
@@ -168,15 +167,15 @@ class IndexCore:
             }
 
         changed_chunks, _unchanged_chunk_ids = self.detect_changed_chunks(chunks)
-        if not changed_chunks and document.id in self.vector.get_document_ids():
+        if not changed_chunks and record.source_id in self.vector.get_document_ids():
             logger.debug("No changes in record %s, skipping re-index", record.source_id)
             return False
 
         self.full_reindex_document(
-            document.id, chunks, on_persist_hash_store=on_persist_hash_store
+            record.source_id, chunks, on_persist_hash_store=on_persist_hash_store
         )
 
-        graph_metadata = {**document.metadata, "source_kind": record.source_kind}
-        self.graph.add_node(document.id, graph_metadata)
+        graph_metadata = {**chunking_metadata, "source_kind": record.source_kind}
+        self.graph.add_node(record.source_id, graph_metadata)
 
         return True
