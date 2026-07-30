@@ -9,6 +9,8 @@ import pytest
 
 from searchkernel.config import ChunkingConfig, Config, IndexingConfig
 from searchkernel.indexing.manager import IndexManager
+from searchkernel.indexing.manifest import IndexManifest, save_manifest
+from searchkernel.indexing.reconciler import build_indexed_files_map
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
@@ -299,13 +301,24 @@ async def test_move_detection_with_git_rename(config, manager, orchestrator):
 
     original.write_text(content)
     manager.index_document(str(original))
+    manager.persist()
+
+    index_path = Path(config.indexing.index_path)
+    manifest = IndexManifest(
+        spec_version="1.0.0",
+        embedding_model="local",
+        chunking_config={},
+        indexed_files=build_indexed_files_map([str(original)], docs_dir, docs_roots=None),
+    )
+    save_manifest(index_path, manifest)
 
     # Simulate git rename (delete + create)
     original.unlink()
     renamed = docs_dir / "README_OLD.md"
     renamed.write_text(content)
 
-    manager.index_document(str(renamed))
+    # Move detection runs during reconciliation, not on a bare index_document call
+    manager.reconcile_indices([str(renamed)], docs_dir)
 
     # Should detect as move
     results, _, _ = await orchestrator.query("Project README", top_k=5, top_n=2)
