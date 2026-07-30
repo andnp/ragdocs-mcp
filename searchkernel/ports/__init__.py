@@ -7,7 +7,11 @@ Dependency rule: ports import only from domain/ and stdlib/typing.
 """
 
 from searchkernel.ports.content_source import ContentSource, SearchableSource
-from searchkernel.ports.embedding import EmbeddingBatchProvider, EmbeddingProvider, EmbeddingSink
+from searchkernel.ports.embedding import (
+    EmbeddingBatchProvider,
+    EmbeddingProvider,
+    EmbeddingSink,
+)
 from searchkernel.ports.llm import LLMProvider
 from searchkernel.ports.rerank import Reranker
 from searchkernel.ports.search import SearchAPI
@@ -16,8 +20,8 @@ from searchkernel.ports.stores import CacheStore, GraphStore, KeywordStore, Vect
 __all__ = [
     "CacheStore",
     "ContentSource",
-    "EmbeddingProvider",
     "EmbeddingBatchProvider",
+    "EmbeddingProvider",
     "EmbeddingSink",
     "GraphStore",
     "KeywordStore",

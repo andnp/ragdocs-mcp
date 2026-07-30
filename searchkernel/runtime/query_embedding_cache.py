@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
-import time
 from threading import Event, Lock
 
 from searchkernel.domain import Vector
