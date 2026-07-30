@@ -591,12 +591,41 @@ class VectorIndex:
                 if new_node_id not in self._doc_id_to_node_ids[new_doc_id]:
                     self._doc_id_to_node_ids[new_doc_id].append(new_node_id)
 
-                # Remove old chunk mappings and docstore entry
+                # Remove old chunk mappings and docstore/index-store/vector-store entries.
+                # Dropping only the docstore entry (and not the index_store/vector_store
+                # references, e.g. FAISS's index_struct.nodes_dict) leaves a stale ID that
+                # a later ANN search can return but no longer resolve to content.
                 try:
                     docstore.delete_document(old_chunk_id)
                 except Exception as e:  # noqa: BLE001 -- best-effort cleanup, docstore errors vary
                     logger.debug(
                         f"Could not delete old docstore entry {old_chunk_id}: {e}"
+                    )
+
+                try:
+                    # nodes_dict maps vector-store id (e.g. a FAISS ordinal) -> node
+                    # doc_id, so old_chunk_id is a value here, not a key.
+                    nodes_dict = self._index.index_struct.nodes_dict
+                    stale_vector_ids = [
+                        vector_id
+                        for vector_id, node_doc_id in nodes_dict.items()
+                        if node_doc_id == old_chunk_id
+                    ]
+                    for vector_id in stale_vector_ids:
+                        self._index.index_struct.delete(vector_id)
+                except Exception as e:  # noqa: BLE001 -- best-effort cleanup, index struct errors vary
+                    logger.debug(
+                        f"Could not delete old index struct entry {old_chunk_id}: {e}"
+                    )
+
+                try:
+                    if self._vector_store is not None and hasattr(
+                        self._vector_store, "delete"
+                    ):
+                        self._vector_store.delete(old_chunk_id)
+                except Exception as e:  # noqa: BLE001 -- best-effort cleanup, vector store errors vary
+                    logger.debug(
+                        f"Could not delete old vector store entry {old_chunk_id}: {e}"
                     )
 
                 self._chunk_id_to_node_id.pop(old_chunk_id, None)
@@ -696,7 +725,19 @@ class VectorIndex:
 
         fetch_k = top_k * 2 if excluded_files else top_k
         retriever = self._index.as_retriever(similarity_top_k=fetch_k)
-        nodes = retriever.retrieve(query)
+        try:
+            nodes = retriever.retrieve(query)
+        except KeyError:
+            # FAISS's flat index doesn't support true vector deletion: a node
+            # removed from the docstore/index_struct (e.g. after a file
+            # move/rename) can still be returned by FAISS's raw ANN search,
+            # and llama_index's retriever raises KeyError trying to resolve
+            # it. Degrade to no results for this query rather than crash.
+            logger.warning(
+                "Retriever hit a stale FAISS vector reference; returning no results",
+                exc_info=True,
+            )
+            return []
 
         results = []
         for node in nodes:
