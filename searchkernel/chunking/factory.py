@@ -1,7 +1,7 @@
 from searchkernel.chunking.base import ChunkingStrategy
 from searchkernel.chunking.header_chunker import HeaderBasedChunker
-from searchkernel.config import ChunkingConfig
+from searchkernel.ports.chunking_config import ChunkTuningConfig
 
 
-def get_chunker(config: ChunkingConfig) -> ChunkingStrategy:
+def get_chunker(config: ChunkTuningConfig) -> ChunkingStrategy:
     return HeaderBasedChunker(config)

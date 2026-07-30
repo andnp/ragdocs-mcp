@@ -5,8 +5,8 @@ from tree_sitter import Language, Parser
 from tree_sitter_markdown import language
 
 from searchkernel.chunking.base import ChunkingStrategy
-from searchkernel.config import ChunkingConfig
 from searchkernel.domain import Chunk, Record
+from searchkernel.ports.chunking_config import ChunkTuningConfig
 
 
 @dataclass
@@ -18,7 +18,7 @@ class HeaderNode:
 
 
 class HeaderBasedChunker(ChunkingStrategy):
-    def __init__(self, config: ChunkingConfig):
+    def __init__(self, config: ChunkTuningConfig):
         self.config = config
         self.parser = Parser(Language(language()))
 
