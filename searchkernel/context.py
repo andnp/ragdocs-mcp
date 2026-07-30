@@ -41,8 +41,10 @@ from searchkernel.indexing.reconciler import (
     reconcile_indices,
 )
 from searchkernel.indexing.runtime_readiness import (
+    SearchAvailability,
     can_refresh_loaded_indices,
     can_serve_queries,
+    semantic_tier_from_progress,
 )
 from searchkernel.indexing.runtime_readiness import (
     is_fully_ready as runtime_is_fully_ready,
@@ -1030,11 +1032,24 @@ class ApplicationContext:
         finishes. On later background rebuilds, queries are allowed once the
         underlying indices are queryable, even if indexing is still ongoing.
         """
+        # Derive semantic tier from actual indexing progress
+        # In main's synchronous architecture, indexed_count reflects documents
+        # that have completed the full pipeline including embeddings
+        semantic_tier = semantic_tier_from_progress(
+            self._index_state.indexed_count, self._index_state.total_count
+        )
+        availability = SearchAvailability(
+            lexical="available" if self.index_manager.is_ready() else "unavailable",
+            graph="available" if self.index_manager.is_ready() else "unavailable",
+            semantic_coarse=semantic_tier,
+            semantic_fine=semantic_tier,
+        )
         return can_serve_queries(
             init_error=self._init_error,
             ready_event_set=self._ready_event.is_set(),
             is_virgin_startup=self._is_virgin_startup,
             indices_queryable=self.index_manager.is_ready(),
+            availability=availability,
         )
 
     def is_fully_ready(self) -> bool:
@@ -1043,11 +1058,22 @@ class ApplicationContext:
         Returns True only when all documents were indexed successfully.
         Use is_ready() if partial results are acceptable.
         """
+        # Derive semantic tier from actual indexing progress
+        semantic_tier = semantic_tier_from_progress(
+            self._index_state.indexed_count, self._index_state.total_count
+        )
+        availability = SearchAvailability(
+            lexical="available" if self.index_manager.is_ready() else "unavailable",
+            graph="available" if self.index_manager.is_ready() else "unavailable",
+            semantic_coarse=semantic_tier,
+            semantic_fine=semantic_tier,
+        )
         return runtime_is_fully_ready(
             init_error=self._init_error,
             ready_event_set=self._ready_event.is_set(),
             index_status=self._index_state.status,
             indices_queryable=self.index_manager.is_ready(),
+            availability=availability,
         )
 
     def get_index_state(self) -> IndexState:
