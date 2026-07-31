@@ -18,14 +18,12 @@ trivially comparing it to itself.
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 from searchkernel.pipeline.default_query_spec import DEFAULT_QUERY_SPEC
 from searchkernel.pipeline.executor import PipelineExecutor
 from searchkernel.pipeline.registry import DEFAULT_QUERY_STAGE_REGISTRY, StageDeps
-from searchkernel.pipeline.stage import SearchContext
+from searchkernel.pipeline.stage import SearchContext, replace_state
 from searchkernel.search.orchestrator import SearchOrchestrator
 from tests.search.evaluation_harness import (
     SEARCH_EVALUATION_CASES,
@@ -90,11 +88,12 @@ async def _run_default_spec_via_executor(
             pipeline = orchestrator._resolve_pipeline(
                 None, disable_reranking=context.metadata["skip_tag_expansion"]
             )
-            dedup_metadata = dict(context.metadata)
-            dedup_metadata["get_embedding"] = query_context.get_chunk_embedding
-            dedup_metadata["get_content"] = query_context.get_chunk_content
-            dedup_metadata["top_n"] = case.top_n
-            context = pipeline.run(replace(context, metadata=dedup_metadata))
+            dedup_updates = {
+                "get_embedding": query_context.get_chunk_embedding,
+                "get_content": query_context.get_chunk_content,
+                "top_n": case.top_n,
+            }
+            context = pipeline.run(replace_state(context, dedup_updates))
             continue
 
         config = dict(stage_spec.config)

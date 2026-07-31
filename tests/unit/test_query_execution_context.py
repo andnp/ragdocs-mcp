@@ -5,6 +5,7 @@ import pytest
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
+from searchkernel.pipeline.stage import replace_state
 from searchkernel.search.classifier import classify_query
 from searchkernel.search.orchestrator import SearchOrchestrator
 
@@ -232,9 +233,8 @@ async def test_query_uses_single_execution_context_and_records_stats(monkeypatch
                 clusters_merged=0,
             )
             return replace(
-                context,
+                replace_state(context, {"compression_stats": stats}),
                 candidates=[(chunk_id, fused[0][1])],
-                metadata={**context.metadata, "compression_stats": stats},
             )
 
     monkeypatch.setattr(orchestrator, "_search_vector", fake_search_vector)
@@ -421,13 +421,12 @@ async def test_query_skips_tag_expansion_and_reranking_for_clear_factual_query(
                 clusters_merged=0,
             )
             return replace(
-                context,
+                replace_state(context, {"compression_stats": stats}),
                 candidates=fused[:top_n],
-                metadata={**context.metadata, "compression_stats": stats},
             )
 
     monkeypatch.setattr(
-        "searchkernel.pipeline.registry.DedupRerankStage",
+        "searchkernel.search.orchestrator.DedupRerankStage",
         lambda config: FakePipeline(config.reranking_enabled),
     )
 
