@@ -629,7 +629,7 @@ class IndexManager:
                     )
                     continue
                 except Exception:
-                    logger.debug(
+                    logger.warning(
                         "Failed to parse %s with %s encoding",
                         file_path,
                         encoding,
@@ -651,8 +651,9 @@ class IndexManager:
                     f for f in self._failed_files if f.path != file_path
                 ] + [failed]
                 # Don't raise - continue indexing other files
-                logger.info(
-                    f"Continuing with remaining files after encoding error in {file_path}"
+                logger.warning(
+                    f"Failed to index {file_path}: all fallback encodings exhausted; "
+                    "continuing with remaining files"
                 )
 
         except Exception as e:
