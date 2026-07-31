@@ -592,6 +592,11 @@ class FileWatcher:
         try:
             return compute_doc_id_multi_root(Path(file_path).resolve(), self._documents_paths)
         except Exception:  # noqa: BLE001 -- fall back to stem for any path-resolution failure
+            logger.warning(
+                "Failed to compute doc_id for %s; falling back to file stem",
+                file_path,
+                exc_info=True,
+            )
             return Path(file_path).stem
 
     def get_pending_queue_size(self) -> int:
