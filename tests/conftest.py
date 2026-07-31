@@ -70,7 +70,7 @@ from ragdocs.config import (
 )
 from ragdocs.daemon.management import inspect_daemon, stop_daemon
 from ragdocs.daemon.paths import RuntimePaths
-from ragdocs.embeddings import (
+from searchkernel.embeddings import (
     TEST_FAKE_EMBEDDINGS_ENV_VAR,
     DeterministicFakeEmbeddingModel,
 )
