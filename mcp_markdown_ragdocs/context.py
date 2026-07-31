@@ -58,6 +58,7 @@ from mcp_markdown_ragdocs.config import (
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
+from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,9 @@ class ApplicationContext:
     index_manager: IndexManager
     orchestrator: SearchOrchestrator
     use_tasks: bool = False
-    watcher: FileWatcher | None = None
+    _watcher_lifecycle: WatcherLifecycle = field(
+        default_factory=WatcherLifecycle, repr=False
+    )
     git_indexing_enabled: bool = False
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
     fallback_index_path: Path | None = None
@@ -182,20 +185,19 @@ class ApplicationContext:
             documents_path=Path(documents_path),
         )
 
-        watcher = None
-        if enable_watcher:
-            watcher = FileWatcher(
-                documents_path=config.indexing.documents_path,
-                documents_paths=[str(root) for root in documents_roots],
-                index_manager=manager,
-                cooldown=config.indexing.debounce_window_seconds,
-                include_patterns=config.indexing.include,
-                exclude_patterns=config.indexing.exclude,
-                exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
-                parser_suffixes=get_parser_suffixes(),
-                use_tasks=use_tasks,
-                task_backpressure_limit=config.indexing.task_backpressure_limit,
-            )
+        watcher_lifecycle = WatcherLifecycle.create(
+            enabled=enable_watcher,
+            documents_path=config.indexing.documents_path,
+            documents_roots=documents_roots,
+            index_manager=manager,
+            cooldown=config.indexing.debounce_window_seconds,
+            include_patterns=config.indexing.include,
+            exclude_patterns=config.indexing.exclude,
+            exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
+            parser_suffixes=get_parser_suffixes(),
+            use_tasks=use_tasks,
+            task_backpressure_limit=config.indexing.task_backpressure_limit,
+        )
 
         # Enable git commit indexing if configured and git is available
         git_indexing_enabled = False
@@ -213,7 +215,7 @@ class ApplicationContext:
             index_manager=manager,
             orchestrator=orchestrator,
             use_tasks=use_tasks,
-            watcher=watcher,
+            _watcher_lifecycle=watcher_lifecycle,
             git_indexing_enabled=git_indexing_enabled,
             index_path=index_path,
             fallback_index_path=fallback_index_path,
@@ -222,6 +224,15 @@ class ApplicationContext:
             current_manifest=None,
             reconciliation_task=None,
         )
+
+    @property
+    def watcher(self) -> FileWatcher | None:
+        """The underlying FileWatcher, if enabled (delegates to `WatcherLifecycle`)."""
+        return self._watcher_lifecycle.watcher
+
+    @watcher.setter
+    def watcher(self, value: FileWatcher | None) -> None:
+        self._watcher_lifecycle = WatcherLifecycle(watcher=value)
 
     @staticmethod
     def _build_vector_store(
@@ -526,10 +537,7 @@ class ApplicationContext:
                 await self._startup_reconciliation()
                 self.schedule_vocabulary_catch_up()
 
-        if self.watcher:
-            self.watcher.set_overflow_callback(self._on_watcher_overflow)
-            self.watcher.start()
-            logger.info("File watcher started")
+        self._watcher_lifecycle.start(self._on_watcher_overflow)
 
         # Index git commits after document indexing
         if self.git_indexing_enabled:
@@ -907,8 +915,7 @@ class ApplicationContext:
         else:
             logger.debug("Overflow reconciliation: no changes needed")
 
-        if self.watcher:
-            self.watcher.refresh_watches()
+        self._watcher_lifecycle.refresh_watches()
 
     async def _periodic_reconciliation(self) -> None:
         interval = self.config.indexing.reconciliation_interval_seconds
@@ -951,8 +958,7 @@ class ApplicationContext:
                     logger.debug("Periodic reconciliation: no changes needed")
 
                 # Register inotify watches for any directories that appeared since startup
-                if self.watcher:
-                    self.watcher.refresh_watches()
+                self._watcher_lifecycle.refresh_watches()
 
                 self.schedule_vocabulary_catch_up()
 
@@ -1224,11 +1230,7 @@ class ApplicationContext:
         self._vocabulary_catch_up_task = None
         self._bootstrap_session = None
 
-        if self.watcher:
-            try:
-                await asyncio.wait_for(self.watcher.stop(), timeout=1.0)
-            except TimeoutError:
-                logger.warning("FileWatcher stop timed out")
+        await self._watcher_lifecycle.stop()
 
         try:
             await asyncio.to_thread(self.index_manager.persist)
