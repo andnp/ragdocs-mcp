@@ -11,6 +11,16 @@ from mcp_markdown_ragdocs.config import Config, IndexingConfig
 from mcp_markdown_ragdocs.context import ApplicationContext
 
 
+def _wait_until(condition, timeout=5.0, interval=0.05):
+    """Poll until condition is true, with timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(interval)
+    return False
+
+
 def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
     config = Config()
     config.indexing = IndexingConfig(
@@ -69,7 +79,11 @@ def test_concurrent_server_startup_file_lock_mode():
 
         proc1.start()
 
-        time.sleep(0.5)
+        # Wait for first process to signal readiness before starting second
+        assert _wait_until(
+            lambda: not ready_queue.empty(),
+            timeout=5.0,
+        ), "First process did not signal ready within timeout"
 
         proc2.start()
 

@@ -20,6 +20,16 @@ from mcp_markdown_ragdocs.indexing.manager import IndexManager
 from mcp_markdown_ragdocs.server import create_app
 
 
+def _wait_until(condition, timeout=5.0, interval=0.05):
+    """Poll until condition is true, with timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(interval)
+    return False
+
+
 @pytest.fixture
 def test_docs_dir(tmp_path):
     """
@@ -226,7 +236,10 @@ def test_file_changes_trigger_index_updates(client, test_docs_dir):
 
     # Wait for watcher to detect, debounce, and process
     # FileWatcher uses 0.5s cooldown by default
-    time.sleep(1.5)
+    assert _wait_until(
+        lambda: client.get("/status").json()["indices"]["document_count"] >= 4,
+        timeout=5.0,
+    ), "New file was not indexed within timeout"
 
     # Query again for new document
     response_after = client.post(

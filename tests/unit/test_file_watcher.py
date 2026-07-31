@@ -94,7 +94,7 @@ class TestFileWatcherStoppedCleanly:
             # Simulate a stuck thread that doesn't join within timeout
             import time
 
-            time.sleep(3.0)
+            time.sleep(2.0)
 
         with patch.object(watcher._observer, "join", side_effect=slow_join):
             await watcher.stop()
@@ -176,7 +176,7 @@ class TestFileWatcherTimeoutHandling:
         def slow_join(timeout=None):
             import time
 
-            time.sleep(3.0)
+            time.sleep(2.0)
 
         with (
             patch.object(observer, "unschedule_all", side_effect=count_unschedule),
@@ -196,7 +196,7 @@ class TestFileWatcherTimeoutHandling:
         def slow_join(timeout=None):
             import time
 
-            time.sleep(3.0)
+            time.sleep(2.0)
 
         with patch.object(watcher._observer, "join", side_effect=slow_join):
             await watcher.stop()
@@ -211,7 +211,7 @@ class TestFileWatcherTimeoutHandling:
         def slow_join(timeout=None):
             import time
 
-            time.sleep(3.0)
+            time.sleep(2.0)
 
         with patch.object(watcher._observer, "join", side_effect=slow_join):
             await watcher.stop()
