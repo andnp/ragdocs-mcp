@@ -6,7 +6,7 @@ from searchkernel.domain import Chunk
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -65,7 +65,7 @@ def indices(shared_embedding_model):
 def orchestrator(config, indices):
     vector, keyword, graph = indices
     manager = IndexManager(config, vector, keyword, graph)
-    return SearchOrchestrator(vector, keyword, graph, config, manager)
+    return CanonicalSearchAdapter(manager)
 
 
 @pytest.mark.asyncio

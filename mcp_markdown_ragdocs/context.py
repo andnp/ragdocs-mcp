@@ -180,7 +180,10 @@ class ApplicationContext:
             graph,
             documents_roots=documents_roots,
         )
-        orchestrator = CanonicalSearchAdapter(manager)
+        orchestrator = CanonicalSearchAdapter(
+            manager,
+            documents_path=Path(documents_path),
+        )
         record_ingestor = AsyncIndexIngestor(manager)
 
         watcher_lifecycle = WatcherLifecycle.create(

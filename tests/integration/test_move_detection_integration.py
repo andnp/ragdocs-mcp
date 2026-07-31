@@ -12,7 +12,7 @@ from searchkernel.indexing.reconciler import build_indexed_files_map
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import ChunkingConfig, Config, IndexingConfig
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
@@ -67,7 +67,7 @@ def manager(config, indices):
 @pytest.fixture
 def orchestrator(config, indices, manager):
     vector, keyword, graph = indices
-    return SearchOrchestrator(vector, keyword, graph, config, manager)
+    return CanonicalSearchAdapter(manager)
 
 
 @pytest.mark.asyncio

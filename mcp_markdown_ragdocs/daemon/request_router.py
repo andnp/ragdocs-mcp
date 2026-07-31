@@ -425,7 +425,10 @@ def build_daemon_request_handler(
                     else None
                 ),
             )
-            results = [ChunkResult.from_domain(r) for r in results]
+            results = [
+                result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
+                for result in results
+            ]
             await ctx.orchestrator.drain_reindex()
             return {
                 "query": query_text,
@@ -478,7 +481,10 @@ def build_daemon_request_handler(
                 project_context=project_context,
                 source_filter=["git_commit"],
             )
-            results = [ChunkResult.from_domain(r) for r in results]
+            results = [
+                result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
+                for result in results
+            ]
             commits = _filter_git_history_results(
                 results, files_glob, after_timestamp, before_timestamp
             )[:top_n]

@@ -14,7 +14,7 @@ from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.runtime.federation import search_anything
 from searchkernel.runtime.registry import SourceRegistry
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.adapters.sources.local import LocalSearchSource
 from mcp_markdown_ragdocs.config import (
@@ -103,9 +103,7 @@ def manager(config, indices):
 
 @pytest.fixture
 def orchestrator(config, indices, manager):
-    return SearchOrchestrator(
-        indices["vector"], indices["keyword"], indices["graph"], config, manager
-    )
+    return CanonicalSearchAdapter(manager)
 
 
 @pytest.fixture

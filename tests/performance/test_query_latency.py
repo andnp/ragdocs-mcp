@@ -6,7 +6,7 @@ import pytest
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
@@ -49,7 +49,7 @@ def manager(config, indices):
 @pytest.fixture
 def orchestrator(config, indices, manager):
     vector, keyword, graph = indices
-    return SearchOrchestrator(vector, keyword, graph, config, manager)
+    return CanonicalSearchAdapter(manager)
 
 
 def create_benchmark_corpus(docs_path: Path, num_docs: int = 50):

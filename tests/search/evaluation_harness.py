@@ -7,7 +7,7 @@ from pathlib import Path
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import EmbeddingModel, VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 from searchkernel.search.path_utils import compute_doc_id
 from searchkernel.storage.db import DatabaseManager
 
@@ -131,7 +131,7 @@ class SearchEvaluationHarness:
         self,
         *,
         corpus_root: Path,
-        orchestrator: SearchOrchestrator,
+        orchestrator: CanonicalSearchAdapter,
         path_to_doc_id: dict[str, str],
         doc_id_to_path: dict[str, str],
         cases: tuple[SearchEvaluationCase, ...],
@@ -156,7 +156,7 @@ class SearchEvaluationHarness:
                 else None,
             )
             ranked_doc_ids = tuple(
-                _dedupe_doc_ids([result.record_id for result in chunk_results])
+                _dedupe_doc_ids([result.doc_id for result in chunk_results])
             )
             ranked_paths = tuple(
                 self.doc_id_to_path.get(doc_id, f"<unknown:{doc_id}>")
@@ -226,14 +226,7 @@ def build_search_evaluation_harness(
         doc_id_to_path[doc_id] = relative_path
 
     manager.persist()
-    orchestrator = SearchOrchestrator(
-        vector,
-        keyword,
-        graph,
-        config,
-        manager,
-        documents_path=corpus_root,
-    )
+    orchestrator = CanonicalSearchAdapter(manager)
 
     return SearchEvaluationHarness(
         corpus_root=corpus_root,

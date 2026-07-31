@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,9 @@ from mcp_markdown_ragdocs.git.repository import (
     discover_git_repositories_multi_root,
     is_git_available,
 )
+from searchkernel.domain import Cursor, Record
+from searchkernel.indexing.async_ingestion import AsyncIndexIngestor
+from searchkernel.ports.content_source import IngestionFailureMode, IngestionReceipt
 from searchkernel.indexing.discovery import discover_files as discover_files_single_root
 from searchkernel.indexing.discovery import discover_files_multi_root
 from searchkernel.indexing.git_ingestion import ingest_git_source
@@ -40,6 +44,34 @@ class RebuildScope:
         if self.project_label is not None:
             return f"project '{self.project_label}'"
         return "global corpus"
+
+
+class _AsyncGitSource:
+    def __init__(self, source: GitContentSource) -> None:
+        self._source = source
+        self.repo_path = str(source.repo_path)
+
+    async def iter_records(self, since: Cursor | None) -> AsyncIterator[Record]:
+        for record in self._source.iter_records(since=since):
+            yield record
+
+
+class _AsyncRecordIndexManager:
+    def __init__(self, index_manager) -> None:
+        self._ingestor = AsyncIndexIngestor(index_manager)
+
+    async def index_records(
+        self,
+        records: list[Record],
+        *,
+        checkpoint: Cursor | None = None,
+        failure_mode: IngestionFailureMode = "strict",
+    ) -> IngestionReceipt:
+        return await self._ingestor.index_records(
+            records,
+            checkpoint=checkpoint,
+            failure_mode=failure_mode,
+        )
 
 
 def rebuild_status_path(runtime_root: Path) -> Path:
@@ -375,7 +407,15 @@ def run_rebuild(
 
                 for repo_path in repos:
                     source = GitContentSource(repo_path)
-                    git_commits_indexed += ingest_git_source(index_manager, source)
+                    receipt = asyncio.run(
+                        ingest_git_source(
+                            _AsyncRecordIndexManager(index_manager),
+                            _AsyncGitSource(source),
+                        )
+                    )
+                    git_commits_indexed += receipt.successful
+                if repos:
+                    index_manager.persist_checkpoint()
 
                 if repos:
                     _append_message(

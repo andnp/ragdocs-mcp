@@ -9,11 +9,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from searchkernel.indexing.git_ingestion import ingest_git_source
+from searchkernel.indexing.async_ingestion import AsyncIndexIngestor
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
 from mcp_markdown_ragdocs.config import (
@@ -104,11 +104,13 @@ async def test_search_git_history_tool_routes_through_orchestrator(repo, shared_
     keyword = KeywordIndex()
     graph = GraphStore()
     manager = IndexManager(config, vector, keyword, graph)
-    orchestrator = SearchOrchestrator(vector, keyword, graph, config, manager)
+    orchestrator = CanonicalSearchAdapter(manager)
 
     source = GitContentSource(repo / ".git")
-    ingested = ingest_git_source(manager, source)
-    assert ingested == 1
+    receipt = await AsyncIndexIngestor(manager).index_records(
+        list(source.iter_records())
+    )
+    assert receipt.committed == 1
 
     ctx = _ReadyContext(orchestrator, git_indexing_enabled=True, total_commits=1)
     hctx = HandlerContext(lambda: ctx, _FakeCoordinator())
@@ -135,7 +137,7 @@ async def test_search_git_history_tool_reports_unavailable_when_disabled(shared_
     keyword = KeywordIndex()
     graph = GraphStore()
     manager = IndexManager(config, vector, keyword, graph)
-    orchestrator = SearchOrchestrator(vector, keyword, graph, config, manager)
+    orchestrator = CanonicalSearchAdapter(manager)
 
     ctx = _ReadyContext(orchestrator, git_indexing_enabled=False, total_commits=0)
     hctx = HandlerContext(lambda: ctx, _FakeCoordinator())

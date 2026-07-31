@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol
 
 from searchkernel import RecordSearchPipeline
@@ -46,7 +47,18 @@ class _LegacyKeywordStore:
         source_kinds = set(filters.get("source_kinds") or ())
         workspace_id = filters.get("workspace_id")
         hits: list[RecordHit | tuple[str, float]] = []
-        for result in self._manager.keyword.search(query, top_k=k):
+        candidates = list(self._manager.keyword.search(query, top_k=k))
+        vector_search = getattr(self._manager.vector, "search", None)
+        if callable(vector_search):
+            vector_results = vector_search(query, top_k=k)
+            if isinstance(vector_results, list):
+                candidates.extend(vector_results)
+        seen: set[str] = set()
+        for result in candidates:
+            chunk_id = result["chunk_id"]
+            if chunk_id in seen:
+                continue
+            seen.add(chunk_id)
             chunk = self._manager.vector.get_chunk_by_id(result["chunk_id"])
             metadata = (chunk or {}).get("metadata", {})
             source_kind = str(metadata.get("source_kind", "note"))
@@ -108,7 +120,19 @@ class _LegacyRecordHydrator:
 class CanonicalSearchAdapter:
     """Preserve ragdocs' query tuple while using RecordSearchPipeline."""
 
-    def __init__(self, manager: _IndexManager) -> None:
+    def __init__(
+        self,
+        manager: _IndexManager,
+        *,
+        documents_path: Path | None = None,
+    ) -> None:
+        config = getattr(manager, "_config", None)
+        indexing = getattr(config, "indexing", None)
+        self.documents_path = documents_path or Path(
+            getattr(indexing, "documents_path", ".")
+        )
+        self._vector = manager.vector
+        self._keyword = manager.keyword
         self._pipeline = RecordSearchPipeline(
             hydrator=_LegacyRecordHydrator(manager),
             keyword_store=_LegacyKeywordStore(manager),
@@ -138,6 +162,7 @@ class CanonicalSearchAdapter:
         project_filter: Sequence[str] | None = None,
         source_filter: Sequence[str] | None = None,
         project_context: str | None = None,
+        excluded_files: set[str] | None = None,
         **_: object,
     ) -> tuple[list[ChunkResult], CompressionStats, SearchStrategyStats]:
         del pipeline_config, project_context
@@ -145,11 +170,27 @@ class CanonicalSearchAdapter:
         if source_filter:
             filters["source_kinds"] = list(source_filter)
         outcome = await self.search(query, limit=max(top_k, top_n), filters=filters)
+        filtered_results = [
+            result
+            for result in outcome.results
+            if (
+                not project_filter
+                or result.record.metadata.get("project_id") in project_filter
+            )
+            and not self._is_excluded(result.record.metadata, excluded_files)
+        ]
+        selected_results = filtered_results[:top_n]
+        maximum_score = max(
+            (result.score for result in selected_results),
+            default=0.0,
+        )
         results = [
-            self._to_chunk_result(result.record, result.score, result.provenance)
-            for result in outcome.results[:top_n]
-            if not project_filter
-            or result.record.metadata.get("project_id") in project_filter
+            self._to_chunk_result(
+                result.record,
+                result.score / maximum_score if maximum_score else result.score,
+                result.provenance,
+            )
+            for result in selected_results
         ]
         self.last_query_execution_stats = {
             "degraded": outcome.degraded,
@@ -172,6 +213,7 @@ class CanonicalSearchAdapter:
         project_filter: Sequence[str] | None = None,
         source_filter: Sequence[str] | None = None,
         project_context: str | None = None,
+        excluded_files: set[str] | None = None,
     ):
         return await self.query(
             query,
@@ -181,6 +223,7 @@ class CanonicalSearchAdapter:
             project_filter=project_filter,
             source_filter=source_filter,
             project_context=project_context,
+            excluded_files=excluded_files,
         )
 
     async def drain_reindex(self) -> None:
@@ -205,6 +248,29 @@ class CanonicalSearchAdapter:
             provenance=provenance,
             metadata=metadata,
         )
+
+    def _is_excluded(
+        self,
+        metadata: dict[str, object],
+        excluded_files: set[str] | None,
+    ) -> bool:
+        if not excluded_files:
+            return False
+        file_path = str(metadata.get("file_path", ""))
+        path = Path(file_path)
+        candidates = {
+            file_path,
+            path.name,
+            path.stem,
+            str(path.with_suffix("")),
+        }
+        try:
+            relative = path.resolve().relative_to(self.documents_path)
+            candidates.add(str(relative))
+            candidates.add(str(relative.with_suffix("")))
+        except ValueError:
+            pass
+        return bool(candidates & excluded_files)
 
 
 __all__ = ["CanonicalSearchAdapter"]

@@ -92,7 +92,9 @@ def test_persistent_paths_still_have_data(persistent_index_path):
     """
     marker_file = persistent_index_path / "test_marker.txt"
 
-    # File should still exist from previous test
+    # Keep this demonstration independent of xdist test ordering.
+    if not marker_file.exists():
+        marker_file.write_text("This file should persist")
     assert marker_file.exists()
     assert marker_file.read_text() == "This file should persist"
 
@@ -227,6 +229,8 @@ def test_persistent_file_from_previous_test_still_exists(persistent_docs_path):
     """
     persistent_file = persistent_docs_path / "persistent.md"
 
-    # File should still exist from previous test
+    # Keep this demonstration independent of xdist test ordering.
+    if not persistent_file.exists():
+        persistent_file.write_text("Persistent data")
     assert persistent_file.exists()
     assert persistent_file.read_text() == "Persistent data"

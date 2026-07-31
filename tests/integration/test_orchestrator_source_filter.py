@@ -12,7 +12,7 @@ from searchkernel.domain import Chunk
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -70,9 +70,7 @@ def manager(config, indices):
 
 @pytest.fixture
 def orchestrator(config, indices, manager):
-    return SearchOrchestrator(
-        indices["vector"], indices["keyword"], indices["graph"], config, manager
-    )
+    return CanonicalSearchAdapter(manager)
 
 
 def _make_chunk(chunk_id: str, doc_id: str, content: str, source_kind: str) -> Chunk:
@@ -112,7 +110,7 @@ async def test_source_filter_restricts_results_to_matching_source_kind(
     )
 
     assert results
-    assert all(result.record_id == "git:abc123" for result in results)
+    assert all(result.doc_id == "git:abc123" for result in results)
 
 
 @pytest.mark.asyncio
@@ -125,7 +123,7 @@ async def test_source_filter_none_returns_all_sources(indices, orchestrator):
         top_n=10,
     )
 
-    doc_ids = {result.record_id for result in results}
+    doc_ids = {result.doc_id for result in results}
     assert "note_doc" in doc_ids
     assert "git:abc123" in doc_ids
 

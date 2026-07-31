@@ -16,7 +16,7 @@ import pytest
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -130,7 +130,7 @@ def _create_mcp_server(config: Config, docs_dir) -> tuple[MCPServer, HandlerCont
     graph = GraphStore()
 
     manager = IndexManager(config, vector, keyword, graph)
-    orchestrator = SearchOrchestrator(vector, keyword, graph, config, manager)
+    orchestrator = CanonicalSearchAdapter(manager)
 
     for doc_path in docs_dir.glob("*.md"):
         manager.index_document(str(doc_path))

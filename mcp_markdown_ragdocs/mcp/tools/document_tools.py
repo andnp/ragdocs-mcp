@@ -260,7 +260,10 @@ async def _query_documents_impl(
         project_filter=request.project_filter,
         project_context=project_context,
     )
-    results = [ChunkResult.from_domain(r) for r in results]
+    results = [
+        result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
+        for result in results
+    ]
 
     query_type = classify_query_type(request.query)
     response = build_query_documents_response_envelope(
@@ -333,7 +336,10 @@ async def handle_search_with_hypothesis(
         project_filter=project_filter,
         project_context=project_context,
     )
-    results = [ChunkResult.from_domain(r) for r in results]
+    results = [
+        result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
+        for result in results
+    ]
 
     results_text = "\n\n".join(
         [
@@ -401,7 +407,10 @@ async def handle_search_git_history(
         project_context=project_context,
         source_filter=["git_commit"],
     )
-    results = [ChunkResult.from_domain(r) for r in results]
+    results = [
+        result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
+        for result in results
+    ]
 
     commits = _filter_commit_results(results, files_glob, after_timestamp, before_timestamp)[
         :top_n
@@ -499,5 +508,4 @@ def _filter_commit_results(
                 continue
         filtered.append(result)
     return filtered
-
 

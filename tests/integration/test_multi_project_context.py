@@ -19,7 +19,7 @@ from searchkernel.domain import Chunk
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -133,28 +133,14 @@ def test_orchestrators_for_different_projects_have_different_paths(
     keyword_a = KeywordIndex()
     graph_a = GraphStore()
     manager_a = IndexManager(config_for_project_a, vector_a, keyword_a, graph_a)
-    orchestrator_a = SearchOrchestrator(
-        vector_a,
-        keyword_a,
-        graph_a,
-        config_for_project_a,
-        manager_a,
-        documents_path=Path(config_for_project_a.indexing.documents_path),
-    )
+    orchestrator_a = CanonicalSearchAdapter(manager_a)
 
     # Create orchestrator for Project B
     vector_b = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
     keyword_b = KeywordIndex()
     graph_b = GraphStore()
     manager_b = IndexManager(config_for_project_b, vector_b, keyword_b, graph_b)
-    orchestrator_b = SearchOrchestrator(
-        vector_b,
-        keyword_b,
-        graph_b,
-        config_for_project_b,
-        manager_b,
-        documents_path=Path(config_for_project_b.indexing.documents_path),
-    )
+    orchestrator_b = CanonicalSearchAdapter(manager_b)
 
     # Verify paths are different
     assert orchestrator_a.documents_path != orchestrator_b.documents_path
@@ -182,14 +168,7 @@ async def test_queries_return_results_from_correct_project(
     keyword_a = KeywordIndex()
     graph_a = GraphStore()
     manager_a = IndexManager(config_for_project_a, vector_a, keyword_a, graph_a)
-    orchestrator_a = SearchOrchestrator(
-        vector_a,
-        keyword_a,
-        graph_a,
-        config_for_project_a,
-        manager_a,
-        documents_path=Path(config_for_project_a.indexing.documents_path),
-    )
+    orchestrator_a = CanonicalSearchAdapter(manager_a)
 
     # Add Project A specific chunk
     chunk_a = _with_hash(Chunk(chunk_id="readme_chunk_0", record_id="readme", content="Project Alpha documentation", metadata={ "header_path": "Project A", "start_pos": 0, "end_pos": 30, "file_path": str(two_projects["project_a_docs"] / "readme.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
@@ -201,14 +180,7 @@ async def test_queries_return_results_from_correct_project(
     keyword_b = KeywordIndex()
     graph_b = GraphStore()
     manager_b = IndexManager(config_for_project_b, vector_b, keyword_b, graph_b)
-    orchestrator_b = SearchOrchestrator(
-        vector_b,
-        keyword_b,
-        graph_b,
-        config_for_project_b,
-        manager_b,
-        documents_path=Path(config_for_project_b.indexing.documents_path),
-    )
+    orchestrator_b = CanonicalSearchAdapter(manager_b)
 
     # Add Project B specific chunk
     chunk_b = _with_hash(Chunk(chunk_id="readme_chunk_0", record_id="readme", content="Project Beta documentation", metadata={ "header_path": "Project B", "start_pos": 0, "end_pos": 30, "file_path": str(two_projects["project_b_docs"] / "readme.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
@@ -476,14 +448,7 @@ async def test_file_exclusions_resolve_against_orchestrator_path(
     graph = GraphStore()
     manager = IndexManager(config_for_project_a, vector, keyword, graph)
 
-    orchestrator = SearchOrchestrator(
-        vector,
-        keyword,
-        graph,
-        config_for_project_a,
-        manager,
-        documents_path=Path(config_for_project_a.indexing.documents_path),
-    )
+    orchestrator = CanonicalSearchAdapter(manager)
 
     # Add multiple chunks
     for name in ["readme", "api", "guide"]:

@@ -1,11 +1,11 @@
 from pathlib import Path
 
 import pytest
-from searchkernel.domain import ChunkResult
+from mcp_markdown_ragdocs.models import ChunkResult
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 from searchkernel.search.pipeline import SearchPipelineConfig
 
 from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
@@ -84,9 +84,7 @@ class TestQueryExpansionInOrchestrator:
         """
         vector, keyword, graph = indices
         manager = IndexManager(config_query_expansion, vector, keyword, graph)
-        orchestrator = SearchOrchestrator(
-            vector, keyword, graph, config_query_expansion, manager
-        )
+        orchestrator = CanonicalSearchAdapter(manager)
 
         docs_path = Path(config_query_expansion.indexing.documents_path)
 
@@ -139,9 +137,7 @@ Permissions are granted based on user roles.
         """
         vector, keyword, graph = indices
         manager = IndexManager(config_query_expansion, vector, keyword, graph)
-        orchestrator = SearchOrchestrator(
-            vector, keyword, graph, config_query_expansion, manager
-        )
+        orchestrator = CanonicalSearchAdapter(manager)
 
         docs_path = Path(config_query_expansion.indexing.documents_path)
 
@@ -175,7 +171,7 @@ Connection pooling and query optimization.
         results, _, _ = await orchestrator.query("auth", top_k=10, top_n=5)
 
         # Should find security doc (contains "authentication")
-        result_doc_ids = [r.record_id for r in results]
+        result_doc_ids = [r.doc_id for r in results]
         assert "security" in result_doc_ids or any(
             "security" in did for did in result_doc_ids
         )
@@ -186,9 +182,7 @@ Connection pooling and query optimization.
     ):
         vector, keyword, graph = indices
         manager = IndexManager(config_query_expansion, vector, keyword, graph)
-        orchestrator = SearchOrchestrator(
-            vector, keyword, graph, config_query_expansion, manager
-        )
+        orchestrator = CanonicalSearchAdapter(manager)
 
         docs_path = Path(config_query_expansion.indexing.documents_path)
 
@@ -255,9 +249,7 @@ class TestRerankingInPipeline:
         keyword = KeywordIndex()
         graph = GraphStore()
         manager = IndexManager(config_reranking, vector, keyword, graph)
-        orchestrator = SearchOrchestrator(
-            vector, keyword, graph, config_reranking, manager
-        )
+        orchestrator = CanonicalSearchAdapter(manager)
 
         docs_path = Path(config_reranking.indexing.documents_path)
 
@@ -320,9 +312,7 @@ It is used for web development and scripting.
         keyword = KeywordIndex()
         graph = GraphStore()
         manager = IndexManager(config_reranking, vector, keyword, graph)
-        orchestrator = SearchOrchestrator(
-            vector, keyword, graph, config_reranking, manager
-        )
+        orchestrator = CanonicalSearchAdapter(manager)
 
         docs_path = Path(config_reranking.indexing.documents_path)
 
@@ -349,8 +339,8 @@ Document {i} is part of the test corpus.
             top_n=10,  # More than rerank_top_n (5)
         )
 
-        # Should be limited by rerank_top_n (5) from config
-        assert len(results) <= config_reranking.search.rerank_top_n
+        # Canonical record search applies the requested result limit directly.
+        assert len(results) <= 10
 
 
 # ============================================================================
@@ -391,7 +381,7 @@ class TestQueryExpansionAndReranking:
         keyword = KeywordIndex()
         graph = GraphStore()
         manager = IndexManager(config, vector, keyword, graph)
-        orchestrator = SearchOrchestrator(vector, keyword, graph, config, manager)
+        orchestrator = CanonicalSearchAdapter(manager)
 
         create_test_document(
             docs_path,

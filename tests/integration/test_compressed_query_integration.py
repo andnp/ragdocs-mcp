@@ -20,7 +20,7 @@ from searchkernel.compression.thresholding import filter_by_score
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 from searchkernel.search.pipeline import SearchPipelineConfig
 
 from mcp_markdown_ragdocs.config import (
@@ -105,16 +105,14 @@ def integration_orchestrator(
     integration_indices: tuple[VectorIndex, KeywordIndex, GraphStore],
     integration_config: Config,
     integration_manager: IndexManager,
-) -> SearchOrchestrator:
+) -> CanonicalSearchAdapter:
     """
     Create module-scoped SearchOrchestrator for integration tests.
 
     Provides query execution capabilities.
     """
     vector, keyword, graph = integration_indices
-    return SearchOrchestrator(
-        vector, keyword, graph, integration_config, integration_manager
-    )
+    return CanonicalSearchAdapter(integration_manager)
 
 
 @pytest.fixture(scope="module")
@@ -222,7 +220,7 @@ class TestCompressionPipeline:
 
     @pytest.mark.asyncio
     async def test_query_with_compression_returns_results(
-        self, integration_orchestrator: SearchOrchestrator, indexed_documents: list[str]
+        self, integration_orchestrator: CanonicalSearchAdapter, indexed_documents: list[str]
     ) -> None:
         """
         Tests that compressed query returns valid results with stats.
@@ -242,7 +240,7 @@ class TestCompressionPipeline:
 
     @pytest.mark.asyncio
     async def test_score_threshold_filters_results(
-        self, integration_orchestrator: SearchOrchestrator, indexed_documents: list[str]
+        self, integration_orchestrator: CanonicalSearchAdapter, indexed_documents: list[str]
     ) -> None:
         """
         Tests that score threshold effectively filters low-relevance results.
@@ -264,7 +262,7 @@ class TestCompressionPipeline:
     @pytest.mark.asyncio
     async def test_deduplication_reduces_similar_results(
         self,
-        integration_orchestrator: SearchOrchestrator,
+        integration_orchestrator: CanonicalSearchAdapter,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -298,7 +296,7 @@ class TestCompressionStats:
     @pytest.mark.asyncio
     async def test_compression_stats_structure(
         self,
-        integration_orchestrator: SearchOrchestrator,
+        integration_orchestrator: CanonicalSearchAdapter,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -357,7 +355,7 @@ class TestParameterHandling:
     @pytest.mark.asyncio
     async def test_top_n_limits_final_results(
         self,
-        integration_orchestrator: SearchOrchestrator,
+        integration_orchestrator: CanonicalSearchAdapter,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -379,7 +377,7 @@ class TestParameterHandling:
 
     @pytest.mark.asyncio
     async def test_min_score_parameter_effect(
-        self, integration_orchestrator: SearchOrchestrator, indexed_documents: list[str]
+        self, integration_orchestrator: CanonicalSearchAdapter, indexed_documents: list[str]
     ) -> None:
         """
         Tests that min_score parameter controls threshold filtering.
@@ -400,7 +398,7 @@ class TestParameterHandling:
     @pytest.mark.asyncio
     async def test_similarity_threshold_parameter_effect(
         self,
-        integration_orchestrator: SearchOrchestrator,
+        integration_orchestrator: CanonicalSearchAdapter,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -434,7 +432,7 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_query_with_no_results(
-        self, integration_orchestrator: SearchOrchestrator, indexed_documents: list[str]
+        self, integration_orchestrator: CanonicalSearchAdapter, indexed_documents: list[str]
     ) -> None:
         """
         Tests compression with query that returns no results.
@@ -453,7 +451,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_single_result_passthrough(
         self,
-        integration_orchestrator: SearchOrchestrator,
+        integration_orchestrator: CanonicalSearchAdapter,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -477,7 +475,7 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_all_results_filtered_by_threshold(
-        self, integration_orchestrator: SearchOrchestrator, indexed_documents: list[str]
+        self, integration_orchestrator: CanonicalSearchAdapter, indexed_documents: list[str]
     ) -> None:
         """
         Tests behavior when all results are below threshold.
@@ -504,7 +502,7 @@ class TestEmbeddingsIntegration:
     @pytest.mark.asyncio
     async def test_embedding_model_generates_vectors(
         self,
-        integration_orchestrator: SearchOrchestrator,
+        integration_orchestrator: CanonicalSearchAdapter,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:
@@ -523,7 +521,7 @@ class TestEmbeddingsIntegration:
     @pytest.mark.asyncio
     async def test_embeddings_enable_similarity_detection(
         self,
-        integration_orchestrator: SearchOrchestrator,
+        integration_orchestrator: CanonicalSearchAdapter,
         indexed_documents: list[str],
         embedding_model,
     ) -> None:

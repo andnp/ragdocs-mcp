@@ -11,7 +11,7 @@ from searchkernel.indexing.reconciler import build_indexed_files_map
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import ChunkingConfig, Config, IndexingConfig
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
@@ -49,7 +49,7 @@ def manager(config, indices):
 @pytest.fixture
 def orchestrator(config, indices, manager):
     vector, keyword, graph = indices
-    return SearchOrchestrator(vector, keyword, graph, config)
+    return CanonicalSearchAdapter(manager)
 
 
 @pytest.mark.asyncio
@@ -204,7 +204,9 @@ async def test_query_after_move_finds_content(config, manager, orchestrator):
     manager.index_document(str(original_file))
 
     # Move file
+    original_doc_id = manager._compute_doc_id_for_path(original_file, docs_dir)
     original_file.unlink()
+    manager.remove_document(original_doc_id)
     moved_file = docs_dir / "guides" / "security.md"
     moved_file.parent.mkdir(parents=True, exist_ok=True)
     moved_file.write_text(

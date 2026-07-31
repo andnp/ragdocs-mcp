@@ -18,7 +18,7 @@ from mcp_markdown_ragdocs.parsers.plaintext import PlainTextParser
 
 
 def _to_record(doc: Document) -> Record:
-    """Adapt a parser-produced models.Document into a domain.Record for chunk_document()."""
+    """Adapt a parser-produced models.Document into a domain.Record for chunk_record()."""
     return Record(
         source_kind="note",
         source_id=doc.id,
@@ -88,7 +88,7 @@ def test_txt_chunking_respects_size_limits(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(_to_record(doc))
+    chunks = chunker.chunk_record(_to_record(doc))
 
     for chunk in chunks:
         assert len(chunk.content) >= config.chunking.min_chunk_chars
@@ -103,7 +103,7 @@ def test_txt_chunks_have_no_header_path(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(_to_record(doc))
+    chunks = chunker.chunk_record(_to_record(doc))
 
     for chunk in chunks:
         assert chunk.metadata.get("header_path") == ""
@@ -117,7 +117,7 @@ def test_txt_small_content_single_chunk(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(_to_record(doc))
+    chunks = chunker.chunk_record(_to_record(doc))
 
     assert len(chunks) == 1
     assert chunks[0].content == "This is a small text file with minimal content."
@@ -174,12 +174,14 @@ def test_txt_chunk_start_end_positions(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(_to_record(doc))
+    chunks = chunker.chunk_record(_to_record(doc))
 
     for chunk in chunks:
-        assert chunk.metadata.get("start_pos") >= 0
-        assert chunk.metadata.get("end_pos") <= len(content)
-        assert chunk.metadata.get("start_pos") < chunk.metadata.get("end_pos")
+        start_pos = int(chunk.metadata["start_pos"])
+        end_pos = int(chunk.metadata["end_pos"])
+        assert start_pos >= 0
+        assert end_pos <= len(content)
+        assert start_pos < end_pos
 
 
 def test_txt_multiple_paragraphs_chunking(tmp_path, config):
@@ -191,7 +193,7 @@ def test_txt_multiple_paragraphs_chunking(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(_to_record(doc))
+    chunks = chunker.chunk_record(_to_record(doc))
 
     assert len(chunks) >= 1
 
@@ -222,7 +224,7 @@ def test_txt_empty_paragraphs_handled(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(_to_record(doc))
+    chunks = chunker.chunk_record(_to_record(doc))
 
     assert len(chunks) >= 1
     for chunk in chunks:
@@ -237,7 +239,7 @@ def test_txt_metadata_preserved(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(_to_record(doc))
+    chunks = chunker.chunk_record(_to_record(doc))
 
     for chunk in chunks:
         assert chunk.metadata.get("file_path") == str(txt_file)
@@ -254,7 +256,7 @@ def test_txt_chunk_ids_unique(tmp_path, config):
     doc = parser.parse(str(txt_file))
 
     chunker = HeaderBasedChunker(config.chunking)
-    chunks = chunker.chunk_document(_to_record(doc))
+    chunks = chunker.chunk_record(_to_record(doc))
 
     chunk_ids = [c.chunk_id for c in chunks]
     assert len(chunk_ids) == len(set(chunk_ids))

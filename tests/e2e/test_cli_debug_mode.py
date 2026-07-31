@@ -87,7 +87,7 @@ def test_query_debug_displays_strategy_stats(runner, tmp_path, indexed_docs):
     """
     Test query --debug displays search strategy statistics.
 
-    Validates that debug tables show vector, keyword, and graph counts.
+    Validates that debug tables show the canonical keyword strategy count.
     """
     import os
 
@@ -99,7 +99,6 @@ def test_query_debug_displays_strategy_stats(runner, tmp_path, indexed_docs):
 
         assert result.exit_code == 0
         assert "Search Strategy Results" in result.output
-        assert "Vector (Semantic)" in result.output
         assert "Keyword (BM25)" in result.output
 
     finally:
@@ -233,9 +232,9 @@ def test_query_debug_shows_removal_counts(runner, tmp_path, indexed_docs):
 
 def test_query_debug_displays_timing_stats(runner, tmp_path, indexed_docs):
     """
-    Test query --debug displays query timing and cache statistics.
+    Test query --debug displays canonical query diagnostics.
 
-    Validates that debug tables show phase timings and execution cache stats.
+    RecordSearchPipeline does not expose the removed legacy phase timing tables.
     """
     import os
 
@@ -246,10 +245,8 @@ def test_query_debug_displays_timing_stats(runner, tmp_path, indexed_docs):
         result = runner.invoke(cli, ["query", "authentication", "--debug"])
 
         assert result.exit_code == 0
-        assert "Query Phase Timings" in result.output
-        assert "Total Query" in result.output
-        assert "Query Execution Cache Stats" in result.output
-        assert "Metadata Lookups" in result.output
+        assert "Search Strategy Results" in result.output
+        assert "Compression Pipeline" in result.output
 
     finally:
         os.chdir(original_cwd)

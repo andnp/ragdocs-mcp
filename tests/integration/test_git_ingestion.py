@@ -2,7 +2,7 @@
 SearchOrchestrator via the git_ingestion wiring, scoped by source_filter.
 
 This is the W2b port proof: GitContentSource -> IndexManager.index_record ->
-the shared vector/keyword store -> SearchOrchestrator.query(source_filter=
+the shared vector/keyword store -> CanonicalSearchAdapter.query(source_filter=
 ["git_commit"]), with zero core search changes beyond source_filter itself.
 """
 
@@ -10,11 +10,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from searchkernel.indexing.git_ingestion import ingest_git_source
+from searchkernel.indexing.async_ingestion import AsyncIndexIngestor
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
 from mcp_markdown_ragdocs.config import (
@@ -86,7 +86,7 @@ def kernel(tmp_path, shared_embedding_model):
     keyword = KeywordIndex()
     graph = GraphStore()
     manager = IndexManager(config, vector, keyword, graph)
-    orchestrator = SearchOrchestrator(vector, keyword, graph, config, manager)
+    orchestrator = CanonicalSearchAdapter(manager)
     return manager, orchestrator
 
 
@@ -95,8 +95,10 @@ async def test_commit_appears_in_search_via_source_filter(repo, kernel):
     manager, orchestrator = kernel
 
     source = GitContentSource(repo / ".git")
-    ingested = ingest_git_source(manager, source)
-    assert ingested == 1
+    receipt = await AsyncIndexIngestor(manager).index_records(
+        list(source.iter_records())
+    )
+    assert receipt.committed == 1
 
     results, _, _ = await orchestrator.query(
         "authentication token refresh bug",
@@ -106,7 +108,7 @@ async def test_commit_appears_in_search_via_source_filter(repo, kernel):
     )
 
     assert results
-    assert all(result.record_id.startswith("git:") for result in results)
+    assert all(result.doc_id.startswith("git:") for result in results)
     assert any("authentication" in result.content.lower() for result in results)
     assert all(result.metadata.get("source_kind") == "git_commit" for result in results)
     assert all(result.metadata.get("author") for result in results)
@@ -117,7 +119,7 @@ async def test_commit_absent_when_source_filter_excludes_git(repo, kernel):
     manager, orchestrator = kernel
 
     source = GitContentSource(repo / ".git")
-    ingest_git_source(manager, source)
+    await AsyncIndexIngestor(manager).index_records(list(source.iter_records()))
 
     results, _, _ = await orchestrator.query(
         "authentication token refresh bug",

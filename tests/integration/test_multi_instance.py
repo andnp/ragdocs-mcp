@@ -31,7 +31,7 @@ def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
     from searchkernel.indices.graph import GraphStore
     from searchkernel.indices.keyword import KeywordIndex
     from searchkernel.indices.vector import VectorIndex
-    from searchkernel.search.orchestrator import SearchOrchestrator
+    from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
     from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
@@ -39,7 +39,7 @@ def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
     keyword = KeywordIndex()
     graph = GraphStore()
     manager = IndexManager(config, vector, keyword, graph)
-    orchestrator = SearchOrchestrator(vector, keyword, graph, config, manager)
+    orchestrator = CanonicalSearchAdapter(manager)
 
     ctx = ApplicationContext(
         config=config,
