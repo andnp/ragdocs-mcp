@@ -460,112 +460,128 @@ class IndexManager:
         """Return True when delta-skip would trust hashes for a missing vector document."""
         return doc_id not in self.vector.get_document_ids()
 
+    def _complete_document_indexing(
+        self, file_path: str, parser, document: "Document", force: bool = False
+    ) -> None:
+        """Complete indexing of a parsed document after successful parsing.
+
+        This method encapsulates the document processing logic (chunking, delta
+        detection, graph operations) so it can be reused when recovering from
+        encoding errors via fallback encodings.
+
+        Args:
+            file_path: Original file path (for logging and manifest tracking)
+            parser: Dispatched parser instance (for link extraction from markdown)
+            document: Successfully parsed Document object
+            force: Whether to force full re-index
+        """
+        docs_path = Path(self._config.indexing.documents_path)
+        document.id = self._compute_doc_id_for_path(file_path, docs_path)
+        project_id = resolve_project_id_for_path(Path(file_path), self._config)
+        document.project_id = project_id
+        if project_id is not None:
+            document.metadata = {
+                **document.metadata,
+                "project_id": project_id,
+            }
+
+        chunks = self._chunk_document(document)
+        for chunk in chunks:
+            if project_id is not None:
+                chunk.metadata = {
+                    **chunk.metadata,
+                    "project_id": project_id,
+                }
+        document.chunks = chunks
+
+        # Delta indexing logic
+        performed_full_reindex = False
+        mutated = False
+        if force:
+            # Force full re-index
+            self._full_reindex_document(document.id, chunks)
+            performed_full_reindex = True
+            mutated = True
+        else:
+            # Delta detection
+            changed_chunks, unchanged_chunk_ids = self._detect_changed_chunks(
+                chunks
+            )
+
+            if not changed_chunks:
+                if self._document_missing_from_loaded_indices(document.id):
+                    logger.warning(
+                        "Hash store reported no changes for %s, but the loaded "
+                        "vector index is missing document %s; forcing full re-index",
+                        file_path,
+                        document.id,
+                    )
+                    self._full_reindex_document(document.id, chunks)
+                    performed_full_reindex = True
+                    mutated = True
+                else:
+                    logger.info(f"No changes in {file_path}, skipping re-index")
+                    return
+
+            # Decide: delta or full re-index?
+            if performed_full_reindex:
+                pass
+            elif not self._should_use_delta_indexing(changed_chunks, len(chunks)):
+                self._full_reindex_document(document.id, chunks)
+                mutated = True
+            else:
+                logger.info(
+                    f"Delta index {file_path}: "
+                    f"{len(changed_chunks)} changed, {len(unchanged_chunk_ids)} unchanged"
+                )
+
+                # Update only changed chunks
+                self._update_chunks(document.id, changed_chunks)
+                mutated = True
+
+                # Update hash store for all chunks (even unchanged, to handle ID shifts)
+                for chunk in chunks:
+                    self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
+
+        # Add document node to graph (for links/metadata)
+        # Pass full metadata including tags and file_path to the graph
+        # This is crucial for ImplicitGraphBuilder to work correctly
+        graph_metadata = {
+            **document.metadata,
+            "tags": document.tags,
+            "file_path": document.file_path,
+        }
+        self.graph.add_node(document.id, graph_metadata)
+
+        from mcp_markdown_ragdocs.parsers.markdown import MarkdownParser
+
+        if isinstance(parser, MarkdownParser):
+            links_with_context = parser.extract_links_with_context(file_path)
+            for link_info in links_with_context:
+                edge_type = infer_edge_type(
+                    link_info.header_context, link_info.target
+                )
+                self.graph.add_edge(
+                    document.id,
+                    link_info.target,
+                    edge_type=edge_type.value,
+                    edge_context=link_info.header_context,
+                )
+        else:
+            for link in document.links:
+                self.graph.add_edge(document.id, link, edge_type="links_to")
+
+        self._failed_files = [f for f in self._failed_files if f.path != file_path]
+        self._record_manifest_index(file_path, document.id)
+        if mutated:
+            self._mark_derived_graph_state_dirty()
+            self._bump_state_version()
+
     def index_document(self, file_path: str, force: bool = False):
         try:
             parser = dispatch_parser(file_path)
             document = parser.parse(file_path)
-
-            docs_path = Path(self._config.indexing.documents_path)
-            document.id = self._compute_doc_id_for_path(file_path, docs_path)
-            project_id = resolve_project_id_for_path(Path(file_path), self._config)
-            document.project_id = project_id
-            if project_id is not None:
-                document.metadata = {
-                    **document.metadata,
-                    "project_id": project_id,
-                }
-
-            chunks = self._chunk_document(document)
-            for chunk in chunks:
-                if project_id is not None:
-                    chunk.metadata = {
-                        **chunk.metadata,
-                        "project_id": project_id,
-                    }
-            document.chunks = chunks
-
-            # Delta indexing logic
-            performed_full_reindex = False
-            mutated = False
-            if force:
-                # Force full re-index
-                self._full_reindex_document(document.id, chunks)
-                performed_full_reindex = True
-                mutated = True
-            else:
-                # Delta detection
-                changed_chunks, unchanged_chunk_ids = self._detect_changed_chunks(
-                    chunks
-                )
-
-                if not changed_chunks:
-                    if self._document_missing_from_loaded_indices(document.id):
-                        logger.warning(
-                            "Hash store reported no changes for %s, but the loaded "
-                            "vector index is missing document %s; forcing full re-index",
-                            file_path,
-                            document.id,
-                        )
-                        self._full_reindex_document(document.id, chunks)
-                        performed_full_reindex = True
-                        mutated = True
-                    else:
-                        logger.info(f"No changes in {file_path}, skipping re-index")
-                        return
-
-                # Decide: delta or full re-index?
-                if performed_full_reindex:
-                    pass
-                elif not self._should_use_delta_indexing(changed_chunks, len(chunks)):
-                    self._full_reindex_document(document.id, chunks)
-                    mutated = True
-                else:
-                    logger.info(
-                        f"Delta index {file_path}: "
-                        f"{len(changed_chunks)} changed, {len(unchanged_chunk_ids)} unchanged"
-                    )
-
-                    # Update only changed chunks
-                    self._update_chunks(document.id, changed_chunks)
-                    mutated = True
-
-                    # Update hash store for all chunks (even unchanged, to handle ID shifts)
-                    for chunk in chunks:
-                        self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
-
-            # Add document node to graph (for links/metadata)
-            # Pass full metadata including tags and file_path to the graph
-            # This is crucial for ImplicitGraphBuilder to work correctly
-            graph_metadata = {
-                **document.metadata,
-                "tags": document.tags,
-                "file_path": document.file_path,
-            }
-            self.graph.add_node(document.id, graph_metadata)
-
-            from mcp_markdown_ragdocs.parsers.markdown import MarkdownParser
-
-            if isinstance(parser, MarkdownParser):
-                links_with_context = parser.extract_links_with_context(file_path)
-                for link_info in links_with_context:
-                    edge_type = infer_edge_type(
-                        link_info.header_context, link_info.target
-                    )
-                    self.graph.add_edge(
-                        document.id,
-                        link_info.target,
-                        edge_type=edge_type.value,
-                        edge_context=link_info.header_context,
-                    )
-            else:
-                for link in document.links:
-                    self.graph.add_edge(document.id, link, edge_type="links_to")
-
-            self._failed_files = [f for f in self._failed_files if f.path != file_path]
-            self._record_manifest_index(file_path, document.id)
-            if mutated:
-                self._mark_derived_graph_state_dirty()
-                self._bump_state_version()
+            self._complete_document_indexing(file_path, parser, document, force)
 
         except UnicodeDecodeError as e:
             # Try alternative encodings for files with encoding issues
