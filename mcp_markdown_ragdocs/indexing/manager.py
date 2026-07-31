@@ -175,7 +175,7 @@ class IndexManager:
         return sorted(get_parser_suffixes())
 
     def _chunk_document(self, document: Document) -> list[Chunk]:
-        # IndexCore.chunk_document (LIBRARY) takes a source-agnostic Record;
+        # IndexCore.chunk_record (LIBRARY) takes a source-agnostic Record;
         # fold the markdown-specific fields into metadata, mirroring
         # Document.to_record() but keeping source_id unprefixed so chunk_id
         # continuity (hash store, vector/keyword doc ids) is unaffected.
