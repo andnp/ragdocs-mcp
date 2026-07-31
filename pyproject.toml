@@ -9,7 +9,7 @@ description = "A Model Context Protocol (MCP) server for semantic search over Ma
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "andnp-searchkernel",
+    "andnp-searchkernel>=0.1.0",
     "tree-sitter>=0.23.0",
     "tree-sitter-markdown>=0.3.2",
     "pyyaml>=6.0.2",
@@ -49,9 +49,6 @@ dev = [
 
 [tool.uv]
 package = true
-
-[tool.uv.sources]
-andnp-searchkernel = { path = "../andnp-searchkernel", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["ragdocs"]
