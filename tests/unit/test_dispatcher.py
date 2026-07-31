@@ -1,8 +1,8 @@
 import pytest
 
-from ragdocs.parsers.dispatcher import dispatch_parser
-from ragdocs.parsers.markdown import MarkdownParser
-from ragdocs.parsers.plaintext import PlainTextParser
+from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
+from mcp_markdown_ragdocs.parsers.markdown import MarkdownParser
+from mcp_markdown_ragdocs.parsers.plaintext import PlainTextParser
 
 
 def test_dispatch_parser_md():

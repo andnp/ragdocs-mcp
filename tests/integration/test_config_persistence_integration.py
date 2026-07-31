@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from ragdocs.cli import cli
-from ragdocs.config import detect_project
+from mcp_markdown_ragdocs.cli import cli
+from mcp_markdown_ragdocs.config import detect_project
 
 
 @pytest.fixture

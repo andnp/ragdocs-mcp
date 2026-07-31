@@ -31,8 +31,8 @@ from searchkernel.indexing.manifest import (
     save_manifest,
 )
 
-from ragdocs.context import ApplicationContext, IndexState
-from ragdocs.indexing.tasks import TaskBatchSubmissionResult
+from mcp_markdown_ragdocs.context import ApplicationContext, IndexState
+from mcp_markdown_ragdocs.indexing.tasks import TaskBatchSubmissionResult
 
 
 def _setattr(obj: Any, name: str, value: Any):
@@ -1142,7 +1142,7 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
         )
 
     monkeypatch.setattr(
-        "ragdocs.indexing.tasks.submit_index_batch",
+        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
         fake_submit_index_batch,
     )
 
@@ -1236,7 +1236,7 @@ async def test_task_bootstrap_keeps_monitoring_when_remaining_work_is_already_pe
     enqueue_checked = asyncio.Event()
 
     monkeypatch.setattr(
-        "ragdocs.indexing.tasks.submit_index_batch",
+        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
         lambda file_paths, force=False: enqueue_checked.set()
         or TaskBatchSubmissionResult(
             queue_available=True,
@@ -1433,7 +1433,7 @@ async def test_task_bootstrap_skips_durably_completed_files(
         )
 
     monkeypatch.setattr(
-        "ragdocs.indexing.tasks.submit_index_batch",
+        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
         fake_submit_index_batch,
     )
 
@@ -1597,11 +1597,11 @@ async def test_task_backed_reconciliation_enqueues_changes_without_index_manager
     _setattr(ctx, "discover_files", lambda: [added])
 
     monkeypatch.setattr(
-        "ragdocs.context.load_manifest",
+        "mcp_markdown_ragdocs.context.load_manifest",
         lambda path: object(),
     )
     monkeypatch.setattr(
-        "ragdocs.context.reconcile_indices",
+        "mcp_markdown_ragdocs.context.reconcile_indices",
         lambda *args: ([added], [removed], {}),
     )
     observed: dict[str, object] = {}
@@ -1623,11 +1623,11 @@ async def test_task_backed_reconciliation_enqueues_changes_without_index_manager
         )
 
     monkeypatch.setattr(
-        "ragdocs.indexing.tasks.submit_index_batch",
+        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
         fake_submit_index_batch,
     )
     monkeypatch.setattr(
-        "ragdocs.indexing.tasks.submit_remove_request_batch",
+        "mcp_markdown_ragdocs.indexing.tasks.submit_remove_request_batch",
         fake_submit_remove_batch,
     )
 

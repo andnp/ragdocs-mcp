@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ragdocs.daemon.metadata import (
+from mcp_markdown_ragdocs.daemon.metadata import (
     DaemonMetadata,
     read_daemon_metadata,
     remove_daemon_metadata,

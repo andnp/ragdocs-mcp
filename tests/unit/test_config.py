@@ -11,7 +11,7 @@ from typing import cast
 
 import pytest
 
-from ragdocs.config import Config, LLMConfig, load_config, resolve_embedding_model
+from mcp_markdown_ragdocs.config import Config, LLMConfig, load_config, resolve_embedding_model
 from searchkernel.embeddings import (
     TEST_FAKE_EMBEDDING_MODEL_NAME,
     TEST_FAKE_EMBEDDINGS_ENV_VAR,

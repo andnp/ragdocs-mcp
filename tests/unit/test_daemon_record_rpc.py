@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from searchkernel.domain import Record, RecordStatus
 
-from ragdocs.daemon.record_rpc import (
+from mcp_markdown_ragdocs.daemon.record_rpc import (
     RecordSerializationError,
     deserialize_record,
     serialize_record,

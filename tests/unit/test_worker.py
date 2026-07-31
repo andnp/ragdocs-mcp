@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from huey import SqliteHuey
 
-from ragdocs.worker.consumer import HueyWorker
+from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 
 
 @pytest.fixture()
@@ -86,7 +86,7 @@ class TestWorkerWithLifecycle:
 
         from searchkernel.storage.db import DatabaseManager
 
-        from ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
+        from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 
         @dataclass
         class FakeGitConfig:
@@ -143,7 +143,7 @@ class TestWorkerWithLifecycle:
 
         from searchkernel.storage.db import DatabaseManager
 
-        from ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
+        from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 
         @dataclass
         class FakeGitConfig:
@@ -203,8 +203,8 @@ class TestWorkerRuntimeStartup:
         monkeypatch,
         tmp_path: Path,
     ) -> None:
-        from ragdocs.cli import _run_worker_forever_async
-        from ragdocs.daemon.paths import RuntimePaths
+        from mcp_markdown_ragdocs.cli import _run_worker_forever_async
+        from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
 
         class _FakeIndexManager:
             def load(self) -> None:
@@ -263,12 +263,12 @@ class TestWorkerRuntimeStartup:
             socket_path=tmp_path / "daemon.sock",
         )
 
-        monkeypatch.setattr("ragdocs.cli.ApplicationContext.create", lambda **kwargs: fake_ctx)
-        monkeypatch.setattr("ragdocs.cli.get_huey", lambda _path: object())
-        monkeypatch.setattr("ragdocs.cli.register_tasks", lambda *args, **kwargs: None)
-        monkeypatch.setattr("ragdocs.cli.HueyWorker", lambda _huey: fake_worker)
+        monkeypatch.setattr("mcp_markdown_ragdocs.cli.ApplicationContext.create", lambda **kwargs: fake_ctx)
+        monkeypatch.setattr("mcp_markdown_ragdocs.cli.get_huey", lambda _path: object())
+        monkeypatch.setattr("mcp_markdown_ragdocs.cli.register_tasks", lambda *args, **kwargs: None)
+        monkeypatch.setattr("mcp_markdown_ragdocs.cli.HueyWorker", lambda _huey: fake_worker)
         monkeypatch.setattr(
-            "ragdocs.cli._parent_process_alive",
+            "mcp_markdown_ragdocs.cli._parent_process_alive",
             lambda _pid, _parent_start_time=None: False,
         )
         monkeypatch.setattr(

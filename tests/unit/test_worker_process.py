@@ -3,8 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from ragdocs.daemon.paths import RuntimePaths
-from ragdocs.worker.process import HueyWorkerProcess, is_expected_daemon_parent
+from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
+from mcp_markdown_ragdocs.worker.process import HueyWorkerProcess, is_expected_daemon_parent
 
 
 class _FakeProcess:
@@ -49,15 +49,15 @@ def test_worker_process_start_uses_internal_worker_command(monkeypatch, tmp_path
     fake_process = _FakeProcess()
 
     monkeypatch.setattr(
-        "ragdocs.worker.process._resolve_daemon_python",
+        "mcp_markdown_ragdocs.worker.process._resolve_daemon_python",
         lambda: Path("/repo/.venv/bin/python"),
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process.current_process_start_time_ticks",
+        "mcp_markdown_ragdocs.worker.process.current_process_start_time_ticks",
         lambda: 424242,
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process._terminate_runtime_worker_processes",
+        "mcp_markdown_ragdocs.worker.process._terminate_runtime_worker_processes",
         lambda _runtime_paths: None,
     )
 
@@ -66,8 +66,8 @@ def test_worker_process_start_uses_internal_worker_command(monkeypatch, tmp_path
         observed["kwargs"] = kwargs
         return fake_process
 
-    monkeypatch.setattr("ragdocs.worker.process.subprocess.Popen", _fake_popen)
-    monkeypatch.setattr("ragdocs.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process.subprocess.Popen", _fake_popen)
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
 
     worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
     worker.start()
@@ -76,7 +76,7 @@ def test_worker_process_start_uses_internal_worker_command(monkeypatch, tmp_path
     assert command[:4] == [
         "/repo/.venv/bin/python",
         "-m",
-        "ragdocs.cli",
+        "mcp_markdown_ragdocs.cli",
         "worker-run",
     ]
     assert "--queue-db" in command
@@ -92,18 +92,18 @@ def test_worker_process_stop_sends_sigterm(monkeypatch, tmp_path: Path):
     fake_process = _FakeProcess()
 
     monkeypatch.setattr(
-        "ragdocs.worker.process._resolve_daemon_python",
+        "mcp_markdown_ragdocs.worker.process._resolve_daemon_python",
         lambda: Path("/repo/.venv/bin/python"),
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process._terminate_runtime_worker_processes",
+        "mcp_markdown_ragdocs.worker.process._terminate_runtime_worker_processes",
         lambda _runtime_paths: None,
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process.subprocess.Popen",
+        "mcp_markdown_ragdocs.worker.process.subprocess.Popen",
         lambda *args, **kwargs: fake_process,
     )
-    monkeypatch.setattr("ragdocs.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
 
     worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
     worker.start()
@@ -119,19 +119,19 @@ def test_worker_process_restart_replaces_process(monkeypatch, tmp_path: Path):
     created = iter([first, second])
 
     monkeypatch.setattr(
-        "ragdocs.worker.process._resolve_daemon_python",
+        "mcp_markdown_ragdocs.worker.process._resolve_daemon_python",
         lambda: Path("/repo/.venv/bin/python"),
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process._terminate_runtime_worker_processes",
+        "mcp_markdown_ragdocs.worker.process._terminate_runtime_worker_processes",
         lambda _runtime_paths: None,
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process.subprocess.Popen",
+        "mcp_markdown_ragdocs.worker.process.subprocess.Popen",
         lambda *args, **kwargs: next(created),
     )
-    monkeypatch.setattr("ragdocs.worker.process.time.sleep", lambda _: None)
-    monkeypatch.setattr("ragdocs.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process.time.sleep", lambda _: None)
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
 
     worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
     worker.start()
@@ -144,23 +144,23 @@ def test_worker_process_restart_replaces_process(monkeypatch, tmp_path: Path):
 
 
 def test_is_expected_daemon_parent_requires_daemon_command(monkeypatch):
-    monkeypatch.setattr("ragdocs.worker.process._process_exists", lambda _pid: True)
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process._process_exists", lambda _pid: True)
     monkeypatch.setattr(
-        "ragdocs.worker.process._read_process_cmdline",
-        lambda _pid: ["python", "-m", "ragdocs.cli", "query"],
+        "mcp_markdown_ragdocs.worker.process._read_process_cmdline",
+        lambda _pid: ["python", "-m", "mcp_markdown_ragdocs.cli", "query"],
     )
 
     assert is_expected_daemon_parent(1234, None) is False
 
 
 def test_is_expected_daemon_parent_rejects_pid_reuse(monkeypatch):
-    monkeypatch.setattr("ragdocs.worker.process._process_exists", lambda _pid: True)
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process._process_exists", lambda _pid: True)
     monkeypatch.setattr(
-        "ragdocs.worker.process._read_process_cmdline",
-        lambda _pid: ["python", "-m", "ragdocs.cli", "daemon-internal-run"],
+        "mcp_markdown_ragdocs.worker.process._read_process_cmdline",
+        lambda _pid: ["python", "-m", "mcp_markdown_ragdocs.cli", "daemon-internal-run"],
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process._read_process_start_time_ticks",
+        "mcp_markdown_ragdocs.worker.process._read_process_start_time_ticks",
         lambda _pid: 222,
     )
 
@@ -175,30 +175,30 @@ def test_worker_process_start_terminates_runtime_matching_workers(
     terminated: list[int] = []
 
     monkeypatch.setattr(
-        "ragdocs.worker.process._resolve_daemon_python",
+        "mcp_markdown_ragdocs.worker.process._resolve_daemon_python",
         lambda: Path("/repo/.venv/bin/python"),
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process.current_process_start_time_ticks",
+        "mcp_markdown_ragdocs.worker.process.current_process_start_time_ticks",
         lambda: None,
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process._find_runtime_worker_pids",
+        "mcp_markdown_ragdocs.worker.process._find_runtime_worker_pids",
         lambda _runtime_paths: [111, 222],
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process.os.getpid",
+        "mcp_markdown_ragdocs.worker.process.os.getpid",
         lambda: 222,
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process._terminate_process",
+        "mcp_markdown_ragdocs.worker.process._terminate_process",
         lambda pid, timeout=1.0: terminated.append(pid),
     )
     monkeypatch.setattr(
-        "ragdocs.worker.process.subprocess.Popen",
+        "mcp_markdown_ragdocs.worker.process.subprocess.Popen",
         lambda *args, **kwargs: fake_process,
     )
-    monkeypatch.setattr("ragdocs.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
 
     worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
     worker.start()

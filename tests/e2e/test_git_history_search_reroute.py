@@ -15,17 +15,17 @@ from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.orchestrator import SearchOrchestrator
 
-from ragdocs.adapters.sources.git import GitContentSource
-from ragdocs.config import (
+from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
+from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from ragdocs.indexing.manager import IndexManager
-from ragdocs.mcp.handlers import HandlerContext
-from ragdocs.mcp.tools.document_tools import handle_search_git_history
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.mcp.handlers import HandlerContext
+from mcp_markdown_ragdocs.mcp.tools.document_tools import handle_search_git_history
 
 
 def _init_git_repo(path: Path) -> None:

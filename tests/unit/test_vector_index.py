@@ -6,9 +6,9 @@ from searchkernel.chunking.header_chunker import HeaderBasedChunker
 from searchkernel.domain import Record
 from searchkernel.indices.vector import VectorIndex
 
-from ragdocs.config import ChunkingConfig
-from ragdocs.models import Document
-from ragdocs.parsers.markdown import MarkdownParser
+from mcp_markdown_ragdocs.config import ChunkingConfig
+from mcp_markdown_ragdocs.models import Document
+from mcp_markdown_ragdocs.parsers.markdown import MarkdownParser
 
 
 def _document_to_record(doc: Document) -> Record:

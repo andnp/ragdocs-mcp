@@ -1,6 +1,6 @@
 from click.testing import CliRunner
 
-from ragdocs import cli as cli_module
+from mcp_markdown_ragdocs import cli as cli_module
 
 
 def test_rebuild_index_cmd_delegates_to_shared_runner(monkeypatch) -> None:

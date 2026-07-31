@@ -15,9 +15,9 @@ from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 
-from ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from ragdocs.indexing.manager import IndexManager
-from ragdocs.server import create_app
+from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.server import create_app
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ def app_with_config(tmp_path, test_docs_dir, monkeypatch):
             llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
-    monkeypatch.setattr("ragdocs.context.load_config", mock_load_config)
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", mock_load_config)
     app = create_app()
     return app
 
@@ -332,7 +332,7 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
             llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
-    monkeypatch.setattr("ragdocs.context.load_config", mock_load_config)
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", mock_load_config)
 
     # Start server - should detect version mismatch and rebuild
     app = create_app()

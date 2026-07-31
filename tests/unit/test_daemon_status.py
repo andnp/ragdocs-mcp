@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ragdocs.daemon import DaemonMetadata, RuntimePaths
-from ragdocs.daemon.management import DaemonInspection
-from ragdocs.daemon.status import (
+from mcp_markdown_ragdocs.daemon import DaemonMetadata, RuntimePaths
+from mcp_markdown_ragdocs.daemon.management import DaemonInspection
+from mcp_markdown_ragdocs.daemon.status import (
     build_daemon_status_payload,
     format_daemon_startup_result,
     request_daemon_overview,

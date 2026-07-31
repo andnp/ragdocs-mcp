@@ -2,10 +2,10 @@
 
 import os
 
-from ragdocs.app.composition import build_kernel
-from ragdocs.app.runtime import configure_runtime_threads
-from ragdocs.config import load_config
-from ragdocs.context import ApplicationContext
+from mcp_markdown_ragdocs.app.composition import build_kernel
+from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
+from mcp_markdown_ragdocs.config import load_config
+from mcp_markdown_ragdocs.context import ApplicationContext
 
 
 class TestCompositionRootNoGlobalMutation:

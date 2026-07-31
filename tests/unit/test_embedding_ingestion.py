@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from ragdocs.ingestion import EmbeddingInput, embed_and_upsert
+from mcp_markdown_ragdocs.ingestion import EmbeddingInput, embed_and_upsert
 
 
 @dataclass

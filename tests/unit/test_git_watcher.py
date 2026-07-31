@@ -3,16 +3,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     Config,
     GitIndexingConfig,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from ragdocs.git.watcher import GitWatcher
-from ragdocs.indexing.manager import IndexManager
-from ragdocs.indexing.tasks import TaskSubmissionResult
+from mcp_markdown_ragdocs.git.watcher import GitWatcher
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.tasks import TaskSubmissionResult
 
 
 @pytest.fixture
@@ -182,7 +182,7 @@ async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
     )
 
     monkeypatch.setattr(
-        "ragdocs.indexing.tasks.submit_refresh_git_request",
+        "mcp_markdown_ragdocs.indexing.tasks.submit_refresh_git_request",
         lambda git_dir_str: observed.append(git_dir_str)
         or TaskSubmissionResult(status="enqueued"),
     )
@@ -208,15 +208,15 @@ async def test_git_watcher_skips_unchanged_repository_after_refresh(
     )
 
     monkeypatch.setattr(
-        "ragdocs.git.watcher.get_git_ref_signature",
+        "mcp_markdown_ragdocs.git.watcher.get_git_ref_signature",
         lambda _git_dir: "same-head",
     )
     monkeypatch.setattr(
-        "ragdocs.git.watcher.get_head",
+        "mcp_markdown_ragdocs.git.watcher.get_head",
         lambda _root, _git_dir: "same-head",
     )
     monkeypatch.setattr(
-        "ragdocs.indexing.tasks.submit_refresh_git_request",
+        "mcp_markdown_ragdocs.indexing.tasks.submit_refresh_git_request",
         lambda git_dir_str: observed.append(git_dir_str)
         or TaskSubmissionResult(status="enqueued"),
     )
@@ -242,7 +242,7 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
     )
 
     monkeypatch.setattr(
-        "ragdocs.indexing.tasks.submit_refresh_git_request",
+        "mcp_markdown_ragdocs.indexing.tasks.submit_refresh_git_request",
         lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
     )
 

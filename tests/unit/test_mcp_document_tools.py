@@ -6,15 +6,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from ragdocs.context import IndexState
-from ragdocs.lifecycle import LifecycleState
-from ragdocs.mcp.handlers import HandlerContext
-from ragdocs.mcp.tools.document_request import normalize_query_documents_request
-from ragdocs.mcp.tools.document_tools import (
+from mcp_markdown_ragdocs.context import IndexState
+from mcp_markdown_ragdocs.lifecycle import LifecycleState
+from mcp_markdown_ragdocs.mcp.handlers import HandlerContext
+from mcp_markdown_ragdocs.mcp.tools.document_request import normalize_query_documents_request
+from mcp_markdown_ragdocs.mcp.tools.document_tools import (
     handle_query_documents,
     handle_search_git_history,
 )
-from ragdocs.models import (
+from mcp_markdown_ragdocs.models import (
     CompressionStats,
     SearchResultProvenance,
     SearchStrategyStats,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ragdocs.coordination.file_lock import IndexLock
+from mcp_markdown_ragdocs.coordination.file_lock import IndexLock
 
 
 @pytest.fixture

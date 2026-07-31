@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from ragdocs.config import Config, IndexingConfig
-from ragdocs.context import ApplicationContext
+from mcp_markdown_ragdocs.config import Config, IndexingConfig
+from mcp_markdown_ragdocs.context import ApplicationContext
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def test_config(tmp_path):
 @pytest.fixture
 def context_with_config(test_config, monkeypatch):
     """Create ApplicationContext with test config."""
-    monkeypatch.setattr("ragdocs.context.load_config", lambda: test_config)
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", lambda: test_config)
     return ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
     )

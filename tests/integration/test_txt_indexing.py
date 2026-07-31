@@ -5,16 +5,16 @@ from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from ragdocs.indexing.manager import IndexManager
-from ragdocs.models import Document
-from ragdocs.parsers.plaintext import PlainTextParser
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.models import Document
+from mcp_markdown_ragdocs.parsers.plaintext import PlainTextParser
 
 
 def _to_record(doc: Document) -> Record:

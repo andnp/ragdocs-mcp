@@ -3,7 +3,7 @@ from typing import cast
 
 import pytest
 
-from ragdocs import cli
+from mcp_markdown_ragdocs import cli
 
 
 def test_should_reexec_into_repo_venv_when_required_dependency_missing(
@@ -69,7 +69,7 @@ def test_reexec_into_repo_venv_uses_module_invocation(monkeypatch, tmp_path):
     assert observed["argv"] == [
         str(repo_python),
         "-m",
-        "ragdocs.cli",
+        "mcp_markdown_ragdocs.cli",
         "daemon-internal-run",
         "--runtime-root",
         "/tmp/runtime",

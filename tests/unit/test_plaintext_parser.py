@@ -1,6 +1,6 @@
 import pytest
 
-from ragdocs.parsers.plaintext import PlainTextParser
+from mcp_markdown_ragdocs.parsers.plaintext import PlainTextParser
 
 
 def test_parse_simple_text(tmp_path):

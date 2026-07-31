@@ -23,15 +23,15 @@ from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.orchestrator import SearchOrchestrator
 from searchkernel.search.pipeline import SearchPipelineConfig
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from ragdocs.indexing.manager import IndexManager
-from ragdocs.models import CompressionStats
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.models import CompressionStats
 
 # ============================================================================
 # Fixtures

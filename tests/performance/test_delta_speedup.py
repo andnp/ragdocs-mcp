@@ -7,8 +7,8 @@ from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 
-from ragdocs.config import ChunkingConfig, Config, IndexingConfig
-from ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.config import ChunkingConfig, Config, IndexingConfig
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
 
 def create_large_doc(num_sections: int = 100) -> str:

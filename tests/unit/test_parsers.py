@@ -2,8 +2,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from ragdocs.models import Document
-from ragdocs.parsers.base import DocumentParser
+from mcp_markdown_ragdocs.models import Document
+from mcp_markdown_ragdocs.parsers.base import DocumentParser
 
 
 class ConcreteTestParser(DocumentParser):

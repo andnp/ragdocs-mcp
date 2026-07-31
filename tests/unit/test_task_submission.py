@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from huey import SqliteHuey
 
-from ragdocs.coordination.task_submission import (
+from mcp_markdown_ragdocs.coordination.task_submission import (
     coalesce_pending_first_args,
     get_pending_task_count,
     get_pending_task_first_args,

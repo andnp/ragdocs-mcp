@@ -58,7 +58,7 @@ def test_persistent_manager_can_persist_and_load(
     vector2 = VectorIndex()
     keyword2 = KeywordIndex()
     graph2 = GraphStore()
-    from ragdocs.indexing.manager import IndexManager
+    from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
     manager2 = IndexManager(persistent_config, vector2, keyword2, graph2)
     manager2.load()

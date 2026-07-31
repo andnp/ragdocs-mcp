@@ -3,8 +3,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from ragdocs.models import Document
-from ragdocs.parsers.markdown import MarkdownParser
+from mcp_markdown_ragdocs.models import Document
+from mcp_markdown_ragdocs.parsers.markdown import MarkdownParser
 
 
 def test_parse_simple_markdown(tmp_path):

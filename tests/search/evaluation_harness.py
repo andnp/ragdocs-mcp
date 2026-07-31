@@ -11,7 +11,7 @@ from searchkernel.search.orchestrator import SearchOrchestrator
 from searchkernel.search.path_utils import compute_doc_id
 from searchkernel.storage.db import DatabaseManager
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
@@ -19,7 +19,7 @@ from ragdocs.config import (
     ProjectConfig,
     SearchConfig,
 )
-from ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
 FIXTURE_CORPUS_ROOT = Path(__file__).resolve().parent.parent / "fixtures" / "search_eval"
 

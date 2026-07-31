@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ragdocs.daemon.lock import FilesystemLock
+from mcp_markdown_ragdocs.daemon.lock import FilesystemLock
 
 
 def test_filesystem_lock_acquire_and_release(tmp_path: Path) -> None:

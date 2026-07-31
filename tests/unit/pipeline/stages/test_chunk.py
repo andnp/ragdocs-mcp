@@ -5,7 +5,7 @@ from searchkernel.domain import Chunk
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.chunk import ChunkStage
 
-from ragdocs.models import Document
+from mcp_markdown_ragdocs.models import Document
 
 
 def _with_hash(chunk):

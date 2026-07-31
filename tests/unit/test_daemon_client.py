@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ragdocs.daemon import DaemonMetadata
-from ragdocs.daemon.client import (
+from mcp_markdown_ragdocs.daemon import DaemonMetadata
+from mcp_markdown_ragdocs.daemon.client import (
     raise_daemon_request_error,
     request_daemon_json,
     should_retry_daemon_request,
@@ -77,17 +77,17 @@ def test_request_daemon_json_auto_starts_and_waits_for_ready(
 ) -> None:
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr("ragdocs.daemon.client.RuntimePaths.resolve", lambda: SimpleNamespace())
+    monkeypatch.setattr("mcp_markdown_ragdocs.daemon.client.RuntimePaths.resolve", lambda: SimpleNamespace())
     monkeypatch.setattr(
-        "ragdocs.daemon.client.start_daemon",
+        "mcp_markdown_ragdocs.daemon.client.start_daemon",
         lambda cwd, project_override, paths: _metadata(status="starting"),
     )
     monkeypatch.setattr(
-        "ragdocs.daemon.client.wait_for_daemon_ready",
+        "mcp_markdown_ragdocs.daemon.client.wait_for_daemon_ready",
         lambda paths: _metadata(status="ready", socket_path="/tmp/ready.sock"),
     )
     monkeypatch.setattr(
-        "ragdocs.daemon.client.request_daemon_socket",
+        "mcp_markdown_ragdocs.daemon.client.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds: captured.update(
             {
                 "socket_path": socket_path,
@@ -116,13 +116,13 @@ def test_request_daemon_json_auto_starts_and_waits_for_ready(
 def test_request_daemon_json_returns_none_for_non_retryable_error_when_not_allowed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("ragdocs.daemon.client.RuntimePaths.resolve", lambda: SimpleNamespace())
+    monkeypatch.setattr("mcp_markdown_ragdocs.daemon.client.RuntimePaths.resolve", lambda: SimpleNamespace())
     monkeypatch.setattr(
-        "ragdocs.daemon.client.inspect_daemon",
+        "mcp_markdown_ragdocs.daemon.client.inspect_daemon",
         lambda paths: SimpleNamespace(running=True, metadata=_metadata()),
     )
     monkeypatch.setattr(
-        "ragdocs.daemon.client.request_daemon_socket",
+        "mcp_markdown_ragdocs.daemon.client.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds: {
             "status": "error",
             "error": "git_indexing_unavailable",
@@ -142,13 +142,13 @@ def test_request_daemon_json_returns_none_for_non_retryable_error_when_not_allow
 def test_request_daemon_json_returns_retryable_error_payload_when_allowed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("ragdocs.daemon.client.RuntimePaths.resolve", lambda: SimpleNamespace())
+    monkeypatch.setattr("mcp_markdown_ragdocs.daemon.client.RuntimePaths.resolve", lambda: SimpleNamespace())
     monkeypatch.setattr(
-        "ragdocs.daemon.client.start_daemon",
+        "mcp_markdown_ragdocs.daemon.client.start_daemon",
         lambda cwd, project_override, paths: _metadata(),
     )
     monkeypatch.setattr(
-        "ragdocs.daemon.client.request_daemon_socket",
+        "mcp_markdown_ragdocs.daemon.client.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds: {
             "status": "error",
             "error": "daemon_request_timed_out",

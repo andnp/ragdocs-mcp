@@ -1,4 +1,4 @@
-from ragdocs.parsers.markdown import MarkdownParser
+from mcp_markdown_ragdocs.parsers.markdown import MarkdownParser
 
 
 def test_extract_wikilinks_basic(tmp_path):

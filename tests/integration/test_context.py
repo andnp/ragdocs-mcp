@@ -8,7 +8,7 @@ from searchkernel.indexing.manifest import (
     save_manifest,
 )
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
@@ -16,7 +16,7 @@ from ragdocs.config import (
     ProjectConfig,
     SearchConfig,
 )
-from ragdocs.context import ApplicationContext
+from mcp_markdown_ragdocs.context import ApplicationContext
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ def test_config(tmp_path):
 
 @pytest.fixture
 def context_with_config(test_config, monkeypatch):
-    monkeypatch.setattr("ragdocs.context.load_config", lambda: test_config)
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", lambda: test_config)
     return ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
     )
@@ -52,7 +52,7 @@ def test_create_initializes_components(context_with_config):
 
 
 def test_create_with_watcher_enabled(test_config, monkeypatch):
-    monkeypatch.setattr("ragdocs.context.load_config", lambda: test_config)
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", lambda: test_config)
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=True, lazy_embeddings=True
     )
@@ -61,7 +61,7 @@ def test_create_with_watcher_enabled(test_config, monkeypatch):
 
 
 def test_create_with_task_watcher_enabled(test_config, monkeypatch):
-    monkeypatch.setattr("ragdocs.context.load_config", lambda: test_config)
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", lambda: test_config)
     ctx = ApplicationContext.create(
         project_override=None,
         enable_watcher=True,
@@ -73,7 +73,7 @@ def test_create_with_task_watcher_enabled(test_config, monkeypatch):
 
 
 def test_create_with_index_path_override(test_config, monkeypatch, tmp_path):
-    monkeypatch.setattr("ragdocs.context.load_config", lambda: test_config)
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", lambda: test_config)
     override_path = tmp_path / "daemon-store"
     ctx = ApplicationContext.create(
         project_override=None,
@@ -111,7 +111,7 @@ def test_create_global_runtime_ignores_project_override_for_documents_roots(
         ],
     )
 
-    monkeypatch.setattr("ragdocs.context.load_config", lambda: deepcopy(config))
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", lambda: deepcopy(config))
 
     global_ctx = ApplicationContext.create(
         project_override="project_a",
@@ -311,7 +311,7 @@ async def test_shutdown_persists_indices(context_with_config):
 
 @pytest.mark.asyncio
 async def test_startup_with_watcher_starts_watcher(test_config, monkeypatch):
-    monkeypatch.setattr("ragdocs.context.load_config", lambda: test_config)
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", lambda: test_config)
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=True, lazy_embeddings=True
     )

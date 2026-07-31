@@ -2,7 +2,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ragdocs.git.commit_parser import (
+from mcp_markdown_ragdocs.git.commit_parser import (
     CommitData,
     build_commit_document,
     parse_commit,

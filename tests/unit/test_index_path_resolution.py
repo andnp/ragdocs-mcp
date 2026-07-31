@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ragdocs.config import Config, IndexingConfig, resolve_index_path
+from mcp_markdown_ragdocs.config import Config, IndexingConfig, resolve_index_path
 
 
 @pytest.fixture

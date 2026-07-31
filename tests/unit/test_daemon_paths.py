@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ragdocs.daemon.paths import RuntimePaths, _socket_path_for
+from mcp_markdown_ragdocs.daemon.paths import RuntimePaths, _socket_path_for
 
 
 def test_runtime_paths_are_global_and_co_located() -> None:

@@ -1,6 +1,6 @@
 import pytest
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     ProjectConfig,
     _validate_projects,
     get_project_root_warnings,

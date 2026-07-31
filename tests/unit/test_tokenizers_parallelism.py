@@ -39,7 +39,7 @@ import os
 os.environ.pop("TOKENIZERS_PARALLELISM", None)
 
 # Import should set the env var
-import ragdocs.cli
+import mcp_markdown_ragdocs.cli
 
 # Verify it was set
 assert os.environ.get("TOKENIZERS_PARALLELISM") == "false", \\
@@ -70,7 +70,7 @@ print("PASS: cli module sets TOKENIZERS_PARALLELISM=false")
                 """
 import os
 os.environ.pop("TOKENIZERS_PARALLELISM", None)
-import ragdocs.mcp.server
+import mcp_markdown_ragdocs.mcp.server
 assert os.environ.get("TOKENIZERS_PARALLELISM") == "false", \\
     f"Expected 'false', got {os.environ.get('TOKENIZERS_PARALLELISM')!r}"
 print("PASS: mcp.server module sets TOKENIZERS_PARALLELISM=false")
@@ -101,7 +101,7 @@ print("PASS: mcp.server module sets TOKENIZERS_PARALLELISM=false")
 import os
 # User explicitly sets to "true"
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
-import ragdocs.cli
+import mcp_markdown_ragdocs.cli
 # Should NOT be overwritten
 assert os.environ.get("TOKENIZERS_PARALLELISM") == "true", \\
     f"Expected user value 'true', got {os.environ.get('TOKENIZERS_PARALLELISM')!r}"
@@ -158,7 +158,7 @@ import sys
 sys.meta_path.insert(0, ImportTracker())
 
 # Import cli (should set env var)
-import ragdocs.cli
+import mcp_markdown_ragdocs.cli
 imported_cli = True
 
 # Importing something that uses sentence_transformers would be caught by tracker

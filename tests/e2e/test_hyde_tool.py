@@ -18,17 +18,17 @@ from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.orchestrator import SearchOrchestrator
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from ragdocs.context import ApplicationContext
-from ragdocs.indexing.manager import IndexManager
-from ragdocs.mcp import MCPServer
-from ragdocs.mcp.handlers import HandlerContext, get_handler
+from mcp_markdown_ragdocs.context import ApplicationContext
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.mcp import MCPServer
+from mcp_markdown_ragdocs.mcp.handlers import HandlerContext, get_handler
 
 # ============================================================================
 # Test Fixtures

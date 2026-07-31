@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     ProjectConfig,
     derive_auto_registration_root,
     detect_project,

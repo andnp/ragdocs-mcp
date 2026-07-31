@@ -12,7 +12,7 @@ Tests cover:
 import pytest
 from searchkernel.compression.thresholding import filter_by_score
 
-from ragdocs.models import ChunkResult
+from mcp_markdown_ragdocs.models import ChunkResult
 
 # ============================================================================
 # Fixtures

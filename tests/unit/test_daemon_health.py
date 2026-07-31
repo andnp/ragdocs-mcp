@@ -7,12 +7,12 @@ import pytest
 
 pytest.importorskip("zmq")
 
-from ragdocs.daemon.health import (
+from mcp_markdown_ragdocs.daemon.health import (
     DaemonHealthServer,
     probe_daemon_socket,
     request_daemon_socket,
 )
-from ragdocs.daemon.metadata import DaemonMetadata
+from mcp_markdown_ragdocs.daemon.metadata import DaemonMetadata
 
 
 def _assert_response_with_request_id(

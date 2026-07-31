@@ -12,9 +12,9 @@ from unittest import mock
 import pytest
 from click.testing import CliRunner
 
-from ragdocs.cli import cli
-from ragdocs.daemon.management import stop_daemon
-from ragdocs.daemon.paths import RuntimePaths
+from mcp_markdown_ragdocs.cli import cli
+from mcp_markdown_ragdocs.daemon.management import stop_daemon
+from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
 
 
 @pytest.fixture
@@ -314,7 +314,7 @@ def test_run_command_starts_server(runner, tmp_path, config_file):
         os.chdir(tmp_path)
 
         # Mock uvicorn.run to avoid actually starting server
-        with mock.patch("ragdocs.cli.uvicorn.run") as mock_uvicorn:
+        with mock.patch("mcp_markdown_ragdocs.cli.uvicorn.run") as mock_uvicorn:
             result = runner.invoke(cli, ["run"])
 
             # Verify successful exit (before uvicorn would start)
@@ -328,7 +328,7 @@ def test_run_command_starts_server(runner, tmp_path, config_file):
             assert call_kwargs["host"] == "127.0.0.1"
             assert call_kwargs["port"] == 8000
             assert call_kwargs["factory"] is True
-            assert "ragdocs.server:create_app" in mock_uvicorn.call_args.args
+            assert "mcp_markdown_ragdocs.server:create_app" in mock_uvicorn.call_args.args
 
     finally:
         os.chdir(original_cwd)
@@ -344,7 +344,7 @@ def test_run_command_with_host_port_overrides(runner, tmp_path, config_file):
     try:
         os.chdir(tmp_path)
 
-        with mock.patch("ragdocs.cli.uvicorn.run") as mock_uvicorn:
+        with mock.patch("mcp_markdown_ragdocs.cli.uvicorn.run") as mock_uvicorn:
             result = runner.invoke(cli, ["run", "--host", "0.0.0.0", "--port", "9000"])
 
             assert result.exit_code == 0
@@ -421,7 +421,7 @@ def test_run_command_error_handling_config_failure(runner, tmp_path):
         os.chdir(tmp_path)
 
         # Mock load_config to raise exception
-        with mock.patch("ragdocs.cli.load_config", side_effect=Exception("Config error")):
+        with mock.patch("mcp_markdown_ragdocs.cli.load_config", side_effect=Exception("Config error")):
             result = runner.invoke(cli, ["run"])
 
             # Verify error exit code (sys.exit(1) in exception handler)

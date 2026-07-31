@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ragdocs.git.repository import (
+from mcp_markdown_ragdocs.git.repository import (
     discover_git_repositories,
     get_commits_after_timestamp,
     is_git_available,

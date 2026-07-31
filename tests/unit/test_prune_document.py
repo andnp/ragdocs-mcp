@@ -15,8 +15,8 @@ from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 
-from ragdocs.config import Config, IndexingConfig
-from ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.config import Config, IndexingConfig
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
@@ -170,7 +170,7 @@ class TestPruneDocumentSuccess:
         doc_id = "reason_test"
         reason = "file_deleted"
 
-        with caplog.at_level(logging.INFO, logger="ragdocs.indexing.manager"):
+        with caplog.at_level(logging.INFO, logger="mcp_markdown_ragdocs.indexing.manager"):
             manager.prune_document(doc_id, reason=reason)
 
         # Check logs contain reason

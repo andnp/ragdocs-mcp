@@ -13,8 +13,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from ragdocs.server import create_app
+from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from mcp_markdown_ragdocs.server import create_app
 
 
 @pytest.fixture
@@ -394,7 +394,7 @@ def app_with_corpus(tmp_path, docs_corpus, monkeypatch):
             llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
-    monkeypatch.setattr("ragdocs.context.load_config", mock_load_config)
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", mock_load_config)
     app = create_app()
     return app
 

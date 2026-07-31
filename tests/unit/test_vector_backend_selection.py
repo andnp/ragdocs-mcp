@@ -8,8 +8,8 @@ than dead configuration nobody reads.
 
 from searchkernel.indices.vector import VectorIndex
 
-from ragdocs.config import Config
-from ragdocs.context import ApplicationContext
+from mcp_markdown_ragdocs.config import Config
+from mcp_markdown_ragdocs.context import ApplicationContext
 
 
 def test_defaults_to_faiss_backend():

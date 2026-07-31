@@ -8,8 +8,8 @@ from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.classifier import classify_query
 from searchkernel.search.orchestrator import SearchOrchestrator
 
-from ragdocs.config import ChunkingConfig, Config, IndexingConfig, SearchConfig
-from ragdocs.models import CompressionStats
+from mcp_markdown_ragdocs.config import ChunkingConfig, Config, IndexingConfig, SearchConfig
+from mcp_markdown_ragdocs.models import CompressionStats
 
 
 def _orchestrator(*, detected_project: str | None = None) -> SearchOrchestrator:

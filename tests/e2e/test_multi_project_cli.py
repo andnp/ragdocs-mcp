@@ -1,7 +1,7 @@
 import pytest
 from click.testing import CliRunner
 
-from ragdocs.cli import cli
+from mcp_markdown_ragdocs.cli import cli
 
 
 @pytest.fixture

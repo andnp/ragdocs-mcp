@@ -12,11 +12,11 @@ from click.testing import CliRunner
 
 pytest.importorskip("zmq")
 
-from ragdocs.cli import cli
-from ragdocs.daemon.health import probe_daemon_socket
-from ragdocs.daemon.management import stop_daemon
-from ragdocs.daemon.paths import RuntimePaths
-from ragdocs.mcp.server import MCPServer
+from mcp_markdown_ragdocs.cli import cli
+from mcp_markdown_ragdocs.daemon.health import probe_daemon_socket
+from mcp_markdown_ragdocs.daemon.management import stop_daemon
+from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
+from mcp_markdown_ragdocs.mcp.server import MCPServer
 
 
 def _write_test_config(tmp_path: Path, docs_path: Path) -> None:
@@ -321,7 +321,7 @@ async def test_mcp_run_stays_daemon_idle_on_startup(monkeypatch: pytest.MonkeyPa
         return None
 
     monkeypatch.setattr(
-        "ragdocs.mcp.server.stdio_server",
+        "mcp_markdown_ragdocs.mcp.server.stdio_server",
         _fake_stdio_server,
     )
     monkeypatch.setattr(
@@ -330,7 +330,7 @@ async def test_mcp_run_stays_daemon_idle_on_startup(monkeypatch: pytest.MonkeyPa
         _fake_server_run,
     )
     monkeypatch.setattr(
-        "ragdocs.mcp.server.start_daemon",
+        "mcp_markdown_ragdocs.mcp.server.start_daemon",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("daemon should not be contacted during stdio startup")),
     )
 

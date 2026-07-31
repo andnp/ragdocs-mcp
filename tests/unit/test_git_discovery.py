@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from ragdocs.git.repository import discover_git_repositories, is_git_available
+from mcp_markdown_ragdocs.git.repository import discover_git_repositories, is_git_available
 
 
 def _init_git_repo(path: Path):

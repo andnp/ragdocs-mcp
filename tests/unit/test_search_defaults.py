@@ -1,7 +1,7 @@
 import pytest
 from searchkernel.search.calibration import calibrate_score
 
-from ragdocs.config import SearchConfig
+from mcp_markdown_ragdocs.config import SearchConfig
 
 
 class TestSearchDefaults:

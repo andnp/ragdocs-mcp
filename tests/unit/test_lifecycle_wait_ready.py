@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 
-from ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
+from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 
 
 @dataclass

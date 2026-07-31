@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from ragdocs.indexing.git_refresh_state import (
+from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
     load_cursors,
     save_cursor,

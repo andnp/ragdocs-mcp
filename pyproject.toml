@@ -32,7 +32,7 @@ Repository = "https://github.com/yourusername/mcp-markdown-ragdocs.git"
 Issues = "https://github.com/yourusername/mcp-markdown-ragdocs/issues"
 
 [project.scripts]
-mcp-markdown-ragdocs = "ragdocs.cli:main"
+mcp-markdown-ragdocs = "mcp_markdown_ragdocs.cli:main"
 
 [dependency-groups]
 dev = [
@@ -51,7 +51,7 @@ dev = [
 package = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["ragdocs"]
+packages = ["mcp_markdown_ragdocs"]
 
 [tool.pytest.ini_options]
 pythonpath = "."
@@ -65,7 +65,7 @@ markers = [
     "real_embeddings: marks tests that require real embedding models (not fake deterministic embeddings)",
 ]
 
-# NOTE: a "ragdocs code must only use searchkernel's public surface" contract was tried
+# NOTE: a "mcp_markdown_ragdocs code must only use searchkernel's public surface" contract was tried
 # here and dropped. import-linter/grimp cannot resolve `forbidden_modules` against an
 # externally-installed distribution (andnp-searchkernel) the way it does for an in-repo
 # package -- it errors out before ever reaching the contract check (no "Contracts:"

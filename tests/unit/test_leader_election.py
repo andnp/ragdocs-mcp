@@ -14,7 +14,7 @@ from typing import Any, cast
 import pytest
 from searchkernel.storage.db import DatabaseManager
 
-from ragdocs.lifecycle import LeaderElection, LifecycleCoordinator, LifecycleState
+from mcp_markdown_ragdocs.lifecycle import LeaderElection, LifecycleCoordinator, LifecycleState
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ragdocs.coordination.singleton import SingletonGuard
+from mcp_markdown_ragdocs.coordination.singleton import SingletonGuard
 
 
 @pytest.fixture

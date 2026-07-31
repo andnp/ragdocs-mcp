@@ -6,7 +6,7 @@ from pathlib import Path
 
 from searchkernel.utils import should_include_file
 
-from ragdocs.cli import _should_include_file
+from mcp_markdown_ragdocs.cli import _should_include_file
 
 
 def test_include_all_pattern():

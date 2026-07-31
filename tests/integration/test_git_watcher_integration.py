@@ -6,16 +6,16 @@ from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     Config,
     GitIndexingConfig,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from ragdocs.git.repository import is_git_available
-from ragdocs.git.watcher import GitWatcher
-from ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.git.repository import is_git_available
+from mcp_markdown_ragdocs.git.watcher import GitWatcher
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
 
 def _init_git_repo(path: Path):

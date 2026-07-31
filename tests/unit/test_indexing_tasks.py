@@ -20,10 +20,10 @@ from searchkernel.indexing.bootstrap_checkpoint import (
     save_bootstrap_checkpoint,
 )
 
-import ragdocs.indexing.tasks as tasks_mod
-from ragdocs.daemon.queue_status import get_queue_stats
-from ragdocs.indexing.git_refresh_state import get_cursor, save_cursor, save_head
-from ragdocs.indexing.tasks import (
+import mcp_markdown_ragdocs.indexing.tasks as tasks_mod
+from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
+from mcp_markdown_ragdocs.indexing.git_refresh_state import get_cursor, save_cursor, save_head
+from mcp_markdown_ragdocs.indexing.tasks import (
     GIT_REFRESH_TASK_PRIORITY,
     RECORD_BATCH_TASK_PRIORITY,
     enqueue_index,
@@ -651,7 +651,7 @@ class TestTaskExecution:
         self, tmp_path: Path, fake_manager: FakeIndexManager
     ) -> None:
         """Full flow: enqueue -> worker processes -> manager called."""
-        from ragdocs.worker.consumer import HueyWorker
+        from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 
         huey = SqliteHuey(
             name="test-e2e", filename=str(tmp_path / "e2e.db"), immediate=False
@@ -680,7 +680,7 @@ class TestTaskExecution:
 
     def test_task_failure_does_not_crash_worker(self, tmp_path: Path) -> None:
         """A failing task doesn't crash the worker."""
-        from ragdocs.worker.consumer import HueyWorker
+        from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 
         class FailingManager:
             def index_document(self, file_path: str, force: bool = False) -> None:
@@ -778,7 +778,7 @@ class TestTaskExecution:
             _fake_ingest_git_source,
         )
         monkeypatch.setattr(
-            "ragdocs.indexing.tasks.get_git_ref_signature",
+            "mcp_markdown_ragdocs.indexing.tasks.get_git_ref_signature",
             lambda _git_dir: "head-1",
         )
 
@@ -809,7 +809,7 @@ class TestTaskExecution:
         git_dir.mkdir()
         save_head(state_root, git_dir, "head-1")
         monkeypatch.setattr(
-            "ragdocs.indexing.tasks.get_git_ref_signature",
+            "mcp_markdown_ragdocs.indexing.tasks.get_git_ref_signature",
             lambda _git_dir: "head-1",
         )
 

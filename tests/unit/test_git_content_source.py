@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from searchkernel.domain import RecordStatus
 
-from ragdocs.adapters.sources.git import GitContentSource
+from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
 
 
 def _init_git_repo(path: Path) -> None:

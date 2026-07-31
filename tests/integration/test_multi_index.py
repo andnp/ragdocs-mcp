@@ -15,9 +15,9 @@ from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 
-from ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from ragdocs.indexing.manager import IndexManager
-from ragdocs.models import Document
+from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.models import Document
 
 
 @pytest.fixture

@@ -8,8 +8,8 @@ from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.orchestrator import SearchOrchestrator
 from searchkernel.search.pipeline import SearchPipelineConfig
 
-from ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
 from tests.conftest import create_test_document
 
 # ============================================================================

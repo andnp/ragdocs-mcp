@@ -61,20 +61,20 @@ from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.storage.db import DatabaseManager
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from ragdocs.daemon.management import inspect_daemon, stop_daemon
-from ragdocs.daemon.paths import RuntimePaths
+from mcp_markdown_ragdocs.daemon.management import inspect_daemon, stop_daemon
+from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
 from searchkernel.embeddings import (
     TEST_FAKE_EMBEDDINGS_ENV_VAR,
     DeterministicFakeEmbeddingModel,
 )
-from ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
 
 @pytest.fixture(autouse=True)

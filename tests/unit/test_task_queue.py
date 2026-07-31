@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from huey import SqliteHuey
 
-from ragdocs.coordination.queue import get_huey, reset_huey
+from mcp_markdown_ragdocs.coordination.queue import get_huey, reset_huey
 
 
 @pytest.fixture(autouse=True)

@@ -1,7 +1,7 @@
 import pytest
 from searchkernel.domain import ChunkResult
 
-from ragdocs.server import QueryRequest, create_app
+from mcp_markdown_ragdocs.server import QueryRequest, create_app
 
 
 class FakeOrchestrator:

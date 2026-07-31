@@ -14,7 +14,7 @@ import os
 import pytest
 from searchkernel.search.pipeline import SearchPipelineConfig
 
-from ragdocs.config import (
+from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
@@ -22,7 +22,7 @@ from ragdocs.config import (
     SearchConfig,
     StoreConfig,
 )
-from ragdocs.context import ApplicationContext
+from mcp_markdown_ragdocs.context import ApplicationContext
 
 pytestmark = [pytest.mark.slow, pytest.mark.serial]
 
@@ -54,7 +54,7 @@ def test_config(tmp_path, pg_dsn):
 
 @pytest.mark.asyncio
 async def test_pgvector_backend_indexes_and_searches_live(test_config, monkeypatch):
-    monkeypatch.setattr("ragdocs.context.load_config", lambda: test_config)
+    monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", lambda: test_config)
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
     )

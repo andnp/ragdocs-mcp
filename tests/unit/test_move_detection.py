@@ -9,8 +9,8 @@ from searchkernel.indices.hash_store import ChunkHashStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 
-from ragdocs.config import ChunkingConfig, Config, IndexingConfig
-from ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.config import ChunkingConfig, Config, IndexingConfig
+from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
