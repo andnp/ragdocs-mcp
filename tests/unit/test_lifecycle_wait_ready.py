@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 
-from searchkernel.lifecycle import LifecycleCoordinator, LifecycleState
+from ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 
 
 @dataclass

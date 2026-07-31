@@ -1,15 +1,15 @@
 from pathlib import Path
 
 import pytest
-
-from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from searchkernel.domain import ChunkResult
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.orchestrator import SearchOrchestrator
 from searchkernel.search.pipeline import SearchPipelineConfig
+
+from ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from ragdocs.indexing.manager import IndexManager
 from tests.conftest import create_test_document
 
 # ============================================================================

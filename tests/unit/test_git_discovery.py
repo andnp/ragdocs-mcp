@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.git.repository import discover_git_repositories, is_git_available
+from ragdocs.git.repository import discover_git_repositories, is_git_available
 
 
 def _init_git_repo(path: Path):

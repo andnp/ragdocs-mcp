@@ -1,5 +1,6 @@
-from searchkernel.models import CompressionStats
 from searchkernel.search.pipeline import SearchPipeline, SearchPipelineConfig
+
+from ragdocs.models import CompressionStats
 
 # Diverse content to survive n-gram dedup (default threshold 0.7)
 _DIVERSE_CONTENT = {

@@ -7,15 +7,15 @@ and works end-to-end with real indices and filesystem operations.
 from pathlib import Path
 
 import pytest
-
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.indexing.manifest import IndexManifest, save_manifest
 from searchkernel.indexing.reconciler import build_indexed_files_map
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.orchestrator import SearchOrchestrator
+
+from ragdocs.config import ChunkingConfig, Config, IndexingConfig
+from ragdocs.indexing.manager import IndexManager
 
 
 def _save_manifest_for_files(manager, config, files: list[Path], docs_roots: list[Path] | None = None):

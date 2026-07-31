@@ -2,19 +2,19 @@ import json
 from pathlib import Path
 
 import pytest
+from searchkernel.indexing.manifest import load_manifest
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 
-from searchkernel.config import (
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indexing.manifest import load_manifest
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
+from ragdocs.indexing.manager import IndexManager
 from tests.conftest import create_test_document
 
 

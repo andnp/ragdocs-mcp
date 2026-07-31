@@ -2,12 +2,12 @@ import time
 from pathlib import Path
 
 import pytest
-
-from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
+
+from ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from ragdocs.indexing.manager import IndexManager
 
 
 @pytest.fixture

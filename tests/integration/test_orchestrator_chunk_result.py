@@ -1,8 +1,13 @@
 from pathlib import Path
 
 import pytest
+from searchkernel.domain import ChunkResult, SearchResultProvenance
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.search.orchestrator import SearchOrchestrator
 
-from searchkernel.config import (
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
@@ -10,12 +15,7 @@ from searchkernel.config import (
     ProjectConfig,
     SearchConfig,
 )
-from searchkernel.domain import ChunkResult, SearchResultProvenance
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
+from ragdocs.indexing.manager import IndexManager
 from tests.conftest import create_test_document
 
 

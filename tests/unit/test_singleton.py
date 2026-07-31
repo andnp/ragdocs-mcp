@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.coordination.singleton import SingletonGuard
+from ragdocs.coordination.singleton import SingletonGuard
 
 
 @pytest.fixture

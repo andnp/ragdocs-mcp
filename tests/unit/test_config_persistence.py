@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-import searchkernel.config
-from searchkernel.config import (
+import ragdocs.config
+from ragdocs.config import (
     ProjectConfig,
     _generate_unique_project_name,
     derive_auto_registration_root,
@@ -332,7 +332,7 @@ def test_detect_project_arbitrary_path_does_not_call_persistence(
     def failing_persist(name, path):
         raise AssertionError("persist_project_to_config should not be called")
 
-    monkeypatch.setattr(searchkernel.config, "persist_project_to_config", failing_persist)
+    monkeypatch.setattr(ragdocs.config, "persist_project_to_config", failing_persist)
 
     result = detect_project(
         cwd=Path("/somewhere/else"), projects=[], project_override=str(arbitrary_dir)
@@ -397,7 +397,7 @@ def test_detect_project_cwd_unmatched_does_not_call_persistence(
     def failing_persist(name, path):
         raise AssertionError("persist_project_to_config should not be called")
 
-    monkeypatch.setattr(searchkernel.config, "persist_project_to_config", failing_persist)
+    monkeypatch.setattr(ragdocs.config, "persist_project_to_config", failing_persist)
 
     result = detect_project(cwd=project_dir, projects=[], project_override=None)
 

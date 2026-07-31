@@ -6,15 +6,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from searchkernel.context import IndexState
-from searchkernel.lifecycle import LifecycleState
-from searchkernel.mcp.handlers import HandlerContext
-from searchkernel.mcp.tools.document_request import normalize_query_documents_request
-from searchkernel.mcp.tools.document_tools import (
+from ragdocs.context import IndexState
+from ragdocs.lifecycle import LifecycleState
+from ragdocs.mcp.handlers import HandlerContext
+from ragdocs.mcp.tools.document_request import normalize_query_documents_request
+from ragdocs.mcp.tools.document_tools import (
     handle_query_documents,
     handle_search_git_history,
 )
-from searchkernel.models import (
+from ragdocs.models import (
     CompressionStats,
     SearchResultProvenance,
     SearchStrategyStats,

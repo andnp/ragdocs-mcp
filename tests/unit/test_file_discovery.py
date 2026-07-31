@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-
 from searchkernel.indexing.discovery import discover_files
 
 

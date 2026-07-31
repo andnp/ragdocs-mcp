@@ -1,6 +1,6 @@
 import pytest
 
-from searchkernel.config import (
+from ragdocs.config import (
     ProjectConfig,
     _validate_projects,
     get_project_root_warnings,

@@ -11,24 +11,15 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from searchkernel.adapters.stores.pgvector_index import PGVectorIndex
 
-from searchkernel.config import (
-    Config,
-    detect_project,
-    load_config,
-    resolve_documents_path,
-    resolve_index_path,
-)
 from searchkernel.indexing.bootstrap_checkpoint import (
     build_file_stamps,
     has_incomplete_bootstrap_checkpoint,
 )
-from searchkernel.indexing.bootstrap_session import BootstrapSession
 from searchkernel.indexing.bootstrap_snapshot import (
     PublicIndexStateSnapshot,
     derive_loaded_index_state_snapshot,
 )
 from searchkernel.indexing.discovery import get_parser_suffixes
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.indexing.manifest import (
     CURRENT_MANIFEST_SPEC_VERSION,
     IndexManifest,
@@ -49,7 +40,6 @@ from searchkernel.indexing.runtime_readiness import (
 from searchkernel.indexing.runtime_readiness import (
     is_fully_ready as runtime_is_fully_ready,
 )
-from searchkernel.indexing.watcher import FileWatcher
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
@@ -57,6 +47,17 @@ from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.discover import DiscoverStage
 from searchkernel.search.orchestrator import SearchOrchestrator
 from searchkernel.storage.db import DatabaseManager
+
+from ragdocs.config import (
+    Config,
+    detect_project,
+    load_config,
+    resolve_documents_path,
+    resolve_index_path,
+)
+from ragdocs.indexing.bootstrap_session import BootstrapSession
+from ragdocs.indexing.manager import IndexManager
+from ragdocs.indexing.watcher import FileWatcher
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +200,7 @@ class ApplicationContext:
         # Enable git commit indexing if configured and git is available
         git_indexing_enabled = False
         if config.git_indexing.enabled:
-            from searchkernel.git.repository import is_git_available
+            from ragdocs.git.repository import is_git_available
 
             if is_git_available():
                 git_indexing_enabled = True
@@ -316,7 +317,7 @@ class ApplicationContext:
         return context.metadata["discovered_files"]
 
     def discover_git_repositories(self) -> list[Path]:
-        from searchkernel.git.repository import (
+        from ragdocs.git.repository import (
             discover_git_repositories,
             discover_git_repositories_multi_root,
         )
@@ -440,7 +441,7 @@ class ApplicationContext:
         if not self.git_indexing_enabled:
             return
 
-        from searchkernel.indexing.tasks import submit_refresh_git_batch
+        from ragdocs.indexing.tasks import submit_refresh_git_batch
 
         repos = await asyncio.to_thread(self.discover_git_repositories)
         if not repos:
@@ -842,7 +843,7 @@ class ApplicationContext:
             logger.info("Task-backed reconciliation complete: no changes needed")
             return
 
-        from searchkernel.indexing.tasks import (
+        from ragdocs.indexing.tasks import (
             submit_index_batch,
             submit_remove_request_batch,
         )
@@ -1257,8 +1258,9 @@ class ApplicationContext:
         Commits land in the same vector/keyword/graph store as documents and
         become discoverable via SearchOrchestrator.query(source_filter=["git_commit"]).
         """
-        from searchkernel.adapters.sources.git import GitContentSource
         from searchkernel.indexing.git_ingestion import ingest_git_source
+
+        from ragdocs.adapters.sources.git import GitContentSource
 
         for repo_path in repos:
             try:

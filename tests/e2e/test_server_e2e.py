@@ -10,14 +10,14 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
-
-from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.indexing.manifest import IndexManifest, save_manifest
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.server import create_app
+
+from ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from ragdocs.indexing.manager import IndexManager
+from ragdocs.server import create_app
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ def app_with_config(tmp_path, test_docs_dir, monkeypatch):
             llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
-    monkeypatch.setattr("searchkernel.context.load_config", mock_load_config)
+    monkeypatch.setattr("ragdocs.context.load_config", mock_load_config)
     app = create_app()
     return app
 
@@ -332,7 +332,7 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
             llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
         )
 
-    monkeypatch.setattr("searchkernel.context.load_config", mock_load_config)
+    monkeypatch.setattr("ragdocs.context.load_config", mock_load_config)
 
     # Start server - should detect version mismatch and rebuild
     app = create_app()

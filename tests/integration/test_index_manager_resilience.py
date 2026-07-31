@@ -8,13 +8,13 @@ fails, and that startup reconciliation survives corrupted keyword index.
 from datetime import UTC, datetime
 
 import pytest
-
-from searchkernel.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from searchkernel.indexing.manager import IndexManager
+from searchkernel.domain import Chunk
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.domain import Chunk
+
+from ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
+from ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
@@ -65,7 +65,7 @@ def test_remove_document_continues_on_partial_failure(tmp_path, config):
     graph = GraphStore()
     manager = IndexManager(config, vector, keyword, graph)
 
-    chunk = _with_hash(Chunk(chunk_id="resilience_test_0", record_id="test-doc", content="Content for resilience testing.", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 35, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="resilience_test_0", record_id="test-doc", content="Content for resilience testing.", metadata={"tags": [], "header_path": "", "start_pos": 0, "end_pos": 35, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     vector.add_chunk(chunk)
     keyword.add_chunk(chunk)
@@ -99,7 +99,7 @@ def test_startup_reconciliation_survives_corrupted_keyword_index(tmp_path, confi
     keyword = KeywordIndex()
     graph = GraphStore()
 
-    chunk = _with_hash(Chunk(chunk_id="startup_test_0", record_id="startup-doc", content="Content for startup reconciliation testing.", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 45, "file_path": "/tmp/startup.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="startup_test_0", record_id="startup-doc", content="Content for startup reconciliation testing.", metadata={"tags": [], "header_path": "", "start_pos": 0, "end_pos": 45, "file_path": "/tmp/startup.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector.add_chunk(chunk)
     keyword.add_chunk(chunk)
     graph.add_node("startup-doc", {"tags": []})
@@ -117,7 +117,7 @@ def test_startup_reconciliation_survives_corrupted_keyword_index(tmp_path, confi
     results = keyword.search("startup reconciliation", top_k=5)
     assert results == []
 
-    new_chunk = _with_hash(Chunk(chunk_id="after_recovery_0", record_id="recovery-doc", content="New content after startup recovery.", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 40, "file_path": "/tmp/recovery.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    new_chunk = _with_hash(Chunk(chunk_id="after_recovery_0", record_id="recovery-doc", content="New content after startup recovery.", metadata={"tags": [], "header_path": "", "start_pos": 0, "end_pos": 40, "file_path": "/tmp/recovery.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     keyword.add_chunk(new_chunk)
 
     keyword_results = keyword.search("startup recovery", top_k=5)

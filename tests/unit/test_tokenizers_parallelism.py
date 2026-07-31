@@ -23,7 +23,7 @@ class TestTokenizersParallelismEnvVar:
 
     def test_cli_module_sets_tokenizers_parallelism(self):
         """
-        Verify searchkernel.cli sets TOKENIZERS_PARALLELISM=false before imports.
+        Verify ragdocs.cli sets TOKENIZERS_PARALLELISM=false before imports.
 
         The env var must be set before any HuggingFace/sentence-transformers
         imports to prevent the warning when forking worker processes.
@@ -39,7 +39,7 @@ import os
 os.environ.pop("TOKENIZERS_PARALLELISM", None)
 
 # Import should set the env var
-import searchkernel.cli
+import ragdocs.cli
 
 # Verify it was set
 assert os.environ.get("TOKENIZERS_PARALLELISM") == "false", \\
@@ -59,7 +59,7 @@ print("PASS: cli module sets TOKENIZERS_PARALLELISM=false")
 
     def test_mcp_server_module_sets_tokenizers_parallelism(self):
         """
-        Verify searchkernel.mcp.server sets TOKENIZERS_PARALLELISM=false before imports.
+        Verify ragdocs.mcp.server sets TOKENIZERS_PARALLELISM=false before imports.
 
         MCP server can be run directly, so it must also set the env var.
         """
@@ -70,7 +70,7 @@ print("PASS: cli module sets TOKENIZERS_PARALLELISM=false")
                 """
 import os
 os.environ.pop("TOKENIZERS_PARALLELISM", None)
-import searchkernel.mcp.server
+import ragdocs.mcp.server
 assert os.environ.get("TOKENIZERS_PARALLELISM") == "false", \\
     f"Expected 'false', got {os.environ.get('TOKENIZERS_PARALLELISM')!r}"
 print("PASS: mcp.server module sets TOKENIZERS_PARALLELISM=false")
@@ -101,7 +101,7 @@ print("PASS: mcp.server module sets TOKENIZERS_PARALLELISM=false")
 import os
 # User explicitly sets to "true"
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
-import searchkernel.cli
+import ragdocs.cli
 # Should NOT be overwritten
 assert os.environ.get("TOKENIZERS_PARALLELISM") == "true", \\
     f"Expected user value 'true', got {os.environ.get('TOKENIZERS_PARALLELISM')!r}"
@@ -158,7 +158,7 @@ import sys
 sys.meta_path.insert(0, ImportTracker())
 
 # Import cli (should set env var)
-import searchkernel.cli
+import ragdocs.cli
 imported_cli = True
 
 # Importing something that uses sentence_transformers would be caught by tracker

@@ -15,8 +15,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from searchkernel.domain import Chunk
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.search.orchestrator import SearchOrchestrator
 
-from searchkernel.config import (
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
@@ -24,13 +29,8 @@ from searchkernel.config import (
     ProjectConfig,
     SearchConfig,
 )
-from searchkernel.context import ApplicationContext
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.domain import Chunk
-from searchkernel.search.orchestrator import SearchOrchestrator
+from ragdocs.context import ApplicationContext
+from ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
@@ -192,7 +192,7 @@ async def test_queries_return_results_from_correct_project(
     )
 
     # Add Project A specific chunk
-    chunk_a = _with_hash(Chunk(chunk_id="readme_chunk_0", record_id="readme", content="Project Alpha documentation", metadata={**({}), "header_path": "Project A", "start_pos": 0, "end_pos": 30, "file_path": str(two_projects["project_a_docs"] / "readme.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk_a = _with_hash(Chunk(chunk_id="readme_chunk_0", record_id="readme", content="Project Alpha documentation", metadata={ "header_path": "Project A", "start_pos": 0, "end_pos": 30, "file_path": str(two_projects["project_a_docs"] / "readme.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector_a.add_chunk(chunk_a)
     keyword_a.add_chunk(chunk_a)
 
@@ -211,7 +211,7 @@ async def test_queries_return_results_from_correct_project(
     )
 
     # Add Project B specific chunk
-    chunk_b = _with_hash(Chunk(chunk_id="readme_chunk_0", record_id="readme", content="Project Beta documentation", metadata={**({}), "header_path": "Project B", "start_pos": 0, "end_pos": 30, "file_path": str(two_projects["project_b_docs"] / "readme.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk_b = _with_hash(Chunk(chunk_id="readme_chunk_0", record_id="readme", content="Project Beta documentation", metadata={ "header_path": "Project B", "start_pos": 0, "end_pos": 30, "file_path": str(two_projects["project_b_docs"] / "readme.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector_b.add_chunk(chunk_b)
     keyword_b.add_chunk(chunk_b)
 
@@ -248,7 +248,7 @@ def test_application_context_creates_orchestrator_with_correct_path(
 
     This verifies the integration between context creation and orchestrator setup.
     """
-    monkeypatch.setattr("searchkernel.context.load_config", lambda: config_for_project_a)
+    monkeypatch.setattr("ragdocs.context.load_config", lambda: config_for_project_a)
 
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
@@ -277,7 +277,7 @@ def test_application_context_discovers_files_across_multiple_project_roots(
         ],
     )
 
-    monkeypatch.setattr("searchkernel.context.load_config", lambda: config)
+    monkeypatch.setattr("ragdocs.context.load_config", lambda: config)
 
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
@@ -308,8 +308,8 @@ def test_ambient_detected_project_narrows_documents_roots(
         ],
     )
 
-    monkeypatch.setattr("searchkernel.context.load_config", lambda: config)
-    monkeypatch.setattr("searchkernel.context.detect_project", lambda **kwargs: "project-a")
+    monkeypatch.setattr("ragdocs.context.load_config", lambda: config)
+    monkeypatch.setattr("ragdocs.context.detect_project", lambda **kwargs: "project-a")
 
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
@@ -337,8 +337,8 @@ def test_global_runtime_ignores_project_scope_and_uses_all_documents_roots(
         ],
     )
 
-    monkeypatch.setattr("searchkernel.context.load_config", lambda: config)
-    monkeypatch.setattr("searchkernel.context.detect_project", lambda **kwargs: "project-a")
+    monkeypatch.setattr("ragdocs.context.load_config", lambda: config)
+    monkeypatch.setattr("ragdocs.context.detect_project", lambda **kwargs: "project-a")
 
     ctx = ApplicationContext.create(
         project_override="project-a",
@@ -376,7 +376,7 @@ def test_global_runtime_ignores_transient_override_outside_registered_projects(
         ],
     )
 
-    monkeypatch.setattr("searchkernel.context.load_config", lambda: config)
+    monkeypatch.setattr("ragdocs.context.load_config", lambda: config)
 
     ctx = ApplicationContext.create(
         project_override=str(external_project),
@@ -405,13 +405,13 @@ def test_multiple_contexts_have_isolated_orchestrator_paths(
     orchestrators could share the same path if they read from a shared config.
     """
     # Create context for Project A
-    monkeypatch.setattr("searchkernel.context.load_config", lambda: config_for_project_a)
+    monkeypatch.setattr("ragdocs.context.load_config", lambda: config_for_project_a)
     ctx_a = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
     )
 
     # Create context for Project B (need to update monkeypatch)
-    monkeypatch.setattr("searchkernel.context.load_config", lambda: config_for_project_b)
+    monkeypatch.setattr("ragdocs.context.load_config", lambda: config_for_project_b)
     ctx_b = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
     )
@@ -440,7 +440,7 @@ def test_config_modification_does_not_affect_existing_context(
 
     This simulates scenarios where config might be modified after initialization.
     """
-    monkeypatch.setattr("searchkernel.context.load_config", lambda: config_for_project_a)
+    monkeypatch.setattr("ragdocs.context.load_config", lambda: config_for_project_a)
 
     ctx = ApplicationContext.create(
         project_override=None, enable_watcher=False, lazy_embeddings=True
@@ -487,7 +487,7 @@ async def test_file_exclusions_resolve_against_orchestrator_path(
 
     # Add multiple chunks
     for name in ["readme", "api", "guide"]:
-        chunk = _with_hash(Chunk(chunk_id=f"{name}_chunk_0", record_id=name, content=f"Content from {name} file in Project A", metadata={**({}), "header_path": name, "start_pos": 0, "end_pos": 50, "file_path": str(two_projects["project_a_docs"] / f"{name}.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
+        chunk = _with_hash(Chunk(chunk_id=f"{name}_chunk_0", record_id=name, content=f"Content from {name} file in Project A", metadata={ "header_path": name, "start_pos": 0, "end_pos": 50, "file_path": str(two_projects["project_a_docs"] / f"{name}.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
         vector.add_chunk(chunk)
         keyword.add_chunk(chunk)
 
@@ -518,7 +518,7 @@ async def test_context_persistence_maintains_path_isolation(
     Test that after persisting and reloading indices, the orchestrator
     still uses the correct documents_path.
     """
-    monkeypatch.setattr("searchkernel.context.load_config", lambda: config_for_project_a)
+    monkeypatch.setattr("ragdocs.context.load_config", lambda: config_for_project_a)
 
     # Create and start context
     ctx = ApplicationContext.create(

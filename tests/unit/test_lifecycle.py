@@ -14,9 +14,9 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
-
-from searchkernel.lifecycle import LifecycleCoordinator, LifecycleState
 from searchkernel.storage.db import DatabaseManager
+
+from ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 
 # ---------------------------------------------------------------------------
 # Lightweight stubs (no mock library — real objects with minimal behavior)
@@ -134,8 +134,8 @@ class TestLifecycleStateMachine:
             to_thread_calls.append(getattr(func, "__name__", repr(func)))
             return func(*args, **kwargs)
 
-        monkeypatch.setattr("searchkernel.lifecycle.LeaderElection", _FakeLeaderElection)
-        monkeypatch.setattr("searchkernel.lifecycle.asyncio.to_thread", _fake_to_thread)
+        monkeypatch.setattr("ragdocs.lifecycle.LeaderElection", _FakeLeaderElection)
+        monkeypatch.setattr("ragdocs.lifecycle.asyncio.to_thread", _fake_to_thread)
 
         worker = _FakeWorker()
         await coord.start(_fake_ctx(), db_manager=object(), huey_worker=worker)
@@ -189,8 +189,8 @@ class TestLifecycleStateMachine:
         async def _fake_to_thread(func, *args, **kwargs):
             return func(*args, **kwargs)
 
-        monkeypatch.setattr("searchkernel.lifecycle.GitWatcher", _FakeGitWatcher)
-        monkeypatch.setattr("searchkernel.lifecycle.asyncio.to_thread", _fake_to_thread)
+        monkeypatch.setattr("ragdocs.lifecycle.GitWatcher", _FakeGitWatcher)
+        monkeypatch.setattr("ragdocs.lifecycle.asyncio.to_thread", _fake_to_thread)
 
         ctx = cast(Any, _GitContext())
         await coord.start(ctx)
@@ -334,7 +334,7 @@ class TestWorkerSupervision:
                 raise asyncio.CancelledError
 
         with (
-            patch("searchkernel.lifecycle.asyncio.sleep", _fake_sleep),
+            patch("ragdocs.lifecycle.asyncio.sleep", _fake_sleep),
             pytest.raises(asyncio.CancelledError),
         ):
             await coord._supervise_worker_health()

@@ -2,20 +2,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from searchkernel.domain import Chunk
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.search.orchestrator import SearchOrchestrator
 
-from searchkernel.config import (
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.domain import Chunk
-from searchkernel.search.orchestrator import SearchOrchestrator
+from ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
@@ -72,7 +72,7 @@ def orchestrator(config, indices):
 async def test_orchestrator_query_without_exclusions(orchestrator, config):
     docs_path = Path(config.indexing.documents_path)
 
-    chunk1 = _with_hash(Chunk(chunk_id="docs/api_chunk_0", record_id="docs/api", content="API authentication using tokens", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_path / "docs" / "api.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk1 = _with_hash(Chunk(chunk_id="docs/api_chunk_0", record_id="docs/api", content="API authentication using tokens", metadata={ "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_path / "docs" / "api.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     orchestrator._vector.add_chunk(chunk1)
     orchestrator._keyword.add_chunk(chunk1)
@@ -87,9 +87,9 @@ async def test_orchestrator_query_without_exclusions(orchestrator, config):
 async def test_orchestrator_query_with_exclusions(orchestrator, config):
     docs_path = Path(config.indexing.documents_path)
 
-    chunk1 = _with_hash(Chunk(chunk_id="docs/api_chunk_0", record_id="docs/api", content="API authentication using tokens", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_path / "docs" / "api.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk1 = _with_hash(Chunk(chunk_id="docs/api_chunk_0", record_id="docs/api", content="API authentication using tokens", metadata={ "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_path / "docs" / "api.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
 
-    chunk2 = _with_hash(Chunk(chunk_id="docs/guide_chunk_0", record_id="docs/guide", content="Authentication guide for users", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_path / "docs" / "guide.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk2 = _with_hash(Chunk(chunk_id="docs/guide_chunk_0", record_id="docs/guide", content="Authentication guide for users", metadata={ "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_path / "docs" / "guide.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     orchestrator._vector.add_chunk(chunk1)
     orchestrator._vector.add_chunk(chunk2)
@@ -114,7 +114,7 @@ async def test_orchestrator_query_compression_stats_with_exclusions(
 
     chunks = []
     for i in range(5):
-        chunk = _with_hash(Chunk(chunk_id=f"docs/file{i}_chunk_0", record_id=f"docs/file{i}", content=f"API documentation topic {i}", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_path / "docs" / f"file{i}.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
+        chunk = _with_hash(Chunk(chunk_id=f"docs/file{i}_chunk_0", record_id=f"docs/file{i}", content=f"API documentation topic {i}", metadata={ "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_path / "docs" / f"file{i}.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
         chunks.append(chunk)
         orchestrator._vector.add_chunk(chunk)
         orchestrator._keyword.add_chunk(chunk)
@@ -136,7 +136,7 @@ async def test_orchestrator_query_multiple_exclusions(orchestrator, config):
 
     chunks = []
     for name in ["api", "guide", "tutorial", "reference"]:
-        chunk = _with_hash(Chunk(chunk_id=f"docs/{name}_chunk_0", record_id=f"docs/{name}", content=f"Documentation for {name}", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_path / "docs" / f"{name}.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
+        chunk = _with_hash(Chunk(chunk_id=f"docs/{name}_chunk_0", record_id=f"docs/{name}", content=f"Documentation for {name}", metadata={ "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(docs_path / "docs" / f"{name}.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
         chunks.append(chunk)
         orchestrator._vector.add_chunk(chunk)
         orchestrator._keyword.add_chunk(chunk)

@@ -4,8 +4,9 @@ Tests for file filtering logic using include/exclude patterns.
 
 from pathlib import Path
 
-from searchkernel.cli import _should_include_file
 from searchkernel.utils import should_include_file
+
+from ragdocs.cli import _should_include_file
 
 
 def test_include_all_pattern():

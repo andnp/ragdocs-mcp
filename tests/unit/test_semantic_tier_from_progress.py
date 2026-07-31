@@ -1,7 +1,6 @@
 """Unit tests for semantic tier derivation from indexing progress."""
 
 import pytest
-
 from searchkernel.indexing.runtime_readiness import semantic_tier_from_progress
 
 

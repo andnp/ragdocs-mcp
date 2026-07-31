@@ -7,7 +7,6 @@ GAP #1: Manifest reconciliation with corrupted data (High/Low, Score 4.0)
 import json
 
 import pytest
-
 from searchkernel.indexing.manifest import IndexManifest, load_manifest, save_manifest
 from searchkernel.indexing.reconciler import build_indexed_files_map, reconcile_indices
 

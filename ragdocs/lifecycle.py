@@ -12,18 +12,19 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from searchkernel.context import ApplicationContext
-from searchkernel.daemon import (
+from ragdocs.context import ApplicationContext
+from ragdocs.daemon import (
     DaemonMetadata,
     RuntimePaths,
     remove_daemon_metadata,
     write_daemon_metadata,
 )
-from searchkernel.git.watcher import GitWatcher
+from ragdocs.git.watcher import GitWatcher
 
 if TYPE_CHECKING:
     from searchkernel.storage.db import DatabaseManager
-    from searchkernel.worker.process import HueyWorkerProcess
+
+    from ragdocs.worker.process import HueyWorkerProcess
 
 logger = logging.getLogger(__name__)
 

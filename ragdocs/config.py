@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import tomlkit
 
-from searchkernel.embeddings import (
+from ragdocs.embeddings import (
     TEST_FAKE_EMBEDDING_MODEL_NAME,
     should_use_test_fake_embeddings,
 )

@@ -9,13 +9,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
-from searchkernel.config import Config, IndexingConfig, LLMConfig
-from searchkernel.indexing.manager import IndexManager
+from searchkernel.domain import Chunk
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.domain import Chunk
+
+from ragdocs.config import Config, IndexingConfig, LLMConfig
+from ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
@@ -43,7 +43,7 @@ def make_chunk(
     content_hash: str | None = None,
 ):
     """Helper to create a Chunk with minimal required fields."""
-    chunk = _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": f"/docs/{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=chunk_index))
+    chunk = _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={ "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": f"/docs/{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=chunk_index))
     # Override computed hash if needed for test control
     if content_hash is not None:
         object.__setattr__(chunk, "content_hash", content_hash)

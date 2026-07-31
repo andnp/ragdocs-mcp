@@ -18,7 +18,6 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-
 from searchkernel.adapters.stores.pgvector_index import PGVectorIndex
 from searchkernel.domain import Chunk
 
@@ -71,7 +70,7 @@ def index(pg_dsn, prefix):
 
 
 def _chunk(chunk_id: str, doc_id: str, content: str, chunk_index: int = 0) -> Chunk:
-    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={**({}), "header_path": "Intro", "start_pos": 0, "end_pos": len(content), "file_path": f"{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=chunk_index))
+    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={ "header_path": "Intro", "start_pos": 0, "end_pos": len(content), "file_path": f"{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=chunk_index))
 
 
 def test_add_chunks_then_get_chunk_by_id(index, prefix):

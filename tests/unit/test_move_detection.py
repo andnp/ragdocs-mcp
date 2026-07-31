@@ -3,14 +3,14 @@
 from datetime import UTC, datetime
 
 import pytest
-
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig
-from searchkernel.indexing.manager import IndexManager
+from searchkernel.domain import Chunk
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.hash_store import ChunkHashStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.domain import Chunk
+
+from ragdocs.config import ChunkingConfig, Config, IndexingConfig
+from ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
@@ -39,8 +39,8 @@ def hash_store(tmp_path):
 def sample_chunks():
     """Create sample chunks for testing."""
     return [
-        _with_hash(Chunk(chunk_id="docs/test_chunk_0", record_id="docs/test", content="First chunk content", metadata={**({"header": "Introduction"}), "header_path": "# Introduction", "start_pos": 0, "end_pos": 50, "file_path": "/docs/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0)),
-        _with_hash(Chunk(chunk_id="docs/test_chunk_1", record_id="docs/test", content="Second chunk content", metadata={**({"header": "Details"}), "header_path": "# Details", "start_pos": 51, "end_pos": 100, "file_path": "/docs/test.md", "modified_time": datetime.now(UTC)}, chunk_index=1)),
+        _with_hash(Chunk(chunk_id="docs/test_chunk_0", record_id="docs/test", content="First chunk content", metadata={"header": "Introduction", "header_path": "# Introduction", "start_pos": 0, "end_pos": 50, "file_path": "/docs/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0)),
+        _with_hash(Chunk(chunk_id="docs/test_chunk_1", record_id="docs/test", content="Second chunk content", metadata={"header": "Details", "header_path": "# Details", "start_pos": 51, "end_pos": 100, "file_path": "/docs/test.md", "modified_time": datetime.now(UTC)}, chunk_index=1)),
     ]
 
 
@@ -157,7 +157,7 @@ def test_vector_index_update_chunk_path(shared_embedding_model):
     """Test VectorIndex.update_chunk_path creates new chunk with reused content."""
     vector = VectorIndex(embedding_model=shared_embedding_model)
 
-    chunk = _with_hash(Chunk(chunk_id="old_path_chunk_0", record_id="old_path", content="Test content", metadata={**({"tags": ["test"]}), "header_path": "# Header", "start_pos": 0, "end_pos": 50, "file_path": "/old/path.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="old_path_chunk_0", record_id="old_path", content="Test content", metadata={"tags": ["test"], "header_path": "# Header", "start_pos": 0, "end_pos": 50, "file_path": "/old/path.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     vector.add_chunk(chunk)
 
@@ -203,12 +203,12 @@ def test_keyword_index_move_chunk():
     """Test KeywordIndex.move_chunk copies document with new ID."""
     keyword = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="old_path_chunk_0", record_id="old_path", content="Test content for keyword search", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": "/old/path.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="old_path_chunk_0", record_id="old_path", content="Test content for keyword search", metadata={ "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": "/old/path.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword.add_chunk(chunk)
 
     # Create new chunk with updated path
-    new_chunk = _with_hash(Chunk(chunk_id="new_path_chunk_0", record_id="new_path", content="Test content for keyword search", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": "/new/path.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    new_chunk = _with_hash(Chunk(chunk_id="new_path_chunk_0", record_id="new_path", content="Test content for keyword search", metadata={ "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": "/new/path.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     success = keyword.move_chunk("old_path_chunk_0", new_chunk)
     assert success is True
@@ -225,7 +225,7 @@ def test_keyword_index_move_chunk_not_found():
     """Test move_chunk returns False for nonexistent chunk."""
     keyword = KeywordIndex()
 
-    new_chunk = _with_hash(Chunk(chunk_id="new_chunk", record_id="test", content="test", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 10, "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    new_chunk = _with_hash(Chunk(chunk_id="new_chunk", record_id="test", content="test", metadata={ "header_path": "", "start_pos": 0, "end_pos": 10, "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     result = keyword.move_chunk("nonexistent_chunk", new_chunk)
     assert result is False
@@ -314,8 +314,8 @@ def test_detect_file_moves_simple_rename(manager, sample_chunks):
 
     # Create new chunks with same content but different path
     new_chunks = [
-        _with_hash(Chunk(chunk_id="docs/renamed_chunk_0", record_id="docs/renamed", content=sample_chunks[0].content, metadata={**({}), "header_path": sample_chunks[0].metadata.get("header_path"), "start_pos": 0, "end_pos": 50, "file_path": "/docs/renamed.md", "modified_time": datetime.now(UTC)}, chunk_index=0)),
-        _with_hash(Chunk(chunk_id="docs/renamed_chunk_1", record_id="docs/renamed", content=sample_chunks[1].content, metadata={**({}), "header_path": sample_chunks[1].metadata.get("header_path"), "start_pos": 51, "end_pos": 100, "file_path": "/docs/renamed.md", "modified_time": datetime.now(UTC)}, chunk_index=1)),
+        _with_hash(Chunk(chunk_id="docs/renamed_chunk_0", record_id="docs/renamed", content=sample_chunks[0].content, metadata={ "header_path": sample_chunks[0].metadata.get("header_path"), "start_pos": 0, "end_pos": 50, "file_path": "/docs/renamed.md", "modified_time": datetime.now(UTC)}, chunk_index=0)),
+        _with_hash(Chunk(chunk_id="docs/renamed_chunk_1", record_id="docs/renamed", content=sample_chunks[1].content, metadata={ "header_path": sample_chunks[1].metadata.get("header_path"), "start_pos": 51, "end_pos": 100, "file_path": "/docs/renamed.md", "modified_time": datetime.now(UTC)}, chunk_index=1)),
     ]
 
     added_docs = {"docs/renamed": new_chunks}
@@ -336,8 +336,8 @@ def test_detect_file_moves_with_edit(manager, sample_chunks):
 
     # Create new chunks: one changed, one unchanged
     new_chunks = [
-        _with_hash(Chunk(chunk_id="docs/moved_chunk_0", record_id="docs/moved", content="CHANGED CONTENT", metadata={**({}), "header_path": "# Introduction", "start_pos": 0, "end_pos": 50, "file_path": "/docs/moved.md", "modified_time": datetime.now(UTC)}, chunk_index=0)),
-        _with_hash(Chunk(chunk_id="docs/moved_chunk_1", record_id="docs/moved", content=sample_chunks[1].content, metadata={**({}), "header_path": "# Details", "start_pos": 51, "end_pos": 100, "file_path": "/docs/moved.md", "modified_time": datetime.now(UTC)}, chunk_index=1)),
+        _with_hash(Chunk(chunk_id="docs/moved_chunk_0", record_id="docs/moved", content="CHANGED CONTENT", metadata={ "header_path": "# Introduction", "start_pos": 0, "end_pos": 50, "file_path": "/docs/moved.md", "modified_time": datetime.now(UTC)}, chunk_index=0)),
+        _with_hash(Chunk(chunk_id="docs/moved_chunk_1", record_id="docs/moved", content=sample_chunks[1].content, metadata={ "header_path": "# Details", "start_pos": 51, "end_pos": 100, "file_path": "/docs/moved.md", "modified_time": datetime.now(UTC)}, chunk_index=1)),
     ]
 
     added_docs = {"docs/moved": new_chunks}
@@ -353,7 +353,7 @@ def test_detect_file_moves_threshold(manager):
     # Create 10 chunks, 8 matching (80% threshold)
     old_chunks = []
     for i in range(10):
-        chunk = _with_hash(Chunk(chunk_id=f"old_doc_chunk_{i}", record_id="old_doc", content=f"Chunk {i} content", metadata={**({}), "header_path": f"# Section {i}", "start_pos": i * 100, "end_pos": (i + 1) * 100, "file_path": "/old/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=i))
+        chunk = _with_hash(Chunk(chunk_id=f"old_doc_chunk_{i}", record_id="old_doc", content=f"Chunk {i} content", metadata={ "header_path": f"# Section {i}", "start_pos": i * 100, "end_pos": (i + 1) * 100, "file_path": "/old/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=i))
         manager._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
         old_chunks.append(chunk)
 
@@ -363,13 +363,13 @@ def test_detect_file_moves_threshold(manager):
     new_chunks = []
     for i in range(8):
         new_chunks.append(
-            _with_hash(Chunk(chunk_id=f"new_doc_chunk_{i}", record_id="new_doc", content=old_chunks[i].content, metadata={**({}), "header_path": f"# Section {i}", "start_pos": i * 100, "end_pos": (i + 1) * 100, "file_path": "/new/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=i))
+            _with_hash(Chunk(chunk_id=f"new_doc_chunk_{i}", record_id="new_doc", content=old_chunks[i].content, metadata={ "header_path": f"# Section {i}", "start_pos": i * 100, "end_pos": (i + 1) * 100, "file_path": "/new/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=i))
         )
 
     # Add 2 new chunks
     for i in range(8, 10):
         new_chunks.append(
-            _with_hash(Chunk(chunk_id=f"new_doc_chunk_{i}", record_id="new_doc", content=f"NEW CONTENT {i}", metadata={**({}), "header_path": f"# Section {i}", "start_pos": i * 100, "end_pos": (i + 1) * 100, "file_path": "/new/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=i))
+            _with_hash(Chunk(chunk_id=f"new_doc_chunk_{i}", record_id="new_doc", content=f"NEW CONTENT {i}", metadata={ "header_path": f"# Section {i}", "start_pos": i * 100, "end_pos": (i + 1) * 100, "file_path": "/new/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=i))
         )
 
     added_docs = {"new_doc": new_chunks}

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
+from searchkernel.domain import Chunk
 from searchkernel.indexing.embedding_cache import SQLiteEmbeddingCache
 from searchkernel.indexing.semantic import (
     EncoderFingerprint,
@@ -16,7 +16,6 @@ from searchkernel.indexing.semantic import (
     embedding_identity,
     semantic_input_for_chunk,
 )
-from searchkernel.domain import Chunk
 
 
 def _with_hash(chunk):
@@ -43,7 +42,7 @@ def make_test_chunk(
     header_path: str = "Header",
 ) -> Chunk:
     """Create a test chunk with minimal required fields."""
-    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={**({}), "header_path": header_path, "start_pos": 0, "end_pos": len(content), "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={ "header_path": header_path, "start_pos": 0, "end_pos": len(content), "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
 
 class FakeEncoder:

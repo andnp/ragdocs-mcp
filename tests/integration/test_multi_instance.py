@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.config import Config, IndexingConfig
-from searchkernel.context import ApplicationContext
+from ragdocs.config import Config, IndexingConfig
+from ragdocs.context import ApplicationContext
 
 
 def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
@@ -18,11 +18,12 @@ def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
         index_path=index_path,
     )
 
-    from searchkernel.indexing.manager import IndexManager
     from searchkernel.indices.graph import GraphStore
     from searchkernel.indices.keyword import KeywordIndex
     from searchkernel.indices.vector import VectorIndex
     from searchkernel.search.orchestrator import SearchOrchestrator
+
+    from ragdocs.indexing.manager import IndexManager
 
     vector = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
     keyword = KeywordIndex()

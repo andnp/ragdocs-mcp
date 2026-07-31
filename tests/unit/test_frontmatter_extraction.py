@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.parsers.markdown import INDEXED_FRONTMATTER_FIELDS, MarkdownParser
+from ragdocs.parsers.markdown import INDEXED_FRONTMATTER_FIELDS, MarkdownParser
 
 
 @pytest.fixture

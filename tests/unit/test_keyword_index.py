@@ -1,7 +1,6 @@
 from datetime import UTC, datetime
 
 import pytest
-
 from searchkernel.domain import Record
 from searchkernel.indices.keyword import KeywordIndex
 
@@ -291,11 +290,11 @@ def test_keyword_index_no_results(keyword_index, sample_document):
 def test_keyword_index_get_chunk_by_id_returns_row_metadata(keyword_index):
     from searchkernel.domain import Chunk
 
-    chunk = _with_hash(Chunk(chunk_id="lookup_chunk_0", record_id="lookup-doc", content="Readable keyword fallback content.", metadata={**({
+    chunk = _with_hash(Chunk(chunk_id="lookup_chunk_0", record_id="lookup-doc", content="Readable keyword fallback content.", metadata={
             "title": "Lookup Title",
             "tags": ["lookup", "fallback"],
-            "source_file": "/tmp/lookup.md",
-        }), "header_path": "Guide > Lookup", "start_pos": 0, "end_pos": 33, "file_path": "/tmp/lookup.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+            "source_file": "/tmp/lookup.md"
+        , "header_path": "Guide > Lookup", "start_pos": 0, "end_pos": 33, "file_path": "/tmp/lookup.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk)
 
@@ -433,10 +432,10 @@ def test_keyword_index_title_field_boosted():
     keyword_index = KeywordIndex()
 
     # Chunk with search term in title
-    chunk_with_title = _with_hash(Chunk(chunk_id="titled_chunk_0", record_id="titled-doc", content="Some generic content about programming.", metadata={**({"title": "Authentication Guide", "tags": []}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": "/tmp/auth.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk_with_title = _with_hash(Chunk(chunk_id="titled_chunk_0", record_id="titled-doc", content="Some generic content about programming.", metadata={"title": "Authentication Guide", "tags": [], "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": "/tmp/auth.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     # Chunk with search term in content only
-    chunk_content_only = _with_hash(Chunk(chunk_id="content_chunk_0", record_id="content-doc", content="This document covers authentication patterns and best practices.", metadata={**({"title": "Generic Document", "tags": []}), "header_path": "", "start_pos": 0, "end_pos": 70, "file_path": "/tmp/generic.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk_content_only = _with_hash(Chunk(chunk_id="content_chunk_0", record_id="content-doc", content="This document covers authentication patterns and best practices.", metadata={"title": "Generic Document", "tags": [], "header_path": "", "start_pos": 0, "end_pos": 70, "file_path": "/tmp/generic.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk_with_title)
     keyword_index.add_chunk(chunk_content_only)
@@ -460,7 +459,7 @@ def test_keyword_index_headers_field_indexed():
 
     keyword_index = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="header_chunk_0", record_id="header-doc", content="Implementation details for the feature.", metadata={**({"tags": []}), "header_path": "API Reference > Endpoints > User Management", "start_pos": 0, "end_pos": 50, "file_path": "/tmp/api.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="header_chunk_0", record_id="header-doc", content="Implementation details for the feature.", metadata={"tags": [], "header_path": "API Reference > Endpoints > User Management", "start_pos": 0, "end_pos": 50, "file_path": "/tmp/api.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk)
 
@@ -482,10 +481,10 @@ def test_keyword_index_keywords_field_indexed():
 
     keyword_index = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="kw_chunk_0", record_id="kw-doc", content="General content without specific terms.", metadata={**({
+    chunk = _with_hash(Chunk(chunk_id="kw_chunk_0", record_id="kw-doc", content="General content without specific terms.", metadata={
             "keywords": ["microservices", "distributed-systems", "scalability"],
-            "tags": [],
-        }), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": "/tmp/arch.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+            "tags": []
+        , "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": "/tmp/arch.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk)
 
@@ -507,10 +506,10 @@ def test_keyword_index_description_field_indexed():
 
     keyword_index = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="desc_chunk_0", record_id="desc-doc", content="Code examples and snippets.", metadata={**({
+    chunk = _with_hash(Chunk(chunk_id="desc_chunk_0", record_id="desc-doc", content="Code examples and snippets.", metadata={
             "description": "A comprehensive guide to containerization with Docker",
-            "tags": [],
-        }), "header_path": "", "start_pos": 0, "end_pos": 30, "file_path": "/tmp/docker.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+            "tags": []
+        , "header_path": "", "start_pos": 0, "end_pos": 30, "file_path": "/tmp/docker.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk)
 
@@ -529,7 +528,7 @@ def test_keyword_index_author_field_indexed():
 
     keyword_index = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="author_chunk_0", record_id="author-doc", content="Technical documentation content.", metadata={**({"author": "John Smith", "tags": []}), "header_path": "", "start_pos": 0, "end_pos": 40, "file_path": "/tmp/authored.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="author_chunk_0", record_id="author-doc", content="Technical documentation content.", metadata={"author": "John Smith", "tags": [], "header_path": "", "start_pos": 0, "end_pos": 40, "file_path": "/tmp/authored.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk)
 
@@ -548,7 +547,7 @@ def test_keyword_index_category_field_indexed():
 
     keyword_index = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="cat_chunk_0", record_id="cat-doc", content="Tutorial content here.", metadata={**({"category": "tutorials", "tags": []}), "header_path": "", "start_pos": 0, "end_pos": 25, "file_path": "/tmp/tutorial.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="cat_chunk_0", record_id="cat-doc", content="Tutorial content here.", metadata={"category": "tutorials", "tags": [], "header_path": "", "start_pos": 0, "end_pos": 25, "file_path": "/tmp/tutorial.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk)
 
@@ -567,15 +566,15 @@ def test_keyword_index_all_boosted_fields_together():
 
     keyword_index = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="full_chunk_0", record_id="full-doc", content="Main content of the document.", metadata={**({
+    chunk = _with_hash(Chunk(chunk_id="full_chunk_0", record_id="full-doc", content="Main content of the document.", metadata={
             "title": "Kubernetes Deployment Guide",
             "description": "Step-by-step instructions for deploying applications",
             "keywords": ["k8s", "containers", "orchestration"],
             "author": "DevOps Team",
             "category": "infrastructure",
             "aliases": ["k8s-guide", "deployment-howto"],
-            "tags": ["kubernetes", "devops"],
-        }), "header_path": "Getting Started > Prerequisites", "start_pos": 0, "end_pos": 35, "file_path": "/tmp/k8s.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+            "tags": ["kubernetes", "devops"]
+        , "header_path": "Getting Started > Prerequisites", "start_pos": 0, "end_pos": 35, "file_path": "/tmp/k8s.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk)
 
@@ -605,9 +604,9 @@ def test_keyword_index_prefers_exact_title_over_header_and_content_matches():
 
     keyword_index = KeywordIndex()
 
-    title_match = _with_hash(Chunk(chunk_id="title_exact_chunk_0", record_id="title-exact-doc", content="General implementation notes without the key phrase.", metadata={**({"title": "Authentication Overview", "tags": []}), "header_path": "", "start_pos": 0, "end_pos": 47, "file_path": "/tmp/title-exact.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
-    header_match = _with_hash(Chunk(chunk_id="header_exact_chunk_0", record_id="header-exact-doc", content="General implementation notes without the key phrase.", metadata={**({"title": "Security Notes", "tags": []}), "header_path": "Reference > Authentication Overview", "start_pos": 0, "end_pos": 47, "file_path": "/tmp/header-exact.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
-    content_match = _with_hash(Chunk(chunk_id="content_phrase_chunk_0", record_id="content-phrase-doc", content="This page contains an authentication overview for platform setup.", metadata={**({"title": "General Setup", "tags": []}), "header_path": "", "start_pos": 0, "end_pos": 66, "file_path": "/tmp/content-phrase.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    title_match = _with_hash(Chunk(chunk_id="title_exact_chunk_0", record_id="title-exact-doc", content="General implementation notes without the key phrase.", metadata={"title": "Authentication Overview", "tags": [], "header_path": "", "start_pos": 0, "end_pos": 47, "file_path": "/tmp/title-exact.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    header_match = _with_hash(Chunk(chunk_id="header_exact_chunk_0", record_id="header-exact-doc", content="General implementation notes without the key phrase.", metadata={"title": "Security Notes", "tags": [], "header_path": "Reference > Authentication Overview", "start_pos": 0, "end_pos": 47, "file_path": "/tmp/header-exact.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    content_match = _with_hash(Chunk(chunk_id="content_phrase_chunk_0", record_id="content-phrase-doc", content="This page contains an authentication overview for platform setup.", metadata={"title": "General Setup", "tags": [], "header_path": "", "start_pos": 0, "end_pos": 66, "file_path": "/tmp/content-phrase.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(title_match)
     keyword_index.add_chunk(header_match)
@@ -629,8 +628,8 @@ def test_keyword_index_prefers_exact_header_segment_over_content_match():
 
     keyword_index = KeywordIndex()
 
-    header_match = _with_hash(Chunk(chunk_id="header_segment_chunk_0", record_id="header-segment-doc", content="Operational notes without the query phrase.", metadata={**({"title": "Operational Notes", "tags": []}), "header_path": "Config > worker.enabled", "start_pos": 0, "end_pos": 42, "file_path": "/tmp/worker-config.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
-    content_match = _with_hash(Chunk(chunk_id="content_config_chunk_0", record_id="content-config-doc", content="Set worker.enabled to false when running locally.", metadata={**({"title": "Runtime Flags", "tags": []}), "header_path": "Config > Runtime", "start_pos": 0, "end_pos": 49, "file_path": "/tmp/runtime-flags.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    header_match = _with_hash(Chunk(chunk_id="header_segment_chunk_0", record_id="header-segment-doc", content="Operational notes without the query phrase.", metadata={"title": "Operational Notes", "tags": [], "header_path": "Config > worker.enabled", "start_pos": 0, "end_pos": 42, "file_path": "/tmp/worker-config.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    content_match = _with_hash(Chunk(chunk_id="content_config_chunk_0", record_id="content-config-doc", content="Set worker.enabled to false when running locally.", metadata={"title": "Runtime Flags", "tags": [], "header_path": "Config > Runtime", "start_pos": 0, "end_pos": 49, "file_path": "/tmp/runtime-flags.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(header_match)
     keyword_index.add_chunk(content_match)
@@ -645,9 +644,9 @@ def test_keyword_index_prefers_exact_title_over_interior_section_match_for_testi
 
     keyword_index = KeywordIndex()
 
-    dedicated_spec = _with_hash(Chunk(chunk_id="spec_testing_strategy_chunk_0", record_id="spec-testing-strategy-doc", content="Policy, fixtures, and verification guidance for repository tests.", metadata={**({"title": "Testing Strategy", "tags": []}), "header_path": "Testing Strategy", "start_pos": 0, "end_pos": 64, "file_path": "/tmp/specs/04-testing-strategy.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    dedicated_spec = _with_hash(Chunk(chunk_id="spec_testing_strategy_chunk_0", record_id="spec-testing-strategy-doc", content="Policy, fixtures, and verification guidance for repository tests.", metadata={"title": "Testing Strategy", "tags": [], "header_path": "Testing Strategy", "start_pos": 0, "end_pos": 64, "file_path": "/tmp/specs/04-testing-strategy.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     broader_doc = _with_hash(Chunk(chunk_id="development_testing_strategy_chunk_0", record_id="development-doc", content="This development guide includes a testing strategy section. "
-            "The testing strategy section summarizes how to run checks.", metadata={**({"title": "Development", "tags": []}), "header_path": "Development > Testing Strategy", "start_pos": 0, "end_pos": 112, "file_path": "/tmp/docs/development.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+            "The testing strategy section summarizes how to run checks.", metadata={"title": "Development", "tags": [], "header_path": "Development > Testing Strategy", "start_pos": 0, "end_pos": 112, "file_path": "/tmp/docs/development.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(dedicated_spec)
     keyword_index.add_chunk(broader_doc)
@@ -665,8 +664,8 @@ def test_keyword_index_prefers_primary_heading_over_deeper_header_match():
 
     keyword_index = KeywordIndex()
 
-    primary_heading_match = _with_hash(Chunk(chunk_id="primary_heading_chunk_0", record_id="primary-heading-doc", content="Repository-level guidance for tests and CI.", metadata={**({"title": "Quality Notes", "tags": []}), "header_path": "Testing Strategy > CI Coverage", "start_pos": 0, "end_pos": 42, "file_path": "/tmp/quality/testing-strategy.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
-    deeper_heading_match = _with_hash(Chunk(chunk_id="deeper_heading_chunk_0", record_id="deeper-heading-doc", content="Development playbook notes for the team.", metadata={**({"title": "Development", "tags": []}), "header_path": "Development > Testing Strategy", "start_pos": 0, "end_pos": 39, "file_path": "/tmp/docs/development.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    primary_heading_match = _with_hash(Chunk(chunk_id="primary_heading_chunk_0", record_id="primary-heading-doc", content="Repository-level guidance for tests and CI.", metadata={"title": "Quality Notes", "tags": [], "header_path": "Testing Strategy > CI Coverage", "start_pos": 0, "end_pos": 42, "file_path": "/tmp/quality/testing-strategy.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    deeper_heading_match = _with_hash(Chunk(chunk_id="deeper_heading_chunk_0", record_id="deeper-heading-doc", content="Development playbook notes for the team.", metadata={"title": "Development", "tags": [], "header_path": "Development > Testing Strategy", "start_pos": 0, "end_pos": 39, "file_path": "/tmp/docs/development.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(primary_heading_match)
     keyword_index.add_chunk(deeper_heading_match)
@@ -681,8 +680,8 @@ def test_keyword_index_prefers_exact_config_key_title_over_content_match():
 
     keyword_index = KeywordIndex()
 
-    title_match = _with_hash(Chunk(chunk_id="title_config_chunk_0", record_id="title-config-doc", content="Configuration reference without the literal key in the body.", metadata={**({"title": "worker.enabled", "tags": []}), "header_path": "Config", "start_pos": 0, "end_pos": 57, "file_path": "/tmp/config-reference.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
-    content_match = _with_hash(Chunk(chunk_id="body_config_chunk_0", record_id="body-config-doc", content="Use worker.enabled to disable the background worker in tests.", metadata={**({"title": "Testing Notes", "tags": []}), "header_path": "Testing", "start_pos": 0, "end_pos": 62, "file_path": "/tmp/testing-notes.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    title_match = _with_hash(Chunk(chunk_id="title_config_chunk_0", record_id="title-config-doc", content="Configuration reference without the literal key in the body.", metadata={"title": "worker.enabled", "tags": [], "header_path": "Config", "start_pos": 0, "end_pos": 57, "file_path": "/tmp/config-reference.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    content_match = _with_hash(Chunk(chunk_id="body_config_chunk_0", record_id="body-config-doc", content="Use worker.enabled to disable the background worker in tests.", metadata={"title": "Testing Notes", "tags": [], "header_path": "Testing", "start_pos": 0, "end_pos": 62, "file_path": "/tmp/testing-notes.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(title_match)
     keyword_index.add_chunk(content_match)
@@ -697,11 +696,11 @@ def test_keyword_index_artifact_lane_matches_dotted_source_file():
 
     keyword_index = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="artifact_chunk_0", record_id="artifact-doc", content="Checkpoint metadata and runtime state.", metadata={**({
+    chunk = _with_hash(Chunk(chunk_id="artifact_chunk_0", record_id="artifact-doc", content="Checkpoint metadata and runtime state.", metadata={
             "title": "Runtime Checkpoint",
             "source_file": "state/bootstrap.checkpoint.json",
-            "tags": [],
-        }), "header_path": "Runtime > State", "start_pos": 0, "end_pos": 37, "file_path": "/tmp/state/bootstrap.checkpoint.json", "modified_time": datetime.now(UTC)}, chunk_index=0))
+            "tags": []
+        , "header_path": "Runtime > State", "start_pos": 0, "end_pos": 37, "file_path": "/tmp/state/bootstrap.checkpoint.json", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(chunk)
 
@@ -715,16 +714,16 @@ def test_keyword_index_artifact_lane_prefers_path_match_over_content_only_match(
 
     keyword_index = KeywordIndex()
 
-    path_match = _with_hash(Chunk(chunk_id="path_chunk_0", record_id="path-doc", content="State persisted after daemon bootstrap.", metadata={**({
+    path_match = _with_hash(Chunk(chunk_id="path_chunk_0", record_id="path-doc", content="State persisted after daemon bootstrap.", metadata={
             "title": "State File",
             "source_file": "runtime/state/bootstrap.checkpoint.json",
-            "tags": [],
-        }), "header_path": "", "start_pos": 0, "end_pos": 37, "file_path": "/tmp/runtime/state/bootstrap.checkpoint.json", "modified_time": datetime.now(UTC)}, chunk_index=0))
-    content_only = _with_hash(Chunk(chunk_id="content_chunk_1", record_id="content-doc", content="The file bootstrap.checkpoint.json stores the current runtime checkpoint.", metadata={**({
+            "tags": []
+        , "header_path": "", "start_pos": 0, "end_pos": 37, "file_path": "/tmp/runtime/state/bootstrap.checkpoint.json", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    content_only = _with_hash(Chunk(chunk_id="content_chunk_1", record_id="content-doc", content="The file bootstrap.checkpoint.json stores the current runtime checkpoint.", metadata={
             "title": "Checkpoint Notes",
             "source_file": "notes/runtime-overview.md",
-            "tags": [],
-        }), "header_path": "", "start_pos": 0, "end_pos": 72, "file_path": "/tmp/notes/runtime-overview.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+            "tags": []
+        , "header_path": "", "start_pos": 0, "end_pos": 72, "file_path": "/tmp/notes/runtime-overview.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(path_match)
     keyword_index.add_chunk(content_only)
@@ -742,11 +741,11 @@ def test_keyword_index_artifact_lane_matches_exact_title_literal():
 
     keyword_index = KeywordIndex()
 
-    title_match = _with_hash(Chunk(chunk_id="title_chunk_0", record_id="title-doc", content="Literal artifact title without filename in content.", metadata={**({
+    title_match = _with_hash(Chunk(chunk_id="title_chunk_0", record_id="title-doc", content="Literal artifact title without filename in content.", metadata={
             "title": "bootstrap.checkpoint.json",
             "source_file": "notes/runtime-artifacts.md",
-            "tags": [],
-        }), "header_path": "Artifacts", "start_pos": 0, "end_pos": 46, "file_path": "/tmp/notes/runtime-artifacts.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+            "tags": []
+        , "header_path": "Artifacts", "start_pos": 0, "end_pos": 46, "file_path": "/tmp/notes/runtime-artifacts.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(title_match)
 
@@ -761,11 +760,11 @@ def test_keyword_index_artifact_lane_matches_literal_in_body_content():
     keyword_index = KeywordIndex()
 
     content_match = _with_hash(Chunk(chunk_id="content_literal_chunk_0", record_id="content-literal-doc", content="Bootstrap recovery uses bootstrap.checkpoint.json to restore "
-            "runtime state after restart.", metadata={**({
+            "runtime state after restart.", metadata={
             "title": "Daemon Recovery Notes",
             "source_file": "notes/restart-behavior.md",
-            "tags": [],
-        }), "header_path": "Runtime > Recovery", "start_pos": 0, "end_pos": 90, "file_path": "/tmp/notes/restart-behavior.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+            "tags": []
+        , "header_path": "Runtime > Recovery", "start_pos": 0, "end_pos": 90, "file_path": "/tmp/notes/restart-behavior.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     keyword_index.add_chunk(content_match)
 
@@ -802,7 +801,7 @@ def test_keyword_index_schema_mismatch_triggers_rebuild(tmp_path):
 
     from searchkernel.domain import Chunk
 
-    chunk = _with_hash(Chunk(chunk_id="new_chunk_0", record_id="new-doc", content="Test content.", metadata={**({"author": "Test Author", "tags": []}), "header_path": "", "start_pos": 0, "end_pos": 13, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="new_chunk_0", record_id="new-doc", content="Test content.", metadata={"author": "Test Author", "tags": [], "header_path": "", "start_pos": 0, "end_pos": 13, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     keyword_index.add_chunk(chunk)
 
     results = keyword_index.search("Test Author", top_k=5)
@@ -821,7 +820,7 @@ def test_keyword_index_remove_handles_corrupted_db(tmp_path):
 
     keyword_index = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="chunk_to_remove_0", record_id="test-doc", content="Content for removal testing.", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 30, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="chunk_to_remove_0", record_id="test-doc", content="Content for removal testing.", metadata={"tags": [], "header_path": "", "start_pos": 0, "end_pos": 30, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     keyword_index.add_chunk(chunk)
 
     index_path = tmp_path / "corrupted_keyword_index"
@@ -852,7 +851,7 @@ def test_keyword_index_search_handles_corrupted_db(tmp_path):
 
     keyword_index = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="search_chunk_0", record_id="search-doc", content="Searchable content for testing.", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 35, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="search_chunk_0", record_id="search-doc", content="Searchable content for testing.", metadata={"tags": [], "header_path": "", "start_pos": 0, "end_pos": 35, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     keyword_index.add_chunk(chunk)
 
     index_path = tmp_path / "corrupted_search_index"
@@ -885,7 +884,7 @@ def test_keyword_index_recovery_allows_reindexing(tmp_path):
 
     keyword_index = KeywordIndex()
 
-    original_chunk = _with_hash(Chunk(chunk_id="original_0", record_id="original-doc", content="Original content before corruption.", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 40, "file_path": "/tmp/original.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    original_chunk = _with_hash(Chunk(chunk_id="original_0", record_id="original-doc", content="Original content before corruption.", metadata={"tags": [], "header_path": "", "start_pos": 0, "end_pos": 40, "file_path": "/tmp/original.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     keyword_index.add_chunk(original_chunk)
 
     index_path = tmp_path / "recovery_test_index"
@@ -898,7 +897,7 @@ def test_keyword_index_recovery_allows_reindexing(tmp_path):
 
     keyword_index.search("trigger corruption detection", top_k=5)
 
-    new_chunk = _with_hash(Chunk(chunk_id="new_after_recovery_0", record_id="new-doc", content="New content added after recovery.", metadata={**({"tags": []}), "header_path": "", "start_pos": 0, "end_pos": 35, "file_path": "/tmp/new.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    new_chunk = _with_hash(Chunk(chunk_id="new_after_recovery_0", record_id="new-doc", content="New content added after recovery.", metadata={"tags": [], "header_path": "", "start_pos": 0, "end_pos": 35, "file_path": "/tmp/new.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     keyword_index.add_chunk(new_chunk)
 
     results = keyword_index.search("new content recovery", top_k=5)
@@ -917,8 +916,8 @@ def test_remove_chunk_removes_from_index():
     keyword_index = KeywordIndex()
 
     # Add two chunks
-    chunk1 = _with_hash(Chunk(chunk_id="doc1#chunk#0", record_id="doc1", content="First chunk with Python programming.", metadata={**({}), "header_path": "Section 1", "start_pos": 0, "end_pos": 36, "file_path": "/tmp/doc1.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
-    chunk2 = _with_hash(Chunk(chunk_id="doc1#chunk#1", record_id="doc1", content="Second chunk with Java programming.", metadata={**({}), "header_path": "Section 2", "start_pos": 37, "end_pos": 72, "file_path": "/tmp/doc1.md", "modified_time": datetime.now(UTC)}, chunk_index=1))
+    chunk1 = _with_hash(Chunk(chunk_id="doc1#chunk#0", record_id="doc1", content="First chunk with Python programming.", metadata={ "header_path": "Section 1", "start_pos": 0, "end_pos": 36, "file_path": "/tmp/doc1.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk2 = _with_hash(Chunk(chunk_id="doc1#chunk#1", record_id="doc1", content="Second chunk with Java programming.", metadata={ "header_path": "Section 2", "start_pos": 37, "end_pos": 72, "file_path": "/tmp/doc1.md", "modified_time": datetime.now(UTC)}, chunk_index=1))
 
     keyword_index.add_chunk(chunk1)
     keyword_index.add_chunk(chunk2)
@@ -960,7 +959,7 @@ def test_remove_chunk_handles_corruption(tmp_path):
 
     keyword_index = KeywordIndex()
 
-    chunk = _with_hash(Chunk(chunk_id="corrupt_test#chunk#0", record_id="corrupt_test", content="Content for corruption test.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 29, "file_path": "/tmp/corrupt.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="corrupt_test#chunk#0", record_id="corrupt_test", content="Content for corruption test.", metadata={ "header_path": "", "start_pos": 0, "end_pos": 29, "file_path": "/tmp/corrupt.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     keyword_index.add_chunk(chunk)
 
     # Persist and corrupt
@@ -977,7 +976,7 @@ def test_remove_chunk_handles_corruption(tmp_path):
     keyword_index.remove_chunk("corrupt_test#chunk#0")
 
     # Index should be reinitialized and functional
-    new_chunk = _with_hash(Chunk(chunk_id="new_chunk#0", record_id="new_doc", content="New content after recovery.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 27, "file_path": "/tmp/new.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    new_chunk = _with_hash(Chunk(chunk_id="new_chunk#0", record_id="new_doc", content="New content after recovery.", metadata={ "header_path": "", "start_pos": 0, "end_pos": 27, "file_path": "/tmp/new.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     keyword_index.add_chunk(new_chunk)
 
     results = keyword_index.search("new content", top_k=5)
@@ -1003,7 +1002,7 @@ def test_remove_chunk_thread_safe():
 
     # Add multiple chunks
     for i in range(10):
-        chunk = _with_hash(Chunk(chunk_id=f"concurrent#chunk#{i}", record_id="concurrent", content=f"Chunk {i} with unique term{i}.", metadata={**({}), "header_path": f"Section {i}", "start_pos": i * 30, "end_pos": (i + 1) * 30, "file_path": "/tmp/concurrent.md", "modified_time": datetime.now(UTC)}, chunk_index=i))
+        chunk = _with_hash(Chunk(chunk_id=f"concurrent#chunk#{i}", record_id="concurrent", content=f"Chunk {i} with unique term{i}.", metadata={ "header_path": f"Section {i}", "start_pos": i * 30, "end_pos": (i + 1) * 30, "file_path": "/tmp/concurrent.md", "modified_time": datetime.now(UTC)}, chunk_index=i))
         keyword_index.add_chunk(chunk)
 
     # Concurrently remove half the chunks

@@ -1,6 +1,6 @@
 import pytest
 
-from searchkernel.parsers.plaintext import PlainTextParser
+from ragdocs.parsers.plaintext import PlainTextParser
 
 
 def test_parse_simple_text(tmp_path):

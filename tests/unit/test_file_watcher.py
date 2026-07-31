@@ -7,10 +7,10 @@ import queue
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-import searchkernel.indexing.tasks as tasks_mod
 from searchkernel.indexing.discovery import is_excluded_dir, walk_included_dirs
-from searchkernel.indexing.watcher import (
+
+import ragdocs.indexing.tasks as tasks_mod
+from ragdocs.indexing.watcher import (
     MAX_QUEUE_SIZE,
     RECURSIVE_ROOT_WATCH_RATIO,
     RECURSIVE_ROOT_WATCH_THRESHOLD,
@@ -530,8 +530,8 @@ class TestFileWatcherSchedulingMode:
         )
 
         with (
-            patch("searchkernel.indexing.watcher.walk_dirs_with_files", return_value=watched_dirs),
-            patch("searchkernel.indexing.watcher.Observer", return_value=observer),
+            patch("ragdocs.indexing.watcher.walk_dirs_with_files", return_value=watched_dirs),
+            patch("ragdocs.indexing.watcher.Observer", return_value=observer),
         ):
             watcher.start()
 
@@ -569,10 +569,10 @@ class TestFileWatcherSchedulingMode:
 
         with (
             patch(
-                "searchkernel.indexing.watcher.walk_dirs_with_files",
+                "ragdocs.indexing.watcher.walk_dirs_with_files",
                 side_effect=[watched_a, watched_b],
             ),
-            patch("searchkernel.indexing.watcher.Observer", return_value=observer),
+            patch("ragdocs.indexing.watcher.Observer", return_value=observer),
         ):
             watcher.start()
 
@@ -604,8 +604,8 @@ class TestFileWatcherSchedulingMode:
         )
 
         with (
-            patch("searchkernel.indexing.watcher.walk_dirs_with_files", side_effect=[watched_a]),
-            patch("searchkernel.indexing.watcher.Observer", return_value=observer),
+            patch("ragdocs.indexing.watcher.walk_dirs_with_files", side_effect=[watched_a]),
+            patch("ragdocs.indexing.watcher.Observer", return_value=observer),
         ):
             watcher.start()
 
@@ -669,7 +669,7 @@ class TestFileWatcherTaskMode:
         )
 
         with patch(
-            "searchkernel.indexing.tasks.submit_index_request_batch",
+            "ragdocs.indexing.tasks.submit_index_request_batch",
             return_value=tasks_mod.TaskBatchSubmissionResult(
                 queue_available=True,
                 requested_unique_count=1,
@@ -696,7 +696,7 @@ class TestFileWatcherTaskMode:
         deleted_file.parent.mkdir()
 
         with patch(
-            "searchkernel.indexing.tasks.submit_remove_request_batch",
+            "ragdocs.indexing.tasks.submit_remove_request_batch",
             return_value=tasks_mod.TaskBatchSubmissionResult(
                 queue_available=True,
                 requested_unique_count=1,
@@ -721,7 +721,7 @@ class TestFileWatcherTaskMode:
         )
 
         with patch(
-            "searchkernel.indexing.tasks.submit_index_request_batch",
+            "ragdocs.indexing.tasks.submit_index_request_batch",
             return_value=tasks_mod.TaskBatchSubmissionResult(
                 queue_available=True,
                 requested_unique_count=3,
@@ -757,7 +757,7 @@ class TestFileWatcherTaskMode:
         )
 
         with patch(
-            "searchkernel.indexing.tasks.submit_index_request_batch",
+            "ragdocs.indexing.tasks.submit_index_request_batch",
             return_value=tasks_mod.TaskBatchSubmissionResult(
                 queue_available=False,
                 requested_unique_count=1,
@@ -788,7 +788,7 @@ class TestFileWatcherTaskMode:
 
         with (
             patch(
-                "searchkernel.indexing.tasks.submit_index_request_batch",
+                "ragdocs.indexing.tasks.submit_index_request_batch",
                 return_value=tasks_mod.TaskBatchSubmissionResult(
                     queue_available=True,
                     requested_unique_count=2,
@@ -796,7 +796,7 @@ class TestFileWatcherTaskMode:
                 ),
             ) as submit_index_batch,
             patch(
-                "searchkernel.indexing.tasks.submit_remove_request_batch",
+                "ragdocs.indexing.tasks.submit_remove_request_batch",
                 return_value=tasks_mod.TaskBatchSubmissionResult(
                     queue_available=True,
                     requested_unique_count=1,
@@ -835,7 +835,7 @@ class TestFileWatcherTaskMode:
         kept.parent.mkdir()
 
         with patch(
-            "searchkernel.indexing.tasks.submit_remove_request_batch",
+            "ragdocs.indexing.tasks.submit_remove_request_batch",
             return_value=tasks_mod.TaskBatchSubmissionResult(
                 queue_available=True,
                 requested_unique_count=2,

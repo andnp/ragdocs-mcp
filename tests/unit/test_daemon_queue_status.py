@@ -6,7 +6,7 @@ from pathlib import Path
 from huey import SqliteHuey
 from huey.utils import Error
 
-from searchkernel.daemon.queue_status import get_queue_stats, purge_queue_state
+from ragdocs.daemon.queue_status import get_queue_stats, purge_queue_state
 
 
 def test_get_queue_stats_includes_pending_and_scheduled_task_details(
@@ -103,7 +103,7 @@ def test_purge_queue_state_clears_only_selected_state(
             Error(
                 {
                     "task_id": "failure-1",
-                    "task_name": "searchkernel.indexing.tasks.delete_document",
+                    "task_name": "ragdocs.indexing.tasks.delete_document",
                     "error": "boom",
                     "retries": 1,
                 }

@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.daemon.metadata import DaemonMetadata
-from searchkernel.mcp.server import MCPServer
+from ragdocs.daemon.metadata import DaemonMetadata
+from ragdocs.mcp.server import MCPServer
 
 
 @pytest.mark.asyncio
@@ -13,7 +13,7 @@ async def test_mcp_server_prefers_daemon_tool_listing(monkeypatch):
     server = MCPServer(project_override="docs")
 
     monkeypatch.setattr(
-        "searchkernel.mcp.server.start_daemon",
+        "ragdocs.mcp.server.start_daemon",
         lambda *, cwd=None, project_override=None, timeout_seconds=10.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
@@ -22,7 +22,7 @@ async def test_mcp_server_prefers_daemon_tool_listing(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "searchkernel.mcp.server.request_daemon_socket",
+        "ragdocs.mcp.server.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds=30.0: {
             "tools": [
                 {
@@ -45,7 +45,7 @@ async def test_mcp_server_prefers_daemon_tool_calls(monkeypatch):
     server = MCPServer(project_override="docs")
 
     monkeypatch.setattr(
-        "searchkernel.mcp.server.start_daemon",
+        "ragdocs.mcp.server.start_daemon",
         lambda *, cwd=None, project_override=None, timeout_seconds=10.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
@@ -54,7 +54,7 @@ async def test_mcp_server_prefers_daemon_tool_calls(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "searchkernel.mcp.server.request_daemon_socket",
+        "ragdocs.mcp.server.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds=30.0: {
             "contents": [{"type": "text", "text": "remote response"}]
         },
@@ -72,7 +72,7 @@ async def test_mcp_server_does_not_wait_for_ready_daemon_before_tool_call(monkey
     server = MCPServer(project_override="docs")
 
     monkeypatch.setattr(
-        "searchkernel.mcp.server.start_daemon",
+        "ragdocs.mcp.server.start_daemon",
         lambda *, cwd=None, project_override=None, timeout_seconds=30.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
@@ -82,13 +82,13 @@ async def test_mcp_server_does_not_wait_for_ready_daemon_before_tool_call(monkey
     )
 
     monkeypatch.setattr(
-        "searchkernel.mcp.server.wait_for_daemon_ready",
+        "ragdocs.mcp.server.wait_for_daemon_ready",
         lambda *, timeout_seconds=120.0, paths=None: (_ for _ in ()).throw(
             AssertionError("wait_for_daemon_ready should not be called")
         ),
     )
     monkeypatch.setattr(
-        "searchkernel.mcp.server.request_daemon_socket",
+        "ragdocs.mcp.server.request_daemon_socket",
         lambda socket_path, path, payload, timeout_seconds=60.0: {
             "contents": [{"type": "text", "text": "remote response"}]
         },
@@ -105,7 +105,7 @@ async def test_mcp_server_retries_tool_call_after_timeout(monkeypatch):
     calls = {"count": 0}
 
     monkeypatch.setattr(
-        "searchkernel.mcp.server.start_daemon",
+        "ragdocs.mcp.server.start_daemon",
         lambda *, cwd=None, project_override=None, timeout_seconds=30.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
@@ -114,7 +114,7 @@ async def test_mcp_server_retries_tool_call_after_timeout(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "searchkernel.mcp.server.inspect_daemon",
+        "ragdocs.mcp.server.inspect_daemon",
         lambda paths=None: type(
             "Inspection",
             (),
@@ -122,7 +122,7 @@ async def test_mcp_server_retries_tool_call_after_timeout(monkeypatch):
         )(),
     )
     monkeypatch.setattr(
-        "searchkernel.mcp.server.wait_for_daemon_ready",
+        "ragdocs.mcp.server.wait_for_daemon_ready",
         lambda *, timeout_seconds=120.0, paths=None: DaemonMetadata(
             pid=1,
             started_at=1.0,
@@ -137,7 +137,7 @@ async def test_mcp_server_retries_tool_call_after_timeout(monkeypatch):
             return {"status": "error", "error": "daemon_request_timed_out"}
         return {"contents": [{"type": "text", "text": "remote response"}]}
 
-    monkeypatch.setattr("searchkernel.mcp.server.request_daemon_socket", _fake_request)
+    monkeypatch.setattr("ragdocs.mcp.server.request_daemon_socket", _fake_request)
 
     contents = await server._call_remote_tool("query_documents", {"query": "test"})
 
@@ -162,7 +162,7 @@ async def test_mcp_server_startup_does_not_forward_project_context(monkeypatch):
             socket_path="/tmp/ragdocs.sock",
         )
 
-    monkeypatch.setattr("searchkernel.mcp.server.start_daemon", _fake_start_daemon)
+    monkeypatch.setattr("ragdocs.mcp.server.start_daemon", _fake_start_daemon)
 
     socket_path, status = server._get_daemon_metadata()
 

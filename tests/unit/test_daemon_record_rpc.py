@@ -1,13 +1,13 @@
 from datetime import UTC, datetime
 
 import pytest
+from searchkernel.domain import Record, RecordStatus
 
-from searchkernel.daemon.record_rpc import (
+from ragdocs.daemon.record_rpc import (
     RecordSerializationError,
     deserialize_record,
     serialize_record,
 )
-from searchkernel.domain import Record, RecordStatus
 
 
 def _record() -> Record:

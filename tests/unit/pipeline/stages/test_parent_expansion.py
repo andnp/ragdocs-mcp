@@ -1,6 +1,7 @@
-from searchkernel.models import SearchResultProvenance
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.parent_expansion import ParentExpansionStage
+
+from ragdocs.models import SearchResultProvenance
 
 
 def _context(candidates, **metadata) -> SearchContext:

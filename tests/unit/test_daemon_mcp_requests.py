@@ -5,11 +5,11 @@ from types import SimpleNamespace
 import pytest
 from mcp.types import TextContent
 
-from searchkernel.daemon.mcp_requests import (
+from ragdocs.daemon.mcp_requests import (
     build_mcp_tools_payload,
     handle_mcp_tool_call,
 )
-from searchkernel.lifecycle import LifecycleState
+from ragdocs.lifecycle import LifecycleState
 
 
 class _FakeCoordinator:
@@ -24,7 +24,7 @@ async def test_handle_mcp_tool_call_returns_contents(monkeypatch) -> None:
         return [TextContent(type="text", text="ok")]
 
     monkeypatch.setattr(
-        "searchkernel.daemon.mcp_requests.get_handler",
+        "ragdocs.daemon.mcp_requests.get_handler",
         lambda name: _fake_handler if name == "query_documents" else None,
     )
 
@@ -41,7 +41,7 @@ async def test_handle_mcp_tool_call_returns_contents(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_handle_mcp_tool_call_validates_arguments_object(monkeypatch) -> None:
-    monkeypatch.setattr("searchkernel.daemon.mcp_requests.get_handler", lambda name: None)
+    monkeypatch.setattr("ragdocs.daemon.mcp_requests.get_handler", lambda name: None)
 
     payload = await handle_mcp_tool_call(
         ctx_getter=lambda: "ctx",
@@ -57,7 +57,7 @@ async def test_handle_mcp_tool_call_validates_arguments_object(monkeypatch) -> N
 
 @pytest.mark.asyncio
 async def test_handle_mcp_tool_call_returns_unknown_tool_error(monkeypatch) -> None:
-    monkeypatch.setattr("searchkernel.daemon.mcp_requests.get_handler", lambda name: None)
+    monkeypatch.setattr("ragdocs.daemon.mcp_requests.get_handler", lambda name: None)
 
     payload = await handle_mcp_tool_call(
         ctx_getter=lambda: "ctx",
@@ -73,7 +73,7 @@ async def test_handle_mcp_tool_call_returns_unknown_tool_error(monkeypatch) -> N
 
 def test_build_mcp_tools_payload_uses_registered_tools(monkeypatch) -> None:
     monkeypatch.setattr(
-        "searchkernel.daemon.mcp_requests.get_document_tools",
+        "ragdocs.daemon.mcp_requests.get_document_tools",
         lambda: [
             SimpleNamespace(
                 name="query_documents",

@@ -4,7 +4,7 @@ import json
 
 from click.testing import CliRunner
 
-from searchkernel import cli as cli_module
+from ragdocs import cli as cli_module
 
 
 def test_queue_purge_requires_yes() -> None:

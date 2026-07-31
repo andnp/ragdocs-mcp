@@ -3,7 +3,6 @@ Unit tests for reconciliation logic.
 """
 
 import pytest
-
 from searchkernel.indexing.manifest import IndexManifest
 from searchkernel.indexing.reconciler import (
     build_indexed_files_map,

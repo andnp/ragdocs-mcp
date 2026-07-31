@@ -53,7 +53,7 @@ def _reexec_into_repo_venv() -> None:
         else str(repo_root)
     )
 
-    argv = [str(repo_python), "-m", "searchkernel.cli", *sys.argv[1:]]
+    argv = [str(repo_python), "-m", "ragdocs.cli", *sys.argv[1:]]
     os.execve(str(repo_python), argv, env)
 
 
@@ -66,26 +66,27 @@ import click
 import uvicorn
 from rich.console import Console
 from rich.table import Table
+from searchkernel.utils import should_include_file
 
-from searchkernel.app.runtime import configure_runtime_threads
-from searchkernel.cli_utils.formatters import print_debug_stats, print_result_panel
-from searchkernel.cli_utils.validators import (
+from ragdocs.app.runtime import configure_runtime_threads
+from ragdocs.cli_utils.formatters import print_debug_stats, print_result_panel
+from ragdocs.cli_utils.validators import (
     validate_range,
     validate_timestamp_range,
 )
-from searchkernel.config import ensure_runtime_project_registered, load_config
-from searchkernel.context import ApplicationContext
-from searchkernel.coordination.queue import get_huey
-from searchkernel.daemon import DaemonMetadata, RuntimePaths
-from searchkernel.daemon.client import (
+from ragdocs.config import ensure_runtime_project_registered, load_config
+from ragdocs.context import ApplicationContext
+from ragdocs.coordination.queue import get_huey
+from ragdocs.daemon import DaemonMetadata, RuntimePaths
+from ragdocs.daemon.client import (
     call_with_supported_kwargs,
     raise_daemon_request_error,
     request_daemon_json_with_dependencies,
 )
-from searchkernel.daemon.health import (
+from ragdocs.daemon.health import (
     request_daemon_socket,
 )
-from searchkernel.daemon.management import (
+from ragdocs.daemon.management import (
     DaemonInspection,
     acquire_boot_lock,
     inspect_daemon,
@@ -94,19 +95,18 @@ from searchkernel.daemon.management import (
     stop_daemon,
     wait_for_daemon_ready,
 )
-from searchkernel.daemon.queue_status import get_queue_stats
-from searchkernel.daemon.rebuild_commands import run_rebuild_command
-from searchkernel.daemon.runtime import create_daemon_runtime
-from searchkernel.daemon.status import (
+from ragdocs.daemon.queue_status import get_queue_stats
+from ragdocs.daemon.rebuild_commands import run_rebuild_command
+from ragdocs.daemon.runtime import create_daemon_runtime
+from ragdocs.daemon.status import (
     build_daemon_status_payload,
     format_daemon_startup_result,
     request_daemon_overview,
 )
-from searchkernel.indexing.tasks import register_tasks
-from searchkernel.lifecycle import LifecycleCoordinator, LifecycleState
-from searchkernel.utils import should_include_file
-from searchkernel.worker.consumer import HueyWorker
-from searchkernel.worker.process import (
+from ragdocs.indexing.tasks import register_tasks
+from ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
+from ragdocs.worker.consumer import HueyWorker
+from ragdocs.worker.process import (
     _worker_status_path,
     is_expected_daemon_parent,
 )
@@ -254,7 +254,7 @@ async def _run_worker_forever_async(
             await ctx.watcher.stop()
 
     if ctx.git_indexing_enabled and ctx.config.git_indexing.watch_enabled:
-        from searchkernel.git.watcher import GitWatcher
+        from ragdocs.git.watcher import GitWatcher
 
         repos = await asyncio.to_thread(ctx.discover_git_repositories)
         if repos:
@@ -432,7 +432,7 @@ def worker_run(
 
 
 def _apply_project_detection(config, project_override: str | None = None):
-    from searchkernel.config import (
+    from ragdocs.config import (
         detect_project,
         resolve_documents_path,
         resolve_index_path,
@@ -513,7 +513,7 @@ def mcp(project: str | None):
     """Run MCP server with stdio transport (for VS Code integration)."""
     try:
         # Import here to avoid importing mcp when not needed
-        from searchkernel.mcp import MCPServer
+        from ragdocs.mcp import MCPServer
 
         # Create and run the server
         async def _run():
@@ -1391,7 +1391,7 @@ def run(host: str, port: int, project: str | None):
 
         logger.info(f"Starting server on {host}:{port}")
         uvicorn.run(
-            "searchkernel.server:create_app",
+            "ragdocs.server:create_app",
             host=host,
             port=port,
             factory=True,
@@ -1453,7 +1453,7 @@ def check_config_cmd(project: str | None):
             for proj in config.projects:
                 table.add_row(f"  • {proj.name}", proj.path)
 
-            from searchkernel.config import detect_project
+            from ragdocs.config import detect_project
 
             detected = detect_project(
                 projects=config.projects, project_override=project
@@ -1566,7 +1566,7 @@ def query(
 
         console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
         if debug:
-            from searchkernel.models import CompressionStats, SearchStrategyStats
+            from ragdocs.models import CompressionStats, SearchStrategyStats
 
             strategy_stats = SearchStrategyStats(
                 **daemon_payload.get("strategy_stats", {})

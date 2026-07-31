@@ -1,8 +1,8 @@
 import pytest
 
-from searchkernel.parsers.dispatcher import dispatch_parser
-from searchkernel.parsers.markdown import MarkdownParser
-from searchkernel.parsers.plaintext import PlainTextParser
+from ragdocs.parsers.dispatcher import dispatch_parser
+from ragdocs.parsers.markdown import MarkdownParser
+from ragdocs.parsers.plaintext import PlainTextParser
 
 
 def test_dispatch_parser_md():

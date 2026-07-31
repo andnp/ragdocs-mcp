@@ -2,9 +2,10 @@ from datetime import UTC, datetime
 
 from searchkernel.chunking.base import ChunkingStrategy
 from searchkernel.domain import Chunk
-from searchkernel.models import Document
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.chunk import ChunkStage
+
+from ragdocs.models import Document
 
 
 def _with_hash(chunk):
@@ -46,7 +47,7 @@ def _document() -> Document:
 
 
 def _chunk() -> Chunk:
-    return _with_hash(Chunk(chunk_id="doc-1_chunk_0", record_id="doc-1", content="hello world", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 11, "file_path": "doc-1.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    return _with_hash(Chunk(chunk_id="doc-1_chunk_0", record_id="doc-1", content="hello world", metadata={ "header_path": "", "start_pos": 0, "end_pos": 11, "file_path": "doc-1.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
 
 def test_chunk_stage_delegates_to_chunker():

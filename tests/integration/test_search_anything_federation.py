@@ -8,24 +8,23 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from searchkernel.domain import Chunk, ScoredRef
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.runtime.federation import search_anything
+from searchkernel.runtime.registry import SourceRegistry
+from searchkernel.search.orchestrator import SearchOrchestrator
 
-from searchkernel.adapters.sources.local import LocalSearchSource
-from searchkernel.config import (
+from ragdocs.adapters.sources.local import LocalSearchSource
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.domain import ScoredRef
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.domain import Chunk
-from searchkernel.runtime.federation import search_anything
-from searchkernel.runtime.registry import SourceRegistry
-from searchkernel.search.orchestrator import SearchOrchestrator
+from ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
@@ -118,7 +117,7 @@ def registry(orchestrator):
 
 
 def _seed(indices):
-    chunk = _with_hash(Chunk(chunk_id="note_doc_chunk_0", record_id="note_doc", content="Authentication documentation covers OAuth flows for the public API.", metadata={**({"source_kind": "note"}), "header_path": "Auth", "start_pos": 0, "end_pos": 10, "file_path": "note_doc.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="note_doc_chunk_0", record_id="note_doc", content="Authentication documentation covers OAuth flows for the public API.", metadata={"source_kind": "note", "header_path": "Auth", "start_pos": 0, "end_pos": 10, "file_path": "note_doc.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     indices["vector"].add_chunk(chunk)
     indices["keyword"].add_chunk(chunk)
 

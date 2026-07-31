@@ -3,12 +3,12 @@
 import time
 
 import pytest
-
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
+
+from ragdocs.config import ChunkingConfig, Config, IndexingConfig
+from ragdocs.indexing.manager import IndexManager
 
 
 def create_large_doc(num_sections: int = 100) -> str:

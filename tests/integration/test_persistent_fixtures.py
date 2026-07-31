@@ -8,7 +8,6 @@ as examples for using different fixture scopes.
 from pathlib import Path
 
 import pytest
-
 from searchkernel.indexing.manifest import IndexManifest, load_manifest, save_manifest
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
@@ -59,7 +58,7 @@ def test_persistent_manager_can_persist_and_load(
     vector2 = VectorIndex()
     keyword2 = KeywordIndex()
     graph2 = GraphStore()
-    from searchkernel.indexing.manager import IndexManager
+    from ragdocs.indexing.manager import IndexManager
 
     manager2 = IndexManager(persistent_config, vector2, keyword2, graph2)
     manager2.load()

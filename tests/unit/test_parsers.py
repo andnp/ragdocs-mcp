@@ -2,8 +2,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from searchkernel.models import Document
-from searchkernel.parsers.base import DocumentParser
+from ragdocs.models import Document
+from ragdocs.parsers.base import DocumentParser
 
 
 class ConcreteTestParser(DocumentParser):

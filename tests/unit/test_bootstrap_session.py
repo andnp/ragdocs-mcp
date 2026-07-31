@@ -2,20 +2,20 @@ import asyncio
 from pathlib import Path
 
 import pytest
-
 from searchkernel.indexing.bootstrap_checkpoint import (
     BootstrapCheckpoint,
     BootstrapFileStamp,
     compute_bootstrap_generation,
     save_bootstrap_checkpoint,
 )
-from searchkernel.indexing.bootstrap_session import BootstrapSession
 from searchkernel.indexing.manifest import (
     CURRENT_MANIFEST_SPEC_VERSION,
     IndexManifest,
     save_manifest,
 )
-from searchkernel.indexing.tasks import TaskBatchSubmissionResult
+
+from ragdocs.indexing.bootstrap_session import BootstrapSession
+from ragdocs.indexing.tasks import TaskBatchSubmissionResult
 
 
 def _manifest() -> IndexManifest:
@@ -202,7 +202,7 @@ async def test_run_keeps_monitoring_when_remaining_work_is_already_pending(
     enqueue_checked = asyncio.Event()
 
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_index_batch",
+        "ragdocs.indexing.tasks.submit_index_batch",
         lambda file_paths, force=False: enqueue_checked.set()
         or TaskBatchSubmissionResult(
             queue_available=True,
@@ -347,7 +347,7 @@ async def test_run_skips_completed_files_and_finishes_ready(
         )
 
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_index_batch",
+        "ragdocs.indexing.tasks.submit_index_batch",
         fake_submit_index_batch,
     )
 
@@ -414,7 +414,7 @@ async def test_run_enqueues_startup_git_refresh_batch_in_task_mode(
     warmup_calls: list[str] = []
 
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_refresh_git_batch",
+        "ragdocs.indexing.tasks.submit_refresh_git_batch",
         lambda git_dirs: git_submissions.append(git_dirs)
         or TaskBatchSubmissionResult(
             queue_available=True,

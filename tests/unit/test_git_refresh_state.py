@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from searchkernel.indexing.git_refresh_state import (
+from ragdocs.indexing.git_refresh_state import (
     get_cursor,
     load_cursors,
     save_cursor,

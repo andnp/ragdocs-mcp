@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.config import Config, IndexingConfig, resolve_index_path
+from ragdocs.config import Config, IndexingConfig, resolve_index_path
 
 
 @pytest.fixture

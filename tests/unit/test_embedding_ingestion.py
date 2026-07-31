@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from searchkernel.ingestion import EmbeddingInput, embed_and_upsert
+from ragdocs.ingestion import EmbeddingInput, embed_and_upsert
 
 
 @dataclass

@@ -5,23 +5,23 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.daemon.management import (
+from ragdocs.daemon.management import (
     DaemonInspection,
     DaemonManagementError,
     start_daemon,
     stop_daemon,
     wait_for_daemon_ready,
 )
-from searchkernel.daemon.metadata import DaemonMetadata
-from searchkernel.daemon.paths import RuntimePaths
+from ragdocs.daemon.metadata import DaemonMetadata
+from ragdocs.daemon.paths import RuntimePaths
 
 
 @pytest.fixture(autouse=True)
 def disable_auto_registration(monkeypatch) -> None:
     monkeypatch.setattr(
-        "searchkernel.daemon.management.ensure_runtime_project_registered",
+        "ragdocs.daemon.management.ensure_runtime_project_registered",
         lambda cwd=None, project_override=None: __import__(
-            "searchkernel.config", fromlist=["AutoRegistrationResult"]
+            "ragdocs.config", fromlist=["AutoRegistrationResult"]
         ).AutoRegistrationResult(
             changed=False,
             reason="test_default",
@@ -84,14 +84,14 @@ def test_start_daemon_returns_spawned_starting_metadata_before_socket_ready(
     )
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management.inspect_daemon",
+        "ragdocs.daemon.management.inspect_daemon",
         lambda paths=None: next(inspections, fallback),
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._spawn_daemon_process",
+        "ragdocs.daemon.management._spawn_daemon_process",
         lambda runtime_paths: _FakeProcess(101, [None, None, None]),
     )
-    monkeypatch.setattr("searchkernel.daemon.management.time.sleep", lambda _: None)
+    monkeypatch.setattr("ragdocs.daemon.management.time.sleep", lambda _: None)
 
     result = start_daemon(timeout_seconds=0.5, paths=_paths(tmp_path))
 
@@ -124,10 +124,10 @@ def test_wait_for_daemon_ready_still_requires_ready_status(
     )
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management.inspect_daemon",
+        "ragdocs.daemon.management.inspect_daemon",
         lambda paths=None: next(inspections),
     )
-    monkeypatch.setattr("searchkernel.daemon.management.time.sleep", lambda _: None)
+    monkeypatch.setattr("ragdocs.daemon.management.time.sleep", lambda _: None)
 
     result = wait_for_daemon_ready(timeout_seconds=0.5, paths=_paths(tmp_path))
 
@@ -168,9 +168,9 @@ def test_start_daemon_restarts_running_daemon_after_auto_registration_change(
     )
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management.ensure_runtime_project_registered",
+        "ragdocs.daemon.management.ensure_runtime_project_registered",
         lambda cwd=None, project_override=None: __import__(
-            "searchkernel.config", fromlist=["AutoRegistrationResult"]
+            "ragdocs.config", fromlist=["AutoRegistrationResult"]
         ).AutoRegistrationResult(
             changed=True,
             project_name="new-project",
@@ -179,21 +179,21 @@ def test_start_daemon_restarts_running_daemon_after_auto_registration_change(
         ),
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management.inspect_daemon",
+        "ragdocs.daemon.management.inspect_daemon",
         lambda paths=None: next(inspections, fallback),
     )
 
     stop_calls: list[float] = []
     monkeypatch.setattr(
-        "searchkernel.daemon.management.stop_daemon",
+        "ragdocs.daemon.management.stop_daemon",
         lambda *, timeout_seconds, paths=None: stop_calls.append(timeout_seconds) or stale_metadata,
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._terminate_extra_runtime_daemon_processes",
+        "ragdocs.daemon.management._terminate_extra_runtime_daemon_processes",
         lambda runtime_paths, *, keep_pid=None: [],
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._spawn_daemon_process",
+        "ragdocs.daemon.management._spawn_daemon_process",
         lambda runtime_paths: _FakeProcess(222, [None]),
     )
 
@@ -211,7 +211,7 @@ def test_spawn_daemon_process_uses_project_agnostic_command(
     fake_process = _FakeProcess(101, [None])
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management._resolve_daemon_python",
+        "ragdocs.daemon.management._resolve_daemon_python",
         lambda: Path("/repo/.venv/bin/python"),
     )
 
@@ -220,15 +220,15 @@ def test_spawn_daemon_process_uses_project_agnostic_command(
         observed["kwargs"] = kwargs
         return fake_process
 
-    monkeypatch.setattr("searchkernel.daemon.management.subprocess.Popen", _fake_popen)
+    monkeypatch.setattr("ragdocs.daemon.management.subprocess.Popen", _fake_popen)
 
-    from searchkernel.daemon.management import _spawn_daemon_process
+    from ragdocs.daemon.management import _spawn_daemon_process
 
     _spawn_daemon_process(_paths(tmp_path))
 
     command = observed["command"]
     assert isinstance(command, list)
-    assert command[:4] == ["/repo/.venv/bin/python", "-m", "searchkernel.cli", "daemon-internal-run"]
+    assert command[:4] == ["/repo/.venv/bin/python", "-m", "ragdocs.cli", "daemon-internal-run"]
     assert "--project" not in command
     assert command[4:] == ["--runtime-root", str(tmp_path)]
 
@@ -240,16 +240,16 @@ def test_find_runtime_daemon_pids_matches_runtime_root_argument(
     paths = _paths(tmp_path)
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management._iter_proc_pids",
+        "ragdocs.daemon.management._iter_proc_pids",
         lambda: [101, 202, 303],
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._read_process_cmdline",
+        "ragdocs.daemon.management._read_process_cmdline",
         lambda pid: {
             101: [
                 sys.executable,
                 "-m",
-                "searchkernel.cli",
+                "ragdocs.cli",
                 "daemon-internal-run",
                 "--runtime-root",
                 str(paths.root),
@@ -257,16 +257,16 @@ def test_find_runtime_daemon_pids_matches_runtime_root_argument(
             202: [
                 sys.executable,
                 "-m",
-                "searchkernel.cli",
+                "ragdocs.cli",
                 "daemon-internal-run",
                 "--runtime-root",
                 str(tmp_path / "other-runtime"),
             ],
-            303: [sys.executable, "-m", "searchkernel.cli", "worker-run"],
+            303: [sys.executable, "-m", "ragdocs.cli", "worker-run"],
         }[pid],
     )
 
-    from searchkernel.daemon.management import _find_runtime_daemon_pids
+    from ragdocs.daemon.management import _find_runtime_daemon_pids
 
     assert _find_runtime_daemon_pids(paths) == [101]
 
@@ -278,19 +278,19 @@ def test_find_runtime_daemon_pids_uses_legacy_proc_fallback_per_runtime(
     paths = _paths(tmp_path)
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management._iter_proc_pids",
+        "ragdocs.daemon.management._iter_proc_pids",
         lambda: [111, 222],
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._read_process_cmdline",
-        lambda pid: [sys.executable, "-m", "searchkernel.cli", "daemon-internal-run"],
+        "ragdocs.daemon.management._read_process_cmdline",
+        lambda pid: [sys.executable, "-m", "ragdocs.cli", "daemon-internal-run"],
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._legacy_runtime_daemon_matches_root",
+        "ragdocs.daemon.management._legacy_runtime_daemon_matches_root",
         lambda pid, runtime_paths: pid == 111 and runtime_paths == paths,
     )
 
-    from searchkernel.daemon.management import _find_runtime_daemon_pids
+    from ragdocs.daemon.management import _find_runtime_daemon_pids
 
     assert _find_runtime_daemon_pids(paths) == [111]
 
@@ -324,18 +324,18 @@ def test_start_daemon_accepts_race_winner_metadata(monkeypatch, tmp_path: Path) 
     )
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management.inspect_daemon",
+        "ragdocs.daemon.management.inspect_daemon",
         lambda paths=None: next(inspections, fallback),
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._spawn_daemon_process",
+        "ragdocs.daemon.management._spawn_daemon_process",
         lambda runtime_paths: _FakeProcess(202, [1, 1, 1]),
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management.probe_daemon_socket",
+        "ragdocs.daemon.management.probe_daemon_socket",
         lambda *args, **kwargs: winner_metadata,
     )
-    monkeypatch.setattr("searchkernel.daemon.management.time.sleep", lambda _: None)
+    monkeypatch.setattr("ragdocs.daemon.management.time.sleep", lambda _: None)
 
     result = start_daemon(timeout_seconds=0.5, paths=_paths(tmp_path))
 
@@ -351,10 +351,10 @@ def test_inspect_daemon_requires_successful_probe(monkeypatch, tmp_path: Path) -
         encoding="utf-8",
     )
 
-    monkeypatch.setattr("searchkernel.daemon.management.is_process_running", lambda pid: True)
-    monkeypatch.setattr("searchkernel.daemon.management.probe_daemon_socket", lambda *args, **kwargs: None)
+    monkeypatch.setattr("ragdocs.daemon.management.is_process_running", lambda pid: True)
+    monkeypatch.setattr("ragdocs.daemon.management.probe_daemon_socket", lambda *args, **kwargs: None)
 
-    inspection = __import__("searchkernel.daemon.management", fromlist=["inspect_daemon"]).inspect_daemon(_paths(tmp_path))
+    inspection = __import__("ragdocs.daemon.management", fromlist=["inspect_daemon"]).inspect_daemon(_paths(tmp_path))
 
     assert inspection.metadata == metadata
     assert inspection.running is True
@@ -398,14 +398,14 @@ def test_start_daemon_surfaces_log_excerpt_on_spawn_failure(
     )
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management.inspect_daemon",
+        "ragdocs.daemon.management.inspect_daemon",
         lambda paths=None: next(inspections, fallback),
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._spawn_daemon_process",
+        "ragdocs.daemon.management._spawn_daemon_process",
         lambda runtime_paths: _FakeProcess(909, [7, 7, 7]),
     )
-    monkeypatch.setattr("searchkernel.daemon.management.time.sleep", lambda _: None)
+    monkeypatch.setattr("ragdocs.daemon.management.time.sleep", lambda _: None)
 
     with pytest.raises(DaemonManagementError) as exc_info:
         start_daemon(timeout_seconds=0.2, paths=paths)
@@ -442,22 +442,22 @@ def test_start_daemon_waits_for_responsive_existing_ready_daemon(
     )
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management.inspect_daemon",
+        "ragdocs.daemon.management.inspect_daemon",
         lambda paths=None: next(inspections),
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._metadata_has_exceeded_grace_period",
+        "ragdocs.daemon.management._metadata_has_exceeded_grace_period",
         lambda metadata: False,
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._spawn_daemon_process",
+        "ragdocs.daemon.management._spawn_daemon_process",
         lambda runtime_paths: pytest.fail("responsive daemon must not be replaced"),
     )
-    monkeypatch.setattr("searchkernel.daemon.management.time.sleep", lambda _: None)
+    monkeypatch.setattr("ragdocs.daemon.management.time.sleep", lambda _: None)
 
     stop_calls: list[float] = []
     monkeypatch.setattr(
-        "searchkernel.daemon.management.stop_daemon",
+        "ragdocs.daemon.management.stop_daemon",
         lambda *, timeout_seconds, paths=None: stop_calls.append(timeout_seconds),
     )
 
@@ -475,7 +475,7 @@ def test_start_daemon_reaps_extra_matching_runtime_processes_before_returning(
     metadata = DaemonMetadata(pid=515, started_at=1.0, status="ready_primary")
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management.inspect_daemon",
+        "ragdocs.daemon.management.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=metadata,
             running=True,
@@ -487,7 +487,7 @@ def test_start_daemon_reaps_extra_matching_runtime_processes_before_returning(
 
     observed: list[tuple[RuntimePaths, int | None]] = []
     monkeypatch.setattr(
-        "searchkernel.daemon.management._terminate_extra_runtime_daemon_processes",
+        "ragdocs.daemon.management._terminate_extra_runtime_daemon_processes",
         lambda runtime_paths, *, keep_pid=None: observed.append((runtime_paths, keep_pid)) or [999],
     )
 
@@ -516,7 +516,7 @@ def test_start_daemon_cleans_up_old_nonresponsive_metadata_before_spawn(
     observed: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management.inspect_daemon",
+        "ragdocs.daemon.management.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=stale_metadata,
             running=True,
@@ -525,13 +525,13 @@ def test_start_daemon_cleans_up_old_nonresponsive_metadata_before_spawn(
             ready=False,
         ),
     )
-    monkeypatch.setattr("searchkernel.daemon.management.time.time", lambda: 40.0)
+    monkeypatch.setattr("ragdocs.daemon.management.time.time", lambda: 40.0)
     monkeypatch.setattr(
-        "searchkernel.daemon.management._cleanup_stale_runtime_state",
+        "ragdocs.daemon.management._cleanup_stale_runtime_state",
         lambda runtime_paths: cleaned.append(runtime_paths),
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.management._spawn_daemon_process",
+        "ragdocs.daemon.management._spawn_daemon_process",
         lambda runtime_paths: _FakeProcess(717, [None, None]),
     )
 
@@ -540,7 +540,7 @@ def test_start_daemon_cleans_up_old_nonresponsive_metadata_before_spawn(
         return replacement_metadata
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management._wait_for_ready_daemon",
+        "ragdocs.daemon.management._wait_for_ready_daemon",
         _fake_wait_for_ready_daemon,
     )
 
@@ -564,7 +564,7 @@ def test_stop_daemon_prefers_internal_shutdown_for_responsive_daemon(
     )
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management.inspect_daemon",
+        "ragdocs.daemon.management.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=metadata,
             running=True,
@@ -583,24 +583,24 @@ def test_stop_daemon_prefers_internal_shutdown_for_responsive_daemon(
         observed["timeout_seconds"] = timeout_seconds
         return {"status": "ok"}
 
-    monkeypatch.setattr("searchkernel.daemon.management.request_daemon_socket", _fake_request)
+    monkeypatch.setattr("ragdocs.daemon.management.request_daemon_socket", _fake_request)
 
     running = iter([True, False])
     monkeypatch.setattr(
-        "searchkernel.daemon.management.is_process_running",
+        "ragdocs.daemon.management.is_process_running",
         lambda pid: next(running),
     )
-    monkeypatch.setattr("searchkernel.daemon.management.time.sleep", lambda _: None)
+    monkeypatch.setattr("ragdocs.daemon.management.time.sleep", lambda _: None)
 
     terminations: list[tuple[int, bool]] = []
     monkeypatch.setattr(
-        "searchkernel.daemon.management._terminate_process",
+        "ragdocs.daemon.management._terminate_process",
         lambda pid, *, force: terminations.append((pid, force)),
     )
 
     cleaned: list[RuntimePaths] = []
     monkeypatch.setattr(
-        "searchkernel.daemon.management._cleanup_stale_runtime_state",
+        "ragdocs.daemon.management._cleanup_stale_runtime_state",
         lambda runtime_paths: cleaned.append(runtime_paths),
     )
 
@@ -619,7 +619,7 @@ def test_stop_daemon_without_metadata_reaps_matching_runtime_processes(
     paths = _paths(tmp_path)
 
     monkeypatch.setattr(
-        "searchkernel.daemon.management.inspect_daemon",
+        "ragdocs.daemon.management.inspect_daemon",
         lambda paths=None: DaemonInspection(
             metadata=None,
             running=False,
@@ -631,13 +631,13 @@ def test_stop_daemon_without_metadata_reaps_matching_runtime_processes(
 
     observed: list[tuple[RuntimePaths, int | None]] = []
     monkeypatch.setattr(
-        "searchkernel.daemon.management._terminate_extra_runtime_daemon_processes",
+        "ragdocs.daemon.management._terminate_extra_runtime_daemon_processes",
         lambda runtime_paths, *, keep_pid=None: observed.append((runtime_paths, keep_pid)) or [901, 902],
     )
 
     cleaned: list[RuntimePaths] = []
     monkeypatch.setattr(
-        "searchkernel.daemon.management._cleanup_stale_runtime_state",
+        "ragdocs.daemon.management._cleanup_stale_runtime_state",
         lambda runtime_paths: cleaned.append(runtime_paths),
     )
 
@@ -658,11 +658,11 @@ def test_resolve_daemon_python_falls_back_to_virtual_env_when_current_interprete
 
     monkeypatch.setenv("VIRTUAL_ENV", str(env_root))
     monkeypatch.setattr(
-        "searchkernel.daemon.management.sys.executable",
+        "ragdocs.daemon.management.sys.executable",
         str(tmp_path / "missing-python"),
     )
 
-    from searchkernel.daemon.management import _resolve_daemon_python
+    from ragdocs.daemon.management import _resolve_daemon_python
 
     assert _resolve_daemon_python() == python_path
 
@@ -684,11 +684,11 @@ def test_resolve_daemon_python_prefers_current_interpreter_over_unrelated_virtua
 
     monkeypatch.setenv("VIRTUAL_ENV", str(env_root))
     monkeypatch.setattr(
-        "searchkernel.daemon.management.sys.executable",
+        "ragdocs.daemon.management.sys.executable",
         str(current_python),
     )
 
-    from searchkernel.daemon.management import _resolve_daemon_python
+    from ragdocs.daemon.management import _resolve_daemon_python
 
     assert _resolve_daemon_python() == current_python
 
@@ -708,11 +708,11 @@ def test_resolve_daemon_python_skips_directory_like_current_interpreter(
 
     monkeypatch.setenv("VIRTUAL_ENV", str(env_root))
     monkeypatch.setattr(
-        "searchkernel.daemon.management.sys.executable",
+        "ragdocs.daemon.management.sys.executable",
         str(current_python),
     )
 
-    from searchkernel.daemon.management import _resolve_daemon_python
+    from ragdocs.daemon.management import _resolve_daemon_python
 
     assert _resolve_daemon_python() == env_python
 
@@ -732,13 +732,13 @@ def test_resolve_daemon_python_prefers_repo_venv_when_current_interpreter_is_unu
     repo_python.chmod(0o755)
 
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
-    monkeypatch.setattr("searchkernel.daemon.management.__file__", str(daemon_file))
+    monkeypatch.setattr("ragdocs.daemon.management.__file__", str(daemon_file))
     monkeypatch.setattr(
-        "searchkernel.daemon.management.sys.executable",
+        "ragdocs.daemon.management.sys.executable",
         str(tmp_path / "missing-python"),
     )
 
-    from searchkernel.daemon.management import _resolve_daemon_python
+    from ragdocs.daemon.management import _resolve_daemon_python
 
     assert _resolve_daemon_python() == repo_python
 
@@ -753,8 +753,8 @@ def test_resolve_daemon_python_falls_back_to_current_interpreter(
     daemon_file.write_text("", encoding="utf-8")
 
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
-    monkeypatch.setattr("searchkernel.daemon.management.__file__", str(daemon_file))
+    monkeypatch.setattr("ragdocs.daemon.management.__file__", str(daemon_file))
 
-    from searchkernel.daemon.management import _resolve_daemon_python
+    from ragdocs.daemon.management import _resolve_daemon_python
 
     assert _resolve_daemon_python() == Path(sys.executable)

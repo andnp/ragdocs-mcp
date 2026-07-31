@@ -43,12 +43,12 @@ def test_all_src_modules_importable(src_modules):
 
 def test_critical_modules_import_without_error():
     critical_modules = [
-        "searchkernel.config",
-        "searchkernel.context",
-        "searchkernel.mcp.server",
-        "searchkernel.server",
-        "searchkernel.git.watcher",
-        "searchkernel.indexing.manager",
+        "ragdocs.config",
+        "ragdocs.context",
+        "ragdocs.mcp.server",
+        "ragdocs.server",
+        "ragdocs.git.watcher",
+        "ragdocs.indexing.manager",
         "searchkernel.indices.vector",
         "searchkernel.indices.keyword",
         "searchkernel.indices.graph",

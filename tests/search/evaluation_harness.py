@@ -4,7 +4,14 @@ from dataclasses import dataclass
 from math import log2
 from pathlib import Path
 
-from searchkernel.config import (
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import EmbeddingModel, VectorIndex
+from searchkernel.search.orchestrator import SearchOrchestrator
+from searchkernel.search.path_utils import compute_doc_id
+from searchkernel.storage.db import DatabaseManager
+
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
@@ -12,13 +19,7 @@ from searchkernel.config import (
     ProjectConfig,
     SearchConfig,
 )
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import EmbeddingModel, VectorIndex
-from searchkernel.search.orchestrator import SearchOrchestrator
-from searchkernel.search.path_utils import compute_doc_id
-from searchkernel.storage.db import DatabaseManager
+from ragdocs.indexing.manager import IndexManager
 
 FIXTURE_CORPUS_ROOT = Path(__file__).resolve().parent.parent / "fixtures" / "search_eval"
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from searchkernel.config import (
+from ragdocs.config import (
     ProjectConfig,
     derive_auto_registration_root,
     detect_project,

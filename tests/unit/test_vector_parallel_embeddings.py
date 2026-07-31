@@ -1,8 +1,8 @@
 import time
 from datetime import UTC, datetime
 
-from searchkernel.indices.vector import VectorIndex
 from searchkernel.domain import Chunk
+from searchkernel.indices.vector import VectorIndex
 
 
 def _with_hash(chunk):
@@ -23,7 +23,7 @@ def _with_hash(chunk):
 
 
 def _create_test_chunk(index: int, doc_id: str = "test-doc") -> Chunk:
-    return _with_hash(Chunk(chunk_id=f"{doc_id}_chunk_{index}", record_id=doc_id, content=f"Test content for chunk {index}. This is a longer text to simulate real documents.", metadata={**({}), "header_path": f"Header {index}", "start_pos": 0, "end_pos": 100, "file_path": f"/tmp/test-{doc_id}.md", "modified_time": datetime.now(UTC), "parent_chunk_id": None}, chunk_index=index))
+    return _with_hash(Chunk(chunk_id=f"{doc_id}_chunk_{index}", record_id=doc_id, content=f"Test content for chunk {index}. This is a longer text to simulate real documents.", metadata={ "header_path": f"Header {index}", "start_pos": 0, "end_pos": 100, "file_path": f"/tmp/test-{doc_id}.md", "modified_time": datetime.now(UTC), "parent_chunk_id": None}, chunk_index=index))
 
 
 def test_parallel_embedding_speedup(tmp_path, shared_embedding_model):
@@ -228,7 +228,7 @@ def test_parallel_preserves_metadata(tmp_path, shared_embedding_model):
         embedding_workers=4,
     )
 
-    chunk = _with_hash(Chunk(chunk_id="test-doc_chunk_0", record_id="test-doc", content="Test content with metadata", metadata={**({"tags": ["test", "parallel"], "custom_field": "value"}), "header_path": "## Test Header", "start_pos": 0, "end_pos": 100, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC), "parent_chunk_id": "parent_chunk"}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="test-doc_chunk_0", record_id="test-doc", content="Test content with metadata", metadata={"tags": ["test", "parallel"], "custom_field": "value", "header_path": "## Test Header", "start_pos": 0, "end_pos": 100, "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC), "parent_chunk_id": "parent_chunk"}, chunk_index=0))
 
     vector.add_chunks([chunk])
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from searchkernel.daemon.metadata import (
+from ragdocs.daemon.metadata import (
     DaemonMetadata,
     read_daemon_metadata,
     remove_daemon_metadata,

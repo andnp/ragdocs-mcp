@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from searchkernel.cli import cli
-from searchkernel.config import detect_project
+from ragdocs.cli import cli
+from ragdocs.config import detect_project
 
 
 @pytest.fixture

@@ -3,16 +3,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from searchkernel.config import (
+from ragdocs.config import (
     Config,
     GitIndexingConfig,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.git.watcher import GitWatcher
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indexing.tasks import TaskSubmissionResult
+from ragdocs.git.watcher import GitWatcher
+from ragdocs.indexing.manager import IndexManager
+from ragdocs.indexing.tasks import TaskSubmissionResult
 
 
 @pytest.fixture
@@ -182,7 +182,7 @@ async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
     )
 
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_refresh_git_request",
+        "ragdocs.indexing.tasks.submit_refresh_git_request",
         lambda git_dir_str: observed.append(git_dir_str)
         or TaskSubmissionResult(status="enqueued"),
     )
@@ -208,15 +208,15 @@ async def test_git_watcher_skips_unchanged_repository_after_refresh(
     )
 
     monkeypatch.setattr(
-        "searchkernel.git.watcher.get_git_ref_signature",
+        "ragdocs.git.watcher.get_git_ref_signature",
         lambda _git_dir: "same-head",
     )
     monkeypatch.setattr(
-        "searchkernel.git.watcher.get_head",
+        "ragdocs.git.watcher.get_head",
         lambda _root, _git_dir: "same-head",
     )
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_refresh_git_request",
+        "ragdocs.indexing.tasks.submit_refresh_git_request",
         lambda git_dir_str: observed.append(git_dir_str)
         or TaskSubmissionResult(status="enqueued"),
     )
@@ -242,7 +242,7 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
     )
 
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_refresh_git_request",
+        "ragdocs.indexing.tasks.submit_refresh_git_request",
         lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
     )
 

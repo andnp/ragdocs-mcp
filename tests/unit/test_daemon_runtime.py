@@ -4,8 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
-from searchkernel.daemon import RuntimePaths
-from searchkernel.daemon.runtime import create_daemon_runtime
+from ragdocs.daemon import RuntimePaths
+from ragdocs.daemon.runtime import create_daemon_runtime
 
 
 def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
@@ -31,12 +31,12 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
     )
 
     monkeypatch.setattr(
-        "searchkernel.daemon.runtime.ApplicationContext.create",
+        "ragdocs.daemon.runtime.ApplicationContext.create",
         lambda **kwargs: calls.update({"create_kwargs": kwargs}) or fake_ctx,
     )
-    monkeypatch.setattr("searchkernel.daemon.runtime.get_huey", lambda queue_db_path: "huey")
+    monkeypatch.setattr("ragdocs.daemon.runtime.get_huey", lambda queue_db_path: "huey")
     monkeypatch.setattr(
-        "searchkernel.daemon.runtime.register_tasks",
+        "ragdocs.daemon.runtime.register_tasks",
         lambda huey, index_manager, **kwargs: calls.setdefault(
             "register_tasks",
             {
@@ -47,15 +47,15 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
         ),
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.runtime.HueyWorkerProcess",
+        "ragdocs.daemon.runtime.HueyWorkerProcess",
         lambda runtime_paths: fake_worker,
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.runtime.read_daemon_metadata",
+        "ragdocs.daemon.runtime.read_daemon_metadata",
         lambda metadata_path: {"status": "ready"},
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.runtime.DaemonHealthServer",
+        "ragdocs.daemon.runtime.DaemonHealthServer",
         lambda socket_path, metadata_provider, request_handler: calls.setdefault(
             "health_server",
             {

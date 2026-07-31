@@ -8,13 +8,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from searchkernel.domain import Record
 
-from searchkernel.daemon.request_router import (
+from ragdocs.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
 )
-from searchkernel.domain import Record
-from searchkernel.lifecycle import LifecycleState
+from ragdocs.lifecycle import LifecycleState
 
 
 @dataclass
@@ -411,12 +411,12 @@ async def test_admin_tasks_purge_route_uses_huey_storage_helpers(
     observed: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "searchkernel.daemon.request_router.get_huey",
+        "ragdocs.daemon.request_router.get_huey",
         lambda queue_db_path: observed.setdefault("queue_db_path", queue_db_path)
         or sentinel_huey,
     )
     monkeypatch.setattr(
-        "searchkernel.daemon.request_router.purge_queue_state",
+        "ragdocs.daemon.request_router.purge_queue_state",
         lambda huey, *, state, worker_running, backpressure_limit: SimpleNamespace(
             to_dict=lambda: {
                 "purged_state": state,

@@ -12,9 +12,9 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import pytest
-
-from searchkernel.lifecycle import LeaderElection, LifecycleCoordinator, LifecycleState
 from searchkernel.storage.db import DatabaseManager
+
+from ragdocs.lifecycle import LeaderElection, LifecycleCoordinator, LifecycleState
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -3,7 +3,7 @@ from typing import cast
 
 import pytest
 
-from searchkernel import cli
+from ragdocs import cli
 
 
 def test_should_reexec_into_repo_venv_when_required_dependency_missing(
@@ -69,7 +69,7 @@ def test_reexec_into_repo_venv_uses_module_invocation(monkeypatch, tmp_path):
     assert observed["argv"] == [
         str(repo_python),
         "-m",
-        "searchkernel.cli",
+        "ragdocs.cli",
         "daemon-internal-run",
         "--runtime-root",
         "/tmp/runtime",

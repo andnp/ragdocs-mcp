@@ -1,5 +1,4 @@
 import pytest
-
 from searchkernel.indexing.manifest import (
     IndexManifest,
     load_manifest,

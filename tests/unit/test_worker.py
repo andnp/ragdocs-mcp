@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from huey import SqliteHuey
 
-from searchkernel.worker.consumer import HueyWorker
+from ragdocs.worker.consumer import HueyWorker
 
 
 @pytest.fixture()
@@ -84,8 +84,9 @@ class TestWorkerWithLifecycle:
         from dataclasses import dataclass, field
         from typing import Any, cast
 
-        from searchkernel.lifecycle import LifecycleCoordinator, LifecycleState
         from searchkernel.storage.db import DatabaseManager
+
+        from ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 
         @dataclass
         class FakeGitConfig:
@@ -140,8 +141,9 @@ class TestWorkerWithLifecycle:
         from dataclasses import dataclass, field
         from typing import Any, cast
 
-        from searchkernel.lifecycle import LifecycleCoordinator, LifecycleState
         from searchkernel.storage.db import DatabaseManager
+
+        from ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 
         @dataclass
         class FakeGitConfig:
@@ -201,8 +203,8 @@ class TestWorkerRuntimeStartup:
         monkeypatch,
         tmp_path: Path,
     ) -> None:
-        from searchkernel.cli import _run_worker_forever_async
-        from searchkernel.daemon.paths import RuntimePaths
+        from ragdocs.cli import _run_worker_forever_async
+        from ragdocs.daemon.paths import RuntimePaths
 
         class _FakeIndexManager:
             def load(self) -> None:
@@ -261,12 +263,12 @@ class TestWorkerRuntimeStartup:
             socket_path=tmp_path / "daemon.sock",
         )
 
-        monkeypatch.setattr("searchkernel.cli.ApplicationContext.create", lambda **kwargs: fake_ctx)
-        monkeypatch.setattr("searchkernel.cli.get_huey", lambda _path: object())
-        monkeypatch.setattr("searchkernel.cli.register_tasks", lambda *args, **kwargs: None)
-        monkeypatch.setattr("searchkernel.cli.HueyWorker", lambda _huey: fake_worker)
+        monkeypatch.setattr("ragdocs.cli.ApplicationContext.create", lambda **kwargs: fake_ctx)
+        monkeypatch.setattr("ragdocs.cli.get_huey", lambda _path: object())
+        monkeypatch.setattr("ragdocs.cli.register_tasks", lambda *args, **kwargs: None)
+        monkeypatch.setattr("ragdocs.cli.HueyWorker", lambda _huey: fake_worker)
         monkeypatch.setattr(
-            "searchkernel.cli._parent_process_alive",
+            "ragdocs.cli._parent_process_alive",
             lambda _pid, _parent_start_time=None: False,
         )
         monkeypatch.setattr(

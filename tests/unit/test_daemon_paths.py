@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from searchkernel.daemon.paths import RuntimePaths, _socket_path_for
+from ragdocs.daemon.paths import RuntimePaths, _socket_path_for
 
 
 def test_runtime_paths_are_global_and_co_located() -> None:

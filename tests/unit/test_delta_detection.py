@@ -3,19 +3,19 @@
 from datetime import UTC, datetime
 
 import pytest
+from searchkernel.domain import Chunk
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 
-from searchkernel.config import (
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.domain import Chunk
+from ragdocs.indexing.manager import IndexManager
 from tests.conftest import create_test_document
 
 
@@ -38,7 +38,7 @@ def _with_hash(chunk):
 
 def make_chunk(chunk_id: str, doc_id: str, content: str, chunk_index: int = 0) -> Chunk:
     """Helper to create test chunks with minimal boilerplate."""
-    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=chunk_index))
+    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={ "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": "/tmp/test.md", "modified_time": datetime.now(UTC)}, chunk_index=chunk_index))
 
 
 @pytest.fixture

@@ -16,22 +16,22 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from searchkernel.compression.thresholding import filter_by_score
-from searchkernel.config import (
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.search.orchestrator import SearchOrchestrator
+from searchkernel.search.pipeline import SearchPipelineConfig
+
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import CompressionStats
-from searchkernel.search.orchestrator import SearchOrchestrator
-from searchkernel.search.pipeline import SearchPipelineConfig
+from ragdocs.indexing.manager import IndexManager
+from ragdocs.models import CompressionStats
 
 # ============================================================================
 # Fixtures

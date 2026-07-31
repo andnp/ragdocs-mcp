@@ -3,7 +3,7 @@ from __future__ import annotations
 import click
 import pytest
 
-from searchkernel.daemon import rebuild_commands as rebuild_module
+from ragdocs.daemon import rebuild_commands as rebuild_module
 
 
 def test_resolve_rebuild_project_scope_rejects_conflicting_flags() -> None:

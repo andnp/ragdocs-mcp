@@ -1,8 +1,9 @@
 from datetime import UTC, datetime
 
 from searchkernel.chunking.header_chunker import HeaderBasedChunker
-from searchkernel.config import ChunkingConfig
 from searchkernel.domain import Record
+
+from ragdocs.config import ChunkingConfig
 
 
 def _make_record(record_id: str, content: str) -> Record:

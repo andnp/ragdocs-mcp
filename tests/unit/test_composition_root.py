@@ -2,10 +2,10 @@
 
 import os
 
-from searchkernel.app.composition import build_kernel
-from searchkernel.app.runtime import configure_runtime_threads
-from searchkernel.config import load_config
-from searchkernel.context import ApplicationContext
+from ragdocs.app.composition import build_kernel
+from ragdocs.app.runtime import configure_runtime_threads
+from ragdocs.config import load_config
+from ragdocs.context import ApplicationContext
 
 
 class TestCompositionRootNoGlobalMutation:

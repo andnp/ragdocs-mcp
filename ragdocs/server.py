@@ -4,13 +4,13 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
-
-from searchkernel.app.runtime import configure_runtime_threads
-from searchkernel.context import ApplicationContext
 from searchkernel.indexing.manifest import load_manifest
-from searchkernel.models import ChunkResult
 from searchkernel.search.pipeline import SearchPipelineConfig
 from searchkernel.search.utils import classify_query_type, truncate_content
+
+from ragdocs.app.runtime import configure_runtime_threads
+from ragdocs.context import ApplicationContext
+from ragdocs.models import ChunkResult
 
 logger = logging.getLogger(__name__)
 

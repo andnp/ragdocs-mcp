@@ -56,25 +56,25 @@ from typing import Any
 
 import pytest
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.storage.db import DatabaseManager
 
-from searchkernel.config import (
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.daemon.management import inspect_daemon, stop_daemon
-from searchkernel.daemon.paths import RuntimePaths
-from searchkernel.embeddings import (
+from ragdocs.daemon.management import inspect_daemon, stop_daemon
+from ragdocs.daemon.paths import RuntimePaths
+from ragdocs.embeddings import (
     TEST_FAKE_EMBEDDINGS_ENV_VAR,
     DeterministicFakeEmbeddingModel,
 )
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.storage.db import DatabaseManager
+from ragdocs.indexing.manager import IndexManager
 
 
 @pytest.fixture(autouse=True)

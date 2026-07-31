@@ -9,23 +9,23 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from searchkernel.indexing.git_ingestion import ingest_git_source
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.search.orchestrator import SearchOrchestrator
 
-from searchkernel.adapters.sources.git import GitContentSource
-from searchkernel.config import (
+from ragdocs.adapters.sources.git import GitContentSource
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.indexing.git_ingestion import ingest_git_source
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.mcp.handlers import HandlerContext
-from searchkernel.mcp.tools.document_tools import handle_search_git_history
-from searchkernel.search.orchestrator import SearchOrchestrator
+from ragdocs.indexing.manager import IndexManager
+from ragdocs.mcp.handlers import HandlerContext
+from ragdocs.mcp.tools.document_tools import handle_search_git_history
 
 
 def _init_git_repo(path: Path) -> None:

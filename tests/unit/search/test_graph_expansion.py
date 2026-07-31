@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
-from searchkernel.indices.vector import VectorIndex
 from searchkernel.domain import Chunk
+from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.graph_expansion import build_graph_chunk_candidates
 
 
@@ -23,7 +23,7 @@ def _with_hash(chunk):
 
 
 def _make_chunk(doc_id: str, chunk_index: int) -> Chunk:
-    return _with_hash(Chunk(chunk_id=f"{doc_id}_chunk_{chunk_index}", record_id=doc_id, content=f"Content for {doc_id} chunk {chunk_index}", metadata={**({}), "header_path": f"Section {chunk_index}", "start_pos": 0, "end_pos": 10, "file_path": f"{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=chunk_index))
+    return _with_hash(Chunk(chunk_id=f"{doc_id}_chunk_{chunk_index}", record_id=doc_id, content=f"Content for {doc_id} chunk {chunk_index}", metadata={ "header_path": f"Section {chunk_index}", "start_pos": 0, "end_pos": 10, "file_path": f"{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=chunk_index))
 
 
 def test_build_graph_chunk_candidates_limits_results_per_doc_and_total(

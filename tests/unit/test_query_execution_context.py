@@ -2,14 +2,14 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, SearchConfig
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import CompressionStats
 from searchkernel.search.classifier import classify_query
 from searchkernel.search.orchestrator import SearchOrchestrator
+
+from ragdocs.config import ChunkingConfig, Config, IndexingConfig, SearchConfig
+from ragdocs.models import CompressionStats
 
 
 def _orchestrator(*, detected_project: str | None = None) -> SearchOrchestrator:

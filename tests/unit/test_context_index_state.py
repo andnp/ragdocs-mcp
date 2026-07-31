@@ -17,8 +17,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from searchkernel.context import ApplicationContext, IndexState
 from searchkernel.indexing.bootstrap_checkpoint import (
     BootstrapCheckpoint,
     BootstrapFileStamp,
@@ -32,7 +30,9 @@ from searchkernel.indexing.manifest import (
     load_manifest,
     save_manifest,
 )
-from searchkernel.indexing.tasks import TaskBatchSubmissionResult
+
+from ragdocs.context import ApplicationContext, IndexState
+from ragdocs.indexing.tasks import TaskBatchSubmissionResult
 
 
 def _setattr(obj: Any, name: str, value: Any):
@@ -1142,7 +1142,7 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
         )
 
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_index_batch",
+        "ragdocs.indexing.tasks.submit_index_batch",
         fake_submit_index_batch,
     )
 
@@ -1236,7 +1236,7 @@ async def test_task_bootstrap_keeps_monitoring_when_remaining_work_is_already_pe
     enqueue_checked = asyncio.Event()
 
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_index_batch",
+        "ragdocs.indexing.tasks.submit_index_batch",
         lambda file_paths, force=False: enqueue_checked.set()
         or TaskBatchSubmissionResult(
             queue_available=True,
@@ -1433,7 +1433,7 @@ async def test_task_bootstrap_skips_durably_completed_files(
         )
 
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_index_batch",
+        "ragdocs.indexing.tasks.submit_index_batch",
         fake_submit_index_batch,
     )
 
@@ -1597,11 +1597,11 @@ async def test_task_backed_reconciliation_enqueues_changes_without_index_manager
     _setattr(ctx, "discover_files", lambda: [added])
 
     monkeypatch.setattr(
-        "searchkernel.context.load_manifest",
+        "ragdocs.context.load_manifest",
         lambda path: object(),
     )
     monkeypatch.setattr(
-        "searchkernel.context.reconcile_indices",
+        "ragdocs.context.reconcile_indices",
         lambda *args: ([added], [removed], {}),
     )
     observed: dict[str, object] = {}
@@ -1623,11 +1623,11 @@ async def test_task_backed_reconciliation_enqueues_changes_without_index_manager
         )
 
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_index_batch",
+        "ragdocs.indexing.tasks.submit_index_batch",
         fake_submit_index_batch,
     )
     monkeypatch.setattr(
-        "searchkernel.indexing.tasks.submit_remove_request_batch",
+        "ragdocs.indexing.tasks.submit_remove_request_batch",
         fake_submit_remove_batch,
     )
 

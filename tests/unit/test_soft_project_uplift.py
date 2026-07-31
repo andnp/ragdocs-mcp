@@ -1,10 +1,11 @@
 from pathlib import Path
 
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig, SearchConfig
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.search.orchestrator import SearchOrchestrator
+
+from ragdocs.config import ChunkingConfig, Config, IndexingConfig, SearchConfig
 
 
 def _orchestrator(

@@ -5,9 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
-from searchkernel.indices.vector import VectorIndex
 from searchkernel.domain import Chunk
+from searchkernel.indices.vector import VectorIndex
 from searchkernel.storage.db import DatabaseManager
 
 
@@ -30,7 +29,7 @@ def _with_hash(chunk):
 
 def _make_chunk(doc_id: str, index: int, content: str) -> Chunk:
     chunk_id = f"{doc_id}_chunk_{index}"
-    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={**({"doc_id": doc_id}), "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": f"/docs/{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=index))
+    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={"doc_id": doc_id, "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": f"/docs/{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=index))
 
 
 @pytest.fixture

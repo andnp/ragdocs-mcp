@@ -12,9 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
-from searchkernel.indices.vector import VectorIndex
 from searchkernel.domain import Chunk
+from searchkernel.indices.vector import VectorIndex
 
 
 def _with_hash(chunk):
@@ -52,7 +51,7 @@ class TestVectorRaceCondition:
         # Create test chunks
         now = datetime.now(UTC)
         chunks = [
-            _with_hash(Chunk(chunk_id=f"chunk_{i}", record_id=f"doc_{i % 3}", content=f"Test content {i} with some keywords like python async threading", metadata={**({"tags": ["test"], "links": []}), "header_path": f"Section {i}", "start_pos": 0, "end_pos": 100, "file_path": f"test_{i % 3}.md", "modified_time": now, "parent_chunk_id": None}, chunk_index=i))
+            _with_hash(Chunk(chunk_id=f"chunk_{i}", record_id=f"doc_{i % 3}", content=f"Test content {i} with some keywords like python async threading", metadata={"tags": ["test"], "links": [], "header_path": f"Section {i}", "start_pos": 0, "end_pos": 100, "file_path": f"test_{i % 3}.md", "modified_time": now, "parent_chunk_id": None}, chunk_index=i))
             for i in range(20)
         ]
 
@@ -124,7 +123,7 @@ class TestVectorRaceCondition:
 
         now = datetime.now(UTC)
         chunks = [
-            _with_hash(Chunk(chunk_id=f"chunk_{i}", record_id=f"doc_{i % 5}", content=f"Async test content {i} with keywords python asyncio threading", metadata={**({"tags": ["async"], "links": []}), "header_path": f"Async Section {i}", "start_pos": 0, "end_pos": 100, "file_path": f"async_test_{i % 5}.md", "modified_time": now, "parent_chunk_id": None}, chunk_index=i))
+            _with_hash(Chunk(chunk_id=f"chunk_{i}", record_id=f"doc_{i % 5}", content=f"Async test content {i} with keywords python asyncio threading", metadata={"tags": ["async"], "links": [], "header_path": f"Async Section {i}", "start_pos": 0, "end_pos": 100, "file_path": f"async_test_{i % 5}.md", "modified_time": now, "parent_chunk_id": None}, chunk_index=i))
             for i in range(30)
         ]
 
@@ -166,7 +165,7 @@ class TestVectorRaceCondition:
 
         now = datetime.now(UTC)
         chunks = [
-            _with_hash(Chunk(chunk_id=f"chunk_{i}", record_id=f"doc_{i % 10}", content=f"Stress test content {i}", metadata={**({"tags": ["stress"], "links": []}), "header_path": f"Section {i}", "start_pos": 0, "end_pos": 100, "file_path": f"stress_{i % 10}.md", "modified_time": now, "parent_chunk_id": None}, chunk_index=i))
+            _with_hash(Chunk(chunk_id=f"chunk_{i}", record_id=f"doc_{i % 10}", content=f"Stress test content {i}", metadata={"tags": ["stress"], "links": [], "header_path": f"Section {i}", "start_pos": 0, "end_pos": 100, "file_path": f"stress_{i % 10}.md", "modified_time": now, "parent_chunk_id": None}, chunk_index=i))
             for i in range(50)
         ]
 

@@ -1,20 +1,20 @@
 import pytest
-
 from searchkernel.chunking.header_chunker import HeaderBasedChunker
-from searchkernel.config import (
+from searchkernel.domain import Record
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.domain import Record
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.models import Document
-from searchkernel.parsers.plaintext import PlainTextParser
+from ragdocs.indexing.manager import IndexManager
+from ragdocs.models import Document
+from ragdocs.parsers.plaintext import PlainTextParser
 
 
 def _to_record(doc: Document) -> Record:

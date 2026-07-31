@@ -4,7 +4,6 @@ import time
 from datetime import UTC, datetime
 
 import pytest
-
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.utils.circuit_breaker import CircuitState
 
@@ -379,7 +378,7 @@ class TestSearchCircuitBreaker:
         vector_index._initialize_index()
 
         # Add a chunk to search for
-        chunk = _with_hash(Chunk(chunk_id="test_doc_chunk_0", record_id="test_doc", content="This is test content for searching", metadata={**({}), "header_path": "Test Section", "start_pos": 0, "end_pos": 34, "file_path": "/test/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+        chunk = _with_hash(Chunk(chunk_id="test_doc_chunk_0", record_id="test_doc", content="This is test content for searching", metadata={ "header_path": "Test Section", "start_pos": 0, "end_pos": 34, "file_path": "/test/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
         vector_index.add_chunk(chunk)
 
         # Force circuit open then reset
@@ -410,7 +409,7 @@ class TestVocabularyCircuitBreaker:
         # Add some content
         from searchkernel.domain import Chunk
 
-        chunk = _with_hash(Chunk(chunk_id="doc1_chunk_0", record_id="doc1", content="test content python programming code", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 37, "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+        chunk = _with_hash(Chunk(chunk_id="doc1_chunk_0", record_id="doc1", content="test content python programming code", metadata={ "header_path": "", "start_pos": 0, "end_pos": 37, "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
         vector_index.add_chunk(chunk)
 
         # Should complete without errors even with low threshold

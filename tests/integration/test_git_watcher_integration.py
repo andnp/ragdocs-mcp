@@ -2,20 +2,20 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
 
-from searchkernel.config import (
+from ragdocs.config import (
     Config,
     GitIndexingConfig,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.git.repository import is_git_available
-from searchkernel.git.watcher import GitWatcher
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
+from ragdocs.git.repository import is_git_available
+from ragdocs.git.watcher import GitWatcher
+from ragdocs.indexing.manager import IndexManager
 
 
 def _init_git_repo(path: Path):

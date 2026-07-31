@@ -6,9 +6,10 @@ makes `StoreConfig.backend` genuinely consumed by the live path, rather
 than dead configuration nobody reads.
 """
 
-from searchkernel.config import Config
-from searchkernel.context import ApplicationContext
 from searchkernel.indices.vector import VectorIndex
+
+from ragdocs.config import Config
+from ragdocs.context import ApplicationContext
 
 
 def test_defaults_to_faiss_backend():

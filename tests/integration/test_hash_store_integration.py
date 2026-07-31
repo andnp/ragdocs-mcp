@@ -4,12 +4,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
-from searchkernel.config import ChunkingConfig, Config, IndexingConfig
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
+
+from ragdocs.config import ChunkingConfig, Config, IndexingConfig
+from ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
@@ -89,7 +89,7 @@ def test_hash_store_persisted_with_indices(tmp_path, manager):
     # Manually store hash (simulating delta indexing flow)
     from searchkernel.domain import Chunk
 
-    test_chunk = _with_hash(Chunk(chunk_id=chunk_id, record_id="test", content="Test content", metadata={**({}), "header_path": "Test", "start_pos": 0, "end_pos": 12, "file_path": str(test_file), "modified_time": datetime.now(UTC)}, chunk_index=0))
+    test_chunk = _with_hash(Chunk(chunk_id=chunk_id, record_id="test", content="Test content", metadata={ "header_path": "Test", "start_pos": 0, "end_pos": 12, "file_path": str(test_file), "modified_time": datetime.now(UTC)}, chunk_index=0))
     manager._hash_store.set_hash(test_chunk.chunk_id, test_chunk.content_hash)
 
     # Persist

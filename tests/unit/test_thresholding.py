@@ -10,9 +10,9 @@ Tests cover:
 """
 
 import pytest
-
 from searchkernel.compression.thresholding import filter_by_score
-from searchkernel.models import ChunkResult
+
+from ragdocs.models import ChunkResult
 
 # ============================================================================
 # Fixtures

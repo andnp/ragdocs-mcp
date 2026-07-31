@@ -9,14 +9,14 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
-from searchkernel.config import Config, IndexingConfig
-from searchkernel.indexing.manager import IndexManager
+from searchkernel.domain import Chunk
 from searchkernel.indexing.manifest import IndexManifest, save_manifest
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from searchkernel.domain import Chunk
+
+from ragdocs.config import Config, IndexingConfig
+from ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
@@ -38,7 +38,7 @@ def _with_hash(chunk):
 
 def make_chunk(chunk_id: str, doc_id: str, content: str, index: int) -> Chunk:
     """Helper to create Chunk with required fields."""
-    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": f"/docs/{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=index))
+    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={ "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": f"/docs/{doc_id}.md", "modified_time": datetime.now(UTC)}, chunk_index=index))
 
 
 @pytest.fixture
@@ -170,7 +170,7 @@ class TestPruneDocumentSuccess:
         doc_id = "reason_test"
         reason = "file_deleted"
 
-        with caplog.at_level(logging.INFO, logger="searchkernel.indexing.manager"):
+        with caplog.at_level(logging.INFO, logger="ragdocs.indexing.manager"):
             manager.prune_document(doc_id, reason=reason)
 
         # Check logs contain reason

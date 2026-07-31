@@ -8,9 +8,8 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-
-from searchkernel.indices.vector import VectorIndex
 from searchkernel.domain import Chunk
+from searchkernel.indices.vector import VectorIndex
 
 
 def _with_hash(chunk):
@@ -33,7 +32,7 @@ def _with_hash(chunk):
 @pytest.fixture
 def sample_chunk():
     """Create a sample chunk for testing."""
-    return _with_hash(Chunk(chunk_id="test_doc_chunk_0", record_id="test_doc", content="Machine learning and artificial intelligence.", metadata={**({"source": "test"}), "header_path": "", "start_pos": 0, "end_pos": 45, "file_path": "/test/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    return _with_hash(Chunk(chunk_id="test_doc_chunk_0", record_id="test_doc", content="Machine learning and artificial intelligence.", metadata={"source": "test", "header_path": "", "start_pos": 0, "end_pos": 45, "file_path": "/test/doc.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
 
 def test_vector_index_load_with_corrupted_concept_vocabulary(
@@ -192,7 +191,7 @@ def test_vector_index_persist_recovers_from_partial_write(
     (persist_path / "concept_vocabulary.json").write_text("corrupted")
 
     # Add more data
-    chunk2 = _with_hash(Chunk(chunk_id="test_doc2_chunk_0", record_id="test_doc2", content="Deep learning neural networks.", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 30, "file_path": "/test/doc2.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk2 = _with_hash(Chunk(chunk_id="test_doc2_chunk_0", record_id="test_doc2", content="Deep learning neural networks.", metadata={ "header_path": "", "start_pos": 0, "end_pos": 30, "file_path": "/test/doc2.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
     index.add_chunk(chunk2)
 
     # Second persist should succeed and overwrite corrupted file
@@ -266,7 +265,7 @@ def test_vector_index_vocabulary_building_with_single_chunk(shared_embedding_mod
     """
     index = VectorIndex(embedding_model=shared_embedding_model)
 
-    chunk = _with_hash(Chunk(chunk_id="single_chunk", record_id="single_doc", content="machine learning", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 16, "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="single_chunk", record_id="single_doc", content="machine learning", metadata={ "header_path": "", "start_pos": 0, "end_pos": 16, "file_path": "/test.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
     index.add_chunk(chunk)
     index.build_concept_vocabulary()

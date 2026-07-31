@@ -16,20 +16,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from searchkernel.domain import Chunk
+from searchkernel.indices.graph import GraphStore
+from searchkernel.indices.keyword import KeywordIndex
+from searchkernel.indices.vector import VectorIndex
+from searchkernel.search.orchestrator import SearchOrchestrator
 
-from searchkernel.config import (
+from ragdocs.config import (
     ChunkingConfig,
     Config,
     IndexingConfig,
     LLMConfig,
     SearchConfig,
 )
-from searchkernel.indexing.manager import IndexManager
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.domain import Chunk
-from searchkernel.search.orchestrator import SearchOrchestrator
+from ragdocs.indexing.manager import IndexManager
 
 
 def _with_hash(chunk):
@@ -296,7 +296,7 @@ async def test_query_uses_orchestrator_documents_path(base_config, indices, tmp_
     )
 
     # Add a chunk that references the explicit docs path
-    chunk = _with_hash(Chunk(chunk_id="test/doc_chunk_0", record_id="test/doc", content="Test content for path verification", metadata={**({}), "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(explicit_docs / "test" / "doc.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
+    chunk = _with_hash(Chunk(chunk_id="test/doc_chunk_0", record_id="test/doc", content="Test content for path verification", metadata={ "header_path": "", "start_pos": 0, "end_pos": 50, "file_path": str(explicit_docs / "test" / "doc.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
     vector.add_chunk(chunk)
     keyword.add_chunk(chunk)
 

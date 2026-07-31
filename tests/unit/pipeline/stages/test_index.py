@@ -47,7 +47,7 @@ class _StubGraph:
 
 
 def _chunk(chunk_id: str) -> Chunk:
-    return _with_hash(Chunk(chunk_id=chunk_id, record_id="doc-1", content="hello world", metadata={**({"tag": "x"}), "header_path": "", "start_pos": 0, "end_pos": 11, "file_path": "doc-1.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
+    return _with_hash(Chunk(chunk_id=chunk_id, record_id="doc-1", content="hello world", metadata={"tag": "x", "header_path": "", "start_pos": 0, "end_pos": 11, "file_path": "doc-1.md", "modified_time": datetime.now(UTC)}, chunk_index=0))
 
 
 def test_index_stage_writes_chunks_to_all_three_indices():
