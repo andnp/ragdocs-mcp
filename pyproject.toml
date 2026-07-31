@@ -50,6 +50,13 @@ dev = [
 [tool.uv]
 package = true
 
+# TEMPORARY: Override andnp-searchkernel to use local editable path during development
+# while waiting for the library's next version to be published to PyPI.
+# Once the library version is bumped and re-released, this section can be removed
+# and the dependency will automatically resolve to the published version.
+[tool.uv.sources]
+andnp-searchkernel = { path = "../andnp-searchkernel", editable = true }
+
 [tool.hatch.build.targets.wheel]
 packages = ["mcp_markdown_ragdocs"]
 

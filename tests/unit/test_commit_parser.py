@@ -6,7 +6,6 @@ from mcp_markdown_ragdocs.git.commit_parser import (
     CommitData,
     build_commit_document,
     parse_commit,
-    truncate_delta,
 )
 
 
@@ -256,23 +255,6 @@ def test_build_commit_document():
     assert "tests/test_auth.py" in doc
     assert "-old line" in doc
     assert "+new line" in doc
-
-
-def test_truncate_delta_function():
-    """Test truncate_delta function directly."""
-    # Test with short input
-    short_diff = "\n".join([f"line {i}" for i in range(50)])
-    result = truncate_delta(short_diff, max_lines=200)
-    assert result == short_diff
-    assert "omitted" not in result
-
-    # Test with long input
-    long_diff = "\n".join([f"line {i}" for i in range(300)])
-    result = truncate_delta(long_diff, max_lines=200)
-    assert "lines omitted" in result
-    lines = result.splitlines()
-    # Should have 200 lines + empty line + omission message
-    assert len([line for line in lines if line and "omitted" not in line]) == 200
 
 
 def test_utf8_encoding():
