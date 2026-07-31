@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import shutil
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -45,8 +46,9 @@ from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.discover import DiscoverStage
-from searchkernel.search.orchestrator import SearchOrchestrator
 from searchkernel.storage.db import DatabaseManager
+from searchkernel.indexing.async_ingestion import AsyncIndexIngestor
+from searchkernel.domain import Record
 
 from mcp_markdown_ragdocs.config import (
     Config,
@@ -59,6 +61,7 @@ from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +88,8 @@ class IndexState:
 class ApplicationContext:
     config: Config
     index_manager: IndexManager
-    orchestrator: SearchOrchestrator
+    orchestrator: CanonicalSearchAdapter
+    record_ingestor: AsyncIndexIngestor | None = None
     use_tasks: bool = False
     _watcher_lifecycle: WatcherLifecycle = field(
         default_factory=WatcherLifecycle, repr=False
@@ -176,14 +180,8 @@ class ApplicationContext:
             graph,
             documents_roots=documents_roots,
         )
-        orchestrator = SearchOrchestrator(
-            vector,
-            keyword,
-            graph,
-            config,
-            manager,
-            documents_path=Path(documents_path),
-        )
+        orchestrator = CanonicalSearchAdapter(manager)
+        record_ingestor = AsyncIndexIngestor(manager)
 
         watcher_lifecycle = WatcherLifecycle.create(
             enabled=enable_watcher,
@@ -214,6 +212,7 @@ class ApplicationContext:
             config=config,
             index_manager=manager,
             orchestrator=orchestrator,
+            record_ingestor=record_ingestor,
             use_tasks=use_tasks,
             _watcher_lifecycle=watcher_lifecycle,
             git_indexing_enabled=git_indexing_enabled,
@@ -1090,6 +1089,22 @@ class ApplicationContext:
     def get_index_state(self) -> IndexState:
         """Get current index state for health checks."""
         return self._index_state
+
+    async def ingest_records(
+        self,
+        records: Sequence[Record],
+        *,
+        checkpoint: str | None = None,
+        failure_mode: Literal["strict", "lenient"] = "strict",
+    ):
+        """Ingest records through searchkernel's async batch boundary."""
+        if self.record_ingestor is None:
+            raise RuntimeError("record ingestion is not configured")
+        return await self.record_ingestor.index_records(
+            records,
+            checkpoint=checkpoint,
+            failure_mode=failure_mode,
+        )
 
     async def ensure_ready(self, timeout: float = 60.0) -> None:
         """Wait for initialization to complete. Call before first query."""

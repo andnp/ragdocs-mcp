@@ -13,7 +13,6 @@ from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from searchkernel.ports import SearchableSource
-from searchkernel.search.orchestrator import SearchOrchestrator
 
 from mcp_markdown_ragdocs.adapters.sources.local import LocalSearchSource
 from mcp_markdown_ragdocs.config import (
@@ -24,6 +23,7 @@ from mcp_markdown_ragdocs.config import (
     SearchConfig,
 )
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 
 def _with_hash(chunk):
@@ -72,9 +72,7 @@ def manager(config, indices):
 
 @pytest.fixture
 def orchestrator(config, indices, manager):
-    return SearchOrchestrator(
-        indices["vector"], indices["keyword"], indices["graph"], config, manager
-    )
+    return CanonicalSearchAdapter(manager)
 
 
 @pytest.fixture

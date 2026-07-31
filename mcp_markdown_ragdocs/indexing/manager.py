@@ -2,7 +2,7 @@ import logging
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -668,7 +668,7 @@ class IndexManager:
             ] + [failed]
             raise
 
-    def index_record(self, record: Record) -> None:
+    def index_record(self, record: Record) -> bool:
         """Ingest a source-agnostic Record (e.g. a git commit) into the live indices.
 
         Unlike index_document, this chunks in-memory content (record.body)
@@ -676,12 +676,25 @@ class IndexManager:
         source_kind/source_id metadata so SearchOrchestrator.query's
         source_filter can scope a query to this source.
         """
+        indexed_record = record
+        if record.workspace_id is not None:
+            indexed_record = replace(
+                record,
+                source_id=record.storage_key,
+                metadata={
+                    **record.metadata,
+                    "canonical_source_id": record.source_id,
+                    "workspace_id": record.workspace_id,
+                },
+            )
         mutated = self._core.index_record(
-            record, on_persist_hash_store=self._persist_hash_store_if_needed
+            indexed_record,
+            on_persist_hash_store=self._persist_hash_store_if_needed,
         )
         if mutated:
             self._mark_derived_graph_state_dirty()
             self._bump_state_version()
+        return mutated
 
     def remove_document(self, doc_id: str):
         errors: list[tuple[str, Exception]] = []

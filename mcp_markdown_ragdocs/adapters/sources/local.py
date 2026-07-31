@@ -5,12 +5,12 @@ local corpus just one federated source among others from search_anything's
 perspective, fused the same way as any external source.
 """
 
-import asyncio
 from collections.abc import Iterable
 from typing import Any
 
-from searchkernel.domain import ChunkResult, ScoredRef
-from searchkernel.search.orchestrator import SearchOrchestrator
+from searchkernel.domain import ScoredRef
+
+from mcp_markdown_ragdocs.models import ChunkResult
 
 
 class LocalSearchSource:
@@ -28,26 +28,45 @@ class LocalSearchSource:
 
     source_kind = "local"
 
-    def __init__(self, orchestrator: SearchOrchestrator):
+    def __init__(self, orchestrator: Any):
         self._orchestrator = orchestrator
 
     async def search(
         self, query: str, k: int, filters: dict[str, Any] | None = None
     ) -> Iterable[ScoredRef]:
-        source_filter = (filters or {}).get("source_filter")
-
-        def run_query() -> list[ChunkResult]:
-            chunk_results, _stats, _strategy_stats = asyncio.run(
-                self._orchestrator.query(
-                    query,
-                    top_k=k,
-                    top_n=k,
-                    source_filter=source_filter,
-                )
+        if hasattr(self._orchestrator, "search"):
+            source_filter = (filters or {}).get("source_filter")
+            canonical_filters = dict(filters or {})
+            if source_filter is not None:
+                canonical_filters["source_kinds"] = list(source_filter)
+            outcome = await self._orchestrator.search(
+                query,
+                limit=k,
+                filters=canonical_filters,
             )
-            return chunk_results
+            return [
+                ScoredRef(
+                    source_id=result.record.source_id,
+                    score=result.score,
+                    source_kind=self.source_kind,
+                    workspace_id=result.record.workspace_id,
+                    metadata={
+                        **result.record.metadata,
+                        "text": result.record.body,
+                        "storage_key": result.record.storage_key,
+                        "provenance": result.provenance.to_dict(),
+                    },
+                )
+                for result in outcome.results
+            ]
 
-        chunk_results = await asyncio.to_thread(run_query)
+        source_filter = (filters or {}).get("source_filter")
+        chunk_results, _stats, _strategy_stats = await self._orchestrator.query(
+            query,
+            top_k=k,
+            top_n=k,
+            source_filter=source_filter,
+        )
         return [self._to_scored_ref(result) for result in chunk_results]
 
     @staticmethod
@@ -58,7 +77,7 @@ class LocalSearchSource:
             source_kind="local",
             metadata={
                 "text": result.content,
-                "doc_id": result.record_id,
+                "doc_id": result.doc_id,
                 "file_path": result.metadata.get("file_path", ""),
                 "header_path": result.metadata.get("header_path", ""),
             },
