@@ -6,11 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tenacity import retry, stop_after_attempt, wait_exponential
-
 from searchkernel.chunking.factory import get_chunker
-from mcp_markdown_ragdocs.config import Config, resolve_project_id_for_path
-from mcp_markdown_ragdocs.coordination import IndexLock
 from searchkernel.domain import Chunk, Record
 from searchkernel.indexing.core import IndexCore
 from searchkernel.indexing.discovery import get_parser_suffixes
@@ -30,8 +26,6 @@ from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.hash_store import ChunkHashStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from mcp_markdown_ragdocs.models import Document
-from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.apply_move import ApplyMoveStage
 from searchkernel.pipeline.stages.detect_moves import DetectMovesStage
@@ -41,6 +35,12 @@ from searchkernel.search.path_utils import (
     compute_doc_id,
     compute_doc_id_multi_root,
 )
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from mcp_markdown_ragdocs.config import Config, resolve_project_id_for_path
+from mcp_markdown_ragdocs.coordination import IndexLock
+from mcp_markdown_ragdocs.models import Document
+from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
 
 logger = logging.getLogger(__name__)
 
@@ -879,6 +879,7 @@ class IndexManager:
         """
         from searchkernel.indexing.manifest import load_manifest
         from searchkernel.indexing.reconciler import reconcile_indices
+
         from mcp_markdown_ragdocs.models import ReconciliationResult
         from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
 
