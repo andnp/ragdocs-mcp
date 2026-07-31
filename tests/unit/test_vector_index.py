@@ -12,7 +12,7 @@ from mcp_markdown_ragdocs.parsers.markdown import MarkdownParser
 
 
 def _document_to_record(doc: Document) -> Record:
-    """Adapt a parser-produced models.Document into a domain.Record for chunk_document()."""
+    """Adapt a parser-produced models.Document into a domain.Record."""
     return Record(
         source_kind="note",
         source_id=doc.id,
@@ -184,7 +184,7 @@ Important body text.
             parent_chunk_max_chars=20_000,
         )
     )
-    chunks = chunker.chunk_document(_document_to_record(document))
+    chunks = chunker.chunk_record(_document_to_record(document))
 
     index = VectorIndex(embedding_model=shared_embedding_model)
     index.add_chunks(chunks)
