@@ -90,3 +90,56 @@ forbidden_modules = [
     "searchkernel.git",
 ]
 ignore_imports = []
+
+[[tool.importlinter.contracts]]
+name = "app-owned modules depend only on library public surface"
+type = "forbidden"
+source_modules = [
+    "searchkernel.adapters.sources",
+    "searchkernel.parsers",
+    "searchkernel.daemon",
+    "searchkernel.mcp",
+    "searchkernel.worker",
+    "searchkernel.coordination",
+    "searchkernel.cli_utils",
+    "searchkernel.indexing",
+]
+forbidden_modules = [
+    "searchkernel.indices",
+    "searchkernel.pipeline",
+    "searchkernel.eval",
+    "searchkernel.storage",
+    "searchkernel.runtime",
+    "searchkernel.compression",
+    "searchkernel.adapters.embedding",
+    "searchkernel.adapters.llm",
+    "searchkernel.adapters.rerank",
+    "searchkernel.adapters.stores",
+    "searchkernel.adapters.cache",
+    "searchkernel.chunking",
+    "searchkernel.search",
+]
+ignore_imports = [
+    "searchkernel.app.composition -> searchkernel.indices",
+    "searchkernel.app.composition -> searchkernel.pipeline",
+    "searchkernel.app.composition -> searchkernel.storage",
+    "searchkernel.app.composition -> searchkernel.runtime",
+    "searchkernel.app.composition -> searchkernel.adapters.embedding",
+    "searchkernel.app.composition -> searchkernel.adapters.llm",
+    "searchkernel.app.composition -> searchkernel.adapters.rerank",
+    "searchkernel.app.composition -> searchkernel.adapters.stores",
+    "searchkernel.app.composition -> searchkernel.adapters.cache",
+    "searchkernel.app.composition -> searchkernel.chunking",
+    "searchkernel.app.composition -> searchkernel.search",
+    "searchkernel.app.runtime -> searchkernel.indices",
+    "searchkernel.app.runtime -> searchkernel.pipeline",
+    "searchkernel.app.runtime -> searchkernel.storage",
+    "searchkernel.app.runtime -> searchkernel.runtime",
+    "searchkernel.app.runtime -> searchkernel.adapters.embedding",
+    "searchkernel.app.runtime -> searchkernel.adapters.llm",
+    "searchkernel.app.runtime -> searchkernel.adapters.rerank",
+    "searchkernel.app.runtime -> searchkernel.adapters.stores",
+    "searchkernel.app.runtime -> searchkernel.adapters.cache",
+    "searchkernel.app.runtime -> searchkernel.chunking",
+    "searchkernel.app.runtime -> searchkernel.search",
+]
