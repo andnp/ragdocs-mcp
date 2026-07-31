@@ -83,6 +83,7 @@ def create_app():
 
     async def _execute_query(
         orchestrator,
+        config,
         query: str,
         top_n: int,
         max_chunks_per_doc: int = 0,
@@ -95,9 +96,9 @@ def create_app():
             top_k = max(top_k, top_n * 10)
 
         pipeline_config = SearchPipelineConfig(
-            min_confidence=0.0,
+            min_confidence=config.search.min_confidence,
             max_chunks_per_doc=max_chunks_per_doc,
-            dedup_threshold=0.85,
+            dedup_threshold=config.search.dedup_threshold,
         )
 
         results, _, _ = await orchestrator.query(
@@ -125,6 +126,7 @@ def create_app():
     async def query_documents(request: QueryRequest):
         results_dict = await _execute_query(
             app.state.orchestrator,
+            app.state.config,
             request.query,
             request.top_n,
             max_chunks_per_doc=0,

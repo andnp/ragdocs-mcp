@@ -1,6 +1,7 @@
 import pytest
 from searchkernel.domain import ChunkResult
 
+from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.server import QueryRequest, create_app
 
 
@@ -34,6 +35,7 @@ async def test_legacy_query_documents_passes_source_and_project_filters():
     app = create_app()
     orchestrator = FakeOrchestrator()
     app.state.orchestrator = orchestrator
+    app.state.config = Config()
 
     response = await _query_endpoint(app)(
         QueryRequest(
@@ -62,6 +64,7 @@ async def test_legacy_query_documents_keeps_project_filter_default():
     app = create_app()
     orchestrator = FakeOrchestrator()
     app.state.orchestrator = orchestrator
+    app.state.config = Config()
 
     await _query_endpoint(app)(QueryRequest(query="find docs"))
 
