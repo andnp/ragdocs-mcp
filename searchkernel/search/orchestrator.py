@@ -10,7 +10,6 @@ from searchkernel.domain import (
     SearchResultProvenance,
     SearchStrategyStats,
 )
-from searchkernel.indexing.manager import IndexManager
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
@@ -22,6 +21,7 @@ from searchkernel.pipeline.stages.dedup_rerank import DedupRerankStage
 from searchkernel.pipeline.stages.seed_bookkeeping import (
     should_skip_expensive_factual_enrichments,
 )
+from searchkernel.ports.index_manager import IndexManagerPort
 from searchkernel.ports.orchestrator_config import OrchestratorConfig
 from searchkernel.search.base_orchestrator import BaseSearchOrchestrator
 from searchkernel.search.chunk_hydrator import ChunkHydrator
@@ -59,7 +59,7 @@ class SearchOrchestrator(BaseSearchOrchestrator[ChunkResult]):
         keyword_index: KeywordIndex,
         graph_store: GraphStore,
         config: OrchestratorConfig,
-        index_manager: IndexManager | None = None,
+        index_manager: IndexManagerPort | None = None,
         documents_path: Path | None = None,
     ):
         super().__init__(
