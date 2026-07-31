@@ -42,4 +42,42 @@ def test_pgvector_backend_selects_pgvector_index(monkeypatch):
     assert created_kwargs == {
         "pg_dsn": "postgresql://example/db",
         "embedding_model_name": "some-model",
+        "truncate_dim": None,
+    }
+
+
+def test_faiss_backend_passes_truncate_dim():
+    config = Config()
+    config.embedding.truncate_dim = 256
+
+    vector = ApplicationContext._build_vector_store(config, "BAAI/bge-small-en-v1.5")
+
+    assert isinstance(vector, VectorIndex)
+    assert vector._truncate_dim == 256
+
+
+def test_pgvector_backend_passes_truncate_dim(monkeypatch):
+    created_kwargs = {}
+
+    class _FakePGVectorIndex:
+        def __init__(self, **kwargs):
+            created_kwargs.update(kwargs)
+
+    monkeypatch.setattr(
+        "searchkernel.adapters.stores.pgvector_index.PGVectorIndex",
+        _FakePGVectorIndex,
+    )
+
+    config = Config()
+    config.store.backend = "pgvector"
+    config.store.pg_dsn = "postgresql://example/db"
+    config.embedding.truncate_dim = 128
+
+    vector = ApplicationContext._build_vector_store(config, "some-model")
+
+    assert isinstance(vector, _FakePGVectorIndex)
+    assert created_kwargs == {
+        "pg_dsn": "postgresql://example/db",
+        "embedding_model_name": "some-model",
+        "truncate_dim": 128,
     }

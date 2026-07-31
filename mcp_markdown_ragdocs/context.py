@@ -239,12 +239,14 @@ class ApplicationContext:
             return PGVectorIndex(
                 pg_dsn=config.store.pg_dsn,
                 embedding_model_name=embedding_model_name,
+                truncate_dim=config.embedding.truncate_dim,
             )
 
         return VectorIndex(
             embedding_model_name=embedding_model_name,
             embedding_workers=config.indexing.embedding_workers,
             torch_num_threads=config.indexing.torch_num_threads,
+            truncate_dim=config.embedding.truncate_dim,
         )
 
     @staticmethod
