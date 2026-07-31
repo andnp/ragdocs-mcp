@@ -195,7 +195,7 @@ class IndexManager:
             },
             uri=f"file://{document.file_path}",
         )
-        return self._core.chunk_document(record)
+        return self._core.chunk_record(record)
 
     def _index_chunks(self, chunks: list[Chunk]) -> None:
         self._core.index_chunks(chunks)
