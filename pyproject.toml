@@ -57,6 +57,12 @@ package = true
 [tool.uv.sources]
 andnp-searchkernel = { path = "../andnp-searchkernel", editable = true }
 
+[tool.ruff.lint.per-file-ignores]
+# cli.py's real imports intentionally follow a venv re-exec guard (which
+# os.execve()s into the repo venv before anything else runs), so they can't
+# be moved to the top of the file without breaking that bootstrap.
+"mcp_markdown_ragdocs/cli.py" = ["E402"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["mcp_markdown_ragdocs"]
 
