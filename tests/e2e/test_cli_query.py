@@ -7,6 +7,7 @@ flag combinations, and error handling.
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -361,9 +362,16 @@ def test_query_command_subprocess_execution(test_env):
     os.chdir(test_env["root"])
 
     try:
+        project_command = [
+            "uv",
+            "run",
+            "--project",
+            str(Path(__file__).resolve().parents[2]),
+            "mcp-markdown-ragdocs",
+        ]
         # Build index first
         subprocess.run(
-            ["uv", "run", "mcp-markdown-ragdocs", "rebuild-index"],
+            [*project_command, "rebuild-index"],
             check=True,
             capture_output=True,
             text=True,
@@ -371,7 +379,7 @@ def test_query_command_subprocess_execution(test_env):
 
         # Run query via subprocess
         result = subprocess.run(
-            ["uv", "run", "mcp-markdown-ragdocs", "query", "authentication", "--json"],
+            [*project_command, "query", "authentication", "--json"],
             capture_output=True,
             text=True,
             check=False,
