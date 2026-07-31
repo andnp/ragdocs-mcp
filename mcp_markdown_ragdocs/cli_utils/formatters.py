@@ -172,3 +172,91 @@ def print_debug_stats(
 
         console.print(cache_table)
         console.print()
+
+
+def _render_initializing_search_response(
+    console: Console,
+    payload: dict[str, object],
+    *,
+    include_git_metadata: bool = False,
+) -> None:
+    lifecycle = str(payload.get("lifecycle", "unknown"))
+    configured_root_count = payload.get("configured_root_count")
+    index_state = payload.get("index_state", {})
+    status = "unknown"
+    indexed_count = 0
+    total_count = 0
+    if isinstance(index_state, dict):
+        status = str(index_state.get("status", "unknown"))
+        indexed_count = int(index_state.get("indexed_count", 0) or 0)
+        total_count = int(index_state.get("total_count", 0) or 0)
+
+    console.print("[yellow]Search service is initializing.[/yellow]")
+    console.print(f"[dim]Lifecycle:[/dim] {lifecycle}")
+    if isinstance(configured_root_count, int):
+        console.print(f"[dim]Configured roots:[/dim] {configured_root_count}")
+    console.print(
+        f"[dim]Index state:[/dim] {status} ({indexed_count}/{total_count})"
+    )
+    if include_git_metadata:
+        console.print(
+            f"[dim]Total commits indexed:[/dim] {int(payload.get('total_commits_indexed', 0) or 0)}"
+        )
+    console.print("[dim]Results will appear once background initialization completes.[/dim]")
+
+
+def _render_index_stats_table(payload: dict[str, object]) -> None:
+    console = Console()
+    per_root_rows = payload.get("per_root")
+    if not isinstance(per_root_rows, list):
+        per_root_rows = []
+
+    table = Table(title="Indexed corpus by root", show_footer=True)
+    table.add_column("Root", style="cyan", footer="Total")
+    table.add_column(
+        "Discovered",
+        justify="right",
+        footer=str(int(payload.get("discovered_files", 0) or 0)),
+    )
+    table.add_column(
+        "Indexed docs≈",
+        justify="right",
+        footer=str(int(payload.get("indexed_documents", 0) or 0)),
+    )
+    table.add_column(
+        "Indexed chunks≈",
+        justify="right",
+        footer=str(int(payload.get("indexed_chunks", 0) or 0)),
+    )
+    table.add_column(
+        "Remaining≈",
+        justify="right",
+        footer=str(int(payload.get("remaining_estimate", 0) or 0)),
+    )
+
+    for row in per_root_rows:
+        if not isinstance(row, dict):
+            continue
+        table.add_row(
+            str(row.get("root_path", "(unknown)")),
+            str(int(row.get("discovered_files", 0) or 0)),
+            str(int(row.get("indexed_documents_estimate", 0) or 0)),
+            str(int(row.get("indexed_chunks_estimate", 0) or 0)),
+            str(int(row.get("remaining_estimate", 0) or 0)),
+        )
+
+    caption_parts = []
+    if payload.get("per_root_counts_are_estimates"):
+        caption_parts.append(
+            "≈ per-root indexed counts are estimated from indexed file paths; aggregate indexed totals remain exact."
+        )
+    unattributed_documents = int(payload.get("unattributed_indexed_documents", 0) or 0)
+    unattributed_chunks = int(payload.get("unattributed_indexed_chunks", 0) or 0)
+    if unattributed_documents > 0 or unattributed_chunks > 0:
+        caption_parts.append(
+            f"Unattributed indexed items: {unattributed_documents} docs / {unattributed_chunks} chunks."
+        )
+    if caption_parts:
+        table.caption = " ".join(caption_parts)
+
+    console.print(table)

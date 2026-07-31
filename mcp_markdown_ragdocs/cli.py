@@ -66,18 +66,41 @@ import click
 import uvicorn
 from rich.console import Console
 from rich.table import Table
-from searchkernel.utils import should_include_file
 
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
-from mcp_markdown_ragdocs.cli_utils.formatters import print_debug_stats, print_result_panel
+from mcp_markdown_ragdocs.cli_utils.formatters import (
+    _render_index_stats_table,
+    _render_initializing_search_response,
+    print_debug_stats,
+    print_result_panel,
+)
+from mcp_markdown_ragdocs.cli_utils.project_context import (
+    _apply_project_detection,
+    _create_query_context,
+    _ensure_runtime_auto_registration,
+)
+from mcp_markdown_ragdocs.cli_utils.queue_output import (
+    _QUEUE_DETAIL_STATES,
+    _coerce_dict,
+    _coerce_int,
+    _coerce_list_of_dicts,
+    _emit_queue_task_section,
+    _filter_queue_status_payload,
+)
 from mcp_markdown_ragdocs.cli_utils.validators import (
+    _should_include_file,  # noqa: F401 -- re-exported for tests.unit.test_file_filtering
     validate_range,
     validate_timestamp_range,
 )
 from mcp_markdown_ragdocs.config import ensure_runtime_project_registered, load_config
 from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.coordination.queue import get_huey
-from mcp_markdown_ragdocs.daemon import DaemonMetadata, RuntimePaths
+from mcp_markdown_ragdocs.daemon import RuntimePaths
+from mcp_markdown_ragdocs.daemon.admin_payloads import (
+    _build_admin_overview_payload,
+    _build_index_stats_payload,
+    _build_queue_status_payload,
+)
 from mcp_markdown_ragdocs.daemon.client import (
     call_with_supported_kwargs,
     raise_daemon_request_error,
@@ -87,7 +110,6 @@ from mcp_markdown_ragdocs.daemon.health import (
     request_daemon_socket,
 )
 from mcp_markdown_ragdocs.daemon.management import (
-    DaemonInspection,
     acquire_boot_lock,
     inspect_daemon,
     restart_daemon,
@@ -95,7 +117,6 @@ from mcp_markdown_ragdocs.daemon.management import (
     stop_daemon,
     wait_for_daemon_ready,
 )
-from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
 from mcp_markdown_ragdocs.daemon.rebuild_commands import run_rebuild_command
 from mcp_markdown_ragdocs.daemon.runtime import create_daemon_runtime
 from mcp_markdown_ragdocs.daemon.status import (
@@ -122,17 +143,6 @@ _GLOBAL_DAEMON_PROJECT_OPTION_HELP = (
 )
 
 
-def _create_query_context(project: str | None) -> ApplicationContext:
-    logging.getLogger().setLevel(logging.WARNING)
-    configure_runtime_threads()
-    ctx = ApplicationContext.create(
-        project_override=project,
-        enable_watcher=False,
-        lazy_embeddings=False,
-    )
-    return ctx
-
-
 def _ignore_daemon_startup_project_option(project: str | None) -> None:
     """Keep legacy daemon --project options as explicit no-ops."""
 
@@ -143,38 +153,6 @@ def _ignore_daemon_runtime_root_option(runtime_root: Path | None) -> None:
     """Accept runtime-root markers used for daemon process identification."""
 
     _ = runtime_root
-
-
-def _ensure_runtime_auto_registration(project_override: str | None) -> None:
-    registration = ensure_runtime_project_registered(
-        cwd=Path.cwd(),
-        project_override=project_override,
-    )
-    if registration.changed:
-        logger.info(
-            "Auto-registered project '%s' at %s",
-            registration.project_name,
-            registration.project_path,
-        )
-
-        inspection = inspect_daemon()
-        if inspection.running:
-            logger.info("Restarting running daemon to load auto-registered corpus")
-            restart_daemon(
-                cwd=Path.cwd(),
-                project_override=project_override,
-            )
-
-
-def _should_include_file(
-    file_path: str,
-    include_patterns: list[str],
-    exclude_patterns: list[str],
-    exclude_hidden_dirs: bool = True,
-):
-    return should_include_file(
-        file_path, include_patterns, exclude_patterns, exclude_hidden_dirs
-    )
 
 
 def _parent_process_alive(
@@ -301,97 +279,6 @@ async def _run_worker_forever_async(
             await ctx.watcher.stop()
 
 
-def _build_queue_status_payload(
-    *,
-    queue_path: Path,
-    worker_running: bool,
-    backpressure_limit: int | None = None,
-) -> dict[str, object]:
-    huey = get_huey(queue_path)
-    stats = get_queue_stats(
-        huey,
-        worker_running=worker_running,
-        backpressure_limit=backpressure_limit,
-    )
-    payload = stats.to_dict()
-    payload["queue_db_path"] = str(queue_path)
-    return payload
-
-
-def _build_admin_overview_payload(
-    ctx: ApplicationContext,
-    runtime_paths: RuntimePaths,
-    worker_running: bool,
-    worker_pid: int | None,
-    lifecycle: str,
-) -> dict[str, object]:
-    index_payload = _build_index_stats_payload(ctx)
-    task_payload = _build_queue_status_payload(
-        queue_path=runtime_paths.queue_db_path,
-        worker_running=worker_running,
-        backpressure_limit=ctx.config.indexing.task_backpressure_limit,
-    )
-    watcher_stats = ctx.watcher.get_stats().to_dict() if ctx.watcher else None
-    return {
-        "status": "ok",
-        "pid": os.getpid(),
-        "lifecycle": lifecycle,
-        "daemon_scope": "global",
-        "project_context_mode": "request_only",
-        "configured_root_count": len(ctx.documents_roots),
-        "documents_roots": [str(root) for root in ctx.documents_roots],
-        "worker_health": "healthy" if worker_running else "dead",
-        "worker_pid": worker_pid,
-        "socket_path": str(runtime_paths.socket_path),
-        "endpoint": f"ipc://{runtime_paths.socket_path}",
-        "index_db_path": str(runtime_paths.index_db_path),
-        "queue_db_path": str(runtime_paths.queue_db_path),
-        "indexed_documents": index_payload["indexed_documents"],
-        "indexed_chunks": index_payload["indexed_chunks"],
-        "git_commits": index_payload["git_commits"],
-        "git_repositories": index_payload["git_repositories"],
-        "pending_count": task_payload["pending_count"],
-        "scheduled_count": task_payload["scheduled_count"],
-        "running_count": task_payload["running_count"],
-        "failed_count": task_payload["failed_count"],
-        "worker_running": task_payload["worker_running"],
-        "queue_stats": task_payload,
-        "watcher_stats": watcher_stats,
-        "index_state": ctx.get_index_state().to_dict(),
-    }
-
-
-def _render_initializing_search_response(
-    console: Console,
-    payload: dict[str, object],
-    *,
-    include_git_metadata: bool = False,
-) -> None:
-    lifecycle = str(payload.get("lifecycle", "unknown"))
-    configured_root_count = payload.get("configured_root_count")
-    index_state = payload.get("index_state", {})
-    status = "unknown"
-    indexed_count = 0
-    total_count = 0
-    if isinstance(index_state, dict):
-        status = str(index_state.get("status", "unknown"))
-        indexed_count = int(index_state.get("indexed_count", 0) or 0)
-        total_count = int(index_state.get("total_count", 0) or 0)
-
-    console.print("[yellow]Search service is initializing.[/yellow]")
-    console.print(f"[dim]Lifecycle:[/dim] {lifecycle}")
-    if isinstance(configured_root_count, int):
-        console.print(f"[dim]Configured roots:[/dim] {configured_root_count}")
-    console.print(
-        f"[dim]Index state:[/dim] {status} ({indexed_count}/{total_count})"
-    )
-    if include_git_metadata:
-        console.print(
-            f"[dim]Total commits indexed:[/dim] {int(payload.get('total_commits_indexed', 0) or 0)}"
-        )
-    console.print("[dim]Results will appear once background initialization completes.[/dim]")
-
-
 @click.group()
 def cli():
     pass
@@ -431,41 +318,6 @@ def worker_run(
         sys.exit(1)
 
 
-def _apply_project_detection(config, project_override: str | None = None):
-    from mcp_markdown_ragdocs.config import (
-        detect_project,
-        resolve_documents_path,
-        resolve_index_path,
-    )
-
-    detected_project = detect_project(
-        projects=config.projects, project_override=project_override
-    )
-    index_path = resolve_index_path(config)
-
-    explicit_documents_path: Path | None = None
-    if project_override:
-        override_path = Path(project_override).expanduser()
-        if override_path.exists():
-            explicit_documents_path = override_path.resolve()
-        elif detected_project:
-            for project in config.projects:
-                if project.name == detected_project:
-                    explicit_documents_path = Path(project.path).resolve()
-                    break
-
-    documents_path = (
-        str(explicit_documents_path)
-        if explicit_documents_path is not None
-        else resolve_documents_path(config)
-    )
-
-    config.indexing.index_path = str(index_path)
-    config.indexing.documents_path = documents_path
-    config.detected_project = detected_project
-    return config
-
-
 def _request_daemon_json(
     path: str,
     payload: dict[str, object],
@@ -487,22 +339,6 @@ def _request_daemon_json(
         request_daemon_socket_fn=request_daemon_socket,
         cwd_provider=Path.cwd,
     )
-
-
-def _raise_daemon_request_error(response: dict[str, object] | None) -> None:
-    raise_daemon_request_error(response)
-
-
-def _request_daemon_overview(
-    inspection: DaemonInspection,
-    *,
-    runtime_paths: RuntimePaths,
-) -> dict[str, object] | None:
-    return request_daemon_overview(inspection, runtime_paths=runtime_paths)
-
-
-def _format_daemon_startup_result(action: str, metadata: DaemonMetadata) -> str:
-    return format_daemon_startup_result(action, metadata)
 
 
 @cli.command()
@@ -582,118 +418,6 @@ def daemon_group():
     """Manage the long-lived Ragdocs daemon."""
 
 
-def _coerce_dict(value: object) -> dict[str, object]:
-    if isinstance(value, dict):
-        return value
-    return {}
-
-
-def _coerce_list_of_dicts(value: object) -> list[dict[str, object]]:
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    return []
-
-
-def _coerce_int(value: object, default: int = 0) -> int:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return default
-    return default
-
-
-_QUEUE_DETAIL_STATES = ("all", "pending", "scheduled", "failed")
-
-
-def _apply_queue_detail_limit(
-    items: list[dict[str, object]],
-    *,
-    limit: int | None,
-) -> list[dict[str, object]]:
-    if limit is None:
-        return items
-    return items[:limit]
-
-
-def _filter_queue_status_payload(
-    payload: dict[str, object],
-    *,
-    state: str,
-    limit: int | None,
-) -> dict[str, object]:
-    filtered_payload = dict(payload)
-    pending_tasks = _coerce_list_of_dicts(payload.get("pending_tasks"))
-    scheduled_tasks = _coerce_list_of_dicts(payload.get("scheduled_tasks"))
-    recent_failures = _coerce_list_of_dicts(payload.get("recent_failures"))
-
-    filtered_payload["pending_tasks"] = _apply_queue_detail_limit(
-        pending_tasks if state in ("all", "pending") else [],
-        limit=limit,
-    )
-    filtered_payload["scheduled_tasks"] = _apply_queue_detail_limit(
-        scheduled_tasks if state in ("all", "scheduled") else [],
-        limit=limit,
-    )
-    filtered_payload["recent_failures"] = _apply_queue_detail_limit(
-        recent_failures if state in ("all", "failed") else [],
-        limit=limit,
-    )
-    filtered_payload["detail_state_filter"] = state
-    filtered_payload["detail_limit"] = limit
-    return filtered_payload
-
-
-def _format_queue_task_summary(
-    task: dict[str, object],
-    *,
-    details: bool,
-) -> list[str]:
-    task_name = str(task.get("task_name") or "unknown")
-    task_id = str(task.get("task_id") or "unknown")
-
-    if not details:
-        parts = [f"id={task_id}"]
-        if task.get("priority") is not None:
-            parts.append(f"priority={task['priority']}")
-        if task.get("eta"):
-            parts.append(f"eta={task['eta']}")
-        return [f"  {task_name} ({', '.join(parts)})"]
-
-    lines = [f"  {task_name}", f"    id: {task_id}"]
-    state = task.get("state")
-    if state:
-        lines.append(f"    state: {state}")
-    source_queue = task.get("source_queue")
-    if source_queue:
-        lines.append(f"    queue: {source_queue}")
-    priority = task.get("priority")
-    if priority is not None:
-        lines.append(f"    priority: {priority}")
-    eta = task.get("eta")
-    if eta:
-        lines.append(f"    eta: {eta}")
-    lines.append(f"    retries: {_coerce_int(task.get('retries'))}")
-    return lines
-
-
-def _emit_queue_task_section(
-    title: str,
-    tasks: list[dict[str, object]],
-    *,
-    details: bool,
-) -> None:
-    if not tasks:
-        return
-
-    click.echo(title)
-    for task in tasks:
-        for line in _format_queue_task_summary(task, details=details):
-            click.echo(line)
-
-
 @cli.group("queue")
 def queue_group():
     """Inspect task queue state."""
@@ -769,7 +493,7 @@ def daemon_start(project: str | None, timeout: float):
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    click.echo(_format_daemon_startup_result("started", metadata))
+    click.echo(format_daemon_startup_result("started", metadata))
 
 
 @daemon_group.command("status")
@@ -778,7 +502,7 @@ def daemon_status(output_json: bool):
     """Print current daemon status."""
     inspection = inspect_daemon()
     runtime_paths = RuntimePaths.resolve()
-    overview = _request_daemon_overview(inspection, runtime_paths=runtime_paths)
+    overview = request_daemon_overview(inspection, runtime_paths=runtime_paths)
     payload = build_daemon_status_payload(
         inspection,
         runtime_paths=runtime_paths,
@@ -876,7 +600,7 @@ def daemon_restart(project: str | None, timeout: float):
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    click.echo(_format_daemon_startup_result("restarted", metadata))
+    click.echo(format_daemon_startup_result("restarted", metadata))
 
 
 @cli.group("index")
@@ -900,7 +624,7 @@ def index_stats(project: str | None, output_json: bool):
             allow_error=True,
         )
         if payload is None or payload.get("status") == "error":
-            _raise_daemon_request_error(payload)
+            raise_daemon_request_error(payload)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
@@ -998,69 +722,6 @@ def reindex_cmd(model: str, truncate_dim: int | None, project: str | None):
         sys.exit(1)
 
 
-def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
-    manifest_path = ctx.index_path / "index.manifest.json"
-    manifest_exists = manifest_path.exists()
-    if manifest_exists:
-        try:
-            ctx.index_manager.load()
-        except TimeoutError as exc:
-            if "Failed to acquire shared lock" not in str(exc):
-                raise
-            logger.warning(
-                "Index stats refresh skipped after shared-lock timeout; using current in-memory snapshot",
-                exc_info=True,
-            )
-
-    docs_root = Path(ctx.config.indexing.documents_path).resolve()
-    discovered_files = ctx.discover_files() if docs_root.exists() else []
-    repo_count = len(ctx.discover_git_repositories())
-    git_commit_count = ctx.get_total_git_commits_indexed()
-
-    indexed_documents = 0
-    indexed_chunks = 0
-    if manifest_exists:
-        indexed_descriptions = ctx.index_manager.vector.describe_documents()
-        indexed_documents = len(indexed_descriptions)
-        indexed_chunks = sum(
-            int(description.get("chunk_count", 0) or 0)
-            for description in indexed_descriptions
-        )
-
-    per_root_rows, unattributed_indexed_documents, unattributed_indexed_chunks = (
-        _build_per_root_index_rows(
-            ctx,
-            discovered_files=discovered_files,
-            common_root=docs_root,
-            include_indexed_estimates=manifest_exists,
-        )
-    )
-    remaining_estimate = max(len(discovered_files) - indexed_documents, 0)
-
-    return {
-        "documents_path": str(docs_root),
-        "documents_common_root": str(docs_root),
-        "documents_path_kind": "common_root",
-        "documents_roots": [str(root) for root in ctx.documents_roots],
-        "index_path": str(ctx.index_path),
-        "index_db_path": str(ctx.index_path / "index.db"),
-        "manifest_path": str(manifest_path),
-        "manifest_exists": manifest_exists,
-        "indexed_documents": indexed_documents,
-        "indexed_chunks": indexed_chunks,
-        "discovered_files": len(discovered_files),
-        "remaining_estimate": remaining_estimate,
-        "per_root": per_root_rows,
-        "per_root_counts_are_estimates": True,
-        "unattributed_indexed_documents": unattributed_indexed_documents,
-        "unattributed_indexed_chunks": unattributed_indexed_chunks,
-        "git_commits": git_commit_count,
-        "git_repositories": repo_count,
-        "index_state": ctx.get_index_state().to_dict(),
-        "watcher_stats": ctx.watcher.get_stats().to_dict() if ctx.watcher else None,
-    }
-
-
 @queue_group.command("status")
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
@@ -1101,7 +762,7 @@ def queue_status(
             allow_error=True,
         )
         if payload is None or payload.get("status") == "error":
-            _raise_daemon_request_error(payload)
+            raise_daemon_request_error(payload)
 
         filtered_payload = _filter_queue_status_payload(
             payload,
@@ -1204,7 +865,7 @@ def queue_purge(
             allow_error=True,
         )
         if payload is None or payload.get("status") == "error":
-            _raise_daemon_request_error(payload)
+            raise_daemon_request_error(payload)
         assert payload is not None
 
         if output_json:
@@ -1228,151 +889,6 @@ def queue_purge(
         logger.error(f"Failed to purge queue state: {e}")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-
-
-def _resolve_stats_file_path(
-    file_path: str | None,
-    *,
-    common_root: Path,
-) -> Path | None:
-    if not file_path:
-        return None
-
-    candidate = Path(file_path).expanduser()
-    if candidate.is_absolute():
-        return candidate.resolve()
-
-    return (common_root / candidate).resolve()
-
-
-def _match_documents_root(
-    file_path: Path,
-    documents_roots: list[Path],
-) -> int | None:
-    for index, root in enumerate(documents_roots):
-        try:
-            file_path.relative_to(root)
-            return index
-        except ValueError:
-            continue
-
-    return None
-
-
-def _build_per_root_index_rows(
-    ctx: ApplicationContext,
-    *,
-    discovered_files: list[str],
-    common_root: Path,
-    include_indexed_estimates: bool,
-) -> tuple[list[dict[str, object]], int, int]:
-    documents_roots = [root.resolve() for root in ctx.documents_roots]
-    rows = [
-        {
-            "root_path": str(root),
-            "discovered_files": 0,
-            "indexed_documents_estimate": 0,
-            "indexed_chunks_estimate": 0,
-            "remaining_estimate": 0,
-        }
-        for root in documents_roots
-    ]
-
-    for discovered_file in discovered_files:
-        resolved_path = Path(discovered_file).expanduser().resolve()
-        root_index = _match_documents_root(resolved_path, documents_roots)
-        if root_index is None:
-            continue
-        rows[root_index]["discovered_files"] += 1
-
-    unattributed_indexed_documents = 0
-    unattributed_indexed_chunks = 0
-    if include_indexed_estimates:
-        for description in ctx.index_manager.vector.describe_documents():
-            raw_file_path = description.get("file_path")
-            resolved_path = _resolve_stats_file_path(
-                raw_file_path if isinstance(raw_file_path, str) else None,
-                common_root=common_root,
-            )
-            chunk_count = int(description.get("chunk_count", 0) or 0)
-            if resolved_path is None:
-                unattributed_indexed_documents += 1
-                unattributed_indexed_chunks += chunk_count
-                continue
-
-            root_index = _match_documents_root(resolved_path, documents_roots)
-            if root_index is None:
-                unattributed_indexed_documents += 1
-                unattributed_indexed_chunks += chunk_count
-                continue
-
-            rows[root_index]["indexed_documents_estimate"] += 1
-            rows[root_index]["indexed_chunks_estimate"] += chunk_count
-
-    for row in rows:
-        row["remaining_estimate"] = max(
-            int(row["discovered_files"]) - int(row["indexed_documents_estimate"]),
-            0,
-        )
-
-    return rows, unattributed_indexed_documents, unattributed_indexed_chunks
-
-
-def _render_index_stats_table(payload: dict[str, object]) -> None:
-    console = Console()
-    per_root_rows = payload.get("per_root")
-    if not isinstance(per_root_rows, list):
-        per_root_rows = []
-
-    table = Table(title="Indexed corpus by root", show_footer=True)
-    table.add_column("Root", style="cyan", footer="Total")
-    table.add_column(
-        "Discovered",
-        justify="right",
-        footer=str(int(payload.get("discovered_files", 0) or 0)),
-    )
-    table.add_column(
-        "Indexed docs≈",
-        justify="right",
-        footer=str(int(payload.get("indexed_documents", 0) or 0)),
-    )
-    table.add_column(
-        "Indexed chunks≈",
-        justify="right",
-        footer=str(int(payload.get("indexed_chunks", 0) or 0)),
-    )
-    table.add_column(
-        "Remaining≈",
-        justify="right",
-        footer=str(int(payload.get("remaining_estimate", 0) or 0)),
-    )
-
-    for row in per_root_rows:
-        if not isinstance(row, dict):
-            continue
-        table.add_row(
-            str(row.get("root_path", "(unknown)")),
-            str(int(row.get("discovered_files", 0) or 0)),
-            str(int(row.get("indexed_documents_estimate", 0) or 0)),
-            str(int(row.get("indexed_chunks_estimate", 0) or 0)),
-            str(int(row.get("remaining_estimate", 0) or 0)),
-        )
-
-    caption_parts = []
-    if payload.get("per_root_counts_are_estimates"):
-        caption_parts.append(
-            "≈ per-root indexed counts are estimated from indexed file paths; aggregate indexed totals remain exact."
-        )
-    unattributed_documents = int(payload.get("unattributed_indexed_documents", 0) or 0)
-    unattributed_chunks = int(payload.get("unattributed_indexed_chunks", 0) or 0)
-    if unattributed_documents > 0 or unattributed_chunks > 0:
-        caption_parts.append(
-            f"Unattributed indexed items: {unattributed_documents} docs / {unattributed_chunks} chunks."
-        )
-    if caption_parts:
-        table.caption = " ".join(caption_parts)
-
-    console.print(table)
 
 
 @cli.command()
@@ -1554,7 +1070,7 @@ def query(
             allow_error=True,
         )
         if daemon_payload is None or daemon_payload.get("status") == "error":
-            _raise_daemon_request_error(daemon_payload)
+            raise_daemon_request_error(daemon_payload)
 
         if output_json:
             click.echo(json.dumps(daemon_payload, indent=2))
@@ -1566,7 +1082,10 @@ def query(
 
         console.print(f"\n[bold cyan]Query:[/bold cyan] {query_text}\n")
         if debug:
-            from mcp_markdown_ragdocs.models import CompressionStats, SearchStrategyStats
+            from mcp_markdown_ragdocs.models import (
+                CompressionStats,
+                SearchStrategyStats,
+            )
 
             strategy_stats = SearchStrategyStats(
                 **daemon_payload.get("strategy_stats", {})
@@ -1695,7 +1214,7 @@ def search_commits(
             allow_error=True,
         )
         if daemon_payload is None or daemon_payload.get("status") == "error":
-            _raise_daemon_request_error(daemon_payload)
+            raise_daemon_request_error(daemon_payload)
 
         if output_json:
             click.echo(json.dumps(daemon_payload, indent=2))

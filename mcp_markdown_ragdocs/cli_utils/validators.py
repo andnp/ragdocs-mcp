@@ -1,6 +1,18 @@
 import sys
 
 import click
+from searchkernel.utils import should_include_file
+
+
+def _should_include_file(
+    file_path: str,
+    include_patterns: list[str],
+    exclude_patterns: list[str],
+    exclude_hidden_dirs: bool = True,
+):
+    return should_include_file(
+        file_path, include_patterns, exclude_patterns, exclude_hidden_dirs
+    )
 
 
 def validate_range(value: int, min_val: int, max_val: int, param_name: str) -> None:
