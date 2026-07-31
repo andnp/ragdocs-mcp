@@ -46,7 +46,7 @@ Rotate credentials every 24 hours and revoke compromised tokens immediately.
 
         doc = _make_record("clean_titles", content)
 
-        chunks = chunker.chunk_document(doc)
+        chunks = chunker.chunk_record(doc)
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
 
         authentication_chunk = next(
@@ -90,7 +90,7 @@ Bearer tokens must be rotated every 24 hours. Include scopes and issuer validati
 
         doc = _make_record("parent_headers", content)
 
-        chunks = chunker.chunk_document(doc)
+        chunks = chunker.chunk_record(doc)
         parent_chunks = [c for c in chunks if "_parent_" in c.chunk_id]
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
 
@@ -125,7 +125,7 @@ CLI cheatsheet.
 
         doc = _make_record("trailing_short", content)
 
-        chunks = chunker.chunk_document(doc)
+        chunks = chunker.chunk_record(doc)
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
 
         assert len(child_chunks) >= 1
@@ -166,7 +166,7 @@ More text to ensure this section is substantial enough for chunking.
 
         doc = _make_record("test_doc", content)
 
-        chunks = chunker.chunk_document(doc)
+        chunks = chunker.chunk_record(doc)
 
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
 
@@ -209,7 +209,7 @@ Content for section three with more text for the chunk.
 
         doc = _make_record("test_doc", content)
 
-        chunks = chunker.chunk_document(doc)
+        chunks = chunker.chunk_record(doc)
 
         parent_chunks = {c.chunk_id: c for c in chunks if "_parent_" in c.chunk_id}
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
@@ -245,7 +245,7 @@ Content for section B with enough text.
 
         doc = _make_record("test_doc", content)
 
-        chunks = chunker.chunk_document(doc)
+        chunks = chunker.chunk_record(doc)
 
         parent_chunks = {c.chunk_id: c for c in chunks if "_parent_" in c.chunk_id}
         child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]

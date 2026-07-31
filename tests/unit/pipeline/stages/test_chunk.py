@@ -1,11 +1,9 @@
 from datetime import UTC, datetime
 
 from searchkernel.chunking.base import ChunkingStrategy
-from searchkernel.domain import Chunk
+from searchkernel.domain import Chunk, Record
 from searchkernel.pipeline.stage import SearchContext
 from searchkernel.pipeline.stages.chunk import ChunkStage
-
-from mcp_markdown_ragdocs.models import Document
 
 
 def _with_hash(chunk):
@@ -29,20 +27,22 @@ class _StubChunker(ChunkingStrategy):
     def __init__(self, chunks: list[Chunk]):
         self._chunks = chunks
 
-    def chunk_document(self, document) -> list[Chunk]:
-        self.seen_document = document
+    def chunk_record(self, record) -> list[Chunk]:
+        self.seen_record = record
         return self._chunks
 
 
-def _document() -> Document:
-    return Document(
-        id="doc-1",
-        content="hello world",
+def _record() -> Record:
+    now = datetime.now(UTC)
+    return Record(
+        source_kind="note",
+        source_id="doc-1",
+        title="doc-1",
+        body="hello world",
+        created_at=now,
+        updated_at=now,
         metadata={},
-        links=[],
-        tags=[],
-        file_path="doc-1.md",
-        modified_time=datetime.now(UTC),
+        uri="doc-1.md",
     )
 
 
@@ -51,20 +51,20 @@ def _chunk() -> Chunk:
 
 
 def test_chunk_stage_delegates_to_chunker():
-    document = _document()
+    record = _record()
     chunks = [_chunk()]
     chunker = _StubChunker(chunks)
 
     result = ChunkStage(chunker).run(
-        SearchContext(query="", metadata={"document": document})
+        SearchContext(query="", metadata={"record": record})
     )
 
-    assert chunker.seen_document is document
+    assert chunker.seen_record is record
     assert result.metadata["chunks"] == chunks
 
 
 def test_chunk_stage_does_not_mutate_input_context():
-    context = SearchContext(query="", metadata={"document": _document()})
+    context = SearchContext(query="", metadata={"record": _record()})
 
     ChunkStage(_StubChunker([_chunk()])).run(context)
 
