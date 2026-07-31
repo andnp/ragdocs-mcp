@@ -4,6 +4,7 @@ from pathlib import Path
 
 from mcp_markdown_ragdocs.models import Document
 from mcp_markdown_ragdocs.parsers.base import DocumentParser
+from mcp_markdown_ragdocs.parsers.encoding import read_text_with_encoding_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -15,24 +16,7 @@ class PlainTextParser(DocumentParser):
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        content = None
-        encoding_used = None
-        for encoding in ["utf-8", "latin-1", "cp1252", "iso-8859-1"]:
-            try:
-                content = path.read_text(encoding=encoding, errors="strict")
-                encoding_used = encoding
-                break
-            except (UnicodeDecodeError, LookupError):
-                continue
-
-        if content is None:
-            raise UnicodeDecodeError(
-                "utf-8",
-                b"",
-                0,
-                1,
-                f"Could not decode {file_path} with any supported encoding",
-            )
+        content, encoding_used = read_text_with_encoding_fallback(file_path)
 
         if encoding_used != "utf-8":
             logger.warning(f"File {file_path} decoded with {encoding_used} encoding")
