@@ -1,4 +1,5 @@
 import logging
+import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -588,35 +589,72 @@ class IndexManager:
             logger.warning(
                 f"UTF-8 decode failed for {file_path}, trying alternative encodings: {e}"
             )
+
+            file_bytes = Path(file_path).read_bytes()
+            decoded_document = None
+
             for encoding in ["latin-1", "cp1252", "iso-8859-1"]:
                 try:
                     logger.info(
                         f"Attempting to read {file_path} with {encoding} encoding"
                     )
-                    parser = dispatch_parser(file_path)
-                    # This will re-attempt parsing with different encoding
-                    # Note: We'd need to modify parsers to accept encoding parameter
-                    # For now, just skip the file and log it
-                    logger.warning(f"Skipping file with encoding issues: {file_path}")
-                    break
+                    decoded_content = file_bytes.decode(encoding)
+
+                    # Write decoded content to temp file and re-parse
+                    with tempfile.NamedTemporaryFile(
+                        mode="w",
+                        suffix=Path(file_path).suffix,
+                        delete=False,
+                        encoding="utf-8",
+                    ) as tmp_file:
+                        tmp_file.write(decoded_content)
+                        tmp_path = tmp_file.name
+
+                    try:
+                        parser = dispatch_parser(tmp_path)
+                        decoded_document = parser.parse(tmp_path)
+                        logger.info(
+                            f"Successfully decoded and parsed {file_path} with {encoding} encoding"
+                        )
+                        break
+                    finally:
+                        Path(tmp_path).unlink(missing_ok=True)
+
+                except (UnicodeDecodeError, LookupError):
+                    logger.debug(
+                        "Retry with %s encoding failed for %s",
+                        encoding,
+                        file_path,
+                        exc_info=True,
+                    )
+                    continue
                 except Exception:
                     logger.debug(
-                        "Retry with %s encoding failed for %s", encoding, file_path, exc_info=True
+                        "Failed to parse %s with %s encoding",
+                        file_path,
+                        encoding,
+                        exc_info=True,
                     )
                     continue
 
-            failed = FailedFile(
-                path=file_path,
-                error=f"Encoding error: {e!s}",
-                timestamp=datetime.now(UTC).isoformat(),
-            )
-            self._failed_files = [
-                f for f in self._failed_files if f.path != file_path
-            ] + [failed]
-            # Don't raise - continue indexing other files
-            logger.info(
-                f"Continuing with remaining files after encoding error in {file_path}"
-            )
+            if decoded_document is not None:
+                # Successfully decoded and parsed with fallback encoding
+                self._complete_document_indexing(file_path, parser, decoded_document, force)
+            else:
+                # All encodings failed
+                failed = FailedFile(
+                    path=file_path,
+                    error=f"Encoding error: {e!s}",
+                    timestamp=datetime.now(UTC).isoformat(),
+                )
+                self._failed_files = [
+                    f for f in self._failed_files if f.path != file_path
+                ] + [failed]
+                # Don't raise - continue indexing other files
+                logger.info(
+                    f"Continuing with remaining files after encoding error in {file_path}"
+                )
+
         except Exception as e:
             logger.exception(f"Failed to index document {file_path}")
             failed = FailedFile(
