@@ -418,7 +418,8 @@ class ApplicationContext:
             try:
                 if candidate.exists():
                     version = max(version, candidate.stat().st_mtime)
-            except OSError:
+            except OSError as e:
+                logger.debug("Failed to stat %s while computing index state version: %s", candidate, e)
                 continue
         return version
 
@@ -758,7 +759,8 @@ class ApplicationContext:
 
             self._index_state = IndexState(status="ready")
             self._ready_event.set()
-        except Exception as e:  # noqa: BLE001 -- startup boundary; must not crash the process
+        except Exception as e:
+            logger.exception("Failed to load existing indices in background")
             self._index_state = IndexState(
                 status="failed",
                 last_error=str(e),
