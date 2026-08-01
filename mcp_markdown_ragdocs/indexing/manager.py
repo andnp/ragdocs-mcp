@@ -596,16 +596,16 @@ class IndexManager:
             self._persist_hash_store_if_needed()
 
             failed_count = len(new_chunks) - moved_count
-            if failed_count:
+            if failed_count and (
+                moved_count / len(new_chunks)
+                < self._config.indexing.move_detection_threshold
+            ):
                 failure_ratio = failed_count / len(new_chunks)
-                if failure_ratio > (
-                    1.0 - self._config.indexing.move_detection_threshold
-                ):
-                    logger.info(
-                        f"Move operation had {failure_ratio:.1%} failures, "
-                        "falling back to full re-index"
-                    )
-                    return False
+                logger.info(
+                    f"Move operation had {failure_ratio:.1%} failures, "
+                    "falling back to full re-index"
+                )
+                return False
 
             logger.info(
                 f"Successfully moved {moved_count}/{len(new_chunks)} chunks "
