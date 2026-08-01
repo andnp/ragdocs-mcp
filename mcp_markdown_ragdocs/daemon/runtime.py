@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.context import ApplicationContext
@@ -18,15 +17,15 @@ from mcp_markdown_ragdocs.indexing.tasks import register_tasks, submit_record_ba
 from mcp_markdown_ragdocs.worker.process import HueyWorkerProcess
 
 BuildAdminOverviewPayload = Callable[[ApplicationContext, RuntimePaths, bool, int | None, str], dict[str, object]]
-BuildIndexStatsPayload = Callable[[object], dict[str, object]]
-BuildQueueStatusPayload = Callable[[Path, bool, int | None], dict[str, object]]
+BuildIndexStatsPayload = Callable[[Any], dict[str, object]]
+BuildQueueStatusPayload = Callable[..., dict[str, object]]
 
 
 @dataclass(frozen=True)
 class DaemonRuntime:
-    ctx: ApplicationContext
-    worker: HueyWorkerProcess
-    health_server: DaemonHealthServer
+    ctx: Any
+    worker: Any
+    health_server: Any
 
 
 def create_daemon_runtime(

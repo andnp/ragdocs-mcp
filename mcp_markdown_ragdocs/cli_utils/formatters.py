@@ -7,6 +7,10 @@ from rich.table import Table
 logger = logging.getLogger(__name__)
 
 
+def _as_int(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 def print_result_panel(
     console: Console,
     idx: int,
@@ -188,8 +192,8 @@ def _render_initializing_search_response(
     total_count = 0
     if isinstance(index_state, dict):
         status = str(index_state.get("status", "unknown"))
-        indexed_count = int(index_state.get("indexed_count", 0) or 0)
-        total_count = int(index_state.get("total_count", 0) or 0)
+        indexed_count = _as_int(index_state.get("indexed_count"))
+        total_count = _as_int(index_state.get("total_count"))
 
     console.print("[yellow]Search service is initializing.[/yellow]")
     console.print(f"[dim]Lifecycle:[/dim] {lifecycle}")
@@ -200,7 +204,7 @@ def _render_initializing_search_response(
     )
     if include_git_metadata:
         console.print(
-            f"[dim]Total commits indexed:[/dim] {int(payload.get('total_commits_indexed', 0) or 0)}"
+            f"[dim]Total commits indexed:[/dim] {_as_int(payload.get('total_commits_indexed'))}"
         )
     console.print("[dim]Results will appear once background initialization completes.[/dim]")
 
@@ -216,22 +220,22 @@ def _render_index_stats_table(payload: dict[str, object]) -> None:
     table.add_column(
         "Discovered",
         justify="right",
-        footer=str(int(payload.get("discovered_files", 0) or 0)),
+        footer=str(_as_int(payload.get("discovered_files"))),
     )
     table.add_column(
         "Indexed docs≈",
         justify="right",
-        footer=str(int(payload.get("indexed_documents", 0) or 0)),
+        footer=str(_as_int(payload.get("indexed_documents"))),
     )
     table.add_column(
         "Indexed chunks≈",
         justify="right",
-        footer=str(int(payload.get("indexed_chunks", 0) or 0)),
+        footer=str(_as_int(payload.get("indexed_chunks"))),
     )
     table.add_column(
         "Remaining≈",
         justify="right",
-        footer=str(int(payload.get("remaining_estimate", 0) or 0)),
+        footer=str(_as_int(payload.get("remaining_estimate"))),
     )
 
     for row in per_root_rows:
@@ -239,10 +243,10 @@ def _render_index_stats_table(payload: dict[str, object]) -> None:
             continue
         table.add_row(
             str(row.get("root_path", "(unknown)")),
-            str(int(row.get("discovered_files", 0) or 0)),
-            str(int(row.get("indexed_documents_estimate", 0) or 0)),
-            str(int(row.get("indexed_chunks_estimate", 0) or 0)),
-            str(int(row.get("remaining_estimate", 0) or 0)),
+            str(_as_int(row.get("discovered_files"))),
+            str(_as_int(row.get("indexed_documents_estimate"))),
+            str(_as_int(row.get("indexed_chunks_estimate"))),
+            str(_as_int(row.get("remaining_estimate"))),
         )
 
     caption_parts = []
@@ -250,8 +254,8 @@ def _render_index_stats_table(payload: dict[str, object]) -> None:
         caption_parts.append(
             "≈ per-root indexed counts are estimated from indexed file paths; aggregate indexed totals remain exact."
         )
-    unattributed_documents = int(payload.get("unattributed_indexed_documents", 0) or 0)
-    unattributed_chunks = int(payload.get("unattributed_indexed_chunks", 0) or 0)
+    unattributed_documents = _as_int(payload.get("unattributed_indexed_documents"))
+    unattributed_chunks = _as_int(payload.get("unattributed_indexed_chunks"))
     if unattributed_documents > 0 or unattributed_chunks > 0:
         caption_parts.append(
             f"Unattributed indexed items: {unattributed_documents} docs / {unattributed_chunks} chunks."

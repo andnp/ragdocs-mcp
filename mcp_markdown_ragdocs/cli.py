@@ -344,6 +344,17 @@ def _request_daemon_json(
     )
 
 
+def _require_daemon_payload(
+    payload: dict[str, object] | None,
+) -> dict[str, object]:
+    if payload is None:
+        raise_daemon_request_error(payload)
+    assert payload is not None
+    if payload.get("status") == "error":
+        raise_daemon_request_error(payload)
+    return payload
+
+
 @cli.command()
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
@@ -629,8 +640,7 @@ def index_stats(project: str | None, output_json: bool):
             auto_start=False,
             allow_error=True,
         )
-        if payload is None or payload.get("status") == "error":
-            raise_daemon_request_error(payload)
+        payload = _require_daemon_payload(payload)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
@@ -751,8 +761,7 @@ def reindex_cmd(
                 auto_start=True,
                 allow_error=True,
             )
-        if payload is None or payload.get("status") == "error":
-            raise_daemon_request_error(payload)
+        payload = _require_daemon_payload(payload)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
@@ -821,8 +830,7 @@ def queue_status(
             auto_start=False,
             allow_error=True,
         )
-        if payload is None or payload.get("status") == "error":
-            raise_daemon_request_error(payload)
+        payload = _require_daemon_payload(payload)
 
         filtered_payload = _filter_queue_status_payload(
             payload,
@@ -924,9 +932,7 @@ def queue_purge(
             auto_start=False,
             allow_error=True,
         )
-        if payload is None or payload.get("status") == "error":
-            raise_daemon_request_error(payload)
-        assert payload is not None
+        payload = _require_daemon_payload(payload)
 
         if output_json:
             click.echo(json.dumps(payload, indent=2))
@@ -1129,8 +1135,7 @@ def query(
             auto_start=True,
             allow_error=True,
         )
-        if daemon_payload is None or daemon_payload.get("status") == "error":
-            raise_daemon_request_error(daemon_payload)
+        daemon_payload = _require_daemon_payload(daemon_payload)
 
         if output_json:
             click.echo(json.dumps(daemon_payload, indent=2))
@@ -1294,8 +1299,7 @@ def search_commits(
             auto_start=True,
             allow_error=True,
         )
-        if daemon_payload is None or daemon_payload.get("status") == "error":
-            raise_daemon_request_error(daemon_payload)
+        daemon_payload = _require_daemon_payload(daemon_payload)
 
         if output_json:
             click.echo(json.dumps(daemon_payload, indent=2))

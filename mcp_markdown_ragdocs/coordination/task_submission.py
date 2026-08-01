@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 type TaskSubmitter = Callable[..., object]
-type TaskValueExtractor = Callable[[object], set[str]]
+type TaskValueExtractor = Callable[[Any], set[str]]
 type BatchTaskSubmitter = Callable[..., object]
 
 
