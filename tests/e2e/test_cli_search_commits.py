@@ -5,12 +5,15 @@ Tests the git commit search command using Click's CliRunner with
 real git repositories and commit indexing.
 """
 
+import contextlib
 import subprocess
 
 import pytest
 from click.testing import CliRunner
 
 from mcp_markdown_ragdocs.cli import cli
+from mcp_markdown_ragdocs.daemon.management import stop_daemon
+from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
 
 
 @pytest.fixture
@@ -21,6 +24,14 @@ def runner():
     Provides isolated environment for command execution.
     """
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def isolated_daemon_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+    yield
+    with contextlib.suppress(Exception):
+        stop_daemon(paths=RuntimePaths.resolve())
 
 
 @pytest.fixture
@@ -488,9 +499,10 @@ embedding_model = "local"
 
 def test_search_commits_no_index_error(runner, tmp_path, git_repo):
     """
-    Test search-commits with git_indexing enabled but no commits indexed.
+    Test search-commits initializes git indexing before returning results.
 
-    Validates that search works even with empty commit index (returns 0 results).
+    Git indexing runs during daemon startup, so an explicit rebuild is not
+    required before searching the repository.
     """
     import os
 
@@ -515,14 +527,12 @@ embedding_model = "local"
     try:
         os.chdir(tmp_path)
 
-        # Without rebuild-index, git indexing is enabled but nothing has been ingested yet
+        # Startup performs the initial git indexing when the feature is enabled.
         result = runner.invoke(cli, ["search-commits", "test"])
 
-        # Should succeed with empty results (not error)
+        # The command should succeed with the repository's three commits indexed.
         assert result.exit_code == 0
-        assert (
-            "Total commits indexed: 0" in result.output or "No results" in result.output
-        )
+        assert "Total commits indexed: 3" in result.output
 
     finally:
         os.chdir(original_cwd)
