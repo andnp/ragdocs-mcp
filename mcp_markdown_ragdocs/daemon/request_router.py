@@ -551,6 +551,7 @@ def build_daemon_request_handler(
             )
             if cold_start_response is not None:
                 return cold_start_response
+            await ctx.ensure_fresh_indices()
             ctx.schedule_freshness_refresh()
             query_text = str(payload.get("query", ""))
             top_n = _as_int(payload.get("top_n"), 5)
@@ -606,6 +607,7 @@ def build_daemon_request_handler(
             if cold_start_response is not None:
                 return cold_start_response
 
+            await ctx.ensure_fresh_indices()
             ctx.schedule_freshness_refresh()
 
             query_text = str(payload.get("query", ""))
