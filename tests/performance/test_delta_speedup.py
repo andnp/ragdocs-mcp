@@ -11,6 +11,9 @@ from mcp_markdown_ragdocs.config import ChunkingConfig, Config, IndexingConfig
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
 
+pytestmark = pytest.mark.performance
+
+
 def create_large_doc(num_sections: int = 100) -> str:
     """Create a large markdown document with many sections."""
     sections = []

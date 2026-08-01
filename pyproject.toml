@@ -69,6 +69,8 @@ markers = [
     "e2e: marks end-to-end tests (full system tests)",
     "slow: marks slow tests (>5s, load models or process large datasets)",
     "real_embeddings: marks tests that require real embedding models (not fake deterministic embeddings)",
+    "performance: marks hosted-runner-sensitive performance tests",
+    "benchmark: marks benchmark tests",
 ]
 
 # The app-side public import boundary is checked by

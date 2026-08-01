@@ -5,6 +5,9 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
 
 jobs:
   lint:
@@ -105,7 +108,9 @@ jobs:
         env:
           HF_HUB_OFFLINE: "1"
           TRANSFORMERS_OFFLINE: "1"
-        run: uv run pytest --cov=src --cov-report=xml --cov-report=term-missing
+        run: >-
+          uv run pytest -m "not performance" --cov=src --cov-report=xml
+          --cov-report=term-missing
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -114,3 +119,64 @@ jobs:
           flags: unittests
           name: codecov-umbrella
           fail_ci_if_error: false
+
+  performance:
+    name: Performance Benchmarks
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      HF_HOME: /home/runner/.cache/huggingface
+      LLAMA_INDEX_CACHE_DIR: /home/runner/.cache/llama_index
+      TOKENIZERS_PARALLELISM: "false"
+      HF_HUB_DISABLE_PROGRESS_BARS: "1"
+      TQDM_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/llama_index
+          key: >-
+            test-models-${{ runner.os }}-${{
+            hashFiles('uv.lock', 'pyproject.toml',
+            'scripts/download_test_models.py', 'tests/conftest.py') }}
+
+      - name: Pre-download test models
+        env:
+          HF_HUB_OFFLINE: "0"
+          TRANSFORMERS_OFFLINE: "0"
+        run: uv run python scripts/download_test_models.py
+
+      - name: Verify test models offline
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          if ! uv run python scripts/download_test_models.py; then
+            echo "::error::Required test models are unavailable."
+            echo "::error::Check both model caches."
+            exit 1
+          fi
+
+      - name: Run performance tests
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: uv run pytest -m performance -n 0

@@ -12,6 +12,9 @@ from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, Searc
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
 
+pytestmark = pytest.mark.performance
+
+
 @pytest.fixture
 def config(tmp_path):
     docs_path = tmp_path / "docs"

@@ -9,6 +9,7 @@ from mcp_markdown_ragdocs.config import Config, IndexingConfig
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
 
 
+@pytest.mark.performance
 @pytest.mark.asyncio
 async def test_parallel_indexing_with_manager(tmp_path, shared_embedding_model):
     """
@@ -55,6 +56,7 @@ async def test_parallel_indexing_with_manager(tmp_path, shared_embedding_model):
     assert manager.get_document_count() == 20
 
 
+@pytest.mark.performance
 @pytest.mark.asyncio
 async def test_parallel_vs_sequential_throughput(tmp_path, shared_embedding_model):
     """
