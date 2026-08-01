@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from mcp_markdown_ragdocs.coordination.queue import get_huey
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
@@ -16,6 +16,10 @@ if TYPE_CHECKING:
     from mcp_markdown_ragdocs.daemon import RuntimePaths
 
 logger = logging.getLogger(__name__)
+
+
+def _as_int(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def _resolve_stats_file_path(
@@ -82,7 +86,7 @@ def _build_per_root_index_rows(
                 raw_file_path if isinstance(raw_file_path, str) else None,
                 common_root=common_root,
             )
-            chunk_count = int(description.get("chunk_count", 0) or 0)
+            chunk_count = _as_int(description.get("chunk_count"))
             if resolved_path is None:
                 unattributed_indexed_documents += 1
                 unattributed_indexed_chunks += chunk_count
@@ -99,14 +103,14 @@ def _build_per_root_index_rows(
 
     for row in rows:
         row["remaining_estimate"] = max(
-            int(row["discovered_files"]) - int(row["indexed_documents_estimate"]),
+            _as_int(row["discovered_files"]) - _as_int(row["indexed_documents_estimate"]),
             0,
         )
 
     return rows, unattributed_indexed_documents, unattributed_indexed_chunks
 
 
-def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
+def _build_index_stats_payload(ctx: Any) -> dict[str, object]:
     manifest_path = ctx.index_path / "index.manifest.json"
     manifest_exists = manifest_path.exists()
     if manifest_exists:
@@ -131,7 +135,7 @@ def _build_index_stats_payload(ctx: ApplicationContext) -> dict[str, object]:
         indexed_descriptions = ctx.index_manager.vector.describe_documents()
         indexed_documents = len(indexed_descriptions)
         indexed_chunks = sum(
-            int(description.get("chunk_count", 0) or 0)
+            _as_int(description.get("chunk_count"))
             for description in indexed_descriptions
         )
 

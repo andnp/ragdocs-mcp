@@ -28,6 +28,12 @@ def main() -> None:
     embedding_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
     embedding_model.get_text_embedding("warmup")
 
+    print("Downloading sentence-transformers/all-MiniLM-L6-v2 (legacy test embedding model)...")
+    legacy_embedding_model = HuggingFaceEmbedding(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+    legacy_embedding_model.get_text_embedding("warmup")
+
     print("Downloading Qwen/Qwen3-Reranker-0.6B (reranker adapter model)...")
     reranker = HuggingFaceReranker()
     reranker.rerank("warmup", ["warmup document"])

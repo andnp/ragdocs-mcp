@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from mcp_markdown_ragdocs.coordination.queue import get_huey
@@ -39,9 +39,13 @@ from mcp_markdown_ragdocs.models import ChunkResult
 logger = logging.getLogger(__name__)
 
 
-type BuildAdminOverviewPayload = Callable[[object, Path, bool, int | None, str], dict[str, object]]
-type BuildIndexStatsPayload = Callable[[object], dict[str, object]]
-type BuildQueueStatusPayload = Callable[[Path, bool, int | None], dict[str, object]]
+def _as_int(value: object, default: int = 0) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+type BuildAdminOverviewPayload = Callable[..., dict[str, object]]
+type BuildIndexStatsPayload = Callable[..., dict[str, object]]
+type BuildQueueStatusPayload = Callable[..., dict[str, object]]
 type SubmitRecordBatch = Callable[[list[dict[str, object]]], object | None]
 
 
@@ -51,6 +55,41 @@ class _RecordIndexManager(Protocol):
 
 class _RecordIndexContext(Protocol):
     index_manager: _RecordIndexManager
+
+
+class _SearchPayloadContext(Protocol):
+    documents_roots: list[Path]
+
+    def get_index_state(self) -> Any: ...
+
+    def get_total_git_commits_indexed(self) -> int: ...
+
+
+class _SearchPayloadCoordinator(Protocol):
+    state: Any
+
+
+class _RouterContext(Protocol):
+    documents_roots: list[Path]
+    index_path: Path
+    index_manager: _RecordIndexManager
+    orchestrator: Any
+    config: Any
+    git_indexing_enabled: bool
+
+    def is_ready(self) -> bool: ...
+    def get_index_state(self) -> Any: ...
+    async def ensure_fresh_indices(self) -> None: ...
+    def schedule_freshness_refresh(self) -> bool: ...
+    def get_total_git_commits_indexed(self) -> int: ...
+
+
+class _RouterCoordinator(Protocol):
+    state: Any
+
+    def request_shutdown(self) -> None: ...
+
+    async def wait_ready(self, timeout: float = 60.0) -> None: ...
 
 
 def _index_records(ctx: _RecordIndexContext, payload: dict[str, object]) -> dict[str, object]:
@@ -212,25 +251,27 @@ def _git_history_result_to_dict(result) -> dict[str, object]:
 
 
 def _build_initializing_search_payload(
-    ctx,
-    coordinator,
+    ctx: object,
+    coordinator: object,
     *,
     query: str,
     include_git_metadata: bool = False,
 ) -> dict[str, object]:
+    search_ctx = cast(_SearchPayloadContext, ctx)
+    search_coordinator = cast(_SearchPayloadCoordinator, coordinator)
     payload: dict[str, object] = {
         "status": "initializing",
         "message": "Search indices are still initializing. Retry shortly.",
         "query": query,
         "results": [],
-        "lifecycle": coordinator.state.value,
+        "lifecycle": search_coordinator.state.value,
         "daemon_scope": "global",
         "project_context_mode": "request_only",
-        "configured_root_count": len(ctx.documents_roots),
-        "index_state": ctx.get_index_state().to_dict(),
+        "configured_root_count": len(search_ctx.documents_roots),
+        "index_state": search_ctx.get_index_state().to_dict(),
     }
     if include_git_metadata:
-        payload["total_commits_indexed"] = ctx.get_total_git_commits_indexed()
+        payload["total_commits_indexed"] = search_ctx.get_total_git_commits_indexed()
     else:
         payload["compression_stats"] = {}
         payload["strategy_stats"] = {}
@@ -238,38 +279,41 @@ def _build_initializing_search_payload(
 
 
 def _build_unavailable_search_payload(
-    ctx,
-    coordinator,
+    ctx: object,
+    coordinator: object,
 ) -> dict[str, object]:
-    index_state = ctx.get_index_state()
+    search_ctx = cast(_SearchPayloadContext, ctx)
+    search_coordinator = cast(_SearchPayloadCoordinator, coordinator)
+    index_state = search_ctx.get_index_state()
     return {
         "status": "error",
         "error": "index_initialization_failed",
         "details": index_state.last_error or "Search indices are not queryable.",
-        "lifecycle": coordinator.state.value,
+        "lifecycle": search_coordinator.state.value,
         "daemon_scope": "global",
         "project_context_mode": "request_only",
-        "configured_root_count": len(ctx.documents_roots),
+        "configured_root_count": len(search_ctx.documents_roots),
         "index_state": index_state.to_dict(),
     }
 
 
 def _get_cold_start_search_response(
-    ctx,
-    coordinator,
+    ctx: object,
+    coordinator: object,
     *,
     query: str,
     include_git_metadata: bool = False,
 ) -> dict[str, object] | None:
-    if ctx.is_ready():
+    search_ctx = cast(_RouterContext, ctx)
+    if search_ctx.is_ready():
         return None
 
-    index_state = ctx.get_index_state()
+    index_state = search_ctx.get_index_state()
     if index_state.status in {"failed", "partial"}:
-        return _build_unavailable_search_payload(ctx, coordinator)
+        return _build_unavailable_search_payload(search_ctx, coordinator)
 
     return _build_initializing_search_payload(
-        ctx,
+        search_ctx,
         coordinator,
         query=query,
         include_git_metadata=include_git_metadata,
@@ -278,13 +322,13 @@ def _get_cold_start_search_response(
 
 def build_daemon_request_handler(
     dependencies: DaemonRequestRouterDependencies,
-) -> Callable[[str, dict[str, object]], Awaitable[dict[str, object]]]:
+) -> Callable[[str, dict[str, object]], Coroutine[Any, Any, dict[str, object]]]:
     async def _handle_daemon_request(
         path: str,
         payload: dict[str, object],
     ) -> dict[str, object]:
-        ctx = dependencies.ctx
-        coordinator = dependencies.coordinator
+        ctx = cast(_RouterContext, dependencies.ctx)
+        coordinator = cast(_RouterCoordinator, dependencies.coordinator)
 
         if path == "/api/mcp/tools":
             return build_mcp_tools_payload()
@@ -310,9 +354,9 @@ def build_daemon_request_handler(
             return dependencies.build_index_stats_payload(ctx)
         if path in {"/api/admin/tasks", "/api/admin/queue-status"}:
             return dependencies.build_queue_status_payload(
-                dependencies.queue_db_path,
-                dependencies.get_worker_running(),
-                ctx.config.indexing.task_backpressure_limit,
+                queue_path=dependencies.queue_db_path,
+                worker_running=dependencies.get_worker_running(),
+                backpressure_limit=ctx.config.indexing.task_backpressure_limit,
             )
         if path == "/api/admin/tasks/purge":
             if payload.get("confirm") is not True:
@@ -378,8 +422,16 @@ def build_daemon_request_handler(
                     ),
                 }
 
-            model = str(payload.get("model")) if payload.get("model") is not None else None
-            old_model = str(payload.get("old_model")) if payload.get("old_model") is not None else None
+            model = (
+                str(payload.get("model"))
+                if payload.get("model") is not None
+                else None
+            )
+            old_model = (
+                str(payload.get("old_model"))
+                if payload.get("old_model") is not None
+                else None
+            )
             raw_truncate_dim = payload.get("truncate_dim")
             truncate_dim = (
                 int(raw_truncate_dim)
@@ -501,7 +553,7 @@ def build_daemon_request_handler(
                 return cold_start_response
             ctx.schedule_freshness_refresh()
             query_text = str(payload.get("query", ""))
-            top_n = int(payload.get("top_n", 5))
+            top_n = _as_int(payload.get("top_n"), 5)
             top_k = max(20, top_n * 4)
             project_filter_payload = payload.get("project_filter", [])
             project_filter = (
@@ -557,10 +609,11 @@ def build_daemon_request_handler(
             ctx.schedule_freshness_refresh()
 
             query_text = str(payload.get("query", ""))
-            top_n = int(payload.get("top_n", 5))
+            top_n = _as_int(payload.get("top_n"), 5)
+            project_filter_payload = payload.get("project_filter", [])
             project_filter = (
-                [str(item) for item in payload.get("project_filter", []) if isinstance(item, str)]
-                if isinstance(payload.get("project_filter", []), list)
+                [str(item) for item in project_filter_payload if isinstance(item, str)]
+                if isinstance(project_filter_payload, list)
                 else []
             )
             project_context = (
@@ -568,12 +621,8 @@ def build_daemon_request_handler(
                 if payload.get("project_context") is not None
                 else None
             )
-            after_timestamp = (
-                int(payload["after_timestamp"]) if payload.get("after_timestamp") is not None else None
-            )
-            before_timestamp = (
-                int(payload["before_timestamp"]) if payload.get("before_timestamp") is not None else None
-            )
+            after_timestamp = _as_int(payload.get("after_timestamp")) if payload.get("after_timestamp") is not None else None
+            before_timestamp = _as_int(payload.get("before_timestamp")) if payload.get("before_timestamp") is not None else None
             files_glob = str(payload["files_glob"]) if payload.get("files_glob") else None
 
             overfetch_multiplier = 10 if (files_glob or after_timestamp or before_timestamp) else 4
