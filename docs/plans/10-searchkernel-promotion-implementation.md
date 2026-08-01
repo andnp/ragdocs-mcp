@@ -1,9 +1,14 @@
 # Plan: Promote ragdocs In-Place into the Search Kernel — Implementation Tranches
 
-**Status:** In progress — 2026-07-23 (see §Implementation progress)
+**Status:** Complete for the agreed scope — 2026-08-01 (see §Implementation progress)
 **Governing design:** `devkit/specs/07-unified-search-architecture.md` (read it for *why*; this doc is *how*)
 **Repo scope:** `mcp-markdown-ragdocs` (becomes the `searchkernel` library + daemon)
 **Related:** `docs/plans/00-ragdocs-v2-refactor-overview.md`, `.../09-global-daemon-multi-corpus-runtime-refactor.md`
+
+The model-migration and progressive-indexing work is complete in the standalone
+`andnp-searchkernel` library and the ragdocs application. The app now consumes
+the published `andnp-searchkernel==0.4.0` API; the final local validation was
+1066 passed, 1 skipped, and 2 expected failures.
 
 ## Audience note (for the orchestrator + implementation agents)
 

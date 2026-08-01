@@ -1,12 +1,16 @@
 # Plan: Extract `searchkernel/` into a Standalone PyPI Library — Implementation Tranches
 
-**Status:** Planning (2026-07-30)
+**Status:** Complete through X7; X8 deferred by scope decision (2026-08-01)
 
 **Governing design:** Plan #10 (Promote ragdocs In-Place into the Search Kernel)
 
 **Repo scope:** This plan spans TWO repositories:
 - **`mcp-markdown-ragdocs`** (application layer): owns daemon lifecycle, file-watching, content-source adapters (git, markdown, plaintext), CLI, MCP server, bootstrap coordination
 - **`andnp-searchkernel`** (new library): extracted generic search/indexing kernel (import name: `searchkernel`, dist name: `andnp-searchkernel`)
+
+X1-X7 are complete, including the published 0.4.0 migration/readiness APIs
+and the ragdocs cutover to the public library facade. Google Drive adapter work
+is intentionally deferred; no X8 implementation was made.
 
 ---
 
@@ -77,7 +81,7 @@ Plan #10 successfully refactored ragdocs into a layered `searchkernel/` package 
 
 ## Workstreams
 
-### X1 — Finalize the library boundary (in progress, being completed by this doc)
+### X1 — Finalize the library boundary
 
 **Goal:** Classify every file under `searchkernel/indexing/` and resolve the two mixed files (`manager.py`, `tasks.py`).
 
@@ -326,7 +330,7 @@ Plan #10 successfully refactored ragdocs into a layered `searchkernel/` package 
 
 ---
 
-### X8 — Prove extensibility: Google Drive ContentSource adapter
+### X8 — Prove extensibility: Google Drive ContentSource adapter (deferred)
 
 **Goal:** Implement a new `ContentSource` (Google Drive) in `mcp-markdown-ragdocs` WITHOUT touching the library, proving the port is truly extensible.
 
@@ -370,7 +374,7 @@ Plan #10 successfully refactored ragdocs into a layered `searchkernel/` package 
 - **M2:** X2–X3 complete — new repo scaffolded, LIBRARY code extracted with history.
 - **M3:** X4–X5 complete — ragdocs cut over to external library dependency, imports working.
 - **M4:** X6–X7 complete — tests split, library published to PyPI.
-- **M5:** X8 complete — Google Drive adapter proves extensibility without library changes.
+- **M5:** Deferred — Google Drive adapter is intentionally out of scope for this delivery.
 
 ---
 

@@ -1,6 +1,6 @@
 # Plan: Progressive Semantic Indexing Architecture
 
-**Status:** In Implementation
+**Status:** Implemented and validated — 2026-08-01
 **Date:** 2026-07-30
 **Related:** `docs/architecture.md`, `searchkernel/context.py`, `searchkernel/indexing/bootstrap_session.py`, `searchkernel/indexing/manager.py`, `searchkernel/indexing/runtime_readiness.py`
 
@@ -19,6 +19,11 @@ The main architectural change is to separate:
 The design should reuse the existing `BootstrapSession`, task queue, readiness model, and index implementations. It should not create a second startup state machine or put cache and scheduling policy into `VectorIndex`.
 
 The faster-model/backend track is intentionally out of scope for this plan.
+
+The shared coordinator, checkpoint recovery, cache-aware semantic planning,
+progressive readiness, and application bootstrap integration are complete.
+Hosted performance benchmarks remain in the scheduled/manual CI job rather
+than the mandatory correctness workflow.
 
 ## Evidence and motivation
 
