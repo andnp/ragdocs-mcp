@@ -203,7 +203,10 @@ def test_update_chunks_removes_old_and_adds_new(manager, tmp_path):
     # Initial index
     manager.index_document(doc_path)
 
-    original_chunk_ids = list(manager._hash_store._hashes.keys())
+    original_chunk_ids = [
+        chunk_id
+        for chunk_id, _ in manager._hash_store.get_chunks_by_document("test_doc")
+    ]
     assert len(original_chunk_ids) > 0
 
     # Create modified chunks
@@ -232,7 +235,7 @@ def test_full_reindex_document_removes_all_old_chunks(manager, tmp_path):
     # Initial index
     manager.index_document(doc_path)
 
-    original_hashes = manager._hash_store._hashes.copy()
+    original_hashes = dict(manager._hash_store.get_chunks_by_document("test_doc"))
     assert len(original_hashes) > 0
 
     # Create completely new chunks with matching format
@@ -245,7 +248,7 @@ def test_full_reindex_document_removes_all_old_chunks(manager, tmp_path):
     manager._full_reindex_document("test_doc", new_chunks)
 
     # Verify hash store updated
-    new_hashes = manager._hash_store._hashes
+    new_hashes = dict(manager._hash_store.get_chunks_by_document("test_doc"))
     assert len(new_hashes) == 2
     assert all(k.startswith("test_doc_chunk_") for k in new_hashes)
 

@@ -128,7 +128,7 @@ Some test content here.
     manager.index_document(str(test_file))
 
     initial_count = len(manager.vector._doc_id_to_node_ids)
-    initial_hashes = dict(manager._hash_store._hashes)
+    initial_hashes = dict(manager._hash_store.get_chunks_by_document("test"))
 
     # 2. Touch file (change mtime but not content)
     await asyncio.sleep(0.1)  # Ensure mtime difference
@@ -145,7 +145,7 @@ Some test content here.
     assert final_count == initial_count
 
     # 5. Verify: hashes unchanged (no chunks were re-indexed)
-    final_hashes = dict(manager._hash_store._hashes)
+    final_hashes = dict(manager._hash_store.get_chunks_by_document("test"))
     assert final_hashes == initial_hashes, (
         "Hashes should not change when content unchanged"
     )
@@ -326,7 +326,9 @@ async def test_delta_indexing_multiple_updates(tmp_path, manager):
     manager.index_document(str(test_file))
 
     # 5. Verify: hash store tracks all changes correctly
-    assert len(manager._hash_store._hashes) >= 2, "Should have hashes for all chunks"
+    assert len(manager._hash_store.get_chunks_by_document("test")) >= 2, (
+        "Should have hashes for all chunks"
+    )
 
     # 6. Verify: query results reflect all updates
     # The keyword search may not find exact version numbers reliably
