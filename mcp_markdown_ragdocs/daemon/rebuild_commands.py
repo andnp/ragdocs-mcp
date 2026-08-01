@@ -18,6 +18,13 @@ type Sleep = Callable[[float], None]
 DEFAULT_REBUILD_POLL_INTERVAL_SECONDS = 0.2
 
 
+def _require_rebuild_payload(payload: dict[str, object] | None) -> dict[str, object]:
+    if payload is None or payload.get("status") == "error":
+        raise_daemon_request_error(payload)
+    assert payload is not None
+    return payload
+
+
 def resolve_rebuild_project_scope(
     *,
     project: str | None,
@@ -41,9 +48,7 @@ def request_rebuild_submit_payload(
         auto_start=True,
         allow_error=True,
     )
-    if payload is None or payload.get("status") == "error":
-        raise_daemon_request_error(payload)
-    return payload
+    return _require_rebuild_payload(payload)
 
 
 def request_rebuild_status_payload(
@@ -57,9 +62,7 @@ def request_rebuild_status_payload(
         auto_start=False,
         allow_error=True,
     )
-    if payload is None or payload.get("status") == "error":
-        raise_daemon_request_error(payload)
-    return payload
+    return _require_rebuild_payload(payload)
 
 
 def render_rebuild_messages(

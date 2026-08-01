@@ -7,6 +7,7 @@ not the deleted commit_indexer/commit_search stack.
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 from searchkernel.indexing.async_ingestion import AsyncIndexIngestor
@@ -24,6 +25,7 @@ from mcp_markdown_ragdocs.config import (
     SearchConfig,
 )
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.lifecycle import LifecycleState
 from mcp_markdown_ragdocs.mcp.handlers import HandlerContext
 from mcp_markdown_ragdocs.mcp.tools.document_tools import handle_search_git_history
 
@@ -68,6 +70,7 @@ class _ReadyContext:
     def __init__(self, orchestrator, git_indexing_enabled: bool, total_commits: int) -> None:
         self.orchestrator = orchestrator
         self.git_indexing_enabled = git_indexing_enabled
+        self.documents_roots = [Path("/docs")]
         self._total_commits = total_commits
 
     def is_ready(self) -> bool:
@@ -76,11 +79,16 @@ class _ReadyContext:
     def get_total_git_commits_indexed(self) -> int:
         return self._total_commits
 
+    def get_index_state(self) -> Any:
+        return None
+
     def get_nonblocking_search_payload(self, *, query, include_git_metadata=False):
         return None
 
 
 class _FakeCoordinator:
+    state = LifecycleState.READY
+
     async def wait_ready(self, timeout: float = 60.0) -> None:
         return None
 

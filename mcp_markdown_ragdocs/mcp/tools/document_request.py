@@ -97,7 +97,7 @@ def normalize_query_documents_request(
         )
     uniqueness_mode: UniquenessMode = uniqueness_value
 
-    scope_mode = validate_enum(
+    raw_scope_mode = validate_enum(
         arguments,
         "scope_mode",
         {"global", "active_project", "explicit_projects"},
@@ -108,8 +108,14 @@ def normalize_query_documents_request(
     )
     preferred_project = validate_optional_string(arguments, "preferred_project")
 
-    if scope_mode is None:
-        scope_mode = "global"
+    if raw_scope_mode is None or raw_scope_mode == "global":
+        scope_mode: ScopeMode = "global"
+    elif raw_scope_mode == "active_project":
+        scope_mode = "active_project"
+    elif raw_scope_mode == "explicit_projects":
+        scope_mode = "explicit_projects"
+    else:
+        raise ValidationError(f"Invalid scope_mode: {raw_scope_mode}")
 
     if scope_mode == "explicit_projects" and not scope_projects:
         raise ValidationError(

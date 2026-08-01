@@ -9,6 +9,20 @@ from mcp_markdown_ragdocs.mcp.tools.document_request import NormalizedQueryDocum
 from mcp_markdown_ragdocs.models import ChunkResult, CompressionStats, SearchStrategyStats
 
 
+def _as_string_object_dict(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    if not all(isinstance(key, str) for key in value):
+        return None
+    return {key: item for key, item in value.items() if isinstance(key, str)}
+
+
+def _as_int(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
 @dataclass(frozen=True)
 class QueryDocumentsScopeEnvelope:
     mode: str
@@ -208,6 +222,8 @@ def build_query_documents_status_envelope(
         applied_filter_projects=tuple(request.project_filter) if request is not None else (),
         applied_uplift_project=None,
     )
+    raw_index_state = _as_string_object_dict(payload.get("index_state"))
+    raw_root_count = _as_int(payload.get("configured_root_count"))
     return QueryDocumentsResponseEnvelope(
         status=status,
         results=(),
@@ -244,16 +260,8 @@ def build_query_documents_status_envelope(
                 if isinstance(payload.get("project_context_mode"), str)
                 else None
             ),
-            configured_root_count=(
-                int(payload["configured_root_count"])
-                if payload.get("configured_root_count") is not None
-                else None
-            ),
-            index_state=(
-                payload["index_state"]
-                if isinstance(payload.get("index_state"), dict)
-                else None
-            ),
+            configured_root_count=raw_root_count,
+            index_state=raw_index_state,
         ),
     )
 

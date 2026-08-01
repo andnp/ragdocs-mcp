@@ -25,10 +25,14 @@ from mcp_markdown_ragdocs.models import (
 class _FakeCoordinator:
     state = LifecycleState.INITIALIZING
 
+    async def wait_ready(self, timeout: float = 60.0) -> None:
+        return None
+
 
 class _ColdStartContext:
     orchestrator: Any
     config: Any
+    git_indexing_enabled = False
 
     def __init__(
         self,

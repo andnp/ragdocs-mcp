@@ -9,7 +9,7 @@ import yaml
 from tree_sitter import Language, Node, Parser
 from tree_sitter_markdown import language
 
-from mcp_markdown_ragdocs.models import Document
+from mcp_markdown_ragdocs.models import Document, DocumentMetadataValue
 from mcp_markdown_ragdocs.parsers.base import DocumentParser
 from mcp_markdown_ragdocs.parsers.encoding import read_text_with_encoding_fallback
 
@@ -26,7 +26,6 @@ INDEXED_FRONTMATTER_FIELDS = [
     "type",
     "related",
 ]
-
 
 @dataclass
 class LinkWithContext:
@@ -63,6 +62,26 @@ def _normalize_frontmatter_value(value: object) -> object:
     return str(value)
 
 
+def _document_metadata_value(value: object) -> DocumentMetadataValue:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): item for key, item in value.items()}
+    if value is None:
+        return None
+    if isinstance(value, str | int | float | bool):
+        return value
+    return str(value)
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return []
+
+
 class MarkdownParser(DocumentParser):
     def __init__(self):
         self.parser = Parser(Language(language()))
@@ -83,13 +102,7 @@ class MarkdownParser(DocumentParser):
 
         text_content = self._extract_text_content(content, root_node)
 
-        aliases = frontmatter_metadata.get("aliases", [])
-        if isinstance(aliases, str):
-            aliases = [aliases]
-
-        frontmatter_tags = frontmatter_metadata.get("tags", [])
-        if isinstance(frontmatter_tags, str):
-            frontmatter_tags = [frontmatter_tags]
+        frontmatter_tags = _string_list(frontmatter_metadata.get("tags"))
 
         wikilinks = self._extract_wikilinks(root_node, content_bytes)
         transclusions = self._extract_transclusions(root_node, content_bytes)
@@ -102,7 +115,10 @@ class MarkdownParser(DocumentParser):
 
         doc_id = Path(file_path).stem
 
-        metadata = dict(frontmatter_metadata)
+        metadata: dict[str, DocumentMetadataValue] = {
+            key: _document_metadata_value(value)
+            for key, value in frontmatter_metadata.items()
+        }
         metadata.pop("aliases", None)
         metadata.pop("tags", None)
         if transclusions:
@@ -112,15 +128,11 @@ class MarkdownParser(DocumentParser):
             if field in frontmatter_metadata:
                 value = frontmatter_metadata[field]
                 if isinstance(value, list):
-                    metadata[field] = value
+                    metadata[field] = [str(item) for item in value]
                 else:
                     metadata[field] = str(value)
 
-        related = frontmatter_metadata.get("related", [])
-        if isinstance(related, str):
-            related = [related]
-        elif not isinstance(related, list):
-            related = []
+        related = _string_list(frontmatter_metadata.get("related"))
         wikilinks = list(set(wikilinks) | set(related))
 
         return Document(
@@ -133,7 +145,7 @@ class MarkdownParser(DocumentParser):
             modified_time=modified_time,
         )
 
-    def _extract_frontmatter(self, content: str):
+    def _extract_frontmatter(self, content: str) -> dict[str, object]:
         frontmatter_pattern = r"^---\s*\n(.*?)\n---\s*\n"
         match = re.match(frontmatter_pattern, content, re.DOTALL)
 
@@ -155,7 +167,7 @@ class MarkdownParser(DocumentParser):
         except yaml.YAMLError:
             return {}
 
-    def _extract_text_content(self, content: str, root_node: Node):
+    def _extract_text_content(self, content: str, root_node: Node) -> str:
         frontmatter_pattern = r"^---\s*\n.*?\n---\s*\n"
         text_without_frontmatter = re.sub(
             frontmatter_pattern, "", content, count=1, flags=re.DOTALL

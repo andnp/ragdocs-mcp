@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
 from mcp.types import TextContent
 
 import mcp_markdown_ragdocs.mcp.tools.document_tools  # noqa: F401 - registers handlers
-from mcp_markdown_ragdocs.mcp.handlers import HandlerContext, get_handler
+from mcp_markdown_ragdocs.mcp.handlers import (
+    ApplicationContextLike,
+    HandlerContext,
+    LifecycleCoordinatorLike,
+    get_handler,
+)
 from mcp_markdown_ragdocs.mcp.tools.document_tools import get_document_tools
-
-if TYPE_CHECKING:
-    from mcp_markdown_ragdocs.context import ApplicationContext
-    from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator
-
 
 def build_mcp_tools_payload() -> dict[str, object]:
     return {
@@ -29,8 +28,8 @@ def build_mcp_tools_payload() -> dict[str, object]:
 
 async def handle_mcp_tool_call(
     *,
-    ctx_getter: Callable[[], ApplicationContext],
-    coordinator: LifecycleCoordinator,
+    ctx_getter: Callable[[], ApplicationContextLike | None],
+    coordinator: LifecycleCoordinatorLike,
     payload: dict[str, object],
 ) -> dict[str, object]:
     tool_name = str(payload.get("name", ""))

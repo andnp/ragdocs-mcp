@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
-from mcp_markdown_ragdocs.models import Document
+from mcp_markdown_ragdocs.models import Document, DocumentMetadataValue
 from mcp_markdown_ragdocs.parsers.base import DocumentParser
 from mcp_markdown_ragdocs.parsers.encoding import read_text_with_encoding_fallback
 
@@ -23,7 +23,7 @@ class PlainTextParser(DocumentParser):
 
         modified_time = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
 
-        metadata: dict[str, str | list[str] | int | float | bool] = {
+        metadata: dict[str, DocumentMetadataValue] = {
             "source": str(path)
         }
         if encoding_used and encoding_used != "utf-8":

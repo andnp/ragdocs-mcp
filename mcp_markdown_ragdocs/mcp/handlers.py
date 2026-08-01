@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import Any, Protocol
 
 from mcp.types import TextContent
-
-if TYPE_CHECKING:
-    from mcp_markdown_ragdocs.context import ApplicationContext
-    from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator
+from mcp_markdown_ragdocs.lifecycle import LifecycleState
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +18,22 @@ MAX_TOP_N = 100
 ToolHandler = Callable[["HandlerContext", dict], Awaitable[list[TextContent]]]
 
 _TOOL_HANDLERS: dict[str, ToolHandler] = {}
+
+
+class ApplicationContextLike(Protocol):
+    documents_roots: list[Path]
+    orchestrator: Any
+    git_indexing_enabled: bool
+
+    def is_ready(self) -> bool: ...
+    def get_index_state(self) -> Any: ...
+    def get_total_git_commits_indexed(self) -> int: ...
+
+
+class LifecycleCoordinatorLike(Protocol):
+    state: LifecycleState
+
+    async def wait_ready(self, timeout: float = 60.0) -> None: ...
 
 
 def tool_handler(name: str):
@@ -42,19 +56,19 @@ class HandlerContext:
 
     def __init__(
         self,
-        ctx_getter: Callable[[], ApplicationContext | None],
-        coordinator: LifecycleCoordinator,
+        ctx_getter: Callable[[], ApplicationContextLike | None],
+        coordinator: LifecycleCoordinatorLike,
     ):
         self._ctx_getter = ctx_getter
         self.coordinator = coordinator
 
     @property
-    def ctx(self) -> ApplicationContext | None:
+    def ctx(self) -> ApplicationContextLike | None:
         return self._ctx_getter()
 
-    def require_ctx(self) -> ApplicationContext:
+    def require_ctx(self) -> ApplicationContextLike:
         """Get the application context, raising an error if not initialized."""
-        ctx = self._ctx_getter()
+        ctx = self.ctx
         if ctx is None:
             raise RuntimeError("Server not initialized")
         return ctx
@@ -162,8 +176,8 @@ def format_search_status_text(
     total_count = 0
     if isinstance(index_state, dict):
         index_status = str(index_state.get("status", "unknown"))
-        indexed_count = int(index_state.get("indexed_count", 0) or 0)
-        total_count = int(index_state.get("total_count", 0) or 0)
+        indexed_count = _as_int(index_state.get("indexed_count"))
+        total_count = _as_int(index_state.get("total_count"))
 
     results = payload.get("results", [])
     results_returned = len(results) if isinstance(results, list) else 0
@@ -186,14 +200,14 @@ def format_search_status_text(
     output_lines.extend(
         [
             f"**Lifecycle:** {payload.get('lifecycle', 'unknown')}",
-            f"**Configured Roots:** {int(payload.get('configured_root_count', 0) or 0)}",
+            f"**Configured Roots:** {_as_int(payload.get('configured_root_count'))}",
             f"**Index State:** {index_status} ({indexed_count}/{total_count})",
         ]
     )
 
     if include_git_metadata:
         output_lines.append(
-            f"**Total Commits Indexed:** {int(payload.get('total_commits_indexed', 0) or 0)}"
+            f"**Total Commits Indexed:** {_as_int(payload.get('total_commits_indexed'))}"
         )
 
     output_lines.extend(
@@ -213,3 +227,7 @@ def format_search_status_text(
         output_lines.append("_No results available._")
 
     return "\n".join(output_lines)
+
+
+def _as_int(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0

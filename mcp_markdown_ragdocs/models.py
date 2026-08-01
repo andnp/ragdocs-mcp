@@ -26,6 +26,10 @@ __all__ = [
     "StrategyContribution",
 ]
 
+type DocumentMetadataValue = (
+    str | list[str] | int | float | bool | dict[str, object] | None
+)
+
 
 @dataclass
 class Chunk:
@@ -134,7 +138,7 @@ class ChunkResult:
 class Document:
     id: str
     content: str
-    metadata: dict[str, str | list[str] | int | float | bool]
+    metadata: dict[str, DocumentMetadataValue]
     links: list[str]
     tags: list[str]
     file_path: str

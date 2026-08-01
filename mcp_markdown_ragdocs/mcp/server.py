@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from typing import Literal
 
 # Prevent tokenizers parallelism warning.
 # Must be set before any HuggingFace/sentence-transformers imports.
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 _MCP_DAEMON_START_TIMEOUT_SECONDS = 30.0
 _MCP_DAEMON_READY_WAIT_SECONDS = 120.0
 _MCP_DAEMON_REQUEST_TIMEOUT_SECONDS = 60.0
+_TEXT_CONTENT_TYPE: Literal["text"] = "text"
 
 
 class MCPServer:
@@ -133,7 +135,7 @@ class MCPServer:
                 raise TypeError("Daemon returned an invalid MCP tool response")
             return [
                 TextContent(
-                    type=str(content.get("type", "text")),
+                    type=_TEXT_CONTENT_TYPE,
                     text=str(content.get("text", "")),
                 )
                 for content in contents

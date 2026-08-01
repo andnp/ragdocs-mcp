@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from mcp_markdown_ragdocs.daemon.metadata import DaemonMetadata
 
@@ -32,7 +32,52 @@ class DaemonTransportClient(Protocol):
     ) -> dict[str, object]: ...
 
 
-def _require_zmq() -> tuple[object, object]:
+class _AsyncSocket(Protocol):
+    linger: int
+
+    def bind(self, endpoint: str) -> None: ...
+    async def recv_multipart(self) -> list[bytes]: ...
+    async def send_multipart(self, frames: list[bytes]) -> None: ...
+    def close(self, linger: int = ...) -> None: ...
+
+
+class _SyncSocket(Protocol):
+    linger: int
+
+    def connect(self, endpoint: str) -> None: ...
+    def send(self, data: bytes) -> None: ...
+    def recv_multipart(self) -> list[bytes]: ...
+    def close(self, linger: int = ...) -> None: ...
+
+
+class _AsyncContext(Protocol):
+    def socket(self, socket_type: int) -> _AsyncSocket: ...
+    def term(self) -> None: ...
+
+
+class _SyncContext(Protocol):
+    def socket(self, socket_type: int) -> _SyncSocket: ...
+    def term(self) -> None: ...
+
+
+class _Poller(Protocol):
+    def register(self, socket: _SyncSocket, flags: int) -> None: ...
+    def poll(self, timeout: int) -> list[tuple[_SyncSocket, int]]: ...
+
+
+class _ZMQModule(Protocol):
+    DEALER: int
+    POLLIN: int
+    ROUTER: int
+    Context: type[_SyncContext]
+    Poller: type[_Poller]
+
+
+class _ZMQAsyncModule(Protocol):
+    Context: type[_AsyncContext]
+
+
+def _require_zmq() -> tuple[_ZMQModule, _ZMQAsyncModule]:
     try:
         zmq = importlib.import_module("zmq")
         zmq_asyncio = importlib.import_module("zmq.asyncio")
@@ -40,7 +85,7 @@ def _require_zmq() -> tuple[object, object]:
         raise RuntimeError(
             "pyzmq is required for the Ragdocs daemon transport. Run 'uv sync' and retry."
         ) from exc
-    return zmq, zmq_asyncio
+    return cast(_ZMQModule, zmq), cast(_ZMQAsyncModule, zmq_asyncio)
 
 
 def transport_endpoint(socket_path: Path) -> str:
@@ -77,8 +122,8 @@ class ZMQTransportServer:
         self._socket_path = socket_path
         self._metadata_provider = metadata_provider
         self._request_handler = request_handler
-        self._context: object | None = None
-        self._socket: object | None = None
+        self._context: _AsyncContext | None = None
+        self._socket: _AsyncSocket | None = None
         self._serve_task: asyncio.Task[None] | None = None
         self._request_tasks: set[asyncio.Task[None]] = set()
         self._send_lock = asyncio.Lock()
@@ -87,10 +132,12 @@ class ZMQTransportServer:
         zmq, zmq_asyncio = _require_zmq()
         remove_transport_socket(self._socket_path)
         self._socket_path.parent.mkdir(parents=True, exist_ok=True)
-        self._context = zmq_asyncio.Context()
-        self._socket = self._context.socket(zmq.ROUTER)
-        self._socket.linger = 0
-        self._socket.bind(transport_endpoint(self._socket_path))
+        context = zmq_asyncio.Context()
+        socket = context.socket(zmq.ROUTER)
+        socket.linger = 0
+        socket.bind(transport_endpoint(self._socket_path))
+        self._context = context
+        self._socket = socket
         self._serve_task = asyncio.create_task(self._serve())
         await asyncio.sleep(0)
         try:
@@ -111,20 +158,23 @@ class ZMQTransportServer:
                 task.cancel()
             await asyncio.gather(*self._request_tasks, return_exceptions=True)
             self._request_tasks.clear()
-        if self._socket is not None:
-            self._socket.close(0)
-            self._socket = None
-        if self._context is not None:
-            self._context.term()
-            self._context = None
+        socket = self._socket
+        self._socket = None
+        if socket is not None:
+            socket.close(0)
+        context = self._context
+        self._context = None
+        if context is not None:
+            context.term()
         remove_transport_socket(self._socket_path)
 
     async def _serve(self) -> None:
-        assert self._socket is not None
+        socket = self._socket
+        assert socket is not None
 
         while True:
             try:
-                frames = await self._socket.recv_multipart()
+                frames = await socket.recv_multipart()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -152,14 +202,16 @@ class ZMQTransportServer:
         payload = await self._dispatch_request(request_line)
         response = json.dumps(payload, sort_keys=True).encode("utf-8")
 
-        if self._socket is None:
+        socket = self._socket
+        if socket is None:
             return
 
         try:
             async with self._send_lock:
-                if self._socket is None:
+                socket = self._socket
+                if socket is None:
                     return
-                await self._socket.send_multipart([identity, response])
+                await socket.send_multipart([identity, response])
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -240,8 +292,8 @@ class ZMQTransportClient:
         timeout_seconds: float,
     ) -> dict[str, object]:
         zmq, _ = _require_zmq()
-        context = None
-        client = None
+        context: _SyncContext | None = None
+        client: _SyncSocket | None = None
         try:
             context = zmq.Context()
             client = context.socket(zmq.DEALER)
