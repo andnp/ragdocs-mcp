@@ -8,7 +8,7 @@ import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import Any, TYPE_CHECKING, Protocol, cast
 
 from mcp_markdown_ragdocs.coordination.task_submission import (
     coalesce_pending_first_args,
@@ -24,6 +24,7 @@ from mcp_markdown_ragdocs.coordination.task_submission import (
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from searchkernel.api import (
     AsyncIndexIngestor,
+    has_incomplete_bootstrap_checkpoint,
     mark_bootstrap_file_completed,
     mark_bootstrap_files_completed,
     TaskBatchSubmissionResult,
@@ -39,6 +40,10 @@ from mcp_markdown_ragdocs.indexing.rebuild_service import run_rebuild
 from mcp_markdown_ragdocs.indexing.reindex import (
     run_reindex_operation,
     write_reindex_status,
+)
+from mcp_markdown_ragdocs.indexing.progressive import (
+    ProgressiveIndexManager,
+    run_progressive_bootstrap,
 )
 
 if TYPE_CHECKING:
@@ -75,7 +80,7 @@ class IndexManagerLike(Protocol):
         persist: bool = False,
     ) -> None: ...
     def persist(self) -> None: ...
-    def index_record(self, record: Record) -> bool: ...
+    def index_record(self, record: Record) -> Any: ...
 
 
 # Module-level references set during initialization
@@ -89,14 +94,14 @@ _git_refresh_in_flight: set[str] = set()
 _git_refresh_lock = threading.Lock()
 
 # Task references (set after register_tasks is called)
-index_document_task = None
-index_documents_batch_task = None
-index_records_batch_task = None
-remove_document_task = None
-remove_documents_batch_task = None
-refresh_git_repository_task = None
-rebuild_index_task = None
-reindex_model_task = None
+index_document_task: Any = None
+index_documents_batch_task: Any = None
+index_records_batch_task: Any = None
+remove_document_task: Any = None
+remove_documents_batch_task: Any = None
+refresh_git_repository_task: Any = None
+rebuild_index_task: Any = None
+reindex_model_task: Any = None
 
 
 def register_tasks(
@@ -148,7 +153,11 @@ def register_tasks(
             return False
 
     @huey.task()
-    def _index_documents_batch(file_paths: list[str], force: bool = False) -> bool:
+    def _index_documents_batch(
+        file_paths: list[str],
+        force: bool = False,
+        progressive: bool = False,
+    ) -> bool:
         """Index a burst of documents and persist once after the batch."""
         if _index_manager is None:
             logger.error("IndexManager not available for batch task execution")
@@ -157,6 +166,37 @@ def register_tasks(
         unique_file_paths = list(dict.fromkeys(file_paths))
         if not unique_file_paths:
             return True
+
+        progressive_index = getattr(
+            _index_manager,
+            "prepare_progressive_document",
+            None,
+        )
+        if (
+            progressive
+            and not force
+            and progressive_index is not None
+            and _bootstrap_index_path is not None
+            and _bootstrap_documents_roots
+            and has_incomplete_bootstrap_checkpoint(_bootstrap_index_path)
+        ):
+            try:
+                receipt = run_progressive_bootstrap(
+                    cast(ProgressiveIndexManager, _index_manager),
+                    unique_file_paths,
+                    documents_roots=_bootstrap_documents_roots,
+                )
+            except Exception:
+                logger.exception(
+                    "Progressive bootstrap task failed for %d document(s)",
+                    len(unique_file_paths),
+                )
+                return False
+            logger.info(
+                "Task completed: progressively indexed %d document(s)",
+                receipt.successful,
+            )
+            return receipt.failed == 0
 
         completed_paths: list[str] = []
         failures: list[str] = []
@@ -694,6 +734,7 @@ def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
 def submit_index_batch(
     file_paths: list[str],
     force: bool = False,
+    progressive: bool = False,
 ) -> TaskBatchSubmissionResult:
     if index_documents_batch_task is None or _huey is None:
         return TaskBatchSubmissionResult(
@@ -716,7 +757,14 @@ def submit_index_batch(
 
     enqueued_count = 0
     if remaining_paths:
-        index_documents_batch_task(remaining_paths, force=force)
+        if progressive:
+            index_documents_batch_task(
+                remaining_paths,
+                force=force,
+                progressive=True,
+            )
+        else:
+            index_documents_batch_task(remaining_paths, force=force)
         enqueued_count = len(remaining_paths)
 
     if already_pending_count > 0:

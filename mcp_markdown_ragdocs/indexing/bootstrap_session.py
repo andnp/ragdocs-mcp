@@ -11,9 +11,11 @@ from searchkernel.api import (
     BootstrapFileStamp,
     build_file_stamps,
     compute_bootstrap_generation,
+    get_bootstrap_availability,
     load_bootstrap_checkpoint,
     prepare_bootstrap_checkpoint,
     PublicIndexStateSnapshot,
+    SearchAvailability,
     compute_bootstrap_completed_paths,
     derive_bootstrap_readiness_snapshot,
     derive_loaded_index_state_snapshot,
@@ -33,6 +35,7 @@ type GetFloatFn = Callable[[], float]
 type GetIntFn = Callable[[], int]
 type GetBoolFn = Callable[[], bool]
 type PublishPublicStateFn = Callable[[PublicIndexStateSnapshot], None]
+type PublishAvailabilityFn = Callable[[SearchAvailability], None]
 type MarkReadyFn = Callable[[], None]
 type ScheduleWarmupFn = Callable[[], bool]
 type ScheduleVocabularyCatchUpFn = Callable[[], bool]
@@ -65,6 +68,7 @@ class BootstrapSession:
     schedule_embedding_warmup: ScheduleWarmupFn
     schedule_vocabulary_catch_up: ScheduleVocabularyCatchUpFn
     report_failure: ReportFailureFn
+    publish_availability: PublishAvailabilityFn | None = None
 
     async def preload_persisted_state(self, *, rebuild_pending: bool) -> bool:
         try:
@@ -96,6 +100,12 @@ class BootstrapSession:
         if preloaded_snapshot is None:
             return False
 
+        availability = await asyncio.to_thread(
+            get_bootstrap_availability,
+            self.index_path,
+        )
+        if availability is not None and self.publish_availability is not None:
+            self.publish_availability(availability)
         self.publish_public_state(preloaded_snapshot.public_state)
         if preloaded_snapshot.queryable:
             self.mark_ready()
@@ -136,12 +146,30 @@ class BootstrapSession:
                 total_count=len(files_to_index),
             )
         )
+        if self.publish_availability is not None:
+            self.publish_availability(
+                SearchAvailability(
+                    lexical="available" if self.is_queryable() else "unavailable",
+                    graph="available" if self.is_queryable() else "unavailable",
+                    semantic_coarse="backfilling",
+                    semantic_fine="backfilling",
+                )
+            )
 
         if self.git_refresh_enabled:
             await self._enqueue_startup_git_refresh()
 
         if not files_to_index:
             await self.persist_indices()
+            if self.publish_availability is not None:
+                self.publish_availability(
+                    SearchAvailability(
+                        lexical="available",
+                        graph="available",
+                        semantic_coarse="complete",
+                        semantic_fine="complete",
+                    )
+                )
             self.publish_public_state(
                 derive_loaded_index_state_snapshot(
                     total_targets=0,
@@ -159,7 +187,13 @@ class BootstrapSession:
             )
             return
 
-        submission = indexing_tasks.submit_index_batch(remaining_files)
+        try:
+            submission = indexing_tasks.submit_index_batch(
+                remaining_files,
+                progressive=True,
+            )
+        except TypeError:
+            submission = indexing_tasks.submit_index_batch(remaining_files)
         logger.info(
             "Enqueued %d startup indexing task(s) for %d remaining documents (%d already durably complete, %d already pending)",
             submission.enqueued_count,
@@ -217,6 +251,20 @@ class BootstrapSession:
             total_targets=total_targets,
             durably_completed_targets=durably_completed_targets,
         )
+        if self.publish_availability is not None:
+            availability = await asyncio.to_thread(
+                get_bootstrap_availability,
+                self.index_path,
+            )
+            self.publish_availability(
+                availability
+                or SearchAvailability(
+                    lexical="available",
+                    graph="available",
+                    semantic_coarse="complete",
+                    semantic_fine="complete",
+                )
+            )
         self.mark_ready()
         self.schedule_embedding_warmup()
         self.schedule_vocabulary_catch_up()
@@ -246,6 +294,28 @@ class BootstrapSession:
                         load_manifest,
                         self.index_path,
                     )
+                    availability = await asyncio.to_thread(
+                        get_bootstrap_availability,
+                        self.index_path,
+                    )
+                    if self.publish_availability is not None:
+                        self.publish_availability(
+                            availability
+                            or SearchAvailability(
+                                lexical=(
+                                    "available"
+                                    if self.is_queryable()
+                                    else "unavailable"
+                                ),
+                                graph=(
+                                    "available"
+                                    if self.is_queryable()
+                                    else "unavailable"
+                                ),
+                                semantic_coarse="backfilling",
+                                semantic_fine="backfilling",
+                            )
+                        )
                     completed_paths = compute_bootstrap_completed_paths(
                         checkpoint,
                         saved_manifest,

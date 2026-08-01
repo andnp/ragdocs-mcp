@@ -63,14 +63,18 @@ class IndexState:
     indexed_count: int = 0
     total_count: int = 0
     last_error: str | None = None
+    availability: SearchAvailability | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "status": self.status,
             "indexed_count": self.indexed_count,
             "total_count": self.total_count,
             "last_error": self.last_error,
         }
+        if self.availability is not None:
+            payload["availability"] = self.availability.to_dict()
+        return payload
 
 
 @dataclass
@@ -97,6 +101,7 @@ class ApplicationContext:
         default_factory=lambda: IndexState(status="uninitialized"),
         repr=False,
     )
+    _availability: SearchAvailability | None = field(default=None, repr=False)
     _freshness_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _freshness_task: asyncio.Task | None = field(default=None, repr=False)
     _embedding_warmup_task: asyncio.Task | None = field(default=None, repr=False)
@@ -428,14 +433,15 @@ class ApplicationContext:
     def _mark_index_state_loaded(self) -> None:
         self._loaded_index_state_version = self._compute_index_state_version()
 
-    @staticmethod
     def _index_state_from_snapshot(
+        self,
         snapshot: PublicIndexStateSnapshot,
     ) -> IndexState:
         return IndexState(
             status=snapshot.status,
             indexed_count=snapshot.indexed_count,
             total_count=snapshot.total_count,
+            availability=getattr(self, "_availability", None),
         )
 
     def _refresh_index_state_from_loaded_indices(self) -> None:
@@ -511,6 +517,14 @@ class ApplicationContext:
             else:
                 self._full_index()
                 self._mark_index_state_loaded()
+                self._publish_bootstrap_availability(
+                    SearchAvailability(
+                        lexical="available",
+                        graph="available",
+                        semantic_coarse="complete",
+                        semantic_fine="complete",
+                    )
+                )
                 self._ready_event.set()
                 self.schedule_embedding_model_warmup()
                 self.schedule_vocabulary_catch_up()
@@ -521,6 +535,14 @@ class ApplicationContext:
                     await asyncio.to_thread(self.index_manager.load)
                     self._mark_index_state_loaded()
                     self._refresh_index_state_from_loaded_indices()
+                    self._publish_bootstrap_availability(
+                        SearchAvailability(
+                            lexical="available",
+                            graph="available",
+                            semantic_coarse="complete",
+                            semantic_fine="complete",
+                        )
+                    )
                     self._ready_event.set()
                     self.schedule_embedding_model_warmup()
                     self._background_index_task = asyncio.create_task(
@@ -535,6 +557,14 @@ class ApplicationContext:
                 await asyncio.to_thread(self.index_manager.load)
                 self._mark_index_state_loaded()
                 self._index_state = IndexState(status="ready")
+                self._publish_bootstrap_availability(
+                    SearchAvailability(
+                        lexical="available",
+                        graph="available",
+                        semantic_coarse="complete",
+                        semantic_fine="complete",
+                    )
+                )
                 self._ready_event.set()
                 self.schedule_embedding_model_warmup()
                 await self._startup_reconciliation()
@@ -607,6 +637,7 @@ class ApplicationContext:
             schedule_embedding_warmup=self.schedule_embedding_model_warmup,
             schedule_vocabulary_catch_up=self.schedule_vocabulary_catch_up,
             report_failure=self._report_bootstrap_failure,
+            publish_availability=self._publish_bootstrap_availability,
         )
 
     def _publish_bootstrap_public_state(
@@ -614,6 +645,16 @@ class ApplicationContext:
         snapshot: PublicIndexStateSnapshot,
     ) -> None:
         self._index_state = self._index_state_from_snapshot(snapshot)
+
+    def _publish_bootstrap_availability(
+        self,
+        availability: SearchAvailability,
+    ) -> None:
+        self._availability = availability
+        self._index_state.availability = availability
+
+    def get_search_availability(self) -> SearchAvailability | None:
+        return self._availability
 
     def schedule_vocabulary_catch_up(self) -> bool:
         if self._init_error is not None:
@@ -641,11 +682,19 @@ class ApplicationContext:
         indexed_count: int,
         total_count: int,
     ) -> None:
+        availability = SearchAvailability(
+            lexical="unavailable",
+            graph="unavailable",
+            semantic_coarse="unavailable",
+            semantic_fine="unavailable",
+        )
+        self._availability = availability
         self._index_state = IndexState(
             status="failed",
             indexed_count=indexed_count,
             total_count=total_count,
             last_error=str(error),
+            availability=availability,
         )
         self._init_error = error
         self._ready_event.set()
@@ -719,6 +768,14 @@ class ApplicationContext:
                     indexed_count=indexed_count,
                     total_count=len(files_to_index),
                 )
+                self._publish_bootstrap_availability(
+                    SearchAvailability(
+                        lexical="available",
+                        graph="available",
+                        semantic_coarse="complete",
+                        semantic_fine="complete",
+                    )
+                )
                 self._ready_event.set()
                 self.schedule_embedding_model_warmup()
                 self.schedule_vocabulary_catch_up()
@@ -760,6 +817,14 @@ class ApplicationContext:
             self.schedule_vocabulary_catch_up()
 
             self._index_state = IndexState(status="ready")
+            self._publish_bootstrap_availability(
+                SearchAvailability(
+                    lexical="available",
+                    graph="available",
+                    semantic_coarse="complete",
+                    semantic_fine="complete",
+                )
+            )
             self._ready_event.set()
         except Exception as e:
             logger.exception("Failed to load existing indices in background")
@@ -1051,7 +1116,7 @@ class ApplicationContext:
         semantic_tier = semantic_tier_from_progress(
             self._index_state.indexed_count, self._index_state.total_count
         )
-        availability = SearchAvailability(
+        availability = getattr(self, "_availability", None) or SearchAvailability(
             lexical="available" if self.index_manager.is_ready() else "unavailable",
             graph="available" if self.index_manager.is_ready() else "unavailable",
             semantic_coarse=semantic_tier,
@@ -1075,7 +1140,7 @@ class ApplicationContext:
         semantic_tier = semantic_tier_from_progress(
             self._index_state.indexed_count, self._index_state.total_count
         )
-        availability = SearchAvailability(
+        availability = getattr(self, "_availability", None) or SearchAvailability(
             lexical="available" if self.index_manager.is_ready() else "unavailable",
             graph="available" if self.index_manager.is_ready() else "unavailable",
             semantic_coarse=semantic_tier,

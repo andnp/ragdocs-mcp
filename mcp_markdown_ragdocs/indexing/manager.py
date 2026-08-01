@@ -48,6 +48,15 @@ class FailedFile:
     timestamp: str
 
 
+@dataclass
+class _PreparedProgressiveDocument:
+    file_path: str
+    parser: object
+    document: Document
+    chunks: list[Chunk]
+    graph_metadata: dict
+
+
 class IndexManager:
     def __init__(
         self,
@@ -111,6 +120,10 @@ class IndexManager:
             f"(mode: {'parallel' if config.indexing.embedding_workers > 1 else 'sequential'})"
         )
 
+    @property
+    def index_path(self) -> Path:
+        return Path(self._config.indexing.index_path)
+
     def _bump_state_version(self) -> None:
         self._state_version += 1
 
@@ -136,6 +149,15 @@ class IndexManager:
     def replace_vector_store(self, vector: VectorIndex) -> None:
         """Switch the live vector namespace after a validated model flip."""
         self.vector = vector
+        encoder_fp = EncoderFingerprint(
+            model=self._config.llm.resolved_embedding_model,
+            version="1",
+        )
+        self._embedding_cache = SQLiteEmbeddingCache(
+            path=Path(self._config.indexing.index_path) / "embedding_cache.db",
+            encoder_namespace=encoder_fp.namespace,
+        )
+        self._encoder_fingerprint = encoder_fp
         self._core = IndexCore(
             self._chunker,
             self.vector,
@@ -147,7 +169,7 @@ class IndexManager:
             self.vector.set_embedding_cache(
                 LlamaIndexEmbeddingCacheAdapter(
                     cache=self._embedding_cache,
-                    encoder_namespace=self._encoder_fingerprint.namespace,
+                    encoder_namespace=encoder_fp.namespace,
                 )
             )
         self._bump_state_version()
@@ -212,6 +234,116 @@ class IndexManager:
             uri=f"file://{document.file_path}",
         )
         return self._core.chunk_record(record)
+
+    def prepare_progressive_document(
+        self,
+        file_path: str,
+    ) -> _PreparedProgressiveDocument:
+        parser = dispatch_parser(file_path)
+        document = parser.parse(file_path)
+        docs_path = Path(self._config.indexing.documents_path)
+        document.id = self._compute_doc_id_for_path(file_path, docs_path)
+        document.project_id = resolve_project_id_for_path(Path(file_path), self._config)
+        if document.project_id is not None:
+            document.metadata = {
+                **document.metadata,
+                "project_id": document.project_id,
+            }
+
+        chunks = self._chunk_document(document)
+        for chunk in chunks:
+            if document.project_id is not None:
+                chunk.metadata = {
+                    **chunk.metadata,
+                    "project_id": document.project_id,
+                }
+        return _PreparedProgressiveDocument(
+            file_path=file_path,
+            parser=parser,
+            document=document,
+            chunks=chunks,
+            graph_metadata={
+                **document.metadata,
+                "tags": document.tags,
+                "file_path": document.file_path,
+            },
+        )
+
+    def apply_progressive_lexical_graph(
+        self,
+        prepared_documents: list[_PreparedProgressiveDocument],
+    ) -> None:
+        for prepared in prepared_documents:
+            self.vector.remove(prepared.document.id)
+            self.keyword.remove(prepared.document.id)
+            self.graph.remove_node(prepared.document.id)
+
+        chunks = [
+            chunk
+            for prepared in prepared_documents
+            for chunk in prepared.chunks
+        ]
+        if chunks:
+            self.keyword.add_chunks(chunks)
+
+        graph_nodes: list[tuple[str, dict]] = []
+        graph_edges: list[tuple[str, str, str, str]] = []
+        for prepared in prepared_documents:
+            graph_nodes.append((prepared.document.id, prepared.graph_metadata))
+            graph_nodes.extend(
+                (chunk.chunk_id, chunk.metadata) for chunk in prepared.chunks
+            )
+            from mcp_markdown_ragdocs.parsers.markdown import MarkdownParser
+
+            if isinstance(prepared.parser, MarkdownParser):
+                links = prepared.parser.extract_links_with_context(
+                    prepared.file_path
+                )
+                graph_edges.extend(
+                    (
+                        prepared.document.id,
+                        link.target,
+                        infer_edge_type(
+                            link.header_context,
+                            link.target,
+                        ).value,
+                        link.header_context,
+                    )
+                    for link in links
+                )
+            else:
+                graph_edges.extend(
+                    (prepared.document.id, link, "links_to", "")
+                    for link in prepared.document.links
+                )
+
+        for node_id, metadata in graph_nodes:
+            self.graph.add_node(node_id, metadata)
+        for source, target, edge_type, context in graph_edges:
+            self.graph.add_edge(
+                source,
+                target,
+                edge_type=edge_type,
+                edge_context=context,
+            )
+        if prepared_documents:
+            self._mark_derived_graph_state_dirty()
+            self._bump_state_version()
+
+    def finalize_progressive_documents(
+        self,
+        prepared_documents: list[_PreparedProgressiveDocument],
+    ) -> None:
+        for prepared in prepared_documents:
+            for chunk in prepared.chunks:
+                self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
+            self._record_manifest_index(
+                prepared.file_path,
+                prepared.document.id,
+            )
+        if prepared_documents:
+            self._persist_hash_store_if_needed()
+            self._bump_state_version()
 
     def _index_chunks(self, chunks: list[Chunk]) -> None:
         self._core.index_chunks(chunks)
