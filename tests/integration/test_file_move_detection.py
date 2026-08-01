@@ -207,6 +207,8 @@ async def test_query_after_move_finds_content(config, manager, orchestrator):
     original_doc_id = manager._compute_doc_id_for_path(original_file, docs_dir)
     original_file.unlink()
     manager.remove_document(original_doc_id)
+    assert original_doc_id not in manager.vector.get_document_ids()
+    assert not manager.graph.has_node(original_doc_id)
     moved_file = docs_dir / "guides" / "security.md"
     moved_file.parent.mkdir(parents=True, exist_ok=True)
     moved_file.write_text(

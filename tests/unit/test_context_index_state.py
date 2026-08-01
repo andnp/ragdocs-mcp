@@ -17,6 +17,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from searchkernel.api import SearchAvailability
 from searchkernel.indexing.bootstrap_checkpoint import (
     BootstrapCheckpoint,
     BootstrapFileStamp,
@@ -1937,6 +1938,51 @@ class TestIsReadyMethods:
         mock_context._init_error = RuntimeError("Failed")
 
         assert mock_context.is_fully_ready() is False
+
+    def test_partial_queries_track_coarse_and_fine_readiness_independently(
+        self,
+        mock_context: Any,
+    ):
+        """Partial lexical/graph results must not claim complete semantic readiness."""
+        initial = SearchAvailability(
+            lexical="available",
+            graph="available",
+            semantic_coarse="backfilling",
+            semantic_fine="unavailable",
+        )
+        coarse_ready = SearchAvailability(
+            lexical="available",
+            graph="available",
+            semantic_coarse="complete",
+            semantic_fine="backfilling",
+        )
+        fully_ready = SearchAvailability(
+            lexical="available",
+            graph="available",
+            semantic_coarse="complete",
+            semantic_fine="complete",
+        )
+        mock_context._ready_event.set()
+        mock_context._index_state = IndexState(
+            status="partial",
+            indexed_count=1,
+            total_count=2,
+            availability=initial,
+        )
+        _setattr(mock_context, "_availability", initial)
+
+        assert mock_context.is_ready() is True
+        assert mock_context.is_fully_ready() is False
+        assert mock_context.get_search_availability() == initial
+
+        mock_context._publish_bootstrap_availability(coarse_ready)
+        assert mock_context.is_ready() is True
+        assert mock_context.is_fully_ready() is False
+        assert mock_context.get_search_availability() == coarse_ready
+
+        mock_context._index_state = IndexState(status="ready")
+        mock_context._publish_bootstrap_availability(fully_ready)
+        assert mock_context.is_fully_ready() is True
 
 
 class TestGetIndexState:

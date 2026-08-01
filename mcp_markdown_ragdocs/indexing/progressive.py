@@ -397,20 +397,20 @@ def _records_for_prepared_document(
         Record(
             source_kind="markdown-chunk",
             source_id=chunk.chunk_id,
-            title=chunk.header_path or chunk.chunk_id,
+            title=_chunk_header_path(chunk) or chunk.chunk_id,
             body=(
-                f"{chunk.header_path}\n\n{chunk.content}"
-                if chunk.header_path
+                f"{_chunk_header_path(chunk)}\n\n{chunk.content}"
+                if _chunk_header_path(chunk)
                 else chunk.content
             ),
-            created_at=chunk.modified_time,
-            updated_at=chunk.modified_time,
+            created_at=_chunk_modified_time(chunk),
+            updated_at=_chunk_modified_time(chunk),
             metadata={
                 **chunk.metadata,
                 "bootstrap_file_path": file_path,
                 "bootstrap_relative_path": relative_path,
             },
-            uri=chunk.file_path,
+            uri=str(chunk.metadata.get("file_path", file_path)),
         )
         for chunk in prepared.chunks
     )
@@ -431,6 +431,28 @@ def _records_for_prepared_document(
             uri=file_path,
         ),
     )
+
+
+def _chunk_header_path(chunk: Any) -> str:
+    header_path = getattr(chunk, "header_path", None)
+    if isinstance(header_path, str):
+        return header_path
+    metadata = getattr(chunk, "metadata", {})
+    value = metadata.get("header_path")
+    return value if isinstance(value, str) else ""
+
+
+def _chunk_modified_time(chunk: Any) -> datetime:
+    modified_time = getattr(chunk, "modified_time", None)
+    if isinstance(modified_time, datetime):
+        return modified_time
+    metadata = getattr(chunk, "metadata", {})
+    value = metadata.get("modified_time")
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    return datetime.now(UTC)
 
 
 def _chunk_for_record(prepared: Any, record: Record) -> Any | None:

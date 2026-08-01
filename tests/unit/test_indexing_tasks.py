@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from huey import SqliteHuey
@@ -513,6 +514,69 @@ class TestTaskRegistration:
 
 
 class TestTaskExecution:
+    def test_progressive_batch_task_uses_bootstrap_coordinator(
+        self,
+        huey_instance: SqliteHuey,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        docs_root = tmp_path / "docs"
+        docs_root.mkdir()
+        document = docs_root / "guide.md"
+        document.write_text("# Guide")
+        save_bootstrap_checkpoint(
+            tmp_path,
+            BootstrapCheckpoint(
+                schema_version="1.0.0",
+                generation="current",
+                complete=False,
+                targets={
+                    "guide.md": BootstrapFileStamp(
+                        "guide.md",
+                        mtime_ns=document.stat().st_mtime_ns,
+                        size=document.stat().st_size,
+                    )
+                },
+                completed={},
+            ),
+        )
+
+        class ProgressiveManager(FakeIndexManager):
+            def prepare_progressive_document(self, file_path: str) -> object:
+                return file_path
+
+        manager = ProgressiveManager()
+        calls: list[tuple[object, list[str], list[Path]]] = []
+
+        def fake_progressive_bootstrap(
+            selected_manager: object,
+            file_paths: list[str],
+            *,
+            documents_roots: list[Path],
+        ) -> SimpleNamespace:
+            calls.append((selected_manager, file_paths, documents_roots))
+            return SimpleNamespace(successful=1, failed=0)
+
+        monkeypatch.setattr(
+            tasks_mod,
+            "run_progressive_bootstrap",
+            fake_progressive_bootstrap,
+        )
+        register_tasks(
+            huey_instance,
+            manager,
+            bootstrap_index_path=tmp_path,
+            bootstrap_documents_roots=[docs_root],
+        )
+
+        submission = submit_index_batch([str(document)], progressive=True)
+        assert submission.enqueued_count == 1
+        task = huey_instance.dequeue()
+        assert task is not None
+        assert huey_instance.execute(task) is True
+        assert calls == [(manager, [str(document)], [docs_root])]
+        assert manager.indexed == []
+
     def test_index_task_calls_manager(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
