@@ -5,7 +5,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from searchkernel.compression import truncate_delta
+from searchkernel.api import truncate_delta
 
 logger = logging.getLogger(__name__)
 
@@ -212,5 +212,4 @@ def build_commit_document(commit: CommitData) -> str:
         parts.append(commit.delta_truncated)
 
     return "\n".join(parts)
-
 

@@ -7,48 +7,36 @@ import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Any, Literal
 
-if TYPE_CHECKING:
-    from searchkernel.adapters.stores.pgvector_index import PGVectorIndex
-
-from searchkernel.indexing.bootstrap_checkpoint import (
-    build_file_stamps,
-    has_incomplete_bootstrap_checkpoint,
-)
-from searchkernel.indexing.bootstrap_snapshot import (
-    PublicIndexStateSnapshot,
-    derive_loaded_index_state_snapshot,
-)
-from searchkernel.indexing.discovery import get_parser_suffixes
-from searchkernel.indexing.manifest import (
-    CURRENT_MANIFEST_SPEC_VERSION,
+from searchkernel.api import (
+    AsyncIndexIngestor,
+    DatabaseManager,
+    GraphIndex as GraphStore,
     IndexManifest,
+    KeywordIndex,
+    PublicIndexStateSnapshot,
+    Record,
+    SearchAvailability,
+    VectorIndex,
+    build_file_stamps,
+    build_indexed_files_map,
+    can_refresh_loaded_indices,
+    can_serve_queries,
+    derive_loaded_index_state_snapshot,
+    detect_and_migrate_legacy_index,
+    discover_files,
+    discover_files_multi_root,
+    get_parser_suffixes,
+    has_incomplete_bootstrap_checkpoint,
+    CURRENT_MANIFEST_SPEC_VERSION,
     load_manifest,
     save_manifest,
     should_rebuild,
-)
-from searchkernel.indexing.reconciler import (
-    build_indexed_files_map,
     reconcile_indices,
-)
-from searchkernel.indexing.runtime_readiness import (
-    SearchAvailability,
-    can_refresh_loaded_indices,
-    can_serve_queries,
     semantic_tier_from_progress,
-)
-from searchkernel.indexing.runtime_readiness import (
     is_fully_ready as runtime_is_fully_ready,
 )
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.pipeline.stage import SearchContext
-from searchkernel.pipeline.stages.discover import DiscoverStage
-from searchkernel.storage.db import DatabaseManager
-from searchkernel.indexing.async_ingestion import AsyncIndexIngestor
-from searchkernel.domain import Record
 
 from mcp_markdown_ragdocs.config import (
     Config,
@@ -165,8 +153,6 @@ class ApplicationContext:
         if not lazy_embeddings:
             vector.warm_up()
 
-        from searchkernel.indexing.migration import detect_and_migrate_legacy_index
-
         detect_and_migrate_legacy_index(index_path)
 
         db_manager = DatabaseManager(index_path / "index.db")
@@ -195,7 +181,7 @@ class ApplicationContext:
             include_patterns=config.indexing.include,
             exclude_patterns=config.indexing.exclude,
             exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
-            parser_suffixes=get_parser_suffixes(),
+            parser_suffixes=set(get_parser_suffixes()),
             use_tasks=use_tasks,
             task_backpressure_limit=config.indexing.task_backpressure_limit,
         )
@@ -237,9 +223,7 @@ class ApplicationContext:
         self._watcher_lifecycle = WatcherLifecycle(watcher=value)
 
     @staticmethod
-    def _build_vector_store(
-        config: Config, embedding_model_name: str
-    ) -> VectorIndex | PGVectorIndex:
+    def _build_vector_store(config: Config, embedding_model_name: str) -> Any:
         """Build the live vector store per `config.store.backend`.
 
         FAISS (`VectorIndex`) is the default; `store.backend = "pgvector"`
@@ -317,19 +301,19 @@ class ApplicationContext:
         )
 
     def discover_files(self) -> list[str]:
-        context = DiscoverStage().run(
-            SearchContext(
-                query="",
-                metadata={
-                    "documents_path": self.config.indexing.documents_path,
-                    "documents_roots": self.documents_roots,
-                    "include_patterns": self.config.indexing.include,
-                    "exclude_patterns": self.config.indexing.exclude,
-                    "exclude_hidden_dirs": self.config.indexing.exclude_hidden_dirs,
-                },
+        if len(self.documents_roots) <= 1:
+            return discover_files(
+                documents_path=self.config.indexing.documents_path,
+                include_patterns=self.config.indexing.include,
+                exclude_patterns=self.config.indexing.exclude,
+                exclude_hidden_dirs=self.config.indexing.exclude_hidden_dirs,
             )
+        return discover_files_multi_root(
+            [str(root) for root in self.documents_roots],
+            include_patterns=self.config.indexing.include,
+            exclude_patterns=self.config.indexing.exclude,
+            exclude_hidden_dirs=self.config.indexing.exclude_hidden_dirs,
         )
-        return context.metadata["discovered_files"]
 
     def discover_git_repositories(self) -> list[Path]:
         from mcp_markdown_ragdocs.git.repository import (
@@ -1282,14 +1266,13 @@ class ApplicationContext:
         Commits land in the same vector/keyword/graph store as documents and
         become discoverable via SearchOrchestrator.query(source_filter=["git_commit"]).
         """
-        from searchkernel.indexing.git_ingestion import ingest_git_source
-
         from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
 
         for repo_path in repos:
             try:
                 source = GitContentSource(repo_path)
-                ingest_git_source(self.index_manager, source)
+                for record in source.iter_records():
+                    self.index_manager.index_record(record)
             except Exception:
                 logger.exception(
                     f"Failed to ingest git records for {repo_path} into kernel index"

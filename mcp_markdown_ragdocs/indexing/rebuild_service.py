@@ -15,13 +15,17 @@ from mcp_markdown_ragdocs.git.repository import (
     discover_git_repositories_multi_root,
     is_git_available,
 )
-from searchkernel.domain import Cursor, Record
-from searchkernel.indexing.async_ingestion import AsyncIndexIngestor
-from searchkernel.ports.content_source import IngestionFailureMode, IngestionReceipt
-from searchkernel.indexing.discovery import discover_files as discover_files_single_root
-from searchkernel.indexing.discovery import discover_files_multi_root
-from searchkernel.indexing.git_ingestion import ingest_git_source
-from searchkernel.utils.atomic_io import atomic_write_json
+from searchkernel.api import (
+    AsyncIndexIngestor,
+    Cursor,
+    IngestionFailureMode,
+    IngestionReceipt,
+    Record,
+    atomic_write_json,
+    discover_files as discover_files_single_root,
+    discover_files_multi_root,
+    ingest_git_source,
+)
 
 logger = logging.getLogger(__name__)
 

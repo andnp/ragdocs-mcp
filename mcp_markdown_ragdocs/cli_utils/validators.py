@@ -1,7 +1,7 @@
 import sys
 
 import click
-from searchkernel.utils import should_include_file
+from searchkernel.api import should_include_file
 
 
 def _should_include_file(

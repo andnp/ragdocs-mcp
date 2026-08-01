@@ -32,8 +32,7 @@ from mcp_markdown_ragdocs.mcp.validation import (
     validate_string_list,
 )
 from mcp_markdown_ragdocs.models import ChunkResult
-from searchkernel.search.pipeline import SearchPipelineConfig
-from searchkernel.search.utils import classify_query_type
+from searchkernel.api import classify_query_type, normalize_path
 
 logger = logging.getLogger(__name__)
 
@@ -226,8 +225,6 @@ async def _query_documents_impl(
 
     excluded_files = None
     if request.excluded_files_raw:
-        from searchkernel.search.path_utils import normalize_path
-
         docs_root = ctx.orchestrator.documents_path
         excluded_files = {
             normalize_path(f, docs_root) for f in request.excluded_files_raw
@@ -236,12 +233,6 @@ async def _query_documents_impl(
     top_k = max(20, request.top_n * 4)
     if request.project_filter:
         top_k = max(top_k, request.top_n * 10)
-
-    pipeline_config = SearchPipelineConfig(
-        min_confidence=request.min_score,
-        max_chunks_per_doc=request.max_chunks_per_doc,
-        dedup_threshold=request.similarity_threshold,
-    )
 
     project_context = request.project_context
     if request.scope_mode == "active_project" and project_context is None:
@@ -255,7 +246,7 @@ async def _query_documents_impl(
         request.query,
         top_k=top_k,
         top_n=request.top_n,
-        pipeline_config=pipeline_config,
+        pipeline_config=None,
         excluded_files=excluded_files,
         project_filter=request.project_filter,
         project_context=project_context,
@@ -285,8 +276,10 @@ async def handle_query_documents(
     try:
         request = normalize_query_documents_request(arguments)
     except (ValidationError, ValueError) as e:
+        raw_query = arguments.get("query")
+        query = raw_query if isinstance(raw_query, str) else ""
         response = build_query_documents_validation_error(
-            query=(arguments.get("query") if isinstance(arguments.get("query"), str) else ""),
+            query=query,
             message=str(e),
         ).render_text()
         return [TextContent(type="text", text=response)]
@@ -319,8 +312,6 @@ async def handle_search_with_hypothesis(
 
     excluded_files = None
     if excluded_files_raw:
-        from searchkernel.search.path_utils import normalize_path
-
         docs_root = ctx.orchestrator.documents_path
         excluded_files = {normalize_path(f, docs_root) for f in excluded_files_raw}
 
@@ -508,4 +499,3 @@ def _filter_commit_results(
                 continue
         filtered.append(result)
     return filtered
-

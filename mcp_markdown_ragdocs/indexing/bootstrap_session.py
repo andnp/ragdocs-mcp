@@ -7,20 +7,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
-from searchkernel.indexing.bootstrap_checkpoint import (
+from searchkernel.api import (
     BootstrapFileStamp,
     build_file_stamps,
     compute_bootstrap_generation,
     load_bootstrap_checkpoint,
     prepare_bootstrap_checkpoint,
-)
-from searchkernel.indexing.bootstrap_snapshot import (
     PublicIndexStateSnapshot,
     compute_bootstrap_completed_paths,
     derive_bootstrap_readiness_snapshot,
     derive_loaded_index_state_snapshot,
+    IndexManifest,
+    load_manifest,
 )
-from searchkernel.indexing.manifest import IndexManifest, load_manifest
 
 logger = logging.getLogger(__name__)
 

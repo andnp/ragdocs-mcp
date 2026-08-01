@@ -9,15 +9,18 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
-from searchkernel.indexing.discovery import PARSER_SUFFIXES, walk_dirs_with_files
+from searchkernel.api import (
+    PARSER_SUFFIXES,
+    compute_doc_id_multi_root,
+    should_include_file,
+    walk_dirs_with_files,
+)
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
-from searchkernel.search.path_utils import compute_doc_id_multi_root
-from searchkernel.utils import should_include_file
 
 logger = logging.getLogger(__name__)
 
@@ -350,14 +353,17 @@ class FileWatcher:
                         self._events_received += 1
                         if file_path in pending_events:
                             self._debounce_overwrites += 1
-                        pending_events[file_path] = (event_type, time.monotonic())
+                        pending_events[file_path] = (
+                            cast(EventType, event_type),
+                            time.monotonic(),
+                        )
                         self._pending_debounce_count = len(pending_events)
                 except queue.Empty:
                     pass
 
                 if pending_events:
                     now = time.monotonic()
-                    ready_events = {
+                    ready_events: dict[str, EventType] = {
                         file_path: event_type
                         for file_path, (event_type, last_seen)
                         in pending_events.items()
@@ -406,7 +412,7 @@ class FileWatcher:
                 self._include_patterns,
                 self._exclude_patterns,
                 self._exclude_hidden_dirs,
-                documents_roots=self._documents_paths,
+                documents_roots=[str(path) for path in self._documents_paths],
             ):
                 logger.debug(f"Skipping excluded file: {file_path}")
                 continue

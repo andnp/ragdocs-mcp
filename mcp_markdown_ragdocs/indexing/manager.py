@@ -6,34 +6,30 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from searchkernel.chunking.factory import get_chunker
-from searchkernel.domain import Chunk, Record
-from searchkernel.indexing.core import IndexCore
-from searchkernel.indexing.discovery import get_parser_suffixes
-from searchkernel.indexing.embedding_cache import SQLiteEmbeddingCache
-from searchkernel.indexing.implicit_graph import ImplicitGraphBuilder
-from searchkernel.indexing.manifest import (
+from searchkernel.api import (
     CURRENT_MANIFEST_SPEC_VERSION,
-    IndexManifest,
-    load_manifest,
-    save_manifest,
-)
-from searchkernel.indexing.semantic import (
+    Chunk,
+    ChunkHashStore,
     EncoderFingerprint,
+    GraphIndex as GraphStore,
+    ImplicitGraphBuilder,
+    IndexCore,
+    IndexManifest,
     LlamaIndexEmbeddingCacheAdapter,
-)
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.hash_store import ChunkHashStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.pipeline.stage import SearchContext
-from searchkernel.pipeline.stages.apply_move import ApplyMoveStage
-from searchkernel.pipeline.stages.detect_moves import DetectMovesStage
-from searchkernel.pipeline.stages.repair import RepairStage
-from searchkernel.search.edge_types import infer_edge_type
-from searchkernel.search.path_utils import (
+    KeywordIndex,
+    Record,
+    SQLiteEmbeddingCache,
+    VectorIndex,
     compute_doc_id,
     compute_doc_id_multi_root,
+    get_chunker,
+    get_parser_suffixes,
+    infer_edge_type,
+    load_manifest,
+    reconcile_indices,
+    resolve_doc_path,
+    resolve_doc_path_multi_root,
+    save_manifest,
 )
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -252,18 +248,13 @@ class IndexManager:
     def reindex_document(self, doc_id: str, reason: str | None = None):
         docs_path = Path(self._config.indexing.documents_path)
         suffixes = self._get_parser_suffixes()
-        context = RepairStage().run(
-            SearchContext(
-                query="",
-                metadata={
-                    "doc_id": doc_id,
-                    "docs_path": docs_path,
-                    "documents_roots": self._documents_roots,
-                    "suffixes": suffixes,
-                },
-            )
+        resolved_path = resolve_doc_path_multi_root(
+            doc_id,
+            self._documents_roots,
+            suffixes,
         )
-        resolved_path = context.metadata["resolved_path"]
+        if resolved_path is None:
+            resolved_path = resolve_doc_path(doc_id, docs_path, suffixes)
         if not resolved_path:
             self.prune_document(doc_id, reason=reason)
             if reason:
@@ -366,17 +357,38 @@ class IndexManager:
         Returns:
             Dict mapping old_doc_id -> new_doc_id for detected moves
         """
-        context = DetectMovesStage(self._hash_store).run(
-            SearchContext(
-                query="",
-                metadata={
-                    "removed_doc_ids": removed_docs,
-                    "added_docs": added_docs,
-                    "move_detection_threshold": self._config.indexing.move_detection_threshold,
-                },
-            )
-        )
-        return context.metadata["moved_files"]
+        moves: dict[str, str] = {}
+        threshold = self._config.indexing.move_detection_threshold
+
+        for new_doc_id, new_chunks in added_docs.items():
+            if not new_chunks:
+                continue
+
+            new_hashes = {chunk.content_hash for chunk in new_chunks}
+            best_match_doc = None
+            best_match_ratio = 0.0
+
+            for old_doc_id in removed_docs:
+                old_chunk_data = self._hash_store.get_chunks_by_document(old_doc_id)
+                if not old_chunk_data:
+                    continue
+
+                old_hashes = {hash_val for _, hash_val in old_chunk_data}
+                if not old_hashes or not new_hashes:
+                    continue
+
+                matching_hashes = new_hashes & old_hashes
+                match_ratio = len(matching_hashes) / max(
+                    len(old_hashes), len(new_hashes)
+                )
+                if match_ratio > best_match_ratio:
+                    best_match_ratio = match_ratio
+                    best_match_doc = old_doc_id
+
+            if best_match_doc and best_match_ratio >= threshold:
+                moves[best_match_doc] = new_doc_id
+
+        return moves
 
     def _apply_file_move(
         self,
@@ -393,39 +405,56 @@ class IndexManager:
             True if move successful, False if fallback to re-index needed
         """
         try:
-            context = ApplyMoveStage(
-                self.vector,
-                self.keyword,
-                self.graph,
-                self._hash_store,
-                self._config.indexing.move_detection_threshold,
-            ).run(
-                SearchContext(
-                    query="",
-                    metadata={
-                        "old_doc_id": old_doc_id,
-                        "new_doc_id": new_doc_id,
-                        "new_chunks": new_chunks,
-                    },
-                )
-            )
-
-            if not context.metadata["hash_store_updated"]:
+            old_chunk_data = self._hash_store.get_chunks_by_document(old_doc_id)
+            if not old_chunk_data:
                 logger.debug(
                     f"No old chunks found for {old_doc_id}, using full reindex"
                 )
                 return False
 
+            old_hash_to_chunk = {
+                hash_val: chunk_id for chunk_id, hash_val in old_chunk_data
+            }
+            moved_count = 0
+            for new_chunk in new_chunks:
+                old_chunk_id = old_hash_to_chunk.get(new_chunk.content_hash)
+                if not old_chunk_id:
+                    continue
+
+                new_metadata = {
+                    "doc_id": new_chunk.record_id,
+                    "chunk_id": new_chunk.chunk_id,
+                    "file_path": new_chunk.metadata.get("file_path", ""),
+                    "header_path": new_chunk.metadata.get("header_path", ""),
+                    **new_chunk.metadata,
+                }
+                if not self.vector.update_chunk_path(
+                    old_chunk_id, new_chunk.chunk_id, new_metadata
+                ):
+                    continue
+                if not self.keyword.move_chunk(old_chunk_id, new_chunk):
+                    continue
+
+                self.graph.rename_node(old_chunk_id, new_chunk.chunk_id)
+                moved_count += 1
+
+            self._hash_store.remove_document(old_doc_id)
+            for chunk in new_chunks:
+                self._hash_store.set_hash(chunk.chunk_id, chunk.content_hash)
+
             self._persist_hash_store_if_needed()
 
-            moved_count = context.metadata["moved_chunk_count"]
-            if not context.metadata["move_applied"]:
-                failure_ratio = 1.0 - (moved_count / len(new_chunks))
-                logger.info(
-                    f"Move operation had {failure_ratio:.1%} failures, "
-                    "falling back to full re-index"
-                )
-                return False
+            failed_count = len(new_chunks) - moved_count
+            if failed_count:
+                failure_ratio = failed_count / len(new_chunks)
+                if failure_ratio > (
+                    1.0 - self._config.indexing.move_detection_threshold
+                ):
+                    logger.info(
+                        f"Move operation had {failure_ratio:.1%} failures, "
+                        "falling back to full re-index"
+                    )
+                    return False
 
             logger.info(
                 f"Successfully moved {moved_count}/{len(new_chunks)} chunks "
@@ -493,8 +522,6 @@ class IndexManager:
                     **chunk.metadata,
                     "project_id": project_id,
                 }
-        document.chunks = chunks
-
         # Delta indexing logic
         performed_full_reindex = False
         mutated = False
@@ -592,6 +619,7 @@ class IndexManager:
 
             file_bytes = Path(file_path).read_bytes()
             decoded_document = None
+            decoded_parser = None
 
             for encoding in ["latin-1", "cp1252", "iso-8859-1"]:
                 try:
@@ -611,8 +639,8 @@ class IndexManager:
                         tmp_path = tmp_file.name
 
                     try:
-                        parser = dispatch_parser(tmp_path)
-                        decoded_document = parser.parse(tmp_path)
+                        decoded_parser = dispatch_parser(tmp_path)
+                        decoded_document = decoded_parser.parse(tmp_path)
                         logger.info(
                             f"Successfully decoded and parsed {file_path} with {encoding} encoding"
                         )
@@ -637,9 +665,11 @@ class IndexManager:
                     )
                     continue
 
-            if decoded_document is not None:
+            if decoded_document is not None and decoded_parser is not None:
                 # Successfully decoded and parsed with fallback encoding
-                self._complete_document_indexing(file_path, parser, decoded_document, force)
+                self._complete_document_indexing(
+                    file_path, decoded_parser, decoded_document, force
+                )
             else:
                 # All encodings failed
                 failed = FailedFile(
@@ -891,9 +921,6 @@ class IndexManager:
         Returns:
             ReconciliationResult with counts of operations performed
         """
-        from searchkernel.indexing.manifest import load_manifest
-        from searchkernel.indexing.reconciler import reconcile_indices
-
         from mcp_markdown_ragdocs.models import ReconciliationResult
         from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
 

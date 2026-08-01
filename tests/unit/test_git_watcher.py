@@ -246,15 +246,22 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
         lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
     )
 
-    def _fake_ingest_git_source(index_manager_arg, source, since=None):
-        observed["index_manager"] = index_manager_arg
-        observed["repo_path"] = source.repo_path
-        observed["since"] = since
-        return 1
+    class _FakeIngestor:
+        def __init__(self, index_manager_arg):
+            observed["index_manager"] = index_manager_arg
+
+        async def index_records(self, records, *, checkpoint=None):
+            observed["records"] = records
+            observed["since"] = checkpoint
+            return type("Receipt", (), {"records": (object(),)})()
 
     monkeypatch.setattr(
-        "searchkernel.indexing.git_ingestion.ingest_git_source",
-        _fake_ingest_git_source,
+        "mcp_markdown_ragdocs.git.watcher.AsyncIndexIngestor",
+        _FakeIngestor,
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.adapters.sources.git.GitContentSource.iter_records",
+        lambda source, since: observed.update(repo_path=source.repo_path) or [],
     )
 
     await watcher._batch_process({git_dir})

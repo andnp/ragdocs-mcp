@@ -690,7 +690,7 @@ def reindex_cmd(model: str, truncate_dim: int | None, project: str | None):
         ctx = _create_query_context(project)
 
         # Load manifest to get current model
-        from searchkernel.indexing.manifest import load_manifest
+        from searchkernel.api import load_manifest
 
         manifest = load_manifest(ctx.index_path)
         if manifest is None:

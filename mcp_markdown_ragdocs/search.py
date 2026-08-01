@@ -8,12 +8,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from searchkernel import RecordSearchPipeline
-from searchkernel.domain import (
+from searchkernel.api import (
     CompressionStats,
     Record,
     RecordHit,
     RecordIdentity,
+    RecordSearchPipeline,
     RecordStatus,
     SearchResultProvenance,
     SearchStrategyStats,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from collections.abc import Callable
@@ -20,9 +21,12 @@ from mcp_markdown_ragdocs.coordination.task_submission import (
     get_pending_task_count as get_shared_pending_task_count,
 )
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
-from searchkernel.indexing.bootstrap_checkpoint import (
+from searchkernel.api import (
+    AsyncIndexIngestor,
     mark_bootstrap_file_completed,
     mark_bootstrap_files_completed,
+    TaskBatchSubmissionResult,
+    TaskSubmissionResult,
 )
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
@@ -31,15 +35,11 @@ from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     save_head,
 )
 from mcp_markdown_ragdocs.indexing.rebuild_service import run_rebuild
-from searchkernel.indexing.submission import (
-    TaskBatchSubmissionResult,
-    TaskSubmissionResult,
-)
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
 
-    from searchkernel.domain import Record
+    from searchkernel.api import Record
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class IndexManagerLike(Protocol):
         persist: bool = False,
     ) -> None: ...
     def persist(self) -> None: ...
-    def index_record(self, record: Record) -> None: ...
+    def index_record(self, record: Record) -> bool: ...
 
 
 # Module-level references set during initialization
@@ -346,8 +346,6 @@ def register_tasks(
             return False
 
         from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
-        from searchkernel.indexing.git_ingestion import ingest_git_source
-
         git_dir_path = Path(git_dir).resolve()
         repo_key = str(git_dir_path)
         with _git_refresh_lock:
@@ -372,20 +370,20 @@ def register_tasks(
                 else None
             )
             since = str(max(0, cursor - 1)) if cursor is not None else None
-            latest_cursor = cursor
-
-            def _track_record(record: Record) -> None:
-                nonlocal latest_cursor
-                timestamp = int(record.updated_at.timestamp())
-                latest_cursor = max(latest_cursor or timestamp, timestamp)
-
             source = GitContentSource(git_dir_path)
-            indexed = ingest_git_source(
-                _index_manager,
-                source,
-                since=since,
-                on_record=_track_record,
+            records = source.iter_records(since=since)
+            records = list(records)
+            latest_cursor = max(
+                (int(record.updated_at.timestamp()) for record in records),
+                default=cursor,
             )
+            receipt = asyncio.run(
+                AsyncIndexIngestor(_index_manager).index_records(
+                    records,
+                    checkpoint=since,
+                )
+            )
+            indexed = len(receipt.records)
             if indexed:
                 _index_manager.persist()
                 if _bootstrap_index_path is not None and latest_cursor is not None:

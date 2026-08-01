@@ -3,18 +3,15 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
-
-from searchkernel import domain
-from searchkernel.domain import (
+from searchkernel.api import (
+    ChunkResult as DomainChunkResult,
     CompressionStats,
+    Record,
+    RecordStatus,
     SearchResultProvenance,
     SearchStrategyStats,
     StrategyContribution,
 )
-
-if TYPE_CHECKING:
-    from searchkernel.domain import Record
 
 __all__ = [
     "Chunk",
@@ -89,7 +86,7 @@ class ChunkResult:
             result["provenance"] = self.provenance.to_dict()
         return result
 
-    def to_domain(self) -> domain.ChunkResult:
+    def to_domain(self) -> DomainChunkResult:
         """Convert a ChunkResult to a domain ChunkResult."""
         metadata = {
             "header_path": self.header_path,
@@ -99,7 +96,7 @@ class ChunkResult:
         if self.project_id is not None:
             metadata["project_id"] = self.project_id
 
-        return domain.ChunkResult(
+        return DomainChunkResult(
             chunk_id=self.chunk_id,
             record_id=self.doc_id,
             score=self.score,
@@ -111,7 +108,7 @@ class ChunkResult:
         )
 
     @classmethod
-    def from_domain(cls, result: domain.ChunkResult) -> ChunkResult:
+    def from_domain(cls, result: DomainChunkResult) -> ChunkResult:
         """Construct a ChunkResult from a domain ChunkResult."""
         metadata = dict(result.metadata)
         header_path = metadata.pop("header_path", "")
@@ -147,8 +144,6 @@ class Document:
 
     def to_record(self) -> Record:
         """Convert a Document to a domain Record."""
-        from searchkernel.domain import Record, RecordStatus
-
         return Record(
             source_kind="note",
             source_id=f"note:{self.id}",
@@ -207,8 +202,6 @@ class CommitResult:
     def to_record(self) -> Record:
         """Convert a CommitResult to a domain Record."""
         from datetime import datetime
-
-        from searchkernel.domain import Record, RecordStatus
 
         # Create timestamp from Unix seconds
         created_at = datetime.fromtimestamp(self.timestamp, tz=UTC)

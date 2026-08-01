@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from searchkernel.domain import Record
+from searchkernel.api import Record
 
 
 class RecordSerializationError(ValueError):

@@ -12,6 +12,8 @@ import logging
 import time
 from pathlib import Path
 
+from searchkernel.api import AsyncIndexIngestor
+
 from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from mcp_markdown_ragdocs.indexing.git_refresh_state import get_head
@@ -131,20 +133,26 @@ class GitWatcher:
             git_dirs = direct_refresh_dirs
 
         from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
-        from searchkernel.indexing.git_ingestion import ingest_git_source
-
         for git_dir in git_dirs:
             try:
                 poll_started_at = int(time.time())
                 since = self._last_indexed.get(git_dir)
 
                 source = GitContentSource(git_dir)
-                indexed = await asyncio.to_thread(
-                    ingest_git_source,
-                    self._index_manager,
-                    source,
-                    str(since) if since is not None else None,
+                records = await asyncio.to_thread(
+                    lambda: list(
+                        source.iter_records(
+                            since=str(since) if since is not None else None
+                        )
+                    )
                 )
+                receipt = await AsyncIndexIngestor(
+                    self._index_manager
+                ).index_records(
+                    records,
+                    checkpoint=str(since) if since is not None else None,
+                )
+                indexed = len(receipt.records)
 
                 self._last_indexed[git_dir] = poll_started_at
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from searchkernel.utils.atomic_io import atomic_write_json
+from searchkernel.api import atomic_write_json
 
 GIT_REFRESH_STATE_FILENAME = "git-refresh-state.json"
 GIT_REFRESH_HEADS_FILENAME = "git-refresh-heads.json"

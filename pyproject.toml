@@ -71,12 +71,6 @@ markers = [
     "real_embeddings: marks tests that require real embedding models (not fake deterministic embeddings)",
 ]
 
-# NOTE: a "mcp_markdown_ragdocs code must only use searchkernel's public surface" contract was tried
-# here and dropped. import-linter/grimp cannot resolve `forbidden_modules` against an
-# externally-installed distribution (andnp-searchkernel) the way it does for an in-repo
-# package -- it errors out before ever reaching the contract check (no "Contracts:"
-# summary is produced; exit code 1). The equivalent "domain and ports are inward-only"
-# contract lives in andnp-searchkernel's own pyproject.toml and works fine there, since
-# that package is fully in-tree from that repo's perspective. Enforcing the app-side half
-# of this boundary is a code-review convention for now (see
-# docs/plans/11-searchkernel-extraction-implementation.md, X5).
+# The app-side public import boundary is checked by
+# scripts/check_public_searchkernel_imports.py because import-linter cannot
+# reliably inspect the externally installed searchkernel distribution.

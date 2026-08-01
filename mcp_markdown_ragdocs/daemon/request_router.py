@@ -15,7 +15,7 @@ from mcp_markdown_ragdocs.daemon.mcp_requests import (
 )
 from mcp_markdown_ragdocs.daemon.queue_status import purge_queue_state
 from mcp_markdown_ragdocs.daemon.record_rpc import RecordSerializationError, deserialize_record
-from searchkernel.domain import Record
+from searchkernel.api import Record
 from mcp_markdown_ragdocs.indexing.rebuild_service import (
     REBUILD_ACTIVE_STATUSES,
     read_rebuild_status,

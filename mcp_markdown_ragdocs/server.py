@@ -4,9 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
-from searchkernel.indexing.manifest import load_manifest
-from searchkernel.search.pipeline import SearchPipelineConfig
-from searchkernel.search.utils import classify_query_type, truncate_content
+from searchkernel.api import classify_query_type, load_manifest, truncate_content
 
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.context import ApplicationContext
@@ -95,17 +93,11 @@ def create_app():
         if project_filter:
             top_k = max(top_k, top_n * 10)
 
-        pipeline_config = SearchPipelineConfig(
-            min_confidence=config.search.min_confidence,
-            max_chunks_per_doc=max_chunks_per_doc,
-            dedup_threshold=config.search.dedup_threshold,
-        )
-
         results, _, _ = await orchestrator.query(
             query,
             top_k=top_k,
             top_n=top_n,
-            pipeline_config=pipeline_config,
+            pipeline_config=None,
             project_filter=project_filter,
             source_filter=source_filter,
             project_context=project_context,

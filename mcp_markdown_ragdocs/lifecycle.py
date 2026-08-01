@@ -22,7 +22,7 @@ from mcp_markdown_ragdocs.daemon import (
 from mcp_markdown_ragdocs.git.watcher import GitWatcher
 
 if TYPE_CHECKING:
-    from searchkernel.storage.db import DatabaseManager
+    from searchkernel.api import DatabaseManager
 
     from mcp_markdown_ragdocs.worker.process import HueyWorkerProcess
 

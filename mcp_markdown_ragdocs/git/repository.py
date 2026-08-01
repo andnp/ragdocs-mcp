@@ -5,7 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from searchkernel.indexing.discovery import is_excluded_dir
+from searchkernel.api import is_excluded_dir
 
 logger = logging.getLogger(__name__)
 

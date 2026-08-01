@@ -721,15 +721,21 @@ class TestTaskExecution:
 
         observed: dict[str, object] = {}
 
-        def _fake_ingest_git_source(index_manager, source, since=None, on_record=None):
-            observed["index_manager"] = index_manager
-            observed["repo_path"] = source.repo_path
-            observed["since"] = since
-            return 1
+        class _FakeIngestor:
+            def __init__(self, index_manager):
+                observed["index_manager"] = index_manager
+
+            async def index_records(self, records, *, checkpoint=None):
+                observed["since"] = checkpoint
+                return type("Receipt", (), {"records": (object(),)})()
 
         monkeypatch.setattr(
-            "searchkernel.indexing.git_ingestion.ingest_git_source",
-            _fake_ingest_git_source,
+            "mcp_markdown_ragdocs.indexing.tasks.AsyncIndexIngestor",
+            _FakeIngestor,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.adapters.sources.git.GitContentSource.iter_records",
+            lambda source, since: observed.update(repo_path=source.repo_path) or [],
         )
 
         git_dir = tmp_path / "repo" / ".git"
@@ -767,15 +773,21 @@ class TestTaskExecution:
             updated_at=datetime.fromtimestamp(124, tz=UTC),
         )
 
-        def _fake_ingest_git_source(index_manager, source, since=None, on_record=None):
-            observed["since"] = since
-            assert on_record is not None
-            on_record(record)
-            return 1
+        class _FakeIngestor:
+            def __init__(self, _index_manager):
+                pass
+
+            async def index_records(self, records, *, checkpoint=None):
+                observed["since"] = checkpoint
+                return type("Receipt", (), {"records": (record,)})()
 
         monkeypatch.setattr(
-            "searchkernel.indexing.git_ingestion.ingest_git_source",
-            _fake_ingest_git_source,
+            "mcp_markdown_ragdocs.indexing.tasks.AsyncIndexIngestor",
+            _FakeIngestor,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.adapters.sources.git.GitContentSource.iter_records",
+            lambda _source, since: [record],
         )
         monkeypatch.setattr(
             "mcp_markdown_ragdocs.indexing.tasks.get_git_ref_signature",
@@ -817,7 +829,7 @@ class TestTaskExecution:
             raise AssertionError("unchanged repository should not be ingested")
 
         monkeypatch.setattr(
-            "searchkernel.indexing.git_ingestion.ingest_git_source",
+            "mcp_markdown_ragdocs.indexing.tasks.AsyncIndexIngestor",
             _unexpected_ingest,
         )
         register_tasks(
