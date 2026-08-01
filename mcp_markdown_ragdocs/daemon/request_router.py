@@ -23,7 +23,17 @@ from mcp_markdown_ragdocs.indexing.rebuild_service import (
     submit_rebuild_status,
     write_rebuild_status,
 )
-from mcp_markdown_ragdocs.indexing.tasks import submit_rebuild_request
+from mcp_markdown_ragdocs.indexing.reindex import (
+    REINDEX_ACTIVE_STATUSES,
+    read_reindex_status,
+    reindex_status_payload,
+    submit_reindex_status,
+    write_reindex_status,
+)
+from mcp_markdown_ragdocs.indexing.tasks import (
+    submit_rebuild_request,
+    submit_reindex_request,
+)
 from mcp_markdown_ragdocs.models import ChunkResult
 
 logger = logging.getLogger(__name__)
@@ -332,6 +342,100 @@ def build_daemon_request_handler(
             return response
         if path == "/api/admin/rebuild/status":
             return read_rebuild_status(dependencies.runtime_root)
+        if path == "/api/admin/reindex/status":
+            return reindex_status_payload(
+                dependencies.runtime_root,
+                Path(getattr(ctx, "index_path")),
+            )
+        if path == "/api/admin/reindex/submit":
+            operation = str(payload.get("operation", "start")).lower()
+            if operation not in {"start", "contract", "rollback"}:
+                return {
+                    "status": "error",
+                    "error": "invalid_reindex_operation",
+                    "details": "operation must be start, contract, or rollback",
+                }
+            if ctx.config.store.backend != "pgvector":
+                return {
+                    "status": "error",
+                    "error": "reindex_backend_unsupported",
+                    "details": (
+                        "durable model migration requires store.backend = "
+                        "'pgvector'; the legacy faiss+sqlite chunk index is "
+                        "not model-scoped"
+                    ),
+                }
+
+            current_status = read_reindex_status(dependencies.runtime_root)
+            if str(current_status.get("status")) in REINDEX_ACTIVE_STATUSES:
+                return {
+                    "status": "ok",
+                    "accepted": False,
+                    "already_running": True,
+                    "reindex": reindex_status_payload(
+                        dependencies.runtime_root,
+                        Path(getattr(ctx, "index_path")),
+                    ),
+                }
+
+            model = str(payload.get("model")) if payload.get("model") is not None else None
+            old_model = str(payload.get("old_model")) if payload.get("old_model") is not None else None
+            raw_truncate_dim = payload.get("truncate_dim")
+            truncate_dim = (
+                int(raw_truncate_dim)
+                if isinstance(raw_truncate_dim, int)
+                and not isinstance(raw_truncate_dim, bool)
+                else None
+            )
+            if operation == "start" and not model:
+                return {
+                    "status": "error",
+                    "error": "reindex_model_required",
+                    "details": "model is required for a start operation",
+                }
+
+            request_id = uuid4().hex
+            queued_status = submit_reindex_status(
+                dependencies.runtime_root,
+                operation=operation,
+                request_id=request_id,
+                model=model,
+                truncate_dim=truncate_dim,
+                old_model=old_model,
+            )
+            submission = submit_reindex_request(
+                operation,
+                model=model,
+                truncate_dim=truncate_dim,
+                old_model=old_model,
+                request_id=request_id,
+            )
+            if not submission.queue_available:
+                write_reindex_status(
+                    dependencies.runtime_root,
+                    {"status": "idle", "error": "reindex_queue_unavailable"},
+                )
+                return {
+                    "status": "error",
+                    "error": "reindex_queue_unavailable",
+                    "details": "Index worker is unavailable.",
+                }
+            if submission.should_retry_later:
+                write_reindex_status(
+                    dependencies.runtime_root,
+                    {"status": "idle", "error": "reindex_queue_backpressured"},
+                )
+                return {
+                    "status": "error",
+                    "error": "reindex_queue_backpressured",
+                    "details": "Index worker queue is backpressured.",
+                }
+            return {
+                "status": "ok",
+                "accepted": submission.accepted_by_queue,
+                "already_running": False,
+                "reindex": queued_status,
+            }
         if path == "/api/admin/rebuild/submit":
             current_status = read_rebuild_status(dependencies.runtime_root)
             current_state = str(current_status.get("status", "idle"))

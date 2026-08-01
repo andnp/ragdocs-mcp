@@ -104,6 +104,9 @@ class ApplicationContext:
     _loaded_index_state_version: float = field(default=0.0, repr=False)
     _is_virgin_startup: bool = field(default=False, repr=False)
     _bootstrap_session: BootstrapSession | None = field(default=None, repr=False)
+    _active_model_identity: tuple[str, int] | None = field(
+        default=None, repr=False
+    )
 
     @classmethod
     def create(
@@ -147,6 +150,14 @@ class ApplicationContext:
         config.indexing.index_path = str(index_path)
         config.indexing.documents_path = documents_path
         config.detected_project = None if global_runtime else detected_project
+
+        saved_manifest = load_manifest(index_path)
+        active_model_identity: tuple[str, int] | None = None
+        if saved_manifest is not None and saved_manifest.active_model is not None:
+            active_namespace = saved_manifest.active_model.namespace
+            config.llm.embedding_model = active_namespace.model_name
+            config.embedding.truncate_dim = active_namespace.dim
+            active_model_identity = active_namespace.identity
 
         embedding_model_name = config.llm.resolved_embedding_model
 
@@ -212,6 +223,7 @@ class ApplicationContext:
             db_manager=db_manager,
             current_manifest=None,
             reconciliation_task=None,
+            _active_model_identity=active_model_identity,
         )
 
     @property
@@ -288,6 +300,7 @@ class ApplicationContext:
         return Path(common).resolve()
 
     def _build_manifest(self) -> IndexManifest:
+        saved_manifest = load_manifest(self.index_path)
         return IndexManifest(
             spec_version=CURRENT_MANIFEST_SPEC_VERSION,
             embedding_model=self.config.llm.embedding_model,
@@ -297,6 +310,10 @@ class ApplicationContext:
                 "max_chunk_chars": self.config.chunking.max_chunk_chars,
                 "overlap_chars": self.config.chunking.overlap_chars,
             },
+            active_model=(
+            saved_manifest.active_model if saved_manifest is not None else None
+            ),
+            migration=saved_manifest.migration if saved_manifest is not None else None,
         )
 
     def discover_files(self) -> list[str]:
@@ -1118,6 +1135,7 @@ class ApplicationContext:
             return
 
         async with self._freshness_lock:
+            await self._refresh_active_model_from_manifest()
             current_version = await asyncio.to_thread(self._compute_index_state_version)
             if current_version <= self._loaded_index_state_version:
                 return
@@ -1132,6 +1150,30 @@ class ApplicationContext:
                 return
             self._loaded_index_state_version = current_version
             self._refresh_index_state_from_loaded_indices()
+
+    async def _refresh_active_model_from_manifest(self) -> None:
+        manifest = await asyncio.to_thread(load_manifest, self.index_path)
+        if manifest is None or manifest.active_model is None:
+            return
+
+        namespace = manifest.active_model.namespace
+        if namespace.identity == self._active_model_identity:
+            return
+        if self.config.store.backend != "pgvector":
+            raise RuntimeError(
+                "active model metadata changed for an unsupported legacy index"
+            )
+
+        self.config.llm.embedding_model = namespace.model_name
+        self.config.embedding.truncate_dim = namespace.dim
+        vector = await asyncio.to_thread(
+            self._build_vector_store,
+            self.config,
+            namespace.model_name,
+        )
+        self.index_manager.replace_vector_store(vector)
+        self._active_model_identity = namespace.identity
+        self._loaded_index_state_version = self._compute_index_state_version()
 
     def schedule_freshness_refresh(self) -> bool:
         if not can_refresh_loaded_indices(

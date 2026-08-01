@@ -173,14 +173,12 @@ class StoreConfig:
 
 @dataclass
 class EmbeddingConfig:
-    # `truncate_dim` is wired through to the live embedding path (VectorIndex /
-    # PGVectorIndex) for Matryoshka-truncated embeddings. `provider` and
-    # `model_name` remain INERT: the live embedding path (indices/vector.py,
-    # bge-small) still resolves its model from LLMConfig.embedding_model, not
-    # from here. A full pluggable-provider swap is a later, larger concern.
+    # These fields configure the durable model-migration target. The active
+    # serving model remains selected by the manifest after a validated flip.
     provider: str = "hf"
     model_name: str = "Qwen/Qwen3-Embedding-0.6B"
     truncate_dim: int | None = None
+    batch_size: int = 64
 
 
 @dataclass

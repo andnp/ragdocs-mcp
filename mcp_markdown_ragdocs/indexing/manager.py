@@ -133,6 +133,25 @@ class IndexManager:
     def _mark_derived_graph_state_dirty(self) -> None:
         self._derived_graph_state_dirty = True
 
+    def replace_vector_store(self, vector: VectorIndex) -> None:
+        """Switch the live vector namespace after a validated model flip."""
+        self.vector = vector
+        self._core = IndexCore(
+            self._chunker,
+            self.vector,
+            self.keyword,
+            self.graph,
+            self._hash_store,
+        )
+        if hasattr(self.vector, "set_embedding_cache"):
+            self.vector.set_embedding_cache(
+                LlamaIndexEmbeddingCacheAdapter(
+                    cache=self._embedding_cache,
+                    encoder_namespace=self._encoder_fingerprint.namespace,
+                )
+            )
+        self._bump_state_version()
+
     def get_state_version(self) -> int:
         return self._state_version
 

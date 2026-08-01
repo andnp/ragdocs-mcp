@@ -76,7 +76,6 @@ from mcp_markdown_ragdocs.cli_utils.formatters import (
 )
 from mcp_markdown_ragdocs.cli_utils.project_context import (
     _apply_project_detection,
-    _create_query_context,
     _ensure_runtime_auto_registration,
 )
 from mcp_markdown_ragdocs.cli_utils.queue_output import (
@@ -668,9 +667,15 @@ def index_stats(project: str | None, output_json: bool):
 
 
 @index_group.command("reindex")
+@click.argument(
+    "operation",
+    required=False,
+    type=click.Choice(["start", "status", "rollback", "contract"]),
+    default="start",
+)
 @click.option(
     "--model",
-    required=True,
+    required=False,
     help="Target embedding model name (e.g., 'Qwen3-Embedding-0.6B')",
 )
 @click.option(
@@ -682,46 +687,94 @@ def index_stats(project: str | None, output_json: bool):
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
 )
-def reindex_cmd(model: str, truncate_dim: int | None, project: str | None):
+@click.option(
+    "--old-model",
+    default=None,
+    help="Expected source model for contract or rollback",
+)
+@click.option("--status", "status_flag", is_flag=True, help="Show migration status")
+@click.option("--rollback", "rollback_flag", is_flag=True, help="Roll back migration")
+@click.option("--contract", "contract_flag", is_flag=True, help="Delete the old model")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON")
+def reindex_cmd(
+    operation: str,
+    model: str | None,
+    truncate_dim: int | None,
+    project: str | None,
+    old_model: str | None,
+    status_flag: bool,
+    rollback_flag: bool,
+    contract_flag: bool,
+    output_json: bool,
+):
     """Migrate embeddings to a new model without data loss.
 
-    This command implements a safe, reversible migration strategy:
-      1. expand: create new per-(model_name, dim) table
-      2. backfill: batch-embed corpus into new table
-      3. flip: mark new model active
-      4. contract: delete old embeddings (after validation)
-
-    Old embeddings remain untouched until contract stage, enabling rollback.
+    START queues expand, backfill, validate, and flip in the daemon worker.
+    STATUS reads durable progress. ROLLBACK restores the old model and
+    CONTRACT removes the old model after validation.
     """
     try:
-        ctx = _create_query_context(project)
+        flags = [status_flag, rollback_flag, contract_flag]
+        if sum(flags) > 1:
+            raise click.UsageError("choose only one of --status, --rollback, or --contract")
+        if any(flags) and operation != "start":
+            raise click.UsageError(
+                "operation argument cannot be combined with an operation flag"
+            )
+        if status_flag:
+            operation = "status"
+        elif rollback_flag:
+            operation = "rollback"
+        elif contract_flag:
+            operation = "contract"
 
-        # Load manifest to get current model
-        from searchkernel.api import load_manifest
+        if operation == "status":
+            payload = _request_daemon_json(
+                "/api/admin/reindex/status",
+                {},
+                project_override=project,
+                auto_start=False,
+                allow_error=True,
+            )
+        else:
+            if operation == "start" and not model:
+                raise click.UsageError("--model is required for reindex start")
+            payload = _request_daemon_json(
+                "/api/admin/reindex/submit",
+                {
+                    "operation": operation,
+                    "model": model,
+                    "truncate_dim": truncate_dim,
+                    "old_model": old_model,
+                },
+                project_override=project,
+                auto_start=True,
+                allow_error=True,
+            )
+        if payload is None or payload.get("status") == "error":
+            raise_daemon_request_error(payload)
 
-        manifest = load_manifest(ctx.index_path)
-        if manifest is None:
-            click.echo("Error: No index found. Run 'rebuild-index' first.", err=True)
-            sys.exit(1)
+        if output_json:
+            click.echo(json.dumps(payload, indent=2))
+            return
 
-        old_model = manifest.embedding_model
-        if old_model == model:
-            click.echo(f"Already using model {model}", err=True)
-            sys.exit(1)
+        if operation == "status":
+            click.echo("Reindex status")
+            click.echo(f"State: {payload.get('status', 'idle')}")
+            click.echo(f"Phase: {payload.get('phase', 'idle')}")
+            click.echo(f"Checkpoint: {payload.get('checkpoint', 0)}/{payload.get('total_records', 0)}")
+            if payload.get("error"):
+                click.echo(f"Error: {payload['error']}")
+            return
 
-        # For now, log that reindex would be initiated.
-        # Full integration requires VectorStore access via composition root,
-        # which is a daemon-level operation.
-        click.echo("Reindex plan:")
-        click.echo(f"  Current model: {old_model}")
-        click.echo(f"  Target model: {model}")
-        if truncate_dim:
-            click.echo(f"  Truncate to dimension: {truncate_dim}")
-        click.echo("")
-        click.echo(
-            "Note: Full reindex requires daemon integration (WM follow-up work)."
-        )
-        click.echo("Stages: expand → backfill → flip → contract")
+        queued = payload.get("reindex", payload)
+        if isinstance(queued, dict):
+            click.echo(
+                f"Reindex {operation} queued "
+                f"(request_id={queued.get('request_id', 'unknown')})"
+            )
+        else:
+            click.echo(f"Reindex {operation} queued")
 
     except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
         logger.error(f"Failed to initiate reindex: {e}")

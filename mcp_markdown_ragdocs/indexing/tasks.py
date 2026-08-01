@@ -6,6 +6,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -35,6 +36,10 @@ from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     save_head,
 )
 from mcp_markdown_ragdocs.indexing.rebuild_service import run_rebuild
+from mcp_markdown_ragdocs.indexing.reindex import (
+    run_reindex_operation,
+    write_reindex_status,
+)
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
@@ -45,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 RECORD_BATCH_TASK_PRIORITY = 100
 GIT_REFRESH_TASK_PRIORITY = 10
+REINDEX_TASK_PRIORITY = 200
 
 __all__ = [
     "TaskBatchSubmissionResult",
@@ -90,6 +96,7 @@ remove_document_task = None
 remove_documents_batch_task = None
 refresh_git_repository_task = None
 rebuild_index_task = None
+reindex_model_task = None
 
 
 def register_tasks(
@@ -111,7 +118,7 @@ def register_tasks(
     global index_document_task, index_documents_batch_task, index_records_batch_task
     global remove_document_task
     global remove_documents_batch_task, refresh_git_repository_task
-    global rebuild_index_task
+    global rebuild_index_task, reindex_model_task
     _huey = huey
     _index_manager = index_manager
     _task_backpressure_limit = max(1, task_backpressure_limit)
@@ -432,6 +439,93 @@ def register_tasks(
             logger.exception("Task failed: rebuild index")
             return False
 
+    @huey.task()
+    def _reindex_model(
+        operation: str,
+        model: str | None,
+        truncate_dim: int | None,
+        old_model: str | None,
+        request_id: str,
+    ) -> dict[str, object]:
+        """Run one durable model-migration operation in the worker."""
+        if _index_manager is None:
+            return {"status": "error", "error": "reindex_queue_unavailable"}
+        if _bootstrap_index_path is None:
+            return {"status": "error", "error": "reindex_runtime_unavailable"}
+
+        from mcp_markdown_ragdocs.config import load_config
+
+        runtime_root = _bootstrap_index_path
+        write_reindex_status(
+            runtime_root,
+            {
+                "status": "running",
+                "operation": operation,
+                "request_id": request_id,
+                "model": model,
+                "truncate_dim": truncate_dim,
+                "old_model": old_model,
+                "phase": "running",
+                "started_at": datetime.now(UTC).isoformat(),
+                "error": None,
+            },
+        )
+        try:
+            config = getattr(_index_manager, "_config", None) or load_config()
+            state = run_reindex_operation(
+                config=config,
+                index_path=runtime_root,
+                runtime_root=runtime_root,
+                operation=operation,
+                model=model,
+                truncate_dim=truncate_dim,
+                old_model=old_model,
+            )
+
+            namespace = state.source if state.phase.value == "rollback" else state.target
+            replace_vector_store = getattr(
+                _index_manager,
+                "replace_vector_store",
+                None,
+            )
+            if callable(replace_vector_store):
+                from mcp_markdown_ragdocs.context import ApplicationContext
+
+                config.llm.embedding_model = namespace.model_name
+                config.embedding.truncate_dim = namespace.dim
+                replace_vector_store(
+                    ApplicationContext._build_vector_store(
+                        config,
+                        namespace.model_name,
+                    )
+                )
+            return {
+                "status": "ok",
+                "request_id": request_id,
+                "phase": state.phase.value,
+            }
+        except Exception as exc:
+            logger.exception("Task failed: model reindex")
+            write_reindex_status(
+                runtime_root,
+                {
+                    "status": "failed",
+                    "operation": operation,
+                    "request_id": request_id,
+                    "model": model,
+                    "truncate_dim": truncate_dim,
+                    "old_model": old_model,
+                    "phase": "failed",
+                    "error": str(exc),
+                    "completed_at": datetime.now(UTC).isoformat(),
+                },
+            )
+            return {
+                "status": "error",
+                "request_id": request_id,
+                "error": str(exc),
+            }
+
     index_document_task = _index_document
     index_documents_batch_task = _index_documents_batch
     index_records_batch_task = _index_records_batch
@@ -439,6 +533,7 @@ def register_tasks(
     remove_documents_batch_task = _remove_documents_batch
     refresh_git_repository_task = _refresh_git_repository
     rebuild_index_task = _rebuild_index
+    reindex_model_task = _reindex_model
     logger.info("Indexing tasks registered with Huey")
 
 
@@ -803,6 +898,34 @@ def submit_rebuild_request(
         return TaskSubmissionResult(status="backpressured")
 
     rebuild_index_task(project_override, request_id=request_id)
+    return TaskSubmissionResult(status="enqueued")
+
+
+def submit_reindex_request(
+    operation: str,
+    *,
+    model: str | None,
+    truncate_dim: int | None,
+    old_model: str | None,
+    request_id: str,
+) -> TaskSubmissionResult:
+    if reindex_model_task is None or _huey is None:
+        return TaskSubmissionResult(status="unavailable")
+    if is_backpressured(
+        _huey,
+        _task_backpressure_limit,
+        item=f"reindex:{operation}",
+        warning_message="Skipping reindex enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
+    ):
+        return TaskSubmissionResult(status="backpressured")
+    reindex_model_task(
+        operation,
+        model,
+        truncate_dim,
+        old_model,
+        request_id=request_id,
+        priority=REINDEX_TASK_PRIORITY,
+    )
     return TaskSubmissionResult(status="enqueued")
 
 
