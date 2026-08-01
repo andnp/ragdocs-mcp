@@ -6,7 +6,7 @@ from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-from searchkernel.search.pipeline import SearchPipelineConfig
+from mcp_markdown_ragdocs.search import SearchPipelineConfig
 
 from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
@@ -223,8 +223,12 @@ It is not the canonical testing strategy document.
         )
 
         assert len(results) >= 2
-        assert results[0].metadata.get("file_path", "").endswith("testing_strategy.md")
-        assert results[1].metadata.get("file_path", "").endswith("development.md")
+        assert str(results[0].metadata.get("file_path", "")).endswith(
+            "testing_strategy.md"
+        )
+        assert str(results[1].metadata.get("file_path", "")).endswith(
+            "development.md"
+        )
 
 
 # ============================================================================

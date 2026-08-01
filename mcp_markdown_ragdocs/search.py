@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -19,6 +20,22 @@ from searchkernel.api import (
     SearchStrategyStats,
 )
 from mcp_markdown_ragdocs.models import ChunkResult
+
+
+@dataclass(frozen=True)
+class SearchPipelineConfig:
+    """Compatibility configuration for callers still passing pipeline options."""
+
+    min_confidence: float = 0.3
+    dedup_threshold: float = 0.85
+    reranking_enabled: bool = True
+
+
+def filter_by_score(
+    results: Sequence[ChunkResult],
+    min_score: float = 0.3,
+) -> list[ChunkResult]:
+    return [result for result in results if result.score >= min_score]
 
 
 class _IndexManager(Protocol):
@@ -86,8 +103,8 @@ class _LegacyRecordHydrator:
     def __init__(self, manager: _IndexManager) -> None:
         self._manager = manager
 
-    async def hydrate_record(self, identity: RecordIdentity) -> Record | None:
-        chunk = self._manager.vector.get_chunk_by_id(identity.source_id)
+    async def hydrate_record(self, record_id: RecordIdentity) -> Record | None:
+        chunk = self._manager.vector.get_chunk_by_id(record_id.source_id)
         if chunk is None:
             return None
         metadata = dict(chunk.get("metadata") or {})
@@ -104,9 +121,9 @@ class _LegacyRecordHydrator:
         )
         now = datetime.now(UTC)
         return Record(
-            workspace_id=identity.workspace_id,
-            source_kind=identity.source_kind,
-            source_id=identity.source_id,
+            workspace_id=record_id.workspace_id,
+            source_kind=record_id.source_kind,
+            source_id=record_id.source_id,
             title=str(metadata.get("title") or metadata["doc_id"]),
             body=str(chunk.get("content", "")),
             created_at=now,

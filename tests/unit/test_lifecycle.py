@@ -150,7 +150,7 @@ class TestLifecycleStateMachine:
         monkeypatch,
     ) -> None:
         coord = _make_coordinator()
-        observed: dict[str, object] = {"discover_calls": 0}
+        observed: dict[str, Any] = {"discover_calls": 0}
 
         @dataclass
         class _GitContext(FakeContext):

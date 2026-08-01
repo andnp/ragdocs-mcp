@@ -162,6 +162,10 @@ def _parent_process_alive(
     return is_expected_daemon_parent(parent_pid, parent_start_time)
 
 
+def _as_float(value: object) -> float:
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
 async def _run_worker_forever_async(
     project: str | None,
     queue_db: Path,
@@ -462,7 +466,10 @@ def daemon_internal_run(project: str | None, runtime_root: Path | None):
     """Run the daemon in the foreground for internal start/restart flows."""
     _ignore_daemon_startup_project_option(project)
     _ignore_daemon_runtime_root_option(runtime_root)
-    daemon_run.callback(None)
+    callback = daemon_run.callback
+    if callback is None:
+        raise RuntimeError("daemon run callback is unavailable")
+    callback(None)
 
 
 @daemon_group.command("start")
@@ -785,7 +792,7 @@ def queue_status(
             click.echo(f"Backpressure limit: {payload['backpressure_limit']}")
         if payload.get("backpressure_utilization") is not None:
             click.echo(
-                f"Backpressure utilization: {float(payload['backpressure_utilization']):.2f}"
+                f"Backpressure utilization: {float(payload['backpressure_utilization']) if isinstance(payload['backpressure_utilization'], (int, float)) else 0.0:.2f}"
             )
 
         task_counts = payload.get("task_counts", {})
@@ -1087,32 +1094,53 @@ def query(
                 SearchStrategyStats,
             )
 
+            strategy_payload = _coerce_dict(daemon_payload.get("strategy_stats"))
+            compression_payload = _coerce_dict(
+                daemon_payload.get("compression_stats")
+            )
             strategy_stats = SearchStrategyStats(
-                **daemon_payload.get("strategy_stats", {})
+                vector_count=_coerce_int(strategy_payload.get("vector_count")),
+                keyword_count=_coerce_int(strategy_payload.get("keyword_count")),
+                graph_count=_coerce_int(strategy_payload.get("graph_count")),
+                tag_expansion_count=_coerce_int(
+                    strategy_payload.get("tag_expansion_count")
+                ),
             )
             compression_stats = CompressionStats(
-                **daemon_payload.get(
-                    "compression_stats",
-                    {
-                        "original_count": 0,
-                        "after_threshold": 0,
-                        "after_content_dedup": 0,
-                        "after_ngram_dedup": 0,
-                        "after_dedup": 0,
-                        "after_doc_limit": 0,
-                        "clusters_merged": 0,
-                    },
-                )
+                original_count=_coerce_int(compression_payload.get("original_count")),
+                after_threshold=_coerce_int(
+                    compression_payload.get("after_threshold")
+                ),
+                after_content_dedup=_coerce_int(
+                    compression_payload.get("after_content_dedup")
+                ),
+                after_ngram_dedup=_coerce_int(
+                    compression_payload.get("after_ngram_dedup")
+                ),
+                after_dedup=_coerce_int(compression_payload.get("after_dedup")),
+                after_doc_limit=_coerce_int(
+                    compression_payload.get("after_doc_limit")
+                ),
+                clusters_merged=_coerce_int(
+                    compression_payload.get("clusters_merged")
+                ),
             )
+            query_stats = {
+                key: value
+                for key, value in _coerce_dict(
+                    daemon_payload.get("query_execution_stats")
+                ).items()
+                if isinstance(value, (int, float))
+            }
             print_debug_stats(
                 console,
                 strategy_stats,
                 compression_stats,
                 0.02,
-                daemon_payload.get("query_execution_stats", {}),
+                query_stats,
             )
 
-        results = daemon_payload.get("results", [])
+        results = _coerce_list_of_dicts(daemon_payload.get("results"))
         if results:
             console.print(f"[bold]Found {len(results)} results:[/bold]\n")
             for idx, result in enumerate(results, 1):
@@ -1126,7 +1154,7 @@ def query(
                 print_result_panel(
                     console,
                     idx,
-                    float(result.get("score", 0.0)),
+                    _as_float(result.get("score")),
                     panel_content,
                     is_last=(idx == len(results)),
                 )
@@ -1232,32 +1260,41 @@ def search_commits(
         console.print(
             f"[dim]Total commits indexed: {daemon_payload.get('total_commits_indexed', 0)}[/dim]\n"
         )
-        results = daemon_payload.get("results", [])
+        results = _coerce_list_of_dicts(daemon_payload.get("results"))
         if results:
             console.print(f"[bold]Found {len(results)} results:[/bold]\n")
             from datetime import datetime
 
             for idx, commit in enumerate(results, 1):
-                commit_date = datetime.fromtimestamp(commit["timestamp"], UTC)
+                commit_date = datetime.fromtimestamp(
+                    _as_float(commit.get("timestamp")),
+                    UTC,
+                )
                 date_str = commit_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+                raw_files_changed = commit.get("files_changed")
+                files_changed = (
+                    [str(item) for item in raw_files_changed]
+                    if isinstance(raw_files_changed, list)
+                    else []
+                )
                 panel_content = [
-                    f"[yellow]Commit:[/yellow] {commit['hash'][:8]}",
-                    f"[cyan]Author:[/cyan] {commit['author']}",
+                    f"[yellow]Commit:[/yellow] {str(commit.get('hash', ''))[:8]}",
+                    f"[cyan]Author:[/cyan] {commit.get('author', 'Unknown')}",
                     f"[blue]Date:[/blue] {date_str}",
                     "",
-                    commit["title"],
+                    str(commit.get("title", "")),
                 ]
-                if len(commit.get("files_changed", [])) > 0:
+                if files_changed:
                     panel_content.append("")
                     panel_content.append(
-                        f"[magenta]Files Changed ({len(commit['files_changed'])}):[/magenta]"
+                        f"[magenta]Files Changed ({len(files_changed)}):[/magenta]"
                     )
-                    for file_path in commit["files_changed"][:5]:
+                    for file_path in files_changed[:5]:
                         panel_content.append(f"  • {file_path}")
                 print_result_panel(
                     console,
                     idx,
-                    float(commit.get("score", 0.0)),
+                    _as_float(commit.get("score")),
                     panel_content,
                     is_last=(idx == len(results)),
                 )

@@ -10,9 +10,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
-from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.daemon import (
     DaemonMetadata,
     RuntimePaths,
@@ -24,7 +23,6 @@ from mcp_markdown_ragdocs.git.watcher import GitWatcher
 if TYPE_CHECKING:
     from searchkernel.api import DatabaseManager
 
-    from mcp_markdown_ragdocs.worker.process import HueyWorkerProcess
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +135,7 @@ class LeaderElection:
 class LifecycleCoordinator:
     _state: LifecycleState = field(default=LifecycleState.UNINITIALIZED)
     _manage_daemon_metadata: bool = field(default=True, repr=False)
-    _ctx: ApplicationContext | None = field(default=None)
+    _ctx: Any = field(default=None)
     _git_watcher: GitWatcher | None = field(default=None, repr=False)
     _emergency_timer: threading.Timer | None = field(default=None, repr=False)
     _shutdown_count: int = field(default=0, repr=False)
@@ -145,8 +143,8 @@ class LifecycleCoordinator:
     _forced_timeout: float = field(default=1.0, repr=False)
     _emergency_timeout: float = field(default=3.5, repr=False)
     _init_error: BaseException | None = field(default=None, repr=False)
-    _leader_election: LeaderElection | None = field(default=None, repr=False)
-    _huey_worker: HueyWorkerProcess | None = field(default=None, repr=False)
+    _leader_election: Any = field(default=None, repr=False)
+    _huey_worker: Any = field(default=None, repr=False)
     _runtime_paths: RuntimePaths = field(
         default_factory=RuntimePaths.resolve, repr=False
     )
@@ -177,11 +175,11 @@ class LifecycleCoordinator:
 
     async def start(
         self,
-        ctx: ApplicationContext,
+        ctx: Any,
         *,
         background_index: bool = False,
-        db_manager: DatabaseManager | None = None,
-        huey_worker: HueyWorkerProcess | None = None,
+        db_manager: Any = None,
+        huey_worker: Any = None,
     ) -> None:
         if self._state != LifecycleState.UNINITIALIZED:
             raise RuntimeError(f"Cannot start from state {self._state}")

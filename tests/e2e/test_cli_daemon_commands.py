@@ -1428,7 +1428,9 @@ def test_build_initializing_search_payload_for_git_history_includes_commit_count
     assert payload["query"] == "fix bug"
     assert payload["results"] == []
     assert payload["total_commits_indexed"] == 17
-    assert payload["index_state"]["status"] == "indexing"
+    index_state = payload["index_state"]
+    assert isinstance(index_state, dict)
+    assert index_state["status"] == "indexing"
 
 
 def test_query_surfaces_initializing_response_in_human_output(monkeypatch):

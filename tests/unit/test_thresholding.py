@@ -10,9 +10,8 @@ Tests cover:
 """
 
 import pytest
-from searchkernel.compression.thresholding import filter_by_score
-
 from mcp_markdown_ragdocs.models import ChunkResult
+from mcp_markdown_ragdocs.search import filter_by_score
 
 # ============================================================================
 # Fixtures

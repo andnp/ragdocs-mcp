@@ -7,7 +7,7 @@ from mcp_markdown_ragdocs.server import QueryRequest, create_app
 
 class FakeOrchestrator:
     def __init__(self):
-        self.query_kwargs = None
+        self.query_kwargs: dict[str, object] = {}
 
     async def query(self, query, **kwargs):
         self.query_kwargs = {"query": query, **kwargs}

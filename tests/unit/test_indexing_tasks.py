@@ -231,6 +231,8 @@ class TestTaskRegistration:
 
         first_task = huey_instance.dequeue()
         second_task = huey_instance.dequeue()
+        assert first_task is not None
+        assert second_task is not None
 
         assert first_task.args == ("/some/file.md",)
         assert second_task.args == (["/some/other.md"],)
@@ -314,6 +316,7 @@ class TestTaskRegistration:
 
         assert huey_instance.pending_count() == 1
         task = huey_instance.dequeue()
+        assert task is not None
         assert task.args == ("/repo/.git",)
 
     def test_submit_refresh_git_request_reports_already_pending_status(
@@ -366,6 +369,8 @@ class TestTaskRegistration:
 
         first_task = huey_instance.dequeue()
         second_task = huey_instance.dequeue()
+        assert first_task is not None
+        assert second_task is not None
 
         assert first_task.args == ("/repo-a/.git",)
         assert second_task.args == ("/repo-b/.git",)
@@ -440,6 +445,7 @@ class TestTaskRegistration:
         huey_instance.dequeue()
         huey_instance.dequeue()
         third_task = huey_instance.dequeue()
+        assert third_task is not None
         assert third_task.args == (["/some/new.md"],)
 
     def test_submit_index_request_batch_reports_only_unrepresented_items_as_backpressured(
@@ -483,6 +489,7 @@ class TestTaskRegistration:
         huey_instance.dequeue()
         huey_instance.dequeue()
         third_task = huey_instance.dequeue()
+        assert third_task is not None
         assert third_task.args == (["docs/new"],)
 
     def test_submit_remove_request_batch_reports_only_unrepresented_items_as_backpressured(
@@ -686,11 +693,29 @@ class TestTaskExecution:
             def index_document(self, file_path: str, force: bool = False) -> None:
                 raise RuntimeError("Simulated failure")
 
+            def index_documents(
+                self,
+                file_paths: list[str],
+                force: bool = False,
+                persist: bool = False,
+            ) -> None:
+                raise RuntimeError("Simulated failure")
+
             def remove_document(self, doc_id: str) -> None:
+                raise RuntimeError("Simulated failure")
+
+            def remove_documents(
+                self,
+                doc_ids: list[str],
+                persist: bool = False,
+            ) -> None:
                 raise RuntimeError("Simulated failure")
 
             def persist(self) -> None:
                 raise AssertionError("persist should not be called after failed task")
+
+            def index_record(self, record: Record) -> None:
+                raise RuntimeError("Simulated failure")
 
         huey = SqliteHuey(
             name="test-fail", filename=str(tmp_path / "fail.db"), immediate=False

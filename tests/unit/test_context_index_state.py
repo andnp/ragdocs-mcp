@@ -13,7 +13,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -530,8 +530,9 @@ async def test_schedule_embedding_model_warmup_runs_in_background(tmp_path: Path
     task = ctx._embedding_warmup_task
     await asyncio.wait_for(task, timeout=1.0)
 
-    assert ctx.index_manager.vector.warm_up_calls == 1
-    assert ctx.index_manager.vector.model_ready() is True
+    vector = cast(Any, ctx.index_manager.vector)
+    assert vector.warm_up_calls == 1
+    assert vector.model_ready() is True
     assert ctx._embedding_warmup_task is None
 
 
@@ -638,7 +639,9 @@ async def test_start_uses_task_bootstrap_for_virgin_background_start(tmp_path: P
     _setattr(ctx, "_background_index", fail_if_called)
 
     await ctx.start(background_index=True)
-    await asyncio.wait_for(ctx._background_index_task, timeout=1.0)
+    task = ctx._background_index_task
+    assert task is not None
+    await asyncio.wait_for(task, timeout=1.0)
 
     assert preload_calls == [True]
     assert run_calls == ["called"]
@@ -700,7 +703,9 @@ async def test_start_uses_task_bootstrap_when_checkpoint_resume_is_pending(
     _setattr(ctx, "_background_index", fail_if_called)
 
     await ctx.start(background_index=True)
-    await asyncio.wait_for(ctx._background_index_task, timeout=1.0)
+    task = ctx._background_index_task
+    assert task is not None
+    await asyncio.wait_for(task, timeout=1.0)
 
     assert preload_calls == [False]
     assert run_calls == ["called"]
@@ -1080,7 +1085,10 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
         ctx.index_path,
         BootstrapCheckpoint(
             schema_version="1.0.0",
-            generation=compute_bootstrap_generation(ctx.current_manifest, checkpoint_targets),
+            generation=compute_bootstrap_generation(
+                cast(IndexManifest, ctx.current_manifest),
+                checkpoint_targets,
+            ),
             complete=False,
             targets=checkpoint_targets,
             completed={
@@ -1398,7 +1406,10 @@ async def test_task_bootstrap_skips_durably_completed_files(
             ctx.index_path,
             BootstrapCheckpoint(
                 schema_version="1.0.0",
-                generation=load_bootstrap_checkpoint(ctx.index_path).generation,
+                generation=cast(
+                    BootstrapCheckpoint,
+                    load_bootstrap_checkpoint(ctx.index_path),
+                ).generation,
                 complete=True,
                 targets={
                     "doc1.md": BootstrapFileStamp(
@@ -1520,7 +1531,8 @@ async def test_background_start_with_existing_index_does_not_block_event_loop(
     await ctx.ensure_ready(timeout=1.0)
 
     assert ctx._index_state.status == "ready"
-    assert ctx.index_manager.loaded is True
+    manager = cast(Any, ctx.index_manager)
+    assert manager.loaded is True
     assert reconciliation_calls == ["called"]
 
 
@@ -1563,8 +1575,9 @@ async def test_task_mode_existing_index_becomes_ready_before_reconciliation(
     await asyncio.wait_for(ctx.start(background_index=True), timeout=1.0)
     await asyncio.wait_for(reconciliation_started.wait(), timeout=1.0)
 
-    assert ctx.index_manager.load_calls == 1
-    assert ctx.index_manager.loaded is True
+    manager = cast(Any, ctx.index_manager)
+    assert manager.load_calls == 1
+    assert manager.loaded is True
     assert ctx._ready_event.is_set()
     assert ctx._index_state.status == "ready"
     assert ctx._background_index_task is not None

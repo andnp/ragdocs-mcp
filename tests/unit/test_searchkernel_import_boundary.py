@@ -51,7 +51,7 @@ def test_public_searchkernel_imports_are_allowed(source: str) -> None:
     )
 
 
-def test_optional_backend_exception_is_scoped_to_composition_root() -> None:
+def test_private_optional_backend_import_is_rejected() -> None:
     source = "from searchkernel.adapters.stores.pgvector_index import PGVectorIndex"
 
     assert (
@@ -59,9 +59,5 @@ def test_optional_backend_exception_is_scoped_to_composition_root() -> None:
             source,
             module_name="mcp_markdown_ragdocs.context",
         )
-        == []
-    )
-    assert find_private_imports_in_source(
-        source,
-        module_name="mcp_markdown_ragdocs.indexing.manager",
+        != []
     )

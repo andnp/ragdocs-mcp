@@ -12,7 +12,7 @@ HuggingFace embedding model, so it is marked slow + serial.
 import os
 
 import pytest
-from searchkernel.search.pipeline import SearchPipelineConfig
+from mcp_markdown_ragdocs.search import SearchPipelineConfig
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -92,8 +92,9 @@ async def test_pgvector_backend_indexes_and_searches_live(test_config, monkeypat
     results, _stats, _strategy_stats = await ctx.orchestrator.query(
         "How do plants turn sunlight into energy?",
         top_k=3,
+        top_n=3,
         pipeline_config=SearchPipelineConfig(reranking_enabled=False),
     )
 
     assert results
-    assert results[0].record_id == "photosynthesis"
+    assert results[0].doc_id == "photosynthesis"

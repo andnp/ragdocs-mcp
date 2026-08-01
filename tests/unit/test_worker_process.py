@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import subprocess
+import signal
+from typing import Any
 from pathlib import Path
 
 from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
@@ -45,7 +46,7 @@ def _paths(tmp_path: Path) -> RuntimePaths:
 
 
 def test_worker_process_start_uses_internal_worker_command(monkeypatch, tmp_path: Path):
-    observed: dict[str, object] = {}
+    observed: dict[str, Any] = {}
     fake_process = _FakeProcess()
 
     monkeypatch.setattr(
@@ -61,7 +62,7 @@ def test_worker_process_start_uses_internal_worker_command(monkeypatch, tmp_path
         lambda _runtime_paths: None,
     )
 
-    def _fake_popen(command, **kwargs):
+    def _fake_popen(command: list[str], **kwargs: Any):
         observed["command"] = command
         observed["kwargs"] = kwargs
         return fake_process
@@ -109,7 +110,7 @@ def test_worker_process_stop_sends_sigterm(monkeypatch, tmp_path: Path):
     worker.start()
     worker.stop(timeout=2.0)
 
-    assert fake_process.signals == [subprocess.signal.SIGTERM]
+    assert fake_process.signals == [signal.SIGTERM]
     assert worker.is_running is False
 
 
@@ -139,7 +140,7 @@ def test_worker_process_restart_replaces_process(monkeypatch, tmp_path: Path):
 
     worker.restart(timeout=2.0)
 
-    assert first.signals == [subprocess.signal.SIGTERM]
+    assert first.signals == [signal.SIGTERM]
     assert worker.pid == second.pid
 
 

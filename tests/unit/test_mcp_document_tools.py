@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -26,6 +27,9 @@ class _FakeCoordinator:
 
 
 class _ColdStartContext:
+    orchestrator: Any
+    config: Any
+
     def __init__(
         self,
         index_state: IndexState,
@@ -48,7 +52,7 @@ class _ColdStartContext:
         return self._index_state
 
 
-def _parse_query_documents_response(response_text: str) -> dict[str, object]:
+def _parse_query_documents_response(response_text: str) -> dict[str, Any]:
     return json.loads(response_text)
 
 

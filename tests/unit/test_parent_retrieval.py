@@ -96,8 +96,11 @@ Bearer tokens must be rotated every 24 hours. Include scopes and issuer validati
 
         assert len(parent_chunks) == 1
         assert parent_chunks[0].metadata.get("header_path") == "API Guide"
-        assert "+" not in parent_chunks[0].metadata.get("header_path")
-        assert all("+" not in chunk.metadata.get("header_path") for chunk in child_chunks)
+        assert "+" not in str(parent_chunks[0].metadata.get("header_path", ""))
+        assert all(
+            "+" not in str(chunk.metadata.get("header_path", ""))
+            for chunk in child_chunks
+        )
         assert "Authentication Details" in parent_chunks[0].content
 
     def test_trailing_short_section_merges_backward_into_previous_chunk(self):
@@ -176,8 +179,9 @@ More text to ensure this section is substantial enough for chunking.
 
         # Child chunks should have parent_chunk_id set
         for child in child_chunks:
-            if child.metadata.get("parent_chunk_id"):
-                assert child.metadata.get("parent_chunk_id").startswith("test_doc_parent_")
+            parent_id = child.metadata.get("parent_chunk_id")
+            if isinstance(parent_id, str):
+                assert parent_id.startswith("test_doc_parent_")
 
     def test_child_chunks_reference_correct_parent(self):
         config = ChunkingConfig(
@@ -252,8 +256,9 @@ Content for section B with enough text.
 
         # Child content should be part of parent content
         for child in child_chunks:
-            if child.metadata.get("parent_chunk_id") and child.metadata.get("parent_chunk_id") in parent_chunks:
-                parent = parent_chunks[child.metadata.get("parent_chunk_id")]
+            parent_id = child.metadata.get("parent_chunk_id")
+            if isinstance(parent_id, str) and parent_id in parent_chunks:
+                parent = parent_chunks[parent_id]
                 # The child content (without overlap markers) should be in parent
                 child_text = child.content
                 if child_text.startswith("[..."):

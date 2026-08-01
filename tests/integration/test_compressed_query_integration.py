@@ -16,12 +16,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from searchkernel.compression.thresholding import filter_by_score
 from searchkernel.indices.graph import GraphStore
 from searchkernel.indices.keyword import KeywordIndex
 from searchkernel.indices.vector import VectorIndex
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-from searchkernel.search.pipeline import SearchPipelineConfig
+from mcp_markdown_ragdocs.search import (
+    CanonicalSearchAdapter,
+    SearchPipelineConfig,
+    filter_by_score,
+)
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,

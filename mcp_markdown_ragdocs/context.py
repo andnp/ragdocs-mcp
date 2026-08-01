@@ -45,6 +45,7 @@ from mcp_markdown_ragdocs.config import (
     resolve_documents_path,
     resolve_index_path,
 )
+from mcp_markdown_ragdocs.adapters.pgvector import build_pgvector_index
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
@@ -231,9 +232,7 @@ class ApplicationContext:
         the same method surface the live index/search path calls.
         """
         if config.store.backend == "pgvector":
-            from searchkernel.adapters.stores.pgvector_index import PGVectorIndex
-
-            return PGVectorIndex(
+            return build_pgvector_index(
                 pg_dsn=config.store.pg_dsn,
                 embedding_model_name=embedding_model_name,
                 truncate_dim=config.embedding.truncate_dim,

@@ -16,15 +16,6 @@ PUBLIC_MODULES = frozenset(
     }
 )
 
-# The optional pgvector provider is intentionally composed by the application
-# until the kernel publishes that provider through its facade.
-ALLOWED_PRIVATE_IMPORTS = {
-    "mcp_markdown_ragdocs.context": frozenset(
-        {"searchkernel.adapters.stores.pgvector_index"}
-    ),
-}
-
-
 @dataclass(frozen=True)
 class ImportViolation:
     module_name: str
@@ -59,11 +50,10 @@ def find_private_imports_in_source(
     path: Path = Path("<source>"),
 ) -> list[ImportViolation]:
     violations = []
-    allowed_private = ALLOWED_PRIVATE_IMPORTS.get(module_name, frozenset())
     for imported_module, line in _imported_modules(ast.parse(source)):
         if not imported_module.startswith("searchkernel."):
             continue
-        if imported_module in PUBLIC_MODULES or imported_module in allowed_private:
+        if imported_module in PUBLIC_MODULES:
             continue
         violations.append(
             ImportViolation(module_name, imported_module, line, path)
