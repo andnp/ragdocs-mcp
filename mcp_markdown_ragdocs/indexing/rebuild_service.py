@@ -4,6 +4,7 @@ import json
 import asyncio
 import hashlib
 import logging
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -32,9 +33,11 @@ logger = logging.getLogger(__name__)
 
 REBUILD_ACTIVE_STATUSES = {"queued", "running"}
 REBUILD_TERMINAL_STATUSES = {"succeeded", "failed"}
+REBUILD_RECOVERABLE_STATUSES = {"recoverable"}
 GIT_REBUILD_BATCH_SIZE = 25
 REBUILD_CHECKPOINT_SCHEMA_VERSION = 1
 REBUILD_CHECKPOINT_FILE_NAME = "rebuild.checkpoint.json"
+REBUILD_STATUS_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -271,13 +274,20 @@ def _ingest_git_repository(
     def _process_batch(records: list[Record]) -> None:
         nonlocal total_indexed
         batch_key = _batch_key(records)
+        current_status = read_rebuild_status(runtime_root)
+        completed_batch_count = current_status.get("git_batches_completed", 0)
+        if not isinstance(completed_batch_count, int):
+            completed_batch_count = 0
         if batch_key in completed_batches:
             total_indexed += len(records)
             _update_rebuild_progress(
                 runtime_root,
                 phase="indexing_git",
                 git_commits_indexed=total_indexed,
+                git_records_completed=total_indexed,
+                git_batches_completed=completed_batch_count + 1,
                 git_repository_path=str(repo_path),
+                current_git_repository=str(repo_path),
             )
             return
 
@@ -297,11 +307,16 @@ def _ingest_git_repository(
             repo_checkpoint["completed_count"] = len(completed_batches)
             if save_checkpoint is not None:
                 save_checkpoint()
+        checkpoint_at = time.time()
         _update_rebuild_progress(
             runtime_root,
             phase="indexing_git",
             git_commits_indexed=total_indexed,
+            git_records_completed=total_indexed,
+            git_batches_completed=completed_batch_count + 1,
             git_repository_path=str(repo_path),
+            current_git_repository=str(repo_path),
+            last_checkpoint_at=checkpoint_at,
         )
 
     for record in source.iter_records():
@@ -324,6 +339,7 @@ def rebuild_status_path(runtime_root: Path) -> Path:
 
 def default_rebuild_status() -> dict[str, object]:
     return {
+        "schema_version": REBUILD_STATUS_SCHEMA_VERSION,
         "status": "idle",
         "phase": "idle",
         "request_id": None,
@@ -336,9 +352,28 @@ def default_rebuild_status() -> dict[str, object]:
         "checkpoint_interval": 0,
         "discovered_files": 0,
         "indexed_files": 0,
+        "documents_total": 0,
+        "documents_completed": 0,
+        "document_batches_total": 0,
+        "document_batches_completed": 0,
         "removed_documents": 0,
         "git_repositories": 0,
         "git_commits_indexed": 0,
+        "git_repository_path": None,
+        "git_records_total": None,
+        "git_records_completed": 0,
+        "git_batches_total": None,
+        "git_batches_completed": 0,
+        "current_document_path": None,
+        "current_git_repository": None,
+        "current_item": None,
+        "last_checkpoint_at": None,
+        "elapsed_seconds": 0.0,
+        "processing_rate": None,
+        "processing_rate_unit": "records/sec",
+        "eta_seconds": None,
+        "queue_wait_seconds": None,
+        "writer_wait_seconds": None,
         "messages": [],
         "error": None,
         "submitted_at": None,
@@ -346,6 +381,19 @@ def default_rebuild_status() -> dict[str, object]:
         "completed_at": None,
         "vocabulary_catch_up_scheduled": False,
     }
+
+
+def _recoverable_rebuild_status(runtime_root: Path, reason: str) -> dict[str, object]:
+    status = default_rebuild_status()
+    status.update(
+        {
+            "status": "recoverable",
+            "phase": "recoverable",
+            "error": reason,
+            "status_file": str(rebuild_status_path(runtime_root)),
+        }
+    )
+    return status
 
 
 def read_rebuild_status(runtime_root: Path) -> dict[str, object]:
@@ -357,15 +405,143 @@ def read_rebuild_status(runtime_root: Path) -> dict[str, object]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         logger.warning("Failed to read rebuild status at %s", path, exc_info=True)
-        return default_rebuild_status()
+        return _recoverable_rebuild_status(runtime_root, "rebuild_status_corrupt")
 
     if not isinstance(payload, dict):
-        return default_rebuild_status()
+        return _recoverable_rebuild_status(runtime_root, "rebuild_status_corrupt")
+    schema_version = payload.get("schema_version", REBUILD_STATUS_SCHEMA_VERSION)
+    if schema_version != REBUILD_STATUS_SCHEMA_VERSION:
+        logger.warning("Ignoring unsupported rebuild status at %s", path)
+        return _recoverable_rebuild_status(runtime_root, "rebuild_status_unsupported")
     return {**default_rebuild_status(), **payload}
 
 
+def _monotonic_status(
+    existing: dict[str, object],
+    candidate: dict[str, object],
+) -> dict[str, object]:
+    merged = {**default_rebuild_status(), **candidate}
+    if existing.get("request_id") != merged.get("request_id"):
+        return merged
+
+    for field in (
+        "indexed_files",
+        "documents_completed",
+        "documents_total",
+        "discovered_files",
+        "document_batches_completed",
+        "document_batches_total",
+        "git_commits_indexed",
+        "git_records_completed",
+        "git_batches_completed",
+        "removed_documents",
+    ):
+        previous = existing.get(field)
+        current = merged.get(field)
+        if isinstance(previous, int) and isinstance(current, int):
+            merged[field] = max(previous, current)
+
+    for field in ("submitted_at", "started_at", "completed_at", "last_checkpoint_at"):
+        previous = existing.get(field)
+        current = merged.get(field)
+        if (
+            field in {"submitted_at", "started_at", "last_checkpoint_at"}
+            and current is None
+            and isinstance(previous, (int, float))
+        ):
+            merged[field] = previous
+            continue
+        if isinstance(previous, (int, float)) and isinstance(current, (int, float)):
+            merged[field] = max(previous, current)
+    return merged
+
+
+def _update_status_telemetry(status: dict[str, object]) -> None:
+    started_at = status.get("started_at")
+    if not isinstance(started_at, (int, float)):
+        status["elapsed_seconds"] = 0.0
+        status["processing_rate"] = None
+        status["eta_seconds"] = None
+        return
+
+    completed_at = status.get("completed_at")
+    end_time = (
+        completed_at
+        if isinstance(completed_at, (int, float))
+        else time.time()
+    )
+    elapsed = max(0.0, float(end_time) - float(started_at))
+    status["elapsed_seconds"] = elapsed
+
+    phase = str(status.get("phase", ""))
+    if phase == "indexing_documents":
+        completed = status.get("documents_completed", status.get("indexed_files", 0))
+        total = status.get("documents_total", status.get("discovered_files", 0))
+    elif phase == "indexing_git":
+        completed = status.get(
+            "git_records_completed",
+            status.get("git_commits_indexed", 0),
+        )
+        total = status.get("git_records_total")
+    else:
+        completed = status.get("documents_completed", status.get("indexed_files", 0))
+        git_completed = status.get(
+            "git_records_completed",
+            status.get("git_commits_indexed", 0),
+        )
+        completed = (
+            completed + git_completed
+            if isinstance(completed, int) and isinstance(git_completed, int)
+            else completed
+        )
+        total = None
+
+    rate = None
+    if isinstance(completed, int) and elapsed > 0:
+        rate = completed / elapsed
+    status["processing_rate"] = rate
+
+    eta = None
+    if (
+        isinstance(completed, int)
+        and isinstance(total, int)
+        and total > completed
+        and rate is not None
+        and rate > 0
+    ):
+        eta = (total - completed) / rate
+    elif str(status.get("status")) == "succeeded":
+        eta = 0.0
+    status["eta_seconds"] = eta
+    status["current_item"] = (
+        status.get("current_document_path")
+        or status.get("current_git_repository")
+    )
+
+    submitted_at = status.get("submitted_at")
+    if isinstance(submitted_at, (int, float)):
+        status["queue_wait_seconds"] = max(
+            0.0,
+            float(started_at) - float(submitted_at),
+        )
+        status["writer_wait_seconds"] = status["queue_wait_seconds"]
+
+
 def write_rebuild_status(runtime_root: Path, payload: dict[str, object]) -> dict[str, object]:
-    normalized = {**default_rebuild_status(), **payload}
+    existing = read_rebuild_status(runtime_root)
+    same_request = (
+        existing.get("request_id") is not None
+        and payload.get("request_id", existing.get("request_id"))
+        == existing.get("request_id")
+    )
+    candidate = (
+        {**default_rebuild_status(), **existing, **payload}
+        if same_request
+        else {**default_rebuild_status(), **payload}
+    )
+    normalized = _monotonic_status(existing, candidate)
+    normalized["schema_version"] = REBUILD_STATUS_SCHEMA_VERSION
+    _update_status_telemetry(normalized)
     atomic_write_json(rebuild_status_path(runtime_root), normalized)
     return normalized
 
@@ -579,6 +755,17 @@ def run_rebuild(
         completed_at=None,
         error=None,
         messages=[],
+        current_document_path=None,
+        current_git_repository=None,
+        last_checkpoint_at=None,
+        documents_total=0,
+        documents_completed=0,
+        document_batches_total=0,
+        document_batches_completed=0,
+        git_records_total=None,
+        git_records_completed=0,
+        git_batches_total=None,
+        git_batches_completed=0,
     )
 
     try:
@@ -676,6 +863,12 @@ def run_rebuild(
             phase="indexing_documents",
             discovered_files=total_files,
             indexed_files=indexed_files,
+            documents_total=total_files,
+            documents_completed=indexed_files,
+            document_batches_total=math.ceil(total_files / checkpoint_interval),
+            document_batches_completed=math.ceil(
+                indexed_files / checkpoint_interval
+            ),
             removed_documents=removed_documents,
         )
 
@@ -708,6 +901,14 @@ def run_rebuild(
                 for file_path in file_batch
                 if str(Path(file_path).resolve()) not in completed_documents
             ]
+            checkpoint_at: float | None = None
+            _update_rebuild_progress(
+                runtime_root,
+                phase="indexing_documents",
+                current_document_path=(
+                    pending_files[0] if pending_files else file_batch[0]
+                ),
+            )
             if pending_files:
                 index_manager.index_documents(
                     pending_files,
@@ -741,8 +942,10 @@ def run_rebuild(
                     resolved_path = str(Path(file_path).resolve())
                     completed_documents[resolved_path] = targets[resolved_path]
                 _save_rebuild_checkpoint(runtime_root, checkpoint)
+                checkpoint_at = time.time()
 
             indexed_files = len(completed_documents)
+            completed_batches = math.ceil(indexed_files / checkpoint_interval)
             checkpoint_message = (
                 f"📍 Checkpoint persisted: {indexed_files}/{total_files} documents"
             )
@@ -751,6 +954,18 @@ def run_rebuild(
                 runtime_root,
                 phase="indexing_documents",
                 indexed_files=indexed_files,
+                documents_total=total_files,
+                documents_completed=indexed_files,
+                document_batches_total=math.ceil(
+                    total_files / checkpoint_interval
+                ),
+                document_batches_completed=completed_batches,
+                current_document_path=None,
+                last_checkpoint_at=(
+                    checkpoint_at
+                    if checkpoint_at is not None
+                    else read_rebuild_status(runtime_root).get("last_checkpoint_at")
+                ),
             )
 
         current_document_targets = _file_targets(
@@ -771,6 +986,10 @@ def run_rebuild(
 
         if total_files == 0:
             index_manager.persist_checkpoint()
+            _update_rebuild_progress(
+                runtime_root,
+                last_checkpoint_at=time.time(),
+            )
 
         _update_rebuild_progress(runtime_root, phase="finalizing")
         index_manager.finalize_derived_graph_state()
@@ -787,6 +1006,9 @@ def run_rebuild(
                     runtime_root,
                     phase="indexing_git",
                     git_repositories=git_repositories,
+                    current_document_path=None,
+                    current_git_repository=None,
+                    git_records_completed=git_commits_indexed,
                 )
 
                 for repo_path in repos:
@@ -801,12 +1023,25 @@ def run_rebuild(
                             checkpoint,
                         ),
                     )
+                    completed_git_batches = read_rebuild_status(runtime_root).get(
+                        "git_batches_completed"
+                    )
+                    _update_rebuild_progress(
+                        runtime_root,
+                        git_records_total=git_commits_indexed,
+                        git_records_completed=git_commits_indexed,
+                        git_batches_total=completed_git_batches,
+                    )
                     _append_message(
                         runtime_root,
                         (
                             f"✅ Indexed git repository {repo_path} "
                             f"({git_commits_indexed} total commits)"
                         ),
+                    )
+                    _update_rebuild_progress(
+                        runtime_root,
+                        current_git_repository=None,
                     )
 
                 if repos:
@@ -849,6 +1084,9 @@ def run_rebuild(
             removed_documents=removed_documents,
             git_repositories=git_repositories,
             git_commits_indexed=git_commits_indexed,
+            git_records_completed=git_commits_indexed,
+            current_document_path=None,
+            current_git_repository=None,
             vocabulary_catch_up_scheduled=vocabulary_scheduled,
             completed_at=time.time(),
         )
@@ -864,6 +1102,9 @@ def run_rebuild(
             removed_documents=removed_documents,
             git_repositories=git_repositories,
             git_commits_indexed=git_commits_indexed,
+            git_records_completed=git_commits_indexed,
+            current_document_path=None,
+            current_git_repository=None,
             error=str(exc),
             completed_at=time.time(),
         )

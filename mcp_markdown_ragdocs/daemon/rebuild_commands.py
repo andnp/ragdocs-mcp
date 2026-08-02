@@ -8,6 +8,7 @@ import click
 from mcp_markdown_ragdocs.daemon.client import raise_daemon_request_error, request_daemon_json
 from mcp_markdown_ragdocs.indexing.rebuild_service import (
     REBUILD_ACTIVE_STATUSES,
+    REBUILD_RECOVERABLE_STATUSES,
     REBUILD_TERMINAL_STATUSES,
 )
 
@@ -81,6 +82,56 @@ def render_rebuild_messages(
     return len(normalized_messages)
 
 
+def render_rebuild_progress(
+    payload: dict[str, object],
+    *,
+    emit: EmitMessage,
+) -> None:
+    telemetry_fields = (
+        "phase",
+        "current_document_path",
+        "current_git_repository",
+        "documents_total",
+        "documents_completed",
+        "git_batches_completed",
+        "processing_rate",
+        "eta_seconds",
+        "queue_wait_seconds",
+    )
+    if not any(field in payload for field in telemetry_fields):
+        return
+
+    phase = str(payload.get("phase", "unknown"))
+    details = [f"phase={phase}"]
+    document_total = payload.get("documents_total")
+    document_completed = payload.get("documents_completed")
+    if isinstance(document_total, int) and isinstance(document_completed, int):
+        details.append(f"documents={document_completed}/{document_total}")
+    git_total = payload.get("git_records_total")
+    git_completed = payload.get("git_records_completed")
+    if isinstance(git_completed, int):
+        git_progress = f"git={git_completed}"
+        if isinstance(git_total, int):
+            git_progress += f"/{git_total}"
+        details.append(git_progress)
+
+    current_item = payload.get("current_item") or payload.get(
+        "current_document_path"
+    ) or payload.get("current_git_repository")
+    if isinstance(current_item, str) and current_item:
+        details.append(f"current={current_item}")
+    rate = payload.get("processing_rate")
+    if isinstance(rate, (int, float)):
+        details.append(f"rate={rate:.2f} records/s")
+    eta = payload.get("eta_seconds")
+    if isinstance(eta, (int, float)):
+        details.append(f"eta={eta:.1f}s")
+    wait = payload.get("writer_wait_seconds")
+    if isinstance(wait, (int, float)):
+        details.append(f"writer_wait={wait:.2f}s")
+    emit("Rebuild progress: " + " ".join(details))
+
+
 def run_rebuild_command(
     *,
     project: str | None,
@@ -112,6 +163,7 @@ def run_rebuild_command(
             printed_count=printed_messages,
             emit=emit,
         )
+        render_rebuild_progress(status_payload, emit=emit)
 
         rebuild_status = str(status_payload.get("status", "idle"))
         if rebuild_status in REBUILD_TERMINAL_STATUSES:
@@ -122,6 +174,15 @@ def run_rebuild_command(
             return
 
         if rebuild_status not in REBUILD_ACTIVE_STATUSES:
+            if rebuild_status in REBUILD_RECOVERABLE_STATUSES:
+                raise RuntimeError(
+                    str(
+                        status_payload.get(
+                            "error",
+                            "Rebuild status is corrupt and must be recovered",
+                        )
+                    )
+                )
             raise RuntimeError(
                 f"Unexpected daemon rebuild status: {rebuild_status}"
             )

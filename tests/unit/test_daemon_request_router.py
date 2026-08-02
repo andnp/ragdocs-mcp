@@ -172,6 +172,33 @@ async def test_admin_overview_route_refreshes_indices_before_building_payload() 
 
 
 @pytest.mark.asyncio
+async def test_rebuild_status_route_returns_extended_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = {
+        "status": "running",
+        "phase": "indexing_documents",
+        "documents_completed": 2,
+        "documents_total": 4,
+        "current_document_path": "/docs/two.md",
+        "elapsed_seconds": 3.5,
+    }
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.request_router.read_rebuild_status",
+        lambda runtime_root: expected
+        if runtime_root == Path("/runtime")
+        else {},
+    )
+    handler = build_daemon_request_handler(
+        _build_dependencies(_FakeContext(), _FakeCoordinator())
+    )
+
+    payload = await handler("/api/admin/rebuild/status", {})
+
+    assert payload == expected
+
+
+@pytest.mark.asyncio
 async def test_search_query_route_returns_initializing_payload_while_cold() -> None:
     ctx = _FakeContext(ready=False)
     coordinator = _FakeCoordinator()

@@ -29,6 +29,28 @@ def test_render_rebuild_messages_emits_only_unprinted_strings() -> None:
     assert emitted == ["second", "third"]
 
 
+def test_render_rebuild_progress_exposes_current_item_and_timing() -> None:
+    emitted: list[str] = []
+
+    rebuild_module.render_rebuild_progress(
+        {
+            "phase": "indexing_documents",
+            "documents_completed": 2,
+            "documents_total": 4,
+            "current_document_path": "/docs/two.md",
+            "processing_rate": 1.5,
+            "eta_seconds": 1.333,
+            "writer_wait_seconds": 0.25,
+        },
+        emit=emitted.append,
+    )
+
+    assert emitted == [
+        "Rebuild progress: phase=indexing_documents documents=2/4 "
+        "current=/docs/two.md rate=1.50 records/s eta=1.3s writer_wait=0.25s"
+    ]
+
+
 def test_run_rebuild_command_polls_until_success(monkeypatch: pytest.MonkeyPatch) -> None:
     emitted: list[str] = []
     sleeps: list[float] = []

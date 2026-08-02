@@ -137,6 +137,103 @@ def test_ingest_git_repository_checkpoints_bounded_batches(
     assert all(entry["phase"] == "indexing_git" for entry in progress)
 
 
+def test_rebuild_status_round_trip_preserves_telemetry(tmp_path: Path) -> None:
+    payload = rebuild_service.write_rebuild_status(
+        tmp_path,
+        {
+            "status": "running",
+            "phase": "indexing_documents",
+            "request_id": "request-1",
+            "documents_total": 4,
+            "documents_completed": 2,
+            "current_document_path": "/docs/two.md",
+            "last_checkpoint_at": 100.0,
+            "elapsed_seconds": 3.0,
+        },
+    )
+
+    assert rebuild_service.read_rebuild_status(tmp_path) == payload
+    assert payload["schema_version"] == 1
+    assert payload["documents_completed"] == 2
+    assert payload["current_document_path"] == "/docs/two.md"
+
+
+def test_rebuild_status_progress_is_monotonic(tmp_path: Path) -> None:
+    rebuild_service.write_rebuild_status(
+        tmp_path,
+        {
+            "request_id": "request-1",
+            "indexed_files": 5,
+            "documents_completed": 5,
+            "git_commits_indexed": 8,
+            "git_records_completed": 8,
+        },
+    )
+    status = rebuild_service.write_rebuild_status(
+        tmp_path,
+        {
+            "request_id": "request-1",
+            "indexed_files": 2,
+            "documents_completed": 2,
+            "git_commits_indexed": 3,
+            "git_records_completed": 3,
+        },
+    )
+
+    assert status["indexed_files"] == 5
+    assert status["documents_completed"] == 5
+    assert status["git_commits_indexed"] == 8
+    assert status["git_records_completed"] == 8
+
+
+def test_rebuild_status_timing_and_eta_use_deterministic_clock(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    now = iter([100.0, 110.0])
+    monkeypatch.setattr(rebuild_service.time, "time", lambda: next(now))
+
+    rebuild_service.write_rebuild_status(
+        tmp_path,
+        {
+            "status": "running",
+            "phase": "indexing_documents",
+            "request_id": "request-1",
+            "submitted_at": 95.0,
+            "started_at": 100.0,
+            "documents_total": 4,
+            "documents_completed": 2,
+        },
+    )
+    status = rebuild_service.write_rebuild_status(
+        tmp_path,
+        {
+            "request_id": "request-1",
+            "documents_total": 4,
+            "documents_completed": 2,
+        },
+    )
+
+    assert status["elapsed_seconds"] == 10.0
+    assert status["processing_rate"] == 0.2
+    assert status["eta_seconds"] == 10.0
+    assert status["queue_wait_seconds"] == 5.0
+    assert status["writer_wait_seconds"] == 5.0
+
+
+def test_corrupt_rebuild_status_is_explicitly_recoverable(tmp_path: Path) -> None:
+    rebuild_service.rebuild_status_path(tmp_path).write_text(
+        "{not-json",
+        encoding="utf-8",
+    )
+
+    status = rebuild_service.read_rebuild_status(tmp_path)
+
+    assert status["status"] == "recoverable"
+    assert status["phase"] == "recoverable"
+    assert status["error"] == "rebuild_status_corrupt"
+
+
 def test_run_rebuild_resumes_interrupted_document_batch(tmp_path: Path) -> None:
     config = _rebuild_config(tmp_path)
     documents_root = Path(config.indexing.documents_path)
@@ -164,6 +261,37 @@ def test_run_rebuild_resumes_interrupted_document_batch(tmp_path: Path) -> None:
     assert resumed.clear_calls == 0
     assert [len(batch) for batch in resumed.indexed_batches] == [2]
     assert succeeded["indexed_files"] == 4
+
+
+def test_run_rebuild_reports_current_document_path(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    config = _rebuild_config(tmp_path)
+    documents_root = Path(config.indexing.documents_path)
+    (documents_root / "one.md").write_text("one", encoding="utf-8")
+    (documents_root / "two.md").write_text("two", encoding="utf-8")
+    updates: list[dict[str, object]] = []
+    original_update = rebuild_service._update_rebuild_progress
+
+    def capture_update(runtime_root: Path, **changes: object) -> dict[str, object]:
+        updates.append(changes)
+        return original_update(runtime_root, **changes)
+
+    monkeypatch.setattr(rebuild_service, "_update_rebuild_progress", capture_update)
+
+    _run_rebuild(
+        tmp_path=tmp_path,
+        config=config,
+        manager=_RebuildManager(),
+        request_id="request-1",
+    )
+
+    assert any(
+        update.get("current_document_path") == str(documents_root / "one.md")
+        for update in updates
+    )
+    assert any(update.get("current_document_path") is None for update in updates)
 
 
 def test_run_rebuild_invalidates_stale_document_checkpoint(tmp_path: Path) -> None:
