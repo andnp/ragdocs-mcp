@@ -31,7 +31,10 @@ _STARTUP_STATUSES = {"starting", "initializing"}
 _NONRESPONSIVE_METADATA_GRACE_SECONDS = 30.0
 _INTERNAL_SHUTDOWN_TIMEOUT_SECONDS = 1.0
 _RUNTIME_DAEMON_COMMAND = ("-m", "mcp_markdown_ragdocs.cli", "daemon-internal-run")
+_RUNTIME_WORKER_COMMAND = ("-m", "mcp_markdown_ragdocs.cli", "worker-run")
 _RUNTIME_ROOT_OPTION = "--runtime-root"
+_WORKER_QUEUE_DB_OPTION = "--queue-db"
+_WORKER_INDEX_ROOT_OPTION = "--index-root"
 
 
 class DaemonManagementError(RuntimeError):
@@ -160,7 +163,8 @@ def stop_daemon(
     metadata = inspection.metadata
     if metadata is None:
         terminated = _terminate_extra_runtime_daemon_processes(runtime_paths)
-        if terminated:
+        terminated_workers = _terminate_runtime_worker_processes(runtime_paths)
+        if terminated or terminated_workers:
             _cleanup_stale_runtime_state(runtime_paths)
         return None
 
@@ -168,6 +172,7 @@ def stop_daemon(
 
     if not inspection.running:
         _terminate_extra_runtime_daemon_processes(runtime_paths)
+        _terminate_runtime_worker_processes(runtime_paths)
         _cleanup_stale_runtime_state(runtime_paths)
         return metadata
 
@@ -179,6 +184,7 @@ def stop_daemon(
     while time.monotonic() < deadline:
         if not is_process_running(metadata.pid):
             _terminate_extra_runtime_daemon_processes(runtime_paths)
+            _terminate_runtime_worker_processes(runtime_paths)
             _cleanup_stale_runtime_state(runtime_paths)
             return metadata
         time.sleep(0.1)
@@ -190,6 +196,7 @@ def stop_daemon(
             break
         time.sleep(0.05)
 
+    _terminate_runtime_worker_processes(runtime_paths)
     _terminate_extra_runtime_daemon_processes(runtime_paths)
     _cleanup_stale_runtime_state(runtime_paths)
     return metadata
@@ -341,6 +348,17 @@ def _terminate_extra_runtime_daemon_processes(
     return terminated
 
 
+def _terminate_runtime_worker_processes(runtime_paths: RuntimePaths) -> list[int]:
+    terminated: list[int] = []
+    current_pid = os.getpid()
+    for pid in _find_runtime_worker_pids(runtime_paths):
+        if pid == current_pid:
+            continue
+        _terminate_pid_with_timeout(pid)
+        terminated.append(pid)
+    return terminated
+
+
 def _terminate_pid_with_timeout(pid: int, timeout_seconds: float = 1.0) -> None:
     logger.warning("Terminating stale daemon process pid=%s", pid)
 
@@ -370,6 +388,31 @@ def _find_runtime_daemon_pids(runtime_paths: RuntimePaths) -> list[int]:
             continue
 
         if _legacy_runtime_daemon_matches_root(pid, runtime_paths):
+            matching_pids.append(pid)
+
+    return matching_pids
+
+
+def _find_runtime_worker_pids(runtime_paths: RuntimePaths) -> list[int]:
+    queue_db_path = runtime_paths.queue_db_path.resolve()
+    runtime_root = runtime_paths.root.resolve()
+    matching_pids: list[int] = []
+    for pid in _iter_proc_pids():
+        cmdline = _read_process_cmdline(pid)
+        if cmdline is None or not _argv_contains_sequence(
+            cmdline, _RUNTIME_WORKER_COMMAND
+        ):
+            continue
+
+        queue_db_option = _read_option_path_value(
+            cmdline,
+            _WORKER_QUEUE_DB_OPTION,
+        )
+        index_root_option = _read_option_path_value(
+            cmdline,
+            _WORKER_INDEX_ROOT_OPTION,
+        )
+        if queue_db_option == queue_db_path and index_root_option == runtime_root:
             matching_pids.append(pid)
 
     return matching_pids

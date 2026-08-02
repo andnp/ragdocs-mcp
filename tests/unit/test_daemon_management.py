@@ -295,6 +295,55 @@ def test_find_runtime_daemon_pids_uses_legacy_proc_fallback_per_runtime(
     assert _find_runtime_daemon_pids(paths) == [111]
 
 
+def test_find_runtime_worker_pids_matches_runtime_paths(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.management._iter_proc_pids",
+        lambda: [101, 202, 303],
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.management._read_process_cmdline",
+        lambda pid: {
+            101: [
+                sys.executable,
+                "-m",
+                "mcp_markdown_ragdocs.cli",
+                "worker-run",
+                "--queue-db",
+                str(paths.queue_db_path),
+                "--index-root",
+                str(paths.root),
+            ],
+            202: [
+                sys.executable,
+                "-m",
+                "mcp_markdown_ragdocs.cli",
+                "worker-run",
+                "--queue-db",
+                str(paths.queue_db_path),
+                "--index-root",
+                str(tmp_path / "other-runtime"),
+            ],
+            303: [
+                sys.executable,
+                "-m",
+                "mcp_markdown_ragdocs.cli",
+                "daemon-internal-run",
+                "--runtime-root",
+                str(paths.root),
+            ],
+        }[pid],
+    )
+
+    from mcp_markdown_ragdocs.daemon.management import _find_runtime_worker_pids
+
+    assert _find_runtime_worker_pids(paths) == [101]
+
+
 def test_start_daemon_accepts_race_winner_metadata(monkeypatch, tmp_path: Path) -> None:
     winner_metadata = DaemonMetadata(pid=303, started_at=2.0, status="ready")
     inspections = iter(
@@ -634,6 +683,11 @@ def test_stop_daemon_without_metadata_reaps_matching_runtime_processes(
         "mcp_markdown_ragdocs.daemon.management._terminate_extra_runtime_daemon_processes",
         lambda runtime_paths, *, keep_pid=None: observed.append((runtime_paths, keep_pid)) or [901, 902],
     )
+    worker_paths: list[RuntimePaths] = []
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.management._terminate_runtime_worker_processes",
+        lambda runtime_paths: worker_paths.append(runtime_paths) or [903],
+    )
 
     cleaned: list[RuntimePaths] = []
     monkeypatch.setattr(
@@ -643,6 +697,7 @@ def test_stop_daemon_without_metadata_reaps_matching_runtime_processes(
 
     assert stop_daemon(timeout_seconds=0.5, paths=paths) is None
     assert observed == [(paths, None)]
+    assert worker_paths == [paths]
     assert cleaned == [paths]
 
 
