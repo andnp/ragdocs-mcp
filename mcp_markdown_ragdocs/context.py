@@ -10,21 +10,16 @@ from pathlib import Path
 from typing import Any, Literal
 
 from searchkernel.api import (
-    AsyncIndexIngestor,
-    DatabaseManager,
-    GraphIndex as GraphStore,
     IndexManifest,
-    KeywordIndex,
+    build_local_record_kernel,
     PublicIndexStateSnapshot,
     Record,
     SearchAvailability,
-    VectorIndex,
     build_file_stamps,
     build_indexed_files_map,
     can_refresh_loaded_indices,
     can_serve_queries,
     derive_loaded_index_state_snapshot,
-    detect_and_migrate_legacy_index,
     discover_files,
     discover_files_multi_root,
     get_parser_suffixes,
@@ -45,9 +40,11 @@ from mcp_markdown_ragdocs.config import (
     resolve_documents_path,
     resolve_index_path,
 )
-from mcp_markdown_ragdocs.adapters.pgvector import build_pgvector_index
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.record_manager import (
+    RecordIndexManager,
+    build_embedding_provider,
+)
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
@@ -80,9 +77,9 @@ class IndexState:
 @dataclass
 class ApplicationContext:
     config: Config
-    index_manager: IndexManager
+    index_manager: RecordIndexManager
     orchestrator: CanonicalSearchAdapter
-    record_ingestor: AsyncIndexIngestor | None = None
+    record_ingestor: Any | None = None
     use_tasks: bool = False
     _watcher_lifecycle: WatcherLifecycle = field(
         default_factory=WatcherLifecycle, repr=False
@@ -91,7 +88,7 @@ class ApplicationContext:
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
     fallback_index_path: Path | None = None
     documents_roots: list[Path] = field(default_factory=list)
-    db_manager: DatabaseManager | None = None
+    db_manager: Any | None = None
     current_manifest: IndexManifest | None = None
     reconciliation_task: asyncio.Task | None = field(default=None, repr=False)
     _background_index_task: asyncio.Task | None = field(default=None, repr=False)
@@ -164,30 +161,33 @@ class ApplicationContext:
             config.embedding.truncate_dim = active_namespace.dim
             active_model_identity = active_namespace.identity
 
-        embedding_model_name = config.llm.resolved_embedding_model
-
-        vector = cls._build_vector_store(config, embedding_model_name)
+        embedding_model_name = config.embedding.model_name
+        if active_model_identity is not None:
+            embedding_model_name = config.llm.embedding_model
+        config.embedding.model_name = embedding_model_name
+        config.llm.embedding_model = embedding_model_name
+        embedding_provider = build_embedding_provider(config, embedding_model_name)
+        local_kernel = build_local_record_kernel(
+            index_path / "index.db",
+            embedding_provider=embedding_provider,
+            embedding_model_name=embedding_provider.model_name,
+            embedding_dim=embedding_provider.dim,
+            vector_engine="exact",
+        )
         if not lazy_embeddings:
-            vector.warm_up()
+            logger.info("Embedding provider is daemon-backed; no in-process warmup needed")
 
-        detect_and_migrate_legacy_index(index_path)
-
-        db_manager = DatabaseManager(index_path / "index.db")
-        keyword = KeywordIndex(db_manager)
-        graph = GraphStore(db_manager)
-
-        manager = IndexManager(
+        manager = RecordIndexManager(
             config,
-            vector,
-            keyword,
-            graph,
+            local_kernel,
+            embedding_provider,
             documents_roots=documents_roots,
         )
         orchestrator = CanonicalSearchAdapter(
             manager,
             documents_path=Path(documents_path),
         )
-        record_ingestor = AsyncIndexIngestor(manager)
+        record_ingestor = manager.ingestor
 
         watcher_lifecycle = WatcherLifecycle.create(
             enabled=enable_watcher,
@@ -225,7 +225,7 @@ class ApplicationContext:
             index_path=index_path,
             fallback_index_path=fallback_index_path,
             documents_roots=documents_roots,
-            db_manager=db_manager,
+            db_manager=local_kernel.backend.db_manager,
             current_manifest=None,
             reconciliation_task=None,
             _active_model_identity=active_model_identity,
@@ -242,25 +242,8 @@ class ApplicationContext:
 
     @staticmethod
     def _build_vector_store(config: Config, embedding_model_name: str) -> Any:
-        """Build the live vector store per `config.store.backend`.
-
-        FAISS (`VectorIndex`) is the default; `store.backend = "pgvector"`
-        selects the Postgres+pgvector-backed adapter instead. Both present
-        the same method surface the live index/search path calls.
-        """
-        if config.store.backend == "pgvector":
-            return build_pgvector_index(
-                pg_dsn=config.store.pg_dsn,
-                embedding_model_name=embedding_model_name,
-                truncate_dim=config.embedding.truncate_dim,
-            )
-
-        return VectorIndex(
-            embedding_model_name=embedding_model_name,
-            embedding_workers=config.indexing.embedding_workers,
-            torch_num_threads=config.indexing.torch_num_threads,
-            truncate_dim=config.embedding.truncate_dim,
-        )
+        """Retained as a compatibility hook for model lifecycle callers."""
+        return build_embedding_provider(config, embedding_model_name)
 
     @staticmethod
     def _resolve_documents_roots(
@@ -375,6 +358,11 @@ class ApplicationContext:
         )
 
     def _hydrate_index_path_from_fallback(self) -> None:
+        if hasattr(self.index_manager, "kernel"):
+            # Canonical records use a single SQLite database.  Copying the
+            # legacy vector/graph bundle into an override path can overwrite
+            # the freshly composed database with an incompatible schema.
+            return
         if self.fallback_index_path is None:
             return
         if self.index_path == self.fallback_index_path:
@@ -657,24 +645,7 @@ class ApplicationContext:
         return self._availability
 
     def schedule_vocabulary_catch_up(self) -> bool:
-        if self._init_error is not None:
-            return False
-        if not self.index_manager.is_ready():
-            return False
-
-        vector = self.index_manager.vector
-        needs_catch_up = getattr(vector, "needs_vocabulary_catch_up", None)
-        if not callable(needs_catch_up) or not needs_catch_up():
-            return False
-
-        current_task = getattr(self, "_vocabulary_catch_up_task", None)
-        if current_task is not None and not current_task.done():
-            return False
-
-        task = asyncio.create_task(self._run_vocabulary_catch_up())
-        self._vocabulary_catch_up_task = task
-        task.add_done_callback(self._clear_vocabulary_catch_up_task)
-        return True
+        return False
 
     def _report_bootstrap_failure(
         self,
@@ -1038,36 +1009,7 @@ class ApplicationContext:
                 logger.exception("Error during periodic reconciliation")
 
     async def _update_vocabulary_incremental(self) -> None:
-        """Catch up concept vocabulary without blocking search readiness."""
-        vector = self.index_manager.vector
-        if not vector.needs_vocabulary_catch_up():
-            return
-
-        before_state = vector.get_vocabulary_state()
-        total_embedded = 0
-        while vector.needs_vocabulary_catch_up():
-            embedded = await asyncio.to_thread(
-                vector.update_vocabulary_incremental,
-                max_terms=2000,
-                min_frequency=3,
-                batch_size=50,
-            )
-            if embedded == 0 and not vector.needs_vocabulary_catch_up():
-                break
-            if embedded == 0:
-                break
-            total_embedded += embedded
-            await asyncio.sleep(0)
-
-        after_state = vector.get_vocabulary_state()
-        if total_embedded > 0 or before_state != after_state:
-            logger.info(
-                "Vocabulary catch-up status=%s embedded=%d",
-                after_state["status"],
-                total_embedded,
-            )
-            await asyncio.to_thread(self.index_manager.persist_checkpoint)
-            self._mark_index_state_loaded()
+        return None
 
     async def _run_vocabulary_catch_up(self) -> None:
         try:
@@ -1085,21 +1027,7 @@ class ApplicationContext:
             self._vocabulary_catch_up_task = None
 
     async def _build_initial_vocabulary(self) -> None:
-        """Build concept vocabulary from scratch in background."""
-        try:
-            logger.info("Building concept vocabulary in background...")
-            await asyncio.to_thread(
-                self.index_manager.vector.build_concept_vocabulary,
-                max_terms=2000,
-                min_frequency=3,
-            )
-            await asyncio.to_thread(self.index_manager.persist_checkpoint)
-            self._mark_index_state_loaded()
-            logger.info("Concept vocabulary built and persisted")
-        except asyncio.CancelledError:
-            logger.info("Vocabulary building cancelled")
-        except Exception:
-            logger.exception("Failed to build vocabulary")
+        return None
 
     def is_ready(self) -> bool:
         """Check if initialization is complete and indices are ready.
@@ -1217,6 +1145,10 @@ class ApplicationContext:
             self._refresh_index_state_from_loaded_indices()
 
     async def _refresh_active_model_from_manifest(self) -> None:
+        # Model identity is fixed at composition time for the daemon-backed
+        # provider; a model migration requires rebuilding this kernel.
+        if hasattr(self.index_manager, "kernel"):
+            return
         manifest = await asyncio.to_thread(load_manifest, self.index_path)
         if manifest is None or manifest.active_model is None:
             return
@@ -1272,33 +1204,10 @@ class ApplicationContext:
             self._freshness_task = None
 
     def schedule_embedding_model_warmup(self) -> bool:
-        if self._init_error is not None:
-            return False
-        if not self.index_manager.is_ready():
-            return False
-        if self.index_manager.vector.model_ready():
-            return False
-
-        current_task = getattr(self, "_embedding_warmup_task", None)
-        if current_task is not None and not current_task.done():
-            return False
-
-        task = asyncio.create_task(self._run_embedding_model_warmup())
-        self._embedding_warmup_task = task
-        task.add_done_callback(self._clear_embedding_warmup_task)
-        return True
+        return False
 
     async def _run_embedding_model_warmup(self) -> None:
-        try:
-            await asyncio.to_thread(self.index_manager.vector.warm_up)
-            logger.info("Background embedding model warmup complete")
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning(
-                "Background embedding warmup failed; semantic search will lazy-load on demand",
-                exc_info=True,
-            )
+        return None
 
     def _clear_embedding_warmup_task(self, task: asyncio.Task) -> None:
         if getattr(self, "_embedding_warmup_task", None) is task:
@@ -1364,7 +1273,7 @@ class ApplicationContext:
         """Count git commits discoverable in the live index (for status/stats display)."""
         if not self.git_indexing_enabled:
             return 0
-        return self.index_manager.vector.count_documents_by_source_kind("git_commit")
+        return self.index_manager.count_records("git_commit")
 
     def _ingest_git_records_into_kernel_index(self, repos: list[Path]) -> None:
         """Ingest discovered git commits into the live IndexManager as Records.

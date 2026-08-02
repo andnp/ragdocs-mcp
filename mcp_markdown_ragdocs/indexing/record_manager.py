@@ -1,0 +1,455 @@
+"""Canonical record indexing for Markdown sources.
+
+The application owns file discovery and parsing.  Searchkernel owns durable
+record storage, embedding, and retrieval.  This module is the small seam that
+connects those two responsibilities.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from searchkernel.api import (
+    GraphEdge,
+    Record,
+    RecordIdentity,
+    RecordStatus,
+    SQLiteEmbeddingCache,
+    compute_doc_id,
+    compute_doc_id_multi_root,
+    get_chunker,
+)
+from searchkernel.domain import Vector
+from searchkernel.ingestion.records import SemanticRecordIngestor
+from searchkernel.local import LocalRecordKernel
+
+from mcp_markdown_ragdocs.config import Config, resolve_project_id_for_path
+from mcp_markdown_ragdocs.models import Document
+from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
+
+logger = logging.getLogger(__name__)
+
+
+class _FakeEmbeddingProvider:
+    """Small provider adapter used by the app's deterministic test mode."""
+
+    model_name = "__deterministic_fake__"
+    dim = 384
+
+    def __init__(self) -> None:
+        from searchkernel.embeddings import DeterministicFakeEmbeddingModel
+
+        self._model = DeterministicFakeEmbeddingModel(self.dim)
+
+    def embed(self, texts: list[str]) -> list[Vector]:
+        return [self._model._vector_for_text(text) for text in texts]
+
+
+def build_embedding_provider(config: Config, model_name: str):
+    """Build the one embedding provider shared by indexing and querying."""
+
+    if os.getenv("MCP_RAGDOCS_TEST_FAKE_EMBEDDINGS") == "1":
+        return _FakeEmbeddingProvider()
+
+    provider_name = config.embedding.provider.lower()
+    if provider_name != "ollama":
+        raise ValueError(
+            "canonical indexing requires embedding.provider = 'ollama'; "
+            f"got {config.embedding.provider!r}"
+        )
+
+    from searchkernel.adapters.embedding.ollama import OllamaEmbeddingProvider
+
+    return OllamaEmbeddingProvider(
+        model_name,
+        base_url=config.embedding.base_url,
+        dim=config.embedding.dimension,
+        timeout=config.embedding.timeout_seconds,
+        auto_pull=config.embedding.auto_pull,
+        pull_timeout=config.embedding.pull_timeout_seconds,
+    )
+
+
+@dataclass(frozen=True)
+class PreparedRecordDocument:
+    file_path: str
+    document: Document
+    records: tuple[Record, ...]
+
+
+class RecordIndexManager:
+    """Index Markdown and source records through searchkernel's local kernel."""
+
+    def __init__(
+        self,
+        config: Config,
+        kernel: LocalRecordKernel,
+        embedding_provider: Any,
+        *,
+        documents_roots: list[Path] | None = None,
+    ) -> None:
+        self._config = config
+        self.kernel = kernel
+        self.embedding_provider = embedding_provider
+        self._chunker = get_chunker(config.chunking)
+        self._documents_roots = [
+            root.resolve()
+            for root in (documents_roots or [Path(config.indexing.documents_path)])
+        ]
+        self._failed_files: list[dict[str, str]] = []
+        self._state_version = 0
+        self._ready = True
+        self._source_map_path = Path(config.indexing.index_path) / "record-sources.json"
+        self._source_records: dict[str, list[str]] = self._load_source_map()
+        self._embedding_cache = SQLiteEmbeddingCache(
+            Path(config.indexing.index_path) / "embedding-cache.db",
+            encoder_namespace=embedding_provider.model_name,
+            dimension=embedding_provider.dim,
+        )
+        self.ingestor = SemanticRecordIngestor(
+            embedding_provider=embedding_provider,
+            keyword_store=kernel.keyword_store,
+            vector_store=kernel.vector_store,
+            embedding_cache=self._embedding_cache,
+        )
+
+    @property
+    def index_path(self) -> Path:
+        return Path(self._config.indexing.index_path)
+
+    @property
+    def vector(self):
+        """Compatibility view for callers that only need semantic operations."""
+        return self.kernel.vector_store
+
+    @property
+    def keyword(self):
+        return self.kernel.keyword_store
+
+    @property
+    def graph(self):
+        return self.kernel.graph_store
+
+    def is_ready(self) -> bool:
+        return self._ready
+
+    def get_state_version(self) -> int:
+        return self._state_version
+
+    def get_document_count(self) -> int:
+        return len(self._source_records)
+
+    def get_failed_files(self) -> list[dict[str, str]]:
+        return list(self._failed_files)
+
+    def count_records(self, source_kind: str | None = None) -> int:
+        if source_kind is None:
+            return sum(len(keys) for keys in self._source_records.values())
+        count = 0
+        for keys in self._source_records.values():
+            count += sum(
+                RecordIdentity.from_storage_key(key).source_kind == source_kind
+                for key in keys
+            )
+        return count
+
+    def describe_documents(self) -> list[dict[str, object]]:
+        descriptions: list[dict[str, object]] = []
+        for doc_id, keys in sorted(self._source_records.items()):
+            records = [self.kernel.backend.hydrate_record(key) for key in keys]
+            record = next((item for item in records if item is not None), None)
+            if record is None:
+                continue
+            descriptions.append(
+                {
+                    "doc_id": doc_id,
+                    "file_path": record.metadata.get("file_path"),
+                    "chunk_count": len(keys),
+                    "source_kind": record.source_kind,
+                }
+            )
+        return descriptions
+
+    def index_documents(
+        self,
+        file_paths: list[str],
+        force: bool = False,
+        persist: bool = False,
+    ) -> None:
+        del force
+        for file_path in file_paths:
+            self.index_document(file_path)
+        if persist:
+            self.persist()
+
+    def remove_documents(self, doc_ids: list[str], persist: bool = False) -> None:
+        for doc_id in doc_ids:
+            self.remove_document(doc_id)
+        if persist:
+            self.persist()
+
+    def _doc_id_for_path(self, file_path: str) -> str:
+        path = Path(file_path).resolve()
+        if len(self._documents_roots) == 1:
+            return compute_doc_id(path, self._documents_roots[0])
+        return compute_doc_id_multi_root(path, self._documents_roots)
+
+    def _load_source_map(self) -> dict[str, list[str]]:
+        try:
+            value = json.loads(self._source_map_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(value, dict):
+            return {}
+        return {
+            str(doc_id): [str(key) for key in keys if isinstance(key, str)]
+            for doc_id, keys in value.items()
+            if isinstance(keys, list)
+        }
+
+    def _save_source_map(self) -> None:
+        self._source_map_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self._source_map_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(self._source_records, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        temporary.replace(self._source_map_path)
+
+    def _document_record(self, document: Document) -> Record:
+        return Record(
+            source_kind="note",
+            source_id=document.id,
+            title=document.id,
+            body=document.content,
+            created_at=document.modified_time,
+            updated_at=document.modified_time,
+            metadata={
+                "links": document.links,
+                "tags": document.tags,
+                "file_path": document.file_path,
+                "project_id": document.project_id,
+                **document.metadata,
+            },
+            uri=f"file://{document.file_path}",
+            status=RecordStatus.ACTIVE,
+        )
+
+    def _chunk_records(self, document: Document) -> tuple[Record, ...]:
+        chunks = self._chunker.chunk_record(self._document_record(document))
+        records: list[Record] = []
+        for chunk in chunks:
+            metadata = {
+                **document.metadata,
+                "chunk_id": chunk.chunk_id,
+                "doc_id": document.id,
+                "chunk_index": chunk.chunk_index,
+                "file_path": document.file_path,
+                "project_id": document.project_id,
+                "links": document.links,
+                "tags": document.tags,
+                **chunk.metadata,
+            }
+            records.append(
+                Record(
+                    source_kind="note",
+                    source_id=chunk.chunk_id,
+                    title=document.id,
+                    body=chunk.content,
+                    created_at=document.modified_time,
+                    updated_at=document.modified_time,
+                    metadata=metadata,
+                    uri=f"file://{document.file_path}",
+                    status=RecordStatus.ACTIVE,
+                    workspace_id=document.project_id,
+                )
+            )
+        return tuple(records)
+
+    def prepare_document(self, file_path: str) -> PreparedRecordDocument:
+        parser = dispatch_parser(file_path)
+        document = parser.parse(file_path)
+        document.id = self._doc_id_for_path(file_path)
+        document.project_id = resolve_project_id_for_path(Path(file_path), self._config)
+        records = self._chunk_records(document)
+        return PreparedRecordDocument(file_path, document, records)
+
+    async def _index_prepared(self, prepared: PreparedRecordDocument) -> None:
+        old_keys = self._source_records.get(prepared.document.id, [])
+        if old_keys:
+            self.kernel.backend.delete(old_keys)
+        receipt = await self.ingestor.index_records(prepared.records)
+        if receipt.failed:
+            errors = "; ".join(item.error or "unknown error" for item in receipt.failures)
+            raise RuntimeError(errors)
+        self._source_records[prepared.document.id] = [
+            record.storage_key for record in prepared.records
+        ]
+        self._upsert_graph(prepared)
+        self._state_version += 1
+
+    def index_document(self, file_path: str, force: bool = False) -> bool:
+        del force
+        try:
+            prepared = self.prepare_document(file_path)
+            _run_async(self._index_prepared(prepared))
+            self._save_source_map()
+            return True
+        except Exception as error:  # noqa: BLE001 - indexing boundary records failures
+            self._failed_files.append(
+                {"path": file_path, "error": str(error)}
+            )
+            logger.exception("Failed to index %s", file_path)
+            return False
+
+    def index_record(self, record: Record) -> bool:
+        try:
+            receipt = _run_async(self.ingestor.index_records([record]))
+            if receipt.failed:
+                return False
+            self._source_records.setdefault(record.source_id, []).append(
+                record.storage_key
+            )
+            self._save_source_map()
+            self._state_version += 1
+            return True
+        except Exception:
+            logger.exception("Failed to index record %s", record.storage_key)
+            return False
+
+    def index_records(self, records: Sequence[Record]) -> bool:
+        try:
+            receipt = _run_async(self.ingestor.index_records(records))
+            if receipt.failed:
+                return False
+            for record in records:
+                self._source_records.setdefault(record.source_id, []).append(
+                    record.storage_key
+                )
+            self._save_source_map()
+            self._state_version += 1
+            return True
+        except Exception:
+            logger.exception("Failed to index record batch")
+            return False
+
+    def _upsert_graph(self, prepared: PreparedRecordDocument) -> None:
+        if not prepared.records:
+            return
+        source = prepared.records[0].identity
+        edges: list[GraphEdge] = []
+        for link in prepared.document.links:
+            target = RecordIdentity(prepared.document.project_id, "note", link)
+            edges.append(
+                GraphEdge(
+                    source=source,
+                    target=target,
+                    edge_type="links_to",
+                    weight=1.0,
+                )
+            )
+        if edges:
+            try:
+                self.graph.upsert_edges(edges)
+            except ValueError:
+                # A link may point at a document not indexed yet.  The graph
+                # remains valid and the edge can be added on its next update.
+                logger.debug("Skipping graph edges with missing targets", exc_info=True)
+
+    def remove_document(self, doc_id: str) -> None:
+        keys = self._source_records.pop(doc_id, [])
+        if keys:
+            self.kernel.backend.delete(keys)
+            self._save_source_map()
+            self._state_version += 1
+
+    def persist(self) -> None:
+        self._save_source_map()
+
+    def persist_checkpoint(self) -> None:
+        self.persist()
+
+    def clear_documents(self) -> None:
+        keys = [
+            key
+            for doc_id, record_keys in self._source_records.items()
+            if not any(
+                RecordIdentity.from_storage_key(key).source_kind == "git_commit"
+                for key in record_keys
+            )
+            for key in record_keys
+        ]
+        if keys:
+            self.kernel.backend.delete(keys)
+        self._source_records = {
+            doc_id: record_keys
+            for doc_id, record_keys in self._source_records.items()
+            if any(
+                RecordIdentity.from_storage_key(key).source_kind == "git_commit"
+                for key in record_keys
+            )
+        }
+        self.persist()
+
+    def finalize_derived_graph_state(self) -> None:
+        """Compatibility hook; graph edges are written with each record batch."""
+        return None
+
+    def load(self) -> None:
+        self._source_records = self._load_source_map()
+
+    def replace_vector_store(self, _vector: Any) -> None:
+        raise RuntimeError("canonical record manager uses one configured embedding provider")
+
+    def reconcile_indices(
+        self,
+        discovered_files: list[str],
+        docs_path: Path,
+        documents_roots: list[Path] | None = None,
+    ) -> Any:
+        del docs_path, documents_roots
+        discovered = {self._doc_id_for_path(path): path for path in discovered_files}
+        current = set(self._source_records)
+        added = 0
+        removed = 0
+        failed = 0
+        for doc_id, path in discovered.items():
+            if doc_id not in current:
+                added += 1
+                if not self.index_document(path):
+                    failed += 1
+        for doc_id in current - set(discovered):
+            self.remove_document(doc_id)
+            removed += 1
+
+        @dataclass(frozen=True)
+        class _ReconcileResult:
+            added_count: int
+            removed_count: int
+            moved_count: int = 0
+            failed_count: int = 0
+
+        return _ReconcileResult(added, removed, 0, failed)
+
+
+def _run_async(awaitable):
+    """Run ingestion from both sync workers and an active event-loop thread."""
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(asyncio.run, awaitable).result()
+
+
+__all__ = ["PreparedRecordDocument", "RecordIndexManager", "build_embedding_provider"]

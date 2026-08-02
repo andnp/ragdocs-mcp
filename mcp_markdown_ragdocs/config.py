@@ -173,10 +173,15 @@ class StoreConfig:
 
 @dataclass
 class EmbeddingConfig:
-    # These fields configure the durable model-migration target. The active
-    # serving model remains selected by the manifest after a validated flip.
-    provider: str = "hf"
-    model_name: str = "Qwen/Qwen3-Embedding-0.6B"
+    # Embeddings are served by Ollama so worker and query processes do not
+    # each load a copy of the model into Python.
+    provider: str = "ollama"
+    model_name: str = "qwen3-embedding:0.6b"
+    base_url: str = "http://localhost:11434"
+    dimension: int | None = None
+    timeout_seconds: float = 60.0
+    auto_pull: bool = True
+    pull_timeout_seconds: float = 600.0
     truncate_dim: int | None = None
     batch_size: int = 64
 

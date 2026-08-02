@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from searchkernel.api import (
     CompressionStats,
     Record,
-    RecordHit,
-    RecordIdentity,
-    RecordSearchPipeline,
-    RecordStatus,
     SearchResultProvenance,
     SearchStrategyStats,
 )
@@ -38,122 +32,16 @@ def filter_by_score(
     return [result for result in results if result.score >= min_score]
 
 
-class _IndexManager(Protocol):
-    vector: Any
-    keyword: Any
-
-
-class _LegacyKeywordStore:
-    """Expose the existing chunk index through the record-store contract."""
-
-    def __init__(self, manager: _IndexManager) -> None:
-        self._manager = manager
-
-    def index(self, records: list[Record]) -> None:
-        del records
-
-    async def search(
-        self, query: str, k: int, filters: dict[str, Any] | None = None
-    ) -> list[RecordHit | tuple[str, float]]:
-        return await asyncio.to_thread(self._search_sync, query, k, filters)
-
-    def _search_sync(
-        self, query: str, k: int, filters: dict[str, Any] | None
-    ) -> list[RecordHit | tuple[str, float]]:
-        filters = filters or {}
-        source_kinds = set(filters.get("source_kinds") or ())
-        workspace_id = filters.get("workspace_id")
-        hits: list[RecordHit | tuple[str, float]] = []
-        candidates = list(self._manager.keyword.search(query, top_k=k))
-        vector_search = getattr(self._manager.vector, "search", None)
-        if callable(vector_search):
-            vector_results = vector_search(query, top_k=k)
-            if isinstance(vector_results, list):
-                candidates.extend(vector_results)
-        seen: set[str] = set()
-        for result in candidates:
-            chunk_id = result["chunk_id"]
-            if chunk_id in seen:
-                continue
-            seen.add(chunk_id)
-            chunk = self._manager.vector.get_chunk_by_id(result["chunk_id"])
-            metadata = (chunk or {}).get("metadata", {})
-            source_kind = str(metadata.get("source_kind", "note"))
-            project_id = metadata.get(
-                "workspace_id", metadata.get("project_id")
-            )
-            if source_kinds and source_kind not in source_kinds:
-                continue
-            if workspace_id is not None and project_id != workspace_id:
-                continue
-            hits.append(
-                RecordHit(
-                    RecordIdentity(
-                        str(project_id) if project_id is not None else None,
-                        source_kind,
-                        result["chunk_id"],
-                    ),
-                    float(result["score"]),
-                )
-            )
-        return hits
-
-
-class _LegacyRecordHydrator:
-    def __init__(self, manager: _IndexManager) -> None:
-        self._manager = manager
-
-    async def hydrate_record(self, record_id: RecordIdentity) -> Record | None:
-        chunk = self._manager.vector.get_chunk_by_id(record_id.source_id)
-        if chunk is None:
-            return None
-        metadata = dict(chunk.get("metadata") or {})
-        metadata.update(
-            {
-                "chunk_id": chunk["chunk_id"],
-                "doc_id": metadata.get(
-                    "canonical_source_id", chunk["doc_id"]
-                ),
-                "chunk_index": chunk.get("chunk_index", 0),
-                "header_path": metadata.get("header_path", ""),
-                "file_path": metadata.get("file_path", ""),
-            }
-        )
-        now = datetime.now(UTC)
-        return Record(
-            workspace_id=record_id.workspace_id,
-            source_kind=record_id.source_kind,
-            source_id=record_id.source_id,
-            title=str(metadata.get("title") or metadata["doc_id"]),
-            body=str(chunk.get("content", "")),
-            created_at=now,
-            updated_at=now,
-            metadata=metadata,
-            uri=str(metadata.get("file_path") or "") or None,
-            status=RecordStatus.ACTIVE,
-        )
-
-
 class CanonicalSearchAdapter:
     """Preserve ragdocs' query tuple while using RecordSearchPipeline."""
 
-    def __init__(
-        self,
-        manager: _IndexManager,
-        *,
-        documents_path: Path | None = None,
-    ) -> None:
+    def __init__(self, manager: Any, *, documents_path: Path | None = None) -> None:
         config = getattr(manager, "_config", None)
         indexing = getattr(config, "indexing", None)
         self.documents_path = documents_path or Path(
             getattr(indexing, "documents_path", ".")
         )
-        self._vector = manager.vector
-        self._keyword = manager.keyword
-        self._pipeline = RecordSearchPipeline(
-            hydrator=_LegacyRecordHydrator(manager),
-            keyword_store=_LegacyKeywordStore(manager),
-        )
+        self._pipeline = manager.kernel.pipeline
         self.last_query_execution_stats: dict[str, object] = {}
 
     async def search(
