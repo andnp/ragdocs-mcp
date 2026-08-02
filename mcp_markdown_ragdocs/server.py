@@ -1,16 +1,37 @@
+import asyncio
+import json
 import logging
+import uuid
 from contextlib import asynccontextmanager
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
 from searchkernel.api import classify_query_type, load_manifest, truncate_content
+from searchkernel.ports.federation import (
+    FEDERATION_CONTRACT_VERSION,
+    SearchRequest,
+)
+from starlette.responses import JSONResponse
 
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.context import ApplicationContext
+from mcp_markdown_ragdocs.federation import (
+    FederationRequestError,
+    RAGDOCS_CAPABILITIES,
+    RAGDOCS_SOURCE,
+    execute_federation_search,
+)
 from mcp_markdown_ragdocs.models import ChunkResult
 
 logger = logging.getLogger(__name__)
+
+MAX_FEDERATION_REQUEST_BYTES = 256 * 1024
+DEFAULT_FEDERATION_TIMEOUT_SECONDS = 30.0
+MAX_CORRELATION_ID_LENGTH = 256
 
 
 class QueryRequest(BaseModel):
@@ -135,6 +156,117 @@ def create_app():
     @app.get("/health")
     async def health():
         return HealthResponse(status="ok")
+
+    @app.get("/v1/search/capabilities")
+    async def federation_capabilities():
+        return JSONResponse(RAGDOCS_CAPABILITIES.to_dict())
+
+    @app.get("/v1/health")
+    async def federation_health():
+        return JSONResponse(
+            {
+                "status": "ok",
+                "contract_version": FEDERATION_CONTRACT_VERSION,
+                "source": RAGDOCS_SOURCE.to_dict(),
+            }
+        )
+
+    @app.post("/v1/search")
+    async def federation_search(request: Request):
+        request_id = request.headers.get("X-Request-ID", "").strip()
+        trace_id = request.headers.get("X-Trace-ID", "").strip()
+        if len(request_id) > MAX_CORRELATION_ID_LENGTH or len(trace_id) > MAX_CORRELATION_ID_LENGTH:
+            return JSONResponse(
+                {"error": "correlation_id_too_long"},
+                status_code=400,
+            )
+
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > MAX_FEDERATION_REQUEST_BYTES:
+                    return JSONResponse(
+                        {"error": "request_payload_too_large"},
+                        status_code=413,
+                    )
+            except ValueError:
+                return JSONResponse({"error": "invalid_content_length"}, status_code=400)
+
+        body = await request.body()
+        if len(body) > MAX_FEDERATION_REQUEST_BYTES:
+            return JSONResponse(
+                {"error": "request_payload_too_large"},
+                status_code=413,
+            )
+        try:
+            decoded = json.loads(body)
+            if not isinstance(decoded, dict):
+                raise ValueError("request body must be a JSON object")
+            search_request = SearchRequest.from_dict(decoded)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            return JSONResponse(
+                {"error": "invalid_request", "details": str(exc)[:512]},
+                status_code=400,
+            )
+
+        effective_request_id = search_request.request_id or request_id or uuid.uuid4().hex
+        effective_trace_id = search_request.trace_id or trace_id
+        if len(effective_request_id) > MAX_CORRELATION_ID_LENGTH or len(effective_trace_id) > MAX_CORRELATION_ID_LENGTH:
+            return JSONResponse(
+                {"error": "correlation_id_too_long"},
+                status_code=400,
+            )
+        search_request = replace(
+            search_request,
+            request_id=effective_request_id,
+            trace_id=effective_trace_id,
+        )
+
+        timeout_seconds = DEFAULT_FEDERATION_TIMEOUT_SECONDS
+        if search_request.deadline_at is not None:
+            timeout_seconds = min(
+                timeout_seconds,
+                (search_request.deadline_at.astimezone(UTC) - datetime.now(UTC)).total_seconds(),
+            )
+        if timeout_seconds <= 0:
+            return JSONResponse(
+                {"error": "request_deadline_expired", "request_id": effective_request_id},
+                status_code=408,
+                headers={"X-Request-ID": effective_request_id},
+            )
+
+        orchestrator = getattr(request.app.state, "orchestrator", None)
+        if orchestrator is None:
+            return JSONResponse(
+                {"error": "search_unavailable", "request_id": effective_request_id},
+                status_code=503,
+                headers={"X-Request-ID": effective_request_id},
+            )
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                response = await execute_federation_search(
+                    orchestrator,
+                    search_request,
+                    request_id=effective_request_id,
+                    elapsed_start=monotonic(),
+                )
+        except FederationRequestError as exc:
+            return JSONResponse(
+                {"error": str(exc), "request_id": effective_request_id},
+                status_code=exc.status_code,
+                headers={"X-Request-ID": effective_request_id},
+            )
+        except TimeoutError:
+            return JSONResponse(
+                {"error": "search_deadline_exceeded", "request_id": effective_request_id},
+                status_code=504,
+                headers={"X-Request-ID": effective_request_id},
+            )
+
+        headers = {"X-Request-ID": effective_request_id}
+        if effective_trace_id:
+            headers["X-Trace-ID"] = effective_trace_id
+        return JSONResponse(response.to_dict(), headers=headers)
 
     @app.get("/status")
     async def status():
