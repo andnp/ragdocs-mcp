@@ -3,6 +3,7 @@
 import logging
 import os
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 from searchkernel.api import is_excluded_dir
@@ -78,44 +79,82 @@ def discover_git_repositories_multi_root(
     return sorted(discovered)
 
 
-def get_commits_after_timestamp(
+def iter_commit_hashes_after_timestamp(
     git_dir: Path,
     after_timestamp: int | None = None,
-) -> list[str]:
+) -> Iterator[str]:
     """
-    Get commit hashes after a timestamp.
+    Yield commit hashes after a timestamp.
 
     Args:
         git_dir: Path to .git directory
         after_timestamp: Unix timestamp (None = all commits)
 
-    Returns:
-        List of commit SHAs (newest first)
+    Raises:
+        subprocess.CalledProcessError: If git log exits unsuccessfully
+        subprocess.TimeoutExpired: If git log does not finish within 30 seconds
     """
     repo_path = git_dir.parent
 
-    # Build git log command
     cmd = ["git", "log", "--all", "--format=%H"]
 
     if after_timestamp is not None:
         cmd.append(f"--after={after_timestamp}")
 
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        )
+    process = subprocess.Popen(
+        cmd,
+        cwd=repo_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
-        commit_hashes = [
-            line.strip() for line in result.stdout.splitlines() if line.strip()
-        ]
+    try:
+        if process.stdout is None:
+            raise RuntimeError("Git log did not provide stdout")
+
+        for line in process.stdout:
+            commit_hash = line.strip()
+            if commit_hash:
+                yield commit_hash
+
+        returncode = process.wait(timeout=30)
+        if returncode != 0:
+            stderr = process.stderr.read() if process.stderr is not None else ""
+            raise subprocess.CalledProcessError(
+                returncode,
+                cmd,
+                stderr=stderr,
+            )
+    finally:
+        if process.poll() is None:
+            process.kill()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                logger.warning("Git log process did not terminate for %s", repo_path)
+
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
+
+
+def get_commits_after_timestamp(
+    git_dir: Path,
+    after_timestamp: int | None = None,
+) -> list[str]:
+    """Get commit hashes after a timestamp as a list."""
+    repo_path = git_dir.parent
+
+    try:
+        commit_hashes = list(
+            iter_commit_hashes_after_timestamp(git_dir, after_timestamp)
+        )
         logger.debug(f"Found {len(commit_hashes)} commits in {repo_path.name}")
         return commit_hashes
-
     except subprocess.CalledProcessError as e:
         logger.error(f"Git log failed for {repo_path}: {e.stderr}")
         return []
