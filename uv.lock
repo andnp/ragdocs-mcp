@@ -115,7 +115,7 @@ wheels = [
 
 [[package]]
 name = "andnp-searchkernel"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "../andnp-searchkernel" }
 dependencies = [
     { name = "numpy" },
@@ -146,12 +146,14 @@ requires-dist = [
     { name = "llama-index-embeddings-huggingface", marker = "extra == 'huggingface'", specifier = ">=0.4.0" },
     { name = "llama-index-vector-stores-faiss", marker = "extra == 'faiss'", specifier = ">=0.3.0" },
     { name = "numpy", specifier = ">=2.0.0" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'pgvector-psycopg3'", specifier = ">=3.1.0" },
+    { name = "psycopg-pool", marker = "extra == 'pgvector-psycopg3'", specifier = ">=3.2.0" },
     { name = "psycopg2-binary", marker = "extra == 'pgvector'", specifier = ">=2.9.0" },
     { name = "sentence-transformers", marker = "extra == 'huggingface'", specifier = ">=3.0.0" },
     { name = "tree-sitter", marker = "extra == 'markdown'", specifier = ">=0.23.0" },
     { name = "tree-sitter-markdown", marker = "extra == 'markdown'", specifier = ">=0.3.2" },
 ]
-provides-extras = ["faiss", "pgvector", "huggingface", "ollama", "markdown"]
+provides-extras = ["faiss", "pgvector", "pgvector-psycopg3", "huggingface", "ollama", "markdown"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -162,6 +164,8 @@ dev = [
     { name = "llama-index-core", specifier = ">=0.12.0" },
     { name = "llama-index-embeddings-huggingface", specifier = ">=0.4.0" },
     { name = "llama-index-vector-stores-faiss", specifier = ">=0.3.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.1.0" },
+    { name = "psycopg-pool", specifier = ">=3.2.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.0" },
     { name = "pyrefly", specifier = ">=0.60.0" },
     { name = "pytest", specifier = ">=9.0.2" },
