@@ -76,7 +76,7 @@ class IndexManagerLike(Protocol):
 
     ingestor: Any
 
-    def index_document(self, file_path: str, force: bool = False) -> None: ...
+    def index_document(self, file_path: str, force: bool = False) -> bool: ...
     def index_documents(
         self,
         file_paths: list[str],
