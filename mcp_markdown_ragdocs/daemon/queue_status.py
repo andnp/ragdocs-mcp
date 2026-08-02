@@ -3,9 +3,11 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from huey.utils import Error
+
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
@@ -91,6 +93,7 @@ def get_queue_stats(
 ) -> QueueStats:
     task_counts = _collect_task_counts(huey)
     failures = _collect_failures(huey)
+    lease_store = TaskLeaseStore(cast(Any, huey.storage).filename)
     pending_count = huey.pending_count()
     utilization = None
     if backpressure_limit is not None and backpressure_limit > 0:
@@ -112,7 +115,7 @@ def get_queue_stats(
     return QueueStats(
         pending_count=pending_count,
         scheduled_count=huey.scheduled_count(),
-        running_count=0,
+        running_count=lease_store.active_count(),
         failed_count=len(failures),
         worker_running=worker_running,
         backpressure_limit=backpressure_limit,

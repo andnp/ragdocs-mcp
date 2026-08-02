@@ -12,6 +12,7 @@ import pytest
 from huey import SqliteHuey
 
 from mcp_markdown_ragdocs.coordination.queue import get_huey, reset_huey
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 
 
 @pytest.fixture(autouse=True)
@@ -108,3 +109,41 @@ class TestTaskPersistence:
         h2 = get_huey(path2)
 
         assert h1 is not h2
+
+
+class TestTaskLeases:
+    def test_claim_heartbeat_and_reclaim(self, tmp_path: Path) -> None:
+        store = TaskLeaseStore(tmp_path / "queue.db", timeout_seconds=10)
+
+        assert store.claim(
+            "task-1",
+            task_name="index_document",
+            owner_token="owner-1",
+            payload=b"serialized-task",
+            now=100.0,
+        )
+        assert store.active_count(now=105.0) == 1
+        assert store.heartbeat("task-1", owner_token="owner-1", now=109.0)
+        assert store.active_count(now=118.0) == 1
+        assert not store.heartbeat("task-1", owner_token="owner-2", now=110.0)
+
+        reclaimed = store.reclaim_expired(now=130.0)
+
+        assert len(reclaimed) == 1
+        assert reclaimed[0].task_id == "task-1"
+        assert reclaimed[0].state == "reclaimed"
+        assert reclaimed[0].payload == b"serialized-task"
+        assert store.active_count(now=130.0) == 0
+
+        assert store.claim(
+            "task-1",
+            task_name="index_document",
+            owner_token="owner-2",
+            payload=b"serialized-task",
+            now=131.0,
+        )
+        assert store.complete("task-1", owner_token="owner-2", now=132.0)
+        assert store.active_count(now=132.0) == 0
+        lease = store.get("task-1")
+        assert lease is not None
+        assert lease.state == "completed"

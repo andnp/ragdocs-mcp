@@ -7,12 +7,14 @@ Commit 3.2: Verifies the Huey consumer thread lifecycle.
 from __future__ import annotations
 
 import errno
+import threading
 import time
 from pathlib import Path
 
 import pytest
 from huey import SqliteHuey
 
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 
 
@@ -61,6 +63,94 @@ class TestHueyWorker:
         worker.stop()
         assert huey_instance.pending_count() == 0
         assert 42 in results
+
+    def test_consumer_reports_active_lease_during_execution(
+        self,
+        huey_instance: SqliteHuey,
+    ) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        @huey_instance.task()
+        def blocking_task() -> None:
+            started.set()
+            release.wait(timeout=5.0)
+
+        blocking_task()
+        worker = HueyWorker(huey_instance)
+        worker.start()
+        try:
+            assert started.wait(timeout=5.0)
+            lease_store = TaskLeaseStore(Path(huey_instance.storage.filename))
+            assert lease_store.active_count() == 1
+            release.set()
+            deadline = time.monotonic() + 5.0
+            while lease_store.active_count() > 0 and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert lease_store.active_count() == 0
+        finally:
+            release.set()
+            worker.stop()
+
+    def test_consumer_marks_huey_errors_failed(
+        self,
+        huey_instance: SqliteHuey,
+    ) -> None:
+        @huey_instance.task()
+        def failing_task() -> None:
+            raise RuntimeError("expected failure")
+
+        result = failing_task()
+        worker = HueyWorker(huey_instance)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while huey_instance.pending_count() > 0 and time.monotonic() < deadline:
+                time.sleep(0.05)
+        finally:
+            worker.stop()
+
+        lease = TaskLeaseStore(Path(huey_instance.storage.filename)).get(result.id)
+        assert lease is not None
+        assert lease.state == "failed"
+        assert lease.error is not None
+        assert "expected failure" in lease.error
+
+    def test_start_requeues_expired_lease(
+        self,
+        huey_instance: SqliteHuey,
+    ) -> None:
+        results: list[int] = []
+
+        @huey_instance.task()
+        def append_value(x: int) -> None:
+            results.append(x)
+
+        append_value(7)
+        task = huey_instance.dequeue()
+        assert task is not None
+        lease_store = TaskLeaseStore(
+            Path(huey_instance.storage.filename),
+            timeout_seconds=1.0,
+        )
+        assert lease_store.claim(
+            task.id,
+            task_name=task.name,
+            owner_token="stale-owner",
+            payload=huey_instance.serialize_task(task),
+            now=100.0,
+        )
+
+        worker = HueyWorker(huey_instance)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while not results and time.monotonic() < deadline:
+                time.sleep(0.05)
+        finally:
+            worker.stop()
+
+        assert results == [7]
 
     def test_double_start_is_safe(self, huey_instance: SqliteHuey) -> None:
         """Starting twice doesn't create duplicate threads."""
@@ -271,14 +361,18 @@ class TestWorkerRuntimeStartup:
             "mcp_markdown_ragdocs.cli._parent_process_alive",
             lambda _pid, _parent_start_time=None: False,
         )
-        monkeypatch.setattr(
-            RuntimePaths,
-            "resolve",
-            classmethod(lambda cls: runtime_paths),
-        )
+        resolve_calls = 0
+
+        def _unexpected_resolve(cls):
+            nonlocal resolve_calls
+            resolve_calls += 1
+            return runtime_paths
+
+        monkeypatch.setattr(RuntimePaths, "resolve", classmethod(_unexpected_resolve))
 
         await _run_worker_forever_async(None, runtime_paths.queue_db_path, runtime_paths.root, 123)
 
         assert fake_ctx.watcher.stop_calls >= 1
         assert fake_worker.start_calls == 1
         assert fake_worker.stop_calls >= 1
+        assert resolve_calls == 0

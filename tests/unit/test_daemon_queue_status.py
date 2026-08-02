@@ -6,6 +6,7 @@ from pathlib import Path
 from huey import SqliteHuey
 from huey.utils import Error
 
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats, purge_queue_state
 
 
@@ -128,3 +129,19 @@ def test_purge_queue_state_clears_only_selected_state(
     assert payload["pending_count"] == 0
     assert payload["scheduled_count"] == 1
     assert payload["failed_count"] == 1
+
+
+def test_get_queue_stats_reports_active_lease_count(tmp_path: Path) -> None:
+    db_path = tmp_path / "queue.db"
+    huey = SqliteHuey(name="queue-status", filename=str(db_path), immediate=False)
+    lease_store = TaskLeaseStore(db_path)
+    assert lease_store.claim(
+        "running-1",
+        task_name="index_document",
+        owner_token="worker-1",
+        payload=b"serialized-task",
+    )
+
+    stats = get_queue_stats(huey)
+
+    assert stats.running_count == 1

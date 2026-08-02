@@ -127,7 +127,6 @@ from mcp_markdown_ragdocs.indexing.tasks import register_tasks
 from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 from mcp_markdown_ragdocs.worker.process import (
-    _worker_status_path,
     is_expected_daemon_parent,
 )
 
@@ -248,7 +247,7 @@ async def _run_worker_forever_async(
             )
             git_watcher.start()
 
-    worker_status_path = _worker_status_path(RuntimePaths.resolve())
+    worker_status_path = index_root / "worker.json"
 
     def _write_worker_status(status: str) -> None:
         worker_status_path.parent.mkdir(parents=True, exist_ok=True)
