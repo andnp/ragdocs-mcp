@@ -1,6 +1,7 @@
 """Commit metadata extraction and delta truncation."""
 
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,6 +9,10 @@ from pathlib import Path
 from searchkernel.api import truncate_delta
 
 logger = logging.getLogger(__name__)
+COMMIT_BATCH_SIZE = 32
+_BULK_RECORD_SEPARATOR = "\x1e"
+_BULK_FIELD_SEPARATOR = "\x1f"
+_BULK_METADATA_SEPARATOR = "\x00"
 
 
 @dataclass
@@ -20,6 +25,131 @@ class CommitData:
     message: str
     files_changed: list[str]
     delta_truncated: str
+
+
+def parse_commits(
+    git_dir: Path,
+    commit_hashes: list[str],
+    max_delta_lines: int = 200,
+) -> list[CommitData]:
+    """Extract commits in bounded batches, falling back per batch on failure."""
+    commits: list[CommitData] = []
+    for start in range(0, len(commit_hashes), COMMIT_BATCH_SIZE):
+        batch = commit_hashes[start : start + COMMIT_BATCH_SIZE]
+        try:
+            commits.extend(_parse_commit_batch(git_dir, batch, max_delta_lines))
+        except (
+            OSError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            ValueError,
+        ) as e:
+            logger.warning(
+                "Bulk parsing failed for commit batch starting at %s: %s",
+                batch[0][:8],
+                e,
+            )
+            commits.extend(
+                parse_commit(git_dir, commit_hash, max_delta_lines)
+                for commit_hash in batch
+            )
+    return commits
+
+
+def _parse_commit_batch(
+    git_dir: Path,
+    commit_hashes: list[str],
+    max_delta_lines: int,
+) -> list[CommitData]:
+    """Parse one bounded batch with a single Git subprocess."""
+    if not commit_hashes:
+        return []
+
+    format_string = (
+        f"{_BULK_RECORD_SEPARATOR}%H{_BULK_FIELD_SEPARATOR}%ct"
+        f"{_BULK_FIELD_SEPARATOR}%an <%ae>{_BULK_FIELD_SEPARATOR}%cn <%ce>"
+        f"{_BULK_FIELD_SEPARATOR}%s{_BULK_FIELD_SEPARATOR}%b"
+        "%x00"
+    )
+    result = subprocess.run(
+        [
+            "git",
+            "show",
+            "--format=" + format_string,
+            "--raw",
+            "--patch",
+            "--no-color",
+            "--no-renames",
+            "--no-ext-diff",
+            *commit_hashes,
+        ],
+        cwd=git_dir.parent,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        timeout=30,
+    )
+
+    parsed: dict[str, CommitData] = {}
+    for raw_record in result.stdout.split(_BULK_RECORD_SEPARATOR):
+        if not raw_record.strip():
+            continue
+        metadata, body = raw_record.split(_BULK_METADATA_SEPARATOR, 1)
+        fields = metadata.split(_BULK_FIELD_SEPARATOR, 5)
+        if len(fields) != 6:
+            raise ValueError("Bulk Git output contained incomplete metadata")
+
+        hash_val, timestamp_text, author, committer, title, message_text = fields
+        hash_val = hash_val.strip()
+        if hash_val not in commit_hashes:
+            raise ValueError(f"Unexpected commit in bulk Git output: {hash_val}")
+
+        try:
+            timestamp = int(timestamp_text.strip())
+        except ValueError as e:
+            raise ValueError(f"Invalid timestamp for commit {hash_val}") from e
+
+        diff_start = re.search(r"(?m)^diff --(?:git|cc) ", body)
+        if diff_start is None:
+            files_text = body
+            delta = ""
+        else:
+            files_text = body[: diff_start.start()]
+            delta = body[diff_start.start() :]
+
+        files_changed = [
+            line.split("\t", 1)[1]
+            for line in files_text.splitlines()
+            if line.startswith(":") and "\t" in line
+        ]
+        parsed[hash_val] = CommitData(
+            hash=hash_val,
+            timestamp=timestamp,
+            author=author.strip(),
+            committer=committer.strip(),
+            title=title.strip(),
+            message=_clean_message(message_text),
+            files_changed=files_changed,
+            delta_truncated=truncate_delta(delta, max_delta_lines),
+        )
+
+    if set(parsed) != set(commit_hashes):
+        missing = set(commit_hashes) - set(parsed)
+        raise ValueError(f"Bulk Git output omitted commits: {sorted(missing)}")
+    return [parsed[commit_hash] for commit_hash in commit_hashes]
+
+
+def _clean_message(message_text: str) -> str:
+    """Match the existing parser's treatment of commit message bodies."""
+    message_lines = []
+    started = False
+    for line in message_text.splitlines():
+        if line.strip() or started:
+            started = True
+            message_lines.append(line.rstrip())
+    return "\n".join(message_lines).rstrip()
 
 
 def parse_commit(
@@ -61,14 +191,7 @@ def parse_commit(
         title = lines[4].strip() if len(lines) > 4 else ""
 
         # Message body (everything after title, excluding empty lines at start)
-        message_lines = []
-        if len(lines) > 5:
-            started = False
-            for line in lines[5:]:
-                if line.strip() or started:
-                    started = True
-                    message_lines.append(line.rstrip())
-        message = "\n".join(message_lines).rstrip()
+        message = _clean_message("\n".join(lines[5:])) if len(lines) > 5 else ""
 
     except (
         subprocess.CalledProcessError,
@@ -212,4 +335,3 @@ def build_commit_document(commit: CommitData) -> str:
         parts.append(commit.delta_truncated)
 
     return "\n".join(parts)
-

@@ -10,7 +10,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from searchkernel.domain import ChangeSignal, Cursor, Record, RecordStatus
-from mcp_markdown_ragdocs.git.commit_parser import build_commit_document, parse_commit
+from mcp_markdown_ragdocs.git.commit_parser import (
+    build_commit_document,
+    CommitData,
+    parse_commit,
+    parse_commits,
+)
 from mcp_markdown_ragdocs.git.repository import get_commits_after_timestamp
 
 logger = logging.getLogger(__name__)
@@ -81,15 +86,14 @@ class GitContentSource:
 
         logger.debug(f"Found {len(commit_hashes)} commits in {self.repo_path.name}")
 
-        for commit_hash in commit_hashes:
+        commit_data = parse_commits(self.git_dir, commit_hashes, max_delta_lines=200)
+        for data in commit_data:
             try:
-                record = self._commit_to_record(commit_hash)
+                record = self._commit_data_to_record(data)
                 if record is not None:
                     yield record
             except Exception:
-                logger.exception(
-                    f"Failed to convert commit {commit_hash[:8]} to Record"
-                )
+                logger.exception(f"Failed to convert commit {data.hash[:8]} to Record")
                 continue
 
     def change_signal(self) -> ChangeSignal:
@@ -114,9 +118,13 @@ class GitContentSource:
             A Record representing the commit, or None if conversion fails.
         """
         commit_data = parse_commit(self.git_dir, commit_hash, max_delta_lines=200)
+        return self._commit_data_to_record(commit_data)
+
+    def _commit_data_to_record(self, commit_data: CommitData) -> Record | None:
+        """Convert parsed commit data to a Record."""
 
         if not commit_data.hash:
-            logger.warning(f"Failed to parse commit {commit_hash[:8]}")
+            logger.warning("Failed to parse commit with empty hash")
             return None
 
         # Build the searchable body text (message + diff summary)

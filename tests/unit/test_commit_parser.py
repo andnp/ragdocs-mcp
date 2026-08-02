@@ -2,10 +2,12 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from mcp_markdown_ragdocs.git import commit_parser
 from mcp_markdown_ragdocs.git.commit_parser import (
     CommitData,
     build_commit_document,
     parse_commit,
+    parse_commits,
 )
 
 
@@ -77,6 +79,77 @@ def test_parse_standard_commit():
         assert commit_data.title == "Add test file"
         # Git diff-tree may not show files for new file commits in some cases
         assert len(commit_data.delta_truncated) > 0  # Verify delta is captured
+
+
+def test_parse_commits_matches_single_commit_parser(tmp_path: Path):
+    """Bulk extraction preserves the single-commit parser contract."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    _init_git_repo(repo_path)
+
+    commit_hashes = [
+        _create_commit(repo_path, "one.txt", "one", "First commit"),
+        _create_commit(repo_path, "two.txt", "two", "Second commit"),
+        _create_commit(repo_path, "three.txt", "three", "Third commit"),
+    ]
+    git_dir = repo_path / ".git"
+
+    expected = [parse_commit(git_dir, commit_hash) for commit_hash in commit_hashes[1:]]
+    actual = parse_commits(git_dir, commit_hashes)
+
+    assert actual[1:] == expected
+    assert actual[0].files_changed == ["one.txt"]
+
+
+def test_parse_commits_uses_bounded_bulk_batches(tmp_path: Path, monkeypatch):
+    """Bulk extraction uses one Git show per bounded batch."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    _init_git_repo(repo_path)
+    commit_hashes = [
+        _create_commit(repo_path, f"{index}.txt", str(index), f"Commit {index}")
+        for index in range(3)
+    ]
+
+    calls: list[list[str]] = []
+    original_run = commit_parser.subprocess.run
+
+    def counting_run(command, *args, **kwargs):
+        if command[:2] == ["git", "show"] and "--raw" in command:
+            calls.append(command)
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(commit_parser.subprocess, "run", counting_run)
+    monkeypatch.setattr(commit_parser, "COMMIT_BATCH_SIZE", 2)
+
+    parse_commits(repo_path / ".git", commit_hashes)
+
+    assert len(calls) == 2
+    assert all(commit_hash in calls[0] + calls[1] for commit_hash in commit_hashes)
+
+
+def test_parse_commits_falls_back_per_batch(tmp_path: Path, monkeypatch):
+    """A failed bulk batch falls back to the existing parser for its commits."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    _init_git_repo(repo_path)
+    commit_hashes = [
+        _create_commit(repo_path, f"{index}.txt", str(index), f"Commit {index}")
+        for index in range(2)
+    ]
+    git_dir = repo_path / ".git"
+    expected = [parse_commit(git_dir, commit_hash) for commit_hash in commit_hashes]
+
+    original_run = commit_parser.subprocess.run
+
+    def fail_bulk_run(command, *args, **kwargs):
+        if command[:2] == ["git", "show"] and "--raw" in command:
+            raise subprocess.CalledProcessError(1, command)
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(commit_parser.subprocess, "run", fail_bulk_run)
+
+    assert parse_commits(git_dir, commit_hashes) == expected
 
 
 def test_parse_merge_commit():
