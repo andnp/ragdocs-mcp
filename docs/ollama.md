@@ -8,7 +8,7 @@ Install and start Ollama, then pull the configured model:
 
 ```sh
 ollama serve
-ollama pull qwen3-embedding:0.6b
+ollama pull nomic-embed-text:latest
 ```
 
 The default configuration is equivalent to:
@@ -16,7 +16,7 @@ The default configuration is equivalent to:
 ```toml
 [embedding]
 provider = "ollama"
-model_name = "qwen3-embedding:0.6b"
+model_name = "nomic-embed-text:latest"
 base_url = "http://localhost:11434"
 auto_pull = true
 timeout_seconds = 60.0

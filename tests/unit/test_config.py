@@ -10,11 +10,16 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-
-from mcp_markdown_ragdocs.config import Config, LLMConfig, load_config, resolve_embedding_model
 from searchkernel.embeddings import (
     TEST_FAKE_EMBEDDING_MODEL_NAME,
     TEST_FAKE_EMBEDDINGS_ENV_VAR,
+)
+
+from mcp_markdown_ragdocs.config import (
+    Config,
+    LLMConfig,
+    load_config,
+    resolve_embedding_model,
 )
 
 
@@ -93,6 +98,7 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         assert config.search.recency_bias == 0.5
         assert config.search.project_uplift_multiplier == 1.2
         assert config.llm.embedding_model == "local"
+        assert config.embedding.model_name == "nomic-embed-text:latest"
         assert config.indexing.torch_num_threads == 4
         assert config.indexing.debounce_window_seconds == 0.5
         assert config.indexing.task_backpressure_limit == 100
