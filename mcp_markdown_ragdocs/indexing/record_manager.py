@@ -7,12 +7,12 @@ connects those two responsibilities.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -119,6 +119,7 @@ class RecordIndexManager:
             keyword_store=kernel.keyword_store,
             vector_store=kernel.vector_store,
             embedding_cache=self._embedding_cache,
+            embedding_batch_size=max(1, config.embedding.batch_size),
         )
 
     @property
