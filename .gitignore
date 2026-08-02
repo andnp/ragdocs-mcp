@@ -14,3 +14,4 @@
 **/.cache/
 **/.mcp-markdown-ragdocs/
 .index_data/
+.codegraph/
