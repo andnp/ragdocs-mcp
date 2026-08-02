@@ -114,6 +114,30 @@ def test_worker_process_stop_sends_sigterm(monkeypatch, tmp_path: Path):
     assert worker.is_running is False
 
 
+def test_worker_process_allows_long_running_task_heartbeat(
+    monkeypatch,
+    tmp_path: Path,
+):
+    fake_process = _FakeProcess()
+    worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
+    worker._process = fake_process
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.worker.process._read_worker_status",
+        lambda _runtime_paths: {
+            "status": "ready",
+            "pid": fake_process.pid,
+            "heartbeat": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.worker.process.time.time",
+        lambda: 100.0 + 299.0,
+    )
+
+    assert worker.is_healthy() is True
+
+
 def test_worker_process_restart_replaces_process(monkeypatch, tmp_path: Path):
     first = _FakeProcess()
     second = _FakeProcess()

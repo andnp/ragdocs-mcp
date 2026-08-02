@@ -14,6 +14,7 @@ from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
 logger = logging.getLogger(__name__)
 
 WORKER_STARTUP_TIMEOUT_SECONDS = 60.0
+WORKER_HEARTBEAT_TIMEOUT_SECONDS = 300.0
 
 _DAEMON_PARENT_COMMAND = ("-m", "mcp_markdown_ragdocs.cli", "daemon-internal-run")
 _WORKER_COMMAND = ("-m", "mcp_markdown_ragdocs.cli", "worker-run")
@@ -52,7 +53,7 @@ class HueyWorkerProcess:
         heartbeat = status.get("heartbeat")
         if not isinstance(heartbeat, (int, float)):
             return False
-        return (time.time() - heartbeat) <= 10.0
+        return (time.time() - heartbeat) <= WORKER_HEARTBEAT_TIMEOUT_SECONDS
 
     def start(self) -> None:
         if self.is_running:
