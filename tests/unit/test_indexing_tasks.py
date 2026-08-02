@@ -297,6 +297,63 @@ class TestTaskRegistration:
         assert first_task.priority == RECORD_BATCH_TASK_PRIORITY
         assert first_task.priority > GIT_REFRESH_TASK_PRIORITY
 
+    def test_document_work_precedes_git_refresh(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+
+        assert enqueue_refresh_git("/repo/.git") is True
+        assert enqueue_index("/docs/note.md") is True
+
+        first_task = huey_instance.dequeue()
+        assert first_task is not None
+        assert first_task.name == "_index_document"
+
+    def test_concurrent_git_refresh_submissions_coalesce(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        barrier = Barrier(2)
+        results: list[str] = []
+
+        def _submit() -> None:
+            barrier.wait()
+            results.append(submit_refresh_git_request("/repo/.git").status)
+
+        threads = [Thread(target=_submit) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert sorted(results) == ["already_pending", "enqueued"]
+        assert huey_instance.pending_count() == 1
+
+    def test_deferred_git_refresh_is_requeued_after_writer_release(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        store = TaskLeaseStore(Path(huey_instance.storage.filename))
+        assert store.acquire_writer("rebuild-active")
+
+        submission = submit_refresh_git_request("/repo/.git")
+        assert submission.status == "already_pending"
+        assert huey_instance.pending_count() == 0
+
+        assert store.release_writer("rebuild-active")
+        tasks_mod._run_as_writer(
+            lambda: None,
+            owner_token="rebuild-finished",
+            busy_result=False,
+        )
+
+        assert huey_instance.pending_count() == 1
+        task = huey_instance.dequeue()
+        assert task is not None
+        assert task.args == ("/repo/.git",)
+
     def test_startup_batch_skips_files_already_pending_in_queue(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:

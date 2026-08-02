@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RECORD_BATCH_TASK_PRIORITY = 100
-GIT_REFRESH_TASK_PRIORITY = 10
+GIT_REFRESH_TASK_PRIORITY = -10
 REINDEX_TASK_PRIORITY = 200
 WRITER_LEASE_TIMEOUT_SECONDS = 30.0
 WRITER_HEARTBEAT_INTERVAL_SECONDS = 5.0
@@ -99,6 +99,8 @@ _bootstrap_index_path: Path | None = None
 _bootstrap_documents_roots: list[Path] = []
 _schedule_vocabulary_catch_up: Callable[[], bool] | None = None
 _git_refresh_in_flight: set[str] = set()
+_git_refresh_pending: set[str] = set()
+_git_refresh_deferred: set[str] = set()
 _git_refresh_lock = threading.Lock()
 
 # Task references (set after register_tasks is called)
@@ -131,6 +133,7 @@ def _run_as_writer(
     *,
     owner_token: str | None = None,
     busy_result: Any,
+    on_busy: Callable[[], None] | None = None,
 ) -> Any:
     store = _writer_lease_store()
     if store is None:
@@ -139,6 +142,8 @@ def _run_as_writer(
     token = owner_token or uuid4().hex
     if not store.acquire_writer(token):
         logger.info("Deferring index write while rebuild owns the writer")
+        if on_busy is not None:
+            on_busy()
         return busy_result
 
     heartbeat_stop = threading.Event()
@@ -160,16 +165,28 @@ def _run_as_writer(
     finally:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=WRITER_HEARTBEAT_INTERVAL_SECONDS)
-        store.release_writer(token)
+        released = store.release_writer(token)
+        if released and owner_token is not None:
+            _flush_deferred_git_refreshes()
 
 
-def _writer_owned_task(*, busy_result: Any):
+def _writer_owned_task(
+    *,
+    busy_result: Any,
+    on_busy: Callable[..., None] | None = None,
+):
     def _decorate(function):
         @functools.wraps(function)
         def _wrapped(*args, **kwargs):
+            busy_callback = on_busy
             return _run_as_writer(
                 lambda: function(*args, **kwargs),
                 busy_result=busy_result,
+                on_busy=(
+                    None
+                    if busy_callback is None
+                    else lambda: busy_callback(*args, **kwargs)
+                ),
             )
 
         return _wrapped
@@ -184,6 +201,36 @@ class _RejectedRecordBatch:
             "error": "index_writer_busy",
             "details": "Index writer is owned by a rebuild. Retry shortly.",
         }
+
+
+def _git_refresh_key(git_dir: str | Path) -> str:
+    return str(Path(git_dir).resolve())
+
+
+def _defer_git_refresh(git_dir: str) -> None:
+    repo_key = _git_refresh_key(git_dir)
+    with _git_refresh_lock:
+        _git_refresh_pending.add(repo_key)
+        _git_refresh_deferred.add(repo_key)
+    logger.info("Deferred git refresh until index writer release: %s", git_dir)
+
+
+def _flush_deferred_git_refreshes() -> None:
+    with _git_refresh_lock:
+        deferred = list(_git_refresh_deferred)
+        _git_refresh_deferred.difference_update(deferred)
+        _git_refresh_pending.difference_update(deferred)
+
+    for git_dir in deferred:
+        submission = submit_refresh_git_request(git_dir)
+        if submission.should_retry_later or not submission.queue_available:
+            with _git_refresh_lock:
+                _git_refresh_pending.add(git_dir)
+                _git_refresh_deferred.add(git_dir)
+            logger.info(
+                "Keeping deferred git refresh for a later retry: %s",
+                git_dir,
+            )
 
 
 def register_tasks(
@@ -212,6 +259,10 @@ def register_tasks(
     _bootstrap_index_path = bootstrap_index_path
     _bootstrap_documents_roots = list(bootstrap_documents_roots or [])
     _schedule_vocabulary_catch_up = schedule_vocabulary_catch_up
+    with _git_refresh_lock:
+        _git_refresh_in_flight.clear()
+        _git_refresh_pending.clear()
+        _git_refresh_deferred.clear()
 
     @huey.task()
     def _index_document(file_path: str, force: bool = False) -> bool:
@@ -487,7 +538,7 @@ def register_tasks(
         return not failures
 
     @huey.task()
-    @_writer_owned_task(busy_result=False)
+    @_writer_owned_task(busy_result=False, on_busy=_defer_git_refresh)
     def _refresh_git_repository(git_dir: str) -> bool:
         """Refresh the git index for one repository."""
         if _index_manager is None:
@@ -552,6 +603,8 @@ def register_tasks(
         finally:
             with _git_refresh_lock:
                 _git_refresh_in_flight.discard(repo_key)
+                if repo_key not in _git_refresh_deferred:
+                    _git_refresh_pending.discard(repo_key)
 
     @huey.task()
     def _rebuild_index(project_override: str | None, request_id: str) -> bool:
@@ -1041,27 +1094,46 @@ def enqueue_refresh_git(git_dir: str) -> bool:
 def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
     if refresh_git_repository_task is None or _huey is None:
         return TaskSubmissionResult(status="unavailable")
-    if _writer_is_active():
-        return TaskSubmissionResult(status="already_pending")
-    git_dir_key = str(Path(git_dir).resolve())
+    git_dir_key = _git_refresh_key(git_dir)
     with _git_refresh_lock:
-        if git_dir_key in _git_refresh_in_flight:
-            logger.info("Skipping git refresh enqueue for %s because it is running", git_dir)
+        if (
+            git_dir_key in _git_refresh_in_flight
+            or git_dir_key in _git_refresh_pending
+            or git_dir_key in _git_refresh_deferred
+        ):
+            logger.info(
+                "Skipping git refresh enqueue for %s because it is already queued or running",
+                git_dir,
+            )
             return TaskSubmissionResult(status="already_pending")
+        if _writer_is_active():
+            _git_refresh_pending.add(git_dir_key)
+            _git_refresh_deferred.add(git_dir_key)
+            logger.info("Deferring git refresh while rebuild owns the writer: %s", git_dir)
+            return TaskSubmissionResult(status="already_pending")
+        _git_refresh_pending.add(git_dir_key)
+
     if is_backpressured(
         _huey,
         _task_backpressure_limit,
         item=git_dir,
         warning_message="Skipping git refresh enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
+        with _git_refresh_lock:
+            _git_refresh_pending.discard(git_dir_key)
         return TaskSubmissionResult(status="backpressured")
-    enqueued = submit_single_task(
-        refresh_git_repository_task,
-        git_dir,
-        task_kwargs={"priority": GIT_REFRESH_TASK_PRIORITY},
-        pending_first_args=_get_pending_refresh_git_dirs(),
-        pending_skip_log_message="Skipping git refresh enqueue for %s because a pending task already exists",
-    )
+    try:
+        enqueued = submit_single_task(
+            refresh_git_repository_task,
+            git_dir,
+            task_kwargs={"priority": GIT_REFRESH_TASK_PRIORITY},
+            pending_first_args=_get_pending_refresh_git_dirs(),
+            pending_skip_log_message="Skipping git refresh enqueue for %s because a pending task already exists",
+        )
+    except Exception:
+        with _git_refresh_lock:
+            _git_refresh_pending.discard(git_dir_key)
+        raise
     if enqueued:
         return TaskSubmissionResult(status="enqueued")
     return TaskSubmissionResult(status="already_pending")
