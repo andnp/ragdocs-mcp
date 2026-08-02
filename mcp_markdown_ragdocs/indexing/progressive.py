@@ -60,7 +60,7 @@ class _BootstrapFileSource:
         records_by_file: dict[str, tuple[Record, ...]],
     ) -> None:
         self._manager = manager
-        self._file_paths = tuple(file_paths)
+        self._file_paths = tuple(sorted(file_paths))
         self._documents_roots = tuple(documents_roots)
         self.prepared_by_file = prepared_by_file
         self.records_by_file = records_by_file
