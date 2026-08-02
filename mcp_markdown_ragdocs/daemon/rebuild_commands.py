@@ -147,9 +147,14 @@ def run_rebuild_command(
         project=project,
         all_projects=all_projects,
     )
-    submit_payload = request_rebuild_submit_payload(
-        project_override=effective_project,
-    )
+    while True:
+        submit_payload = request_rebuild_submit_payload(
+            project_override=effective_project,
+        )
+        if not bool(submit_payload.get("retry_later")):
+            break
+        sleep(poll_interval_seconds)
+
     if bool(submit_payload.get("already_running")):
         emit("ℹ️  Rebuild already in progress; attaching to daemon-owned status")
 

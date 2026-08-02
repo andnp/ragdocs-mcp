@@ -154,7 +154,7 @@ class TestTaskRegistration:
         for thread in threads:
             thread.join()
 
-        assert sorted(results) == ["already_pending", "enqueued"]
+        assert sorted(results) == ["backpressured", "enqueued"]
         assert huey_instance.pending_count() == 1
 
     def test_rebuild_task_releases_writer_after_success_and_failure(

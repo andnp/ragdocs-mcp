@@ -528,9 +528,11 @@ def build_daemon_request_handler(
                 }
             if submission.should_retry_later:
                 return {
-                    "status": "error",
-                    "error": "rebuild_queue_backpressured",
-                    "details": "Daemon rebuild queue is backpressured. Retry shortly.",
+                    "status": "ok",
+                    "accepted": False,
+                    "already_running": False,
+                    "retry_later": True,
+                    "details": "Daemon rebuild writer is busy. Retry shortly.",
                 }
 
             queued_status = submit_rebuild_status(

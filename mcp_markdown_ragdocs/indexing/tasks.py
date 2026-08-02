@@ -1183,8 +1183,10 @@ def submit_rebuild_request(
         return TaskSubmissionResult(status="unavailable")
 
     writer_store = _writer_lease_store()
-    if writer_store is None or not writer_store.acquire_writer(request_id):
-        return TaskSubmissionResult(status="already_pending")
+    if writer_store is None:
+        return TaskSubmissionResult(status="unavailable")
+    if not writer_store.acquire_writer(request_id):
+        return TaskSubmissionResult(status="backpressured")
 
     queue_item = project_override or "__global__"
     if is_backpressured(
