@@ -21,7 +21,6 @@ from mcp_markdown_ragdocs.indexing.rebuild_service import (
     read_rebuild_status,
     resolve_rebuild_scope,
     submit_rebuild_status,
-    write_rebuild_status,
 )
 from mcp_markdown_ragdocs.indexing.reindex import (
     REINDEX_ACTIVE_STATUSES,
@@ -510,30 +509,35 @@ def build_daemon_request_handler(
                 project_override,
             )
             request_id = uuid4().hex
-            queued_status = submit_rebuild_status(
-                dependencies.runtime_root,
-                request_id=request_id,
-                scope=scope,
-            )
             submission = submit_rebuild_request(
                 project_override,
                 request_id=request_id,
             )
+            if submission.status == "already_pending":
+                return {
+                    "status": "ok",
+                    "accepted": False,
+                    "already_running": True,
+                    "rebuild": read_rebuild_status(dependencies.runtime_root),
+                }
             if not submission.queue_available:
-                write_rebuild_status(dependencies.runtime_root, {"status": "idle"})
                 return {
                     "status": "error",
                     "error": "rebuild_queue_unavailable",
                     "details": "Daemon rebuild queue is unavailable.",
                 }
             if submission.should_retry_later:
-                write_rebuild_status(dependencies.runtime_root, {"status": "idle"})
                 return {
                     "status": "error",
                     "error": "rebuild_queue_backpressured",
                     "details": "Daemon rebuild queue is backpressured. Retry shortly.",
                 }
 
+            queued_status = submit_rebuild_status(
+                dependencies.runtime_root,
+                request_id=request_id,
+                scope=scope,
+            )
             return {
                 "status": "ok",
                 "accepted": submission.accepted_by_queue,

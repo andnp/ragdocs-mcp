@@ -18,6 +18,7 @@ ACTIVE_LEASE = "active"
 COMPLETED_LEASE = "completed"
 FAILED_LEASE = "failed"
 RECLAIMED_LEASE = "reclaimed"
+INDEX_WRITER_RESOURCE = "index-writer"
 
 
 @dataclass(frozen=True)
@@ -229,6 +230,93 @@ class TaskLeaseStore:
             ).fetchone()
         return None if row is None else _row_to_lease(row)
 
+    def acquire_writer(self, owner_token: str, *, now: float | None = None) -> bool:
+        timestamp = time.time() if now is None else now
+        cutoff = timestamp - self._timeout_seconds
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT owner_token, heartbeat_at
+                FROM writer_leases
+                WHERE resource = ?
+                """,
+                (INDEX_WRITER_RESOURCE,),
+            ).fetchone()
+            if (
+                row is not None
+                and row["owner_token"] != owner_token
+                and row["heartbeat_at"] > cutoff
+            ):
+                return False
+
+            connection.execute(
+                """
+                INSERT INTO writer_leases (
+                    resource, owner_token, acquired_at, heartbeat_at
+                )
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(resource) DO UPDATE SET
+                    owner_token = excluded.owner_token,
+                    acquired_at = excluded.acquired_at,
+                    heartbeat_at = excluded.heartbeat_at
+                """,
+                (INDEX_WRITER_RESOURCE, owner_token, timestamp, timestamp),
+            )
+            return True
+
+    def heartbeat_writer(
+        self,
+        owner_token: str,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        timestamp = time.time() if now is None else now
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE writer_leases
+                SET heartbeat_at = ?
+                WHERE resource = ? AND owner_token = ?
+                """,
+                (timestamp, INDEX_WRITER_RESOURCE, owner_token),
+            )
+            return cursor.rowcount == 1
+
+    def release_writer(self, owner_token: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM writer_leases
+                WHERE resource = ? AND owner_token = ?
+                """,
+                (INDEX_WRITER_RESOURCE, owner_token),
+            )
+            return cursor.rowcount == 1
+
+    def writer_owner(self, *, now: float | None = None) -> str | None:
+        timestamp = time.time() if now is None else now
+        cutoff = timestamp - self._timeout_seconds
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT owner_token, heartbeat_at
+                FROM writer_leases
+                WHERE resource = ?
+                """,
+                (INDEX_WRITER_RESOURCE,),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["heartbeat_at"] <= cutoff:
+                connection.execute(
+                    "DELETE FROM writer_leases WHERE resource = ?",
+                    (INDEX_WRITER_RESOURCE,),
+                )
+                return None
+            return str(row["owner_token"])
+
     def _finish(
         self,
         task_id: str,
@@ -271,6 +359,16 @@ class TaskLeaseStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_task_leases_active_heartbeat
                 ON task_leases (state, heartbeat_at)
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS writer_leases (
+                    resource TEXT PRIMARY KEY,
+                    owner_token TEXT NOT NULL,
+                    acquired_at REAL NOT NULL,
+                    heartbeat_at REAL NOT NULL
+                )
                 """
             )
 

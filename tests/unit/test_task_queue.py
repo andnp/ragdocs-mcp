@@ -147,3 +147,14 @@ class TestTaskLeases:
         lease = store.get("task-1")
         assert lease is not None
         assert lease.state == "completed"
+
+    def test_writer_lease_is_exclusive_and_expires(self, tmp_path: Path) -> None:
+        store = TaskLeaseStore(tmp_path / "queue.db", timeout_seconds=10)
+
+        assert store.acquire_writer("rebuild-1", now=100.0)
+        assert not store.acquire_writer("rebuild-2", now=105.0)
+        assert store.writer_owner(now=105.0) == "rebuild-1"
+        assert store.writer_owner(now=111.0) is None
+        assert store.acquire_writer("rebuild-2", now=112.0)
+        assert store.release_writer("rebuild-2")
+        assert store.writer_owner(now=112.0) is None

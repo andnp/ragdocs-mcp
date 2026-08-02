@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TYPE_CHECKING, Protocol, cast
+from uuid import uuid4
 
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.task_submission import (
     coalesce_pending_first_args,
     get_pending_task_first_args,
@@ -36,7 +39,10 @@ from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     save_cursor,
     save_head,
 )
-from mcp_markdown_ragdocs.indexing.rebuild_service import run_rebuild
+from mcp_markdown_ragdocs.indexing.rebuild_service import (
+    run_rebuild,
+    write_rebuild_status,
+)
 from mcp_markdown_ragdocs.indexing.reindex import (
     run_reindex_operation,
     write_reindex_status,
@@ -56,6 +62,8 @@ logger = logging.getLogger(__name__)
 RECORD_BATCH_TASK_PRIORITY = 100
 GIT_REFRESH_TASK_PRIORITY = 10
 REINDEX_TASK_PRIORITY = 200
+WRITER_LEASE_TIMEOUT_SECONDS = 30.0
+WRITER_HEARTBEAT_INTERVAL_SECONDS = 5.0
 
 __all__ = [
     "TaskBatchSubmissionResult",
@@ -104,6 +112,80 @@ rebuild_index_task: Any = None
 reindex_model_task: Any = None
 
 
+def _writer_lease_store() -> TaskLeaseStore | None:
+    if _huey is None:
+        return None
+    return TaskLeaseStore(
+        cast(Any, _huey.storage).filename,
+        timeout_seconds=WRITER_LEASE_TIMEOUT_SECONDS,
+    )
+
+
+def _writer_is_active() -> bool:
+    store = _writer_lease_store()
+    return store is not None and store.writer_owner() is not None
+
+
+def _run_as_writer(
+    operation: Callable[[], Any],
+    *,
+    owner_token: str | None = None,
+    busy_result: Any,
+) -> Any:
+    store = _writer_lease_store()
+    if store is None:
+        return busy_result
+
+    token = owner_token or uuid4().hex
+    if not store.acquire_writer(token):
+        logger.info("Deferring index write while rebuild owns the writer")
+        return busy_result
+
+    heartbeat_stop = threading.Event()
+
+    def _heartbeat() -> None:
+        while not heartbeat_stop.wait(WRITER_HEARTBEAT_INTERVAL_SECONDS):
+            if not store.heartbeat_writer(token):
+                logger.warning("Lost index writer ownership: %s", token)
+                return
+
+    heartbeat_thread = threading.Thread(
+        target=_heartbeat,
+        name=f"index-writer-heartbeat-{token[:8]}",
+        daemon=True,
+    )
+    heartbeat_thread.start()
+    try:
+        return operation()
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=WRITER_HEARTBEAT_INTERVAL_SECONDS)
+        store.release_writer(token)
+
+
+def _writer_owned_task(*, busy_result: Any):
+    def _decorate(function):
+        @functools.wraps(function)
+        def _wrapped(*args, **kwargs):
+            return _run_as_writer(
+                lambda: function(*args, **kwargs),
+                busy_result=busy_result,
+            )
+
+        return _wrapped
+
+    return _decorate
+
+
+class _RejectedRecordBatch:
+    def get(self, *, blocking: bool, timeout: float) -> dict[str, object]:
+        return {
+            "status": "error",
+            "error": "index_writer_busy",
+            "details": "Index writer is owned by a rebuild. Retry shortly.",
+        }
+
+
 def register_tasks(
     huey: SqliteHuey,
     index_manager: IndexManagerLike,
@@ -137,20 +219,25 @@ def register_tasks(
         if _index_manager is None:
             logger.error("IndexManager not available for task execution")
             return False
-        try:
-            _index_manager.index_document(file_path, force=force)
-            _index_manager.persist()
-            if _bootstrap_index_path is not None and _bootstrap_documents_roots:
-                mark_bootstrap_file_completed(
-                    _bootstrap_index_path,
-                    _bootstrap_documents_roots,
-                    file_path,
-                )
-            logger.info("Task completed: indexed %s", file_path)
-            return True
-        except Exception:
-            logger.exception("Task failed: index %s", file_path)
-            return False
+        manager = _index_manager
+
+        def _operation() -> bool:
+            try:
+                manager.index_document(file_path, force=force)
+                manager.persist()
+                if _bootstrap_index_path is not None and _bootstrap_documents_roots:
+                    mark_bootstrap_file_completed(
+                        _bootstrap_index_path,
+                        _bootstrap_documents_roots,
+                        file_path,
+                    )
+                logger.info("Task completed: indexed %s", file_path)
+                return True
+            except Exception:
+                logger.exception("Task failed: index %s", file_path)
+                return False
+
+        return _run_as_writer(_operation, busy_result=False)
 
     @huey.task()
     def _index_documents_batch(
@@ -162,6 +249,7 @@ def register_tasks(
         if _index_manager is None:
             logger.error("IndexManager not available for batch task execution")
             return False
+        manager = _index_manager
 
         unique_file_paths = list(dict.fromkeys(file_paths))
         if not unique_file_paths:
@@ -180,79 +268,92 @@ def register_tasks(
             and _bootstrap_documents_roots
             and has_incomplete_bootstrap_checkpoint(_bootstrap_index_path)
         ):
-            try:
-                receipt = run_progressive_bootstrap(
-                    cast(ProgressiveIndexManager, _index_manager),
-                    unique_file_paths,
-                    documents_roots=_bootstrap_documents_roots,
-                )
-            except Exception:
-                logger.exception(
-                    "Progressive bootstrap task failed for %d document(s)",
-                    len(unique_file_paths),
-                )
-                return False
-            logger.info(
-                "Task completed: progressively indexed %d document(s)",
-                receipt.successful,
-            )
-            return receipt.failed == 0
-
-        completed_paths: list[str] = []
-        failures: list[str] = []
-
-        try:
-            _index_manager.index_documents(
-                unique_file_paths,
-                force=force,
-                persist=True,
-            )
-            completed_paths = unique_file_paths
-        except Exception:
-            logger.warning(
-                "Batch index task failed; retrying files individually before one final persist",
-                exc_info=True,
-            )
-            for file_path in unique_file_paths:
+            def _progressive_operation() -> bool:
                 try:
-                    _index_manager.index_document(file_path, force=force)
-                    completed_paths.append(file_path)
-                except Exception:
-                    failures.append(file_path)
-                    logger.exception(
-                        "Task failed within batch: index %s",
-                        file_path,
+                    receipt = run_progressive_bootstrap(
+                        cast(ProgressiveIndexManager, manager),
+                        unique_file_paths,
+                        documents_roots=_bootstrap_documents_roots,
                     )
-
-            if completed_paths:
-                try:
-                    _index_manager.persist()
                 except Exception:
                     logger.exception(
-                        "Batch fallback persist failed for %d indexed document(s)",
-                        len(completed_paths),
+                        "Progressive bootstrap task failed for %d document(s)",
+                        len(unique_file_paths),
                     )
                     return False
+                logger.info(
+                    "Task completed: progressively indexed %d document(s)",
+                    receipt.successful,
+                )
+                return receipt.failed == 0
 
-        if (
-            completed_paths
-            and _bootstrap_index_path is not None
-            and _bootstrap_documents_roots
-        ):
-            mark_bootstrap_files_completed(
-                _bootstrap_index_path,
-                _bootstrap_documents_roots,
-                completed_paths,
+            return _run_as_writer(_progressive_operation, busy_result=False)
+
+        def _operation() -> bool:
+            completed_paths: list[str] = []
+            failures: list[str] = []
+
+            try:
+                manager.index_documents(
+                    unique_file_paths,
+                    force=force,
+                    persist=True,
+                )
+                completed_paths = unique_file_paths
+            except Exception:
+                logger.warning(
+                    "Batch index task failed; retrying files individually before one final persist",
+                    exc_info=True,
+                )
+                for file_path in unique_file_paths:
+                    try:
+                        manager.index_document(file_path, force=force)
+                        completed_paths.append(file_path)
+                    except Exception:
+                        failures.append(file_path)
+                        logger.exception(
+                            "Task failed within batch: index %s",
+                            file_path,
+                        )
+
+                if completed_paths:
+                    try:
+                        manager.persist()
+                    except Exception:
+                        logger.exception(
+                            "Batch fallback persist failed for %d indexed document(s)",
+                            len(completed_paths),
+                        )
+                        return False
+
+            if (
+                completed_paths
+                and _bootstrap_index_path is not None
+                and _bootstrap_documents_roots
+            ):
+                mark_bootstrap_files_completed(
+                    _bootstrap_index_path,
+                    _bootstrap_documents_roots,
+                    completed_paths,
+                )
+
+            logger.info(
+                "Task completed: indexed %d document(s) in batch%s",
+                len(completed_paths),
+                "" if not failures else f" with {len(failures)} failure(s)",
             )
+            return not failures
 
-        logger.info(
-            "Task completed: indexed %d document(s) in batch%s",
-            len(completed_paths),
-            "" if not failures else f" with {len(failures)} failure(s)",
-        )
-        return not failures
+        return _run_as_writer(_operation, busy_result=False)
 
     @huey.task()
+    @_writer_owned_task(
+        busy_result={
+            "status": "error",
+            "error": "index_writer_busy",
+            "details": "Index writer is owned by a rebuild. Retry shortly.",
+        }
+    )
     def _index_records_batch(
         record_payloads: list[dict[str, object]],
     ) -> dict[str, object]:
@@ -269,7 +370,6 @@ def register_tasks(
                 "error": "record_queue_unavailable",
                 "details": "Index worker is not configured.",
             }
-
         from mcp_markdown_ragdocs.daemon.record_rpc import (
             RecordSerializationError,
             deserialize_record,
@@ -321,6 +421,7 @@ def register_tasks(
         return {"status": "ok", "indexed_count": len(records)}
 
     @huey.task()
+    @_writer_owned_task(busy_result=False)
     def _remove_document(doc_id: str) -> bool:
         """Remove a document from all indices."""
         if _index_manager is None:
@@ -336,12 +437,12 @@ def register_tasks(
             return False
 
     @huey.task()
+    @_writer_owned_task(busy_result=False)
     def _remove_documents_batch(doc_ids: list[str]) -> bool:
         """Remove a burst of documents and persist once after the batch."""
         if _index_manager is None:
             logger.error("IndexManager not available for batch task execution")
             return False
-
         unique_doc_ids = list(dict.fromkeys(doc_ids))
         if not unique_doc_ids:
             return True
@@ -386,12 +487,12 @@ def register_tasks(
         return not failures
 
     @huey.task()
+    @_writer_owned_task(busy_result=False)
     def _refresh_git_repository(git_dir: str) -> bool:
         """Refresh the git index for one repository."""
         if _index_manager is None:
             logger.error("IndexManager not available for git refresh task")
             return False
-
         from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
         git_dir_path = Path(git_dir).resolve()
         repo_key = str(git_dir_path)
@@ -461,25 +562,67 @@ def register_tasks(
         if _bootstrap_index_path is None:
             logger.error("Runtime root not configured for rebuild task execution")
             return False
+        runtime_root = _bootstrap_index_path
+        manager = _index_manager
 
         from mcp_markdown_ragdocs.config import load_config
 
-        try:
-            payload = run_rebuild(
-                runtime_root=_bootstrap_index_path,
-                config=load_config(),
-                index_manager=_index_manager,
-                global_documents_roots=_bootstrap_documents_roots,
-                request_id=request_id,
-                project_override=project_override,
-                schedule_vocabulary_catch_up=_schedule_vocabulary_catch_up,
+        def _operation() -> dict[str, object]:
+            try:
+                return run_rebuild(
+                    runtime_root=runtime_root,
+                    config=load_config(),
+                    index_manager=manager,
+                    global_documents_roots=_bootstrap_documents_roots,
+                    request_id=request_id,
+                    project_override=project_override,
+                    schedule_vocabulary_catch_up=None,
+                )
+            except Exception as exc:
+                logger.exception("Task failed: rebuild index")
+                return {"status": "failed", "error": str(exc)}
+
+        payload = _run_as_writer(
+            _operation,
+            owner_token=request_id,
+            busy_result={"status": "failed", "error": "index_writer_busy"},
+        )
+        if payload.get("error") != "index_writer_busy":
+            payload = write_rebuild_status(
+                runtime_root,
+                {
+                    **payload,
+                    "writer_owned": False,
+                    "writer_owner": None,
+                },
             )
-            return payload.get("status") == "succeeded"
-        except Exception:
-            logger.exception("Task failed: rebuild index")
-            return False
+        if payload.get("status") == "succeeded" and _schedule_vocabulary_catch_up is not None:
+            try:
+                scheduled = bool(_schedule_vocabulary_catch_up())
+            except Exception:
+                logger.warning(
+                    "Failed to schedule vocabulary catch-up after rebuild",
+                    exc_info=True,
+                )
+            else:
+                if scheduled:
+                    write_rebuild_status(
+                        runtime_root,
+                        {
+                            **payload,
+                            "vocabulary_catch_up_scheduled": True,
+                        },
+                    )
+        return payload.get("status") == "succeeded"
 
     @huey.task()
+    @_writer_owned_task(
+        busy_result={
+            "status": "error",
+            "error": "index_writer_busy",
+            "details": "Index writer is owned by a rebuild. Retry shortly.",
+        }
+    )
     def _reindex_model(
         operation: str,
         model: str | None,
@@ -492,7 +635,6 @@ def register_tasks(
             return {"status": "error", "error": "reindex_queue_unavailable"}
         if _bootstrap_index_path is None:
             return {"status": "error", "error": "reindex_runtime_unavailable"}
-
         from mcp_markdown_ragdocs.config import load_config
 
         runtime_root = _bootstrap_index_path
@@ -585,6 +727,8 @@ def enqueue_index(file_path: str, force: bool = False) -> bool:
 def submit_index_request(file_path: str, force: bool = False) -> TaskSubmissionResult:
     if index_document_task is None or _huey is None:
         return TaskSubmissionResult(status="unavailable")
+    if _writer_is_active():
+        return TaskSubmissionResult(status="already_pending")
     if is_backpressured(
         _huey,
         _task_backpressure_limit,
@@ -742,6 +886,14 @@ def submit_index_batch(
             requested_unique_count=len(set(file_paths)),
             enqueued_count=0,
         )
+    if _writer_is_active():
+        unique_count = len(set(file_paths))
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=unique_count,
+            enqueued_count=0,
+            already_pending_count=unique_count,
+        )
 
     unique_file_paths = list(dict.fromkeys(file_paths))
     pending_paths = set() if force else _get_pending_index_document_paths()
@@ -791,6 +943,14 @@ def submit_index_request_batch(
             requested_unique_count=len(set(file_paths)),
             enqueued_count=0,
         )
+    if _writer_is_active():
+        unique_count = len(set(file_paths))
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=unique_count,
+            enqueued_count=0,
+            already_pending_count=unique_count,
+        )
 
     pending_paths = set() if force else _get_pending_index_document_paths()
     return _submit_backpressure_limited_batch_request(
@@ -808,6 +968,8 @@ def submit_record_batch(
     """Queue a Record batch and return its Huey result handle."""
     if index_records_batch_task is None or _huey is None:
         return None
+    if _writer_is_active():
+        return _RejectedRecordBatch()
     return index_records_batch_task(
         record_payloads,
         priority=RECORD_BATCH_TASK_PRIORITY,
@@ -832,6 +994,8 @@ def enqueue_remove(doc_id: str) -> bool:
 def submit_remove_request(doc_id: str) -> TaskSubmissionResult:
     if remove_document_task is None or _huey is None:
         return TaskSubmissionResult(status="unavailable")
+    if _writer_is_active():
+        return TaskSubmissionResult(status="already_pending")
     if is_backpressured(
         _huey,
         _task_backpressure_limit,
@@ -852,6 +1016,14 @@ def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult
             requested_unique_count=len(set(doc_ids)),
             enqueued_count=0,
         )
+    if _writer_is_active():
+        unique_count = len(set(doc_ids))
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=unique_count,
+            enqueued_count=0,
+            already_pending_count=unique_count,
+        )
 
     return _submit_backpressure_limited_batch_request(
         task_submitter=remove_documents_batch_task,
@@ -869,6 +1041,8 @@ def enqueue_refresh_git(git_dir: str) -> bool:
 def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
     if refresh_git_repository_task is None or _huey is None:
         return TaskSubmissionResult(status="unavailable")
+    if _writer_is_active():
+        return TaskSubmissionResult(status="already_pending")
     git_dir_key = str(Path(git_dir).resolve())
     with _git_refresh_lock:
         if git_dir_key in _git_refresh_in_flight:
@@ -936,6 +1110,10 @@ def submit_rebuild_request(
     if rebuild_index_task is None or _huey is None:
         return TaskSubmissionResult(status="unavailable")
 
+    writer_store = _writer_lease_store()
+    if writer_store is None or not writer_store.acquire_writer(request_id):
+        return TaskSubmissionResult(status="already_pending")
+
     queue_item = project_override or "__global__"
     if is_backpressured(
         _huey,
@@ -943,9 +1121,14 @@ def submit_rebuild_request(
         item=queue_item,
         warning_message="Skipping rebuild enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
+        writer_store.release_writer(request_id)
         return TaskSubmissionResult(status="backpressured")
 
-    rebuild_index_task(project_override, request_id=request_id)
+    try:
+        rebuild_index_task(project_override, request_id=request_id)
+    except Exception:
+        writer_store.release_writer(request_id)
+        raise
     return TaskSubmissionResult(status="enqueued")
 
 
@@ -959,6 +1142,8 @@ def submit_reindex_request(
 ) -> TaskSubmissionResult:
     if reindex_model_task is None or _huey is None:
         return TaskSubmissionResult(status="unavailable")
+    if _writer_is_active():
+        return TaskSubmissionResult(status="already_pending")
     if is_backpressured(
         _huey,
         _task_backpressure_limit,

@@ -7,6 +7,7 @@ Commit 3.3: Verifies indexing operations work as Huey tasks.
 from __future__ import annotations
 
 import time
+from threading import Barrier, Thread
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,7 @@ from searchkernel.indexing.bootstrap_checkpoint import (
 
 import mcp_markdown_ragdocs.indexing.tasks as tasks_mod
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.indexing.git_refresh_state import get_cursor, save_cursor, save_head
 from mcp_markdown_ragdocs.indexing.tasks import (
     GIT_REFRESH_TASK_PRIORITY,
@@ -38,6 +40,7 @@ from mcp_markdown_ragdocs.indexing.tasks import (
     submit_index_request_batch,
     submit_record_batch,
     submit_refresh_git_request,
+    submit_rebuild_request,
     submit_remove_request_batch,
 )
 
@@ -107,6 +110,8 @@ def _reset_tasks():
     tasks_mod.remove_document_task = None
     tasks_mod.remove_documents_batch_task = None
     tasks_mod.refresh_git_repository_task = None
+    tasks_mod.rebuild_index_task = None
+    tasks_mod.reindex_model_task = None
     yield
     tasks_mod._huey = None
     tasks_mod._index_manager = None
@@ -120,9 +125,86 @@ def _reset_tasks():
     tasks_mod.remove_document_task = None
     tasks_mod.remove_documents_batch_task = None
     tasks_mod.refresh_git_repository_task = None
+    tasks_mod.rebuild_index_task = None
+    tasks_mod.reindex_model_task = None
 
 
 class TestTaskRegistration:
+    def test_concurrent_rebuild_submissions_share_one_writer_lease(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        barrier = Barrier(2)
+        results: list[str] = []
+
+        def _submit(request_id: str) -> None:
+            barrier.wait()
+            results.append(
+                submit_rebuild_request(None, request_id=request_id).status
+            )
+
+        threads = [
+            Thread(target=_submit, args=(f"rebuild-{index}",))
+            for index in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert sorted(results) == ["already_pending", "enqueued"]
+        assert huey_instance.pending_count() == 1
+
+    def test_rebuild_task_releases_writer_after_success_and_failure(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=tmp_path,
+        )
+        outcomes = iter(
+            [
+                {"status": "succeeded"},
+                {"status": "failed", "error": "boom"},
+            ]
+        )
+        monkeypatch.setattr(tasks_mod, "run_rebuild", lambda **_: next(outcomes))
+
+        for request_id in ("rebuild-success", "rebuild-failure"):
+            assert submit_rebuild_request(None, request_id=request_id).status == "enqueued"
+            task = huey_instance.dequeue()
+            assert task is not None
+            huey_instance.execute(task)
+            store = TaskLeaseStore(Path(huey_instance.storage.filename))
+            assert store.writer_owner() is None
+
+    def test_document_and_git_tasks_reject_writes_while_rebuild_owns_writer(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        store = TaskLeaseStore(Path(huey_instance.storage.filename))
+        assert store.acquire_writer("rebuild-active")
+
+        tasks_mod.index_document_task("/docs/blocked.md")
+        tasks_mod.refresh_git_repository_task("/repo/.git")
+        first = huey_instance.dequeue()
+        second = huey_instance.dequeue()
+        assert first is not None
+        assert second is not None
+        assert huey_instance.execute(first) is False
+        assert huey_instance.execute(second) is False
+        assert fake_manager.indexed == []
+        assert fake_manager.indexed_records == []
+
     def test_register_tasks_creates_task_functions(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
