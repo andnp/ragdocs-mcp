@@ -14,8 +14,8 @@ from searchkernel.domain import ChangeSignal, Cursor, Record, RecordStatus
 from mcp_markdown_ragdocs.git.commit_chunker import chunk_commit
 from mcp_markdown_ragdocs.git.commit_parser import (
     CommitData,
+    iter_commits,
     parse_commit,
-    parse_commits,
 )
 from mcp_markdown_ragdocs.git.repository import get_commits_after_timestamp
 
@@ -87,8 +87,7 @@ class GitContentSource:
 
         logger.debug(f"Found {len(commit_hashes)} commits in {self.repo_path.name}")
 
-        commit_data = parse_commits(self.git_dir, commit_hashes, max_delta_lines=200)
-        for data in commit_data:
+        for data in iter_commits(self.git_dir, commit_hashes, max_delta_lines=200):
             try:
                 yield from self._commit_data_to_records(data)
             except Exception:
