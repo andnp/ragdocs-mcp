@@ -4,9 +4,13 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import pytest
+
+from mcp_markdown_ragdocs.git import repository
 from mcp_markdown_ragdocs.git.repository import (
     discover_git_repositories,
     get_commits_after_timestamp,
+    iter_commit_hashes_after_timestamp,
     is_git_available,
 )
 
@@ -188,6 +192,128 @@ def test_get_commits_after_timestamp():
 
         # Should get commits after the timestamp (git --after is inclusive, so all 3)
         assert len(commits) >= 2
+
+
+class _FakeStream:
+    def __init__(self, content: str):
+        self._content = content
+        self.closed = False
+
+    def __iter__(self):
+        return iter(self._content.splitlines(keepends=True))
+
+    def read(self):
+        return self._content
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeGitProcess:
+    def __init__(self, output: str, *, wait_error=None, returncode: int = 0):
+        self.stdout = _FakeStream(output)
+        self.stderr = _FakeStream("git failed")
+        self._wait_error = wait_error
+        self._returncode = returncode
+        self._running = True
+        self.killed = False
+        self.wait_calls: list[int | None] = []
+
+    def wait(self, timeout=None):
+        self.wait_calls.append(timeout)
+        if self._wait_error is not None and self._running:
+            if isinstance(self._wait_error, subprocess.TimeoutExpired):
+                raise self._wait_error
+            self._running = False
+            raise self._wait_error
+        self._running = False
+        return self._returncode
+
+    def poll(self):
+        return None if self._running else self._returncode
+
+    def kill(self):
+        self.killed = True
+        self._running = False
+
+
+def _patch_git_process(monkeypatch, process: _FakeGitProcess):
+    commands = []
+
+    def fake_popen(command, **kwargs):
+        commands.append((command, kwargs))
+        return process
+
+    monkeypatch.setattr(repository.subprocess, "Popen", fake_popen)
+    return commands
+
+
+def test_iter_commit_hashes_is_lazy_and_preserves_git_order(tmp_path, monkeypatch):
+    """Hash production starts on demand and preserves Git's output order."""
+    process = _FakeGitProcess("new\nmiddle\nold\n")
+    commands = _patch_git_process(monkeypatch, process)
+    iterator = iter_commit_hashes_after_timestamp(tmp_path / ".git", 123)
+
+    assert commands == []
+    assert next(iterator) == "new"
+    assert commands[0][0] == [
+        "git",
+        "log",
+        "--all",
+        "--format=%H",
+        "--after=123",
+    ]
+    assert list(iterator) == ["middle", "old"]
+
+
+@pytest.mark.parametrize(
+    "wait_error",
+    [
+        subprocess.CalledProcessError(2, ["git", "log"], stderr="bad"),
+        subprocess.TimeoutExpired(["git", "log"], timeout=30),
+    ],
+)
+def test_iter_commit_hashes_surfaces_git_failures(tmp_path, monkeypatch, wait_error):
+    """The streaming iterator exposes subprocess failures to its caller."""
+    process = _FakeGitProcess("partial\n", wait_error=wait_error)
+    _patch_git_process(monkeypatch, process)
+
+    with pytest.raises(type(wait_error)):
+        list(iter_commit_hashes_after_timestamp(tmp_path / ".git"))
+
+
+def test_iter_commit_hashes_closes_process_on_early_close(tmp_path, monkeypatch):
+    """Closing a partially consumed iterator terminates and closes Git safely."""
+    process = _FakeGitProcess("first\nsecond\n")
+    _patch_git_process(monkeypatch, process)
+    iterator = iter_commit_hashes_after_timestamp(tmp_path / ".git")
+
+    assert next(iterator) == "first"
+    iterator.close()
+
+    assert process.killed
+    assert process.wait_calls == [1]
+    assert process.stdout.closed
+    assert process.stderr.closed
+
+
+def test_get_commits_after_timestamp_keeps_list_contract(tmp_path, monkeypatch):
+    """The compatibility wrapper materializes streamed hashes into a list."""
+    git_dir = tmp_path / ".git"
+    calls = []
+
+    def fake_iterator(received_git_dir, received_timestamp):
+        calls.append((received_git_dir, received_timestamp))
+        yield "first"
+        yield "second"
+
+    monkeypatch.setattr(repository, "iter_commit_hashes_after_timestamp", fake_iterator)
+
+    commits = get_commits_after_timestamp(git_dir, after_timestamp=456)
+
+    assert commits == ["first", "second"]
+    assert isinstance(commits, list)
+    assert calls == [(git_dir, 456)]
 
 
 def test_git_not_available(monkeypatch):
