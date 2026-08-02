@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -13,7 +14,10 @@ from mcp_markdown_ragdocs.config import (
 )
 from mcp_markdown_ragdocs.git.watcher import GitWatcher
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
-from mcp_markdown_ragdocs.indexing.tasks import TaskSubmissionResult
+from mcp_markdown_ragdocs.indexing.tasks import (
+    GIT_REFRESH_BATCH_SIZE,
+    TaskSubmissionResult,
+)
 
 
 @pytest.fixture
@@ -228,8 +232,8 @@ async def test_git_watcher_skips_unchanged_repository_after_refresh(
 
 
 @pytest.mark.asyncio
-async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
-    test_config, index_manager, tmp_path, monkeypatch
+async def test_git_watcher_direct_refresh_accumulates_batches(
+    test_config, index_manager, tmp_path, monkeypatch, caplog
 ):
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
@@ -241,29 +245,86 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
         config=test_config,
         use_tasks=True,
     )
+    watcher._last_indexed[git_dir] = 123
 
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.indexing.tasks.submit_refresh_git_request",
         lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
     )
-
-    async def _index_records(records, *, checkpoint=None):
-        observed["records"] = records
-        observed["since"] = checkpoint
-        return type("Receipt", (), {"records": (object(),)})()
-
     monkeypatch.setattr(
-        index_manager,
-        "ingestor",
-        SimpleNamespace(index_records=_index_records),
-        raising=False,
+        "mcp_markdown_ragdocs.git.watcher.get_git_ref_signature",
+        lambda _git_dir: "new-head",
     )
     monkeypatch.setattr(
-        "mcp_markdown_ragdocs.adapters.sources.git.GitContentSource.iter_records",
-        lambda source, since: observed.update(repo_path=source.repo_path) or [],
+        "mcp_markdown_ragdocs.git.watcher.get_head",
+        lambda _root, _git_dir: "old-head",
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.time.time",
+        lambda: 456,
+    )
+
+    async def _receipts(_manager, source, *, since, batch_size):
+        observed["repo_path"] = source.repo_path
+        observed["since"] = since
+        observed["batch_size"] = batch_size
+        yield SimpleNamespace(records=(object(), object()))
+        yield SimpleNamespace(records=(object(),))
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.indexing.git_ingestion.iter_git_ingestion_receipts",
+        _receipts,
+    )
+
+    caplog.set_level(logging.INFO)
+    await watcher._batch_process({git_dir})
+
+    assert observed["repo_path"] == git_dir.parent
+    assert observed["since"] == "123"
+    assert observed["batch_size"] == GIT_REFRESH_BATCH_SIZE
+    assert watcher._last_indexed[git_dir] == 456
+    assert f"Updated commit index for {tmp_path.name}: 3 commits" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_git_watcher_direct_refresh_failure_preserves_cursor(
+    test_config, index_manager, tmp_path, monkeypatch
+):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+
+    watcher = GitWatcher(
+        git_repos=[git_dir],
+        index_manager=index_manager,
+        config=test_config,
+        use_tasks=True,
+    )
+    watcher._last_indexed[git_dir] = 123
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.indexing.tasks.submit_refresh_git_request",
+        lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_git_ref_signature",
+        lambda _git_dir: "new-head",
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_head",
+        lambda _root, _git_dir: "old-head",
+    )
+
+    async def _receipts(_manager, _source, *, since, batch_size):
+        assert since == "123"
+        assert batch_size == GIT_REFRESH_BATCH_SIZE
+        yield SimpleNamespace(records=(object(),))
+        raise RuntimeError("refresh failed")
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.indexing.git_ingestion.iter_git_ingestion_receipts",
+        _receipts,
     )
 
     await watcher._batch_process({git_dir})
 
-    assert observed["repo_path"] == git_dir.parent
-    assert observed["since"] is None
+    assert watcher._last_indexed[git_dir] == 123
