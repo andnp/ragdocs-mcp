@@ -1024,9 +1024,17 @@ class TestTaskExecution:
         observed: dict[str, object] = {}
         record = Record(
             source_kind="git_commit",
-            source_id="git:abc",
+            source_id="git:abc:summary:0",
             title="Commit",
             body="Body",
+            created_at=datetime.fromtimestamp(124, tz=UTC),
+            updated_at=datetime.fromtimestamp(124, tz=UTC),
+        )
+        diff_record = Record(
+            source_kind="git_commit",
+            source_id="git:abc:diff:0",
+            title="Commit",
+            body="Diff",
             created_at=datetime.fromtimestamp(124, tz=UTC),
             updated_at=datetime.fromtimestamp(124, tz=UTC),
         )
@@ -1034,7 +1042,11 @@ class TestTaskExecution:
         async def _receipts(_manager, _source, *, since, batch_size):
             observed["since"] = since
             observed["batch_size"] = batch_size
-            yield SimpleNamespace(records=(record,), failed=0, checkpoint="124")
+            yield SimpleNamespace(
+                records=(record, diff_record),
+                failed=0,
+                checkpoint="124",
+            )
 
         monkeypatch.setattr(
             "mcp_markdown_ragdocs.indexing.git_ingestion.iter_git_ingestion_receipts",
@@ -1064,6 +1076,8 @@ class TestTaskExecution:
         assert progress["cursor"] == 124
         assert progress["processed_count"] == 1
         assert progress["discovered_count"] == 1
+        assert progress["processed_chunk_count"] == 2
+        assert progress["discovered_chunk_count"] == 2
 
     def test_refresh_git_task_skips_completed_head(
         self,

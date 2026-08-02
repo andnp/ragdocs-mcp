@@ -10,8 +10,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from searchkernel.domain import ChangeSignal, Cursor, Record, RecordStatus
+
+from mcp_markdown_ragdocs.git.commit_chunker import chunk_commit
 from mcp_markdown_ragdocs.git.commit_parser import (
-    build_commit_document,
     CommitData,
     parse_commit,
     parse_commits,
@@ -89,9 +90,7 @@ class GitContentSource:
         commit_data = parse_commits(self.git_dir, commit_hashes, max_delta_lines=200)
         for data in commit_data:
             try:
-                record = self._commit_data_to_record(data)
-                if record is not None:
-                    yield record
+                yield from self._commit_data_to_records(data)
             except Exception:
                 logger.exception(f"Failed to convert commit {data.hash[:8]} to Record")
                 continue
@@ -118,17 +117,18 @@ class GitContentSource:
             A Record representing the commit, or None if conversion fails.
         """
         commit_data = parse_commit(self.git_dir, commit_hash, max_delta_lines=200)
-        return self._commit_data_to_record(commit_data)
+        records = self._commit_data_to_records(commit_data)
+        return records[0] if records else None
 
-    def _commit_data_to_record(self, commit_data: CommitData) -> Record | None:
-        """Convert parsed commit data to a Record."""
+    def _commit_data_to_records(self, commit_data: CommitData) -> tuple[Record, ...]:
+        """Convert one parsed commit into structure-aware records."""
 
         if not commit_data.hash:
             logger.warning("Failed to parse commit with empty hash")
-            return None
+            return ()
 
-        # Build the searchable body text (message + diff summary)
-        body = build_commit_document(commit_data)
+        commit_id = f"git:{commit_data.hash}"
+        chunks = chunk_commit(commit_data)
 
         # Convert unix timestamp to datetime
         commit_dt = datetime.fromtimestamp(commit_data.timestamp, tz=UTC)
@@ -139,21 +139,30 @@ class GitContentSource:
             "committer": commit_data.committer,
             "timestamp": commit_data.timestamp,
             "files_changed": commit_data.files_changed,
+            "title": commit_data.title or "(no commit message)",
+            "doc_id": commit_id,
+            "commit_id": commit_id,
         }
 
-        # Create and return the Record
-        record = Record(
-            source_kind=self.source_kind,
-            source_id=f"git:{commit_data.hash}",
-            title=commit_data.title or "(no commit message)",
-            body=body,
-            created_at=commit_dt,
-            updated_at=commit_dt,
-            metadata=metadata,
-            uri=None,  # Could be set to a commit link if repo URL is known
-            status=RecordStatus.ACTIVE,
-            embedding=None,  # Kernel will compute
-            embedding_model=None,
+        return tuple(
+            Record(
+                source_kind=self.source_kind,
+                source_id=f"{commit_id}:{chunk.section}:{chunk.section_index}",
+                title=commit_data.title or "(no commit message)",
+                body=chunk.text,
+                created_at=commit_dt,
+                updated_at=commit_dt,
+                metadata={
+                    **metadata,
+                    "chunk_section": chunk.section,
+                    "chunk_index": chunk.section_index,
+                    "chunk_count": len(chunks),
+                    "estimated_tokens": chunk.estimated_tokens,
+                },
+                uri=None,
+                status=RecordStatus.ACTIVE,
+                embedding=None,
+                embedding_model=None,
+            )
+            for chunk in chunks
         )
-
-        return record

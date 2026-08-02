@@ -134,7 +134,7 @@ async def test_search_git_history_tool_routes_through_orchestrator(repo):
         )
     ]
     assert len(receipts) == 1
-    assert receipts[0].committed == 1
+    assert receipts[0].committed == 2
 
     ctx = _ReadyContext(orchestrator, git_indexing_enabled=True, total_commits=1)
     hctx = HandlerContext(lambda: ctx, _FakeCoordinator())

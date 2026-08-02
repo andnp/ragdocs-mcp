@@ -13,6 +13,8 @@ from searchkernel.api import (
     SearchResultProvenance,
     SearchStrategyStats,
 )
+
+from mcp_markdown_ragdocs.git.results import aggregate_commit_results
 from mcp_markdown_ragdocs.models import ChunkResult
 
 
@@ -74,7 +76,10 @@ class CanonicalSearchAdapter:
         filters: dict[str, object] = {}
         if source_filter:
             filters["source_kinds"] = list(source_filter)
-        outcome = await self.search(query, limit=max(top_k, top_n), filters=filters)
+        limit = max(top_k, top_n)
+        if source_filter == ["git_commit"]:
+            limit = max(limit, top_n * 4)
+        outcome = await self.search(query, limit=limit, filters=filters)
         filtered_results = [
             result
             for result in outcome.results
@@ -84,9 +89,8 @@ class CanonicalSearchAdapter:
             )
             and not self._is_excluded(result.record.metadata, excluded_files)
         ]
-        selected_results = filtered_results[:top_n]
         maximum_score = max(
-            (result.score for result in selected_results),
+            (result.score for result in filtered_results),
             default=0.0,
         )
         results = [
@@ -95,8 +99,11 @@ class CanonicalSearchAdapter:
                 result.score / maximum_score if maximum_score else result.score,
                 result.provenance,
             )
-            for result in selected_results
+            for result in filtered_results
         ]
+        if source_filter == ["git_commit"]:
+            results = aggregate_commit_results(results)
+        results = results[:top_n]
         self.last_query_execution_stats = {
             "degraded": outcome.degraded,
             "failures": [failure.message for failure in outcome.failures],

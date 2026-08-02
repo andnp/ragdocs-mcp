@@ -38,6 +38,11 @@ from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
 logger = logging.getLogger(__name__)
 
 
+def _git_commit_id(source_id: str) -> str:
+    parts = source_id.split(":")
+    return ":".join(parts[:2]) if len(parts) >= 2 and parts[0] == "git" else source_id
+
+
 class _FakeEmbeddingProvider:
     """Small provider adapter used by the app's deterministic test mode."""
 
@@ -154,6 +159,15 @@ class RecordIndexManager:
     def count_records(self, source_kind: str | None = None) -> int:
         if source_kind is None:
             return sum(len(keys) for keys in self._source_records.values())
+        if source_kind == "git_commit":
+            return len(
+                {
+                    _git_commit_id(RecordIdentity.from_storage_key(key).source_id)
+                    for keys in self._source_records.values()
+                    for key in keys
+                    if RecordIdentity.from_storage_key(key).source_kind == source_kind
+                }
+            )
         count = 0
         for keys in self._source_records.values():
             count += sum(

@@ -10,7 +10,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
 from mcp_markdown_ragdocs.config import (
@@ -20,6 +19,7 @@ from mcp_markdown_ragdocs.config import (
     LLMConfig,
     SearchConfig,
 )
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 from tests.integration._canonical import make_record_index_manager
 
 
@@ -36,13 +36,21 @@ def _init_git_repo(path: Path) -> None:
     )
 
 
-def _commit(repo_path: Path, file_name: str, content: str, message: str) -> None:
+def _commit(repo_path: Path, file_name: str, content: str, message: str) -> str:
     file_path = repo_path / file_name
     file_path.write_text(content)
     subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", message], cwd=repo_path, check=True, capture_output=True
     )
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 @pytest.fixture
@@ -50,13 +58,13 @@ def repo(tmp_path):
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     _init_git_repo(repo_path)
-    _commit(
+    commit_hash = _commit(
         repo_path,
         "auth.py",
         "def login(): ...",
         "Fix a subtle authentication token refresh bug",
     )
-    return repo_path
+    return repo_path, commit_hash
 
 
 @pytest.fixture
@@ -86,9 +94,11 @@ def kernel(tmp_path):
 @pytest.mark.asyncio
 async def test_commit_appears_in_search_via_source_filter(repo, kernel):
     manager, orchestrator = kernel
+    repo_path, commit_hash = repo
 
-    source = GitContentSource(repo / ".git")
+    source = GitContentSource(repo_path / ".git")
     records = list(source.iter_records())
+    assert len(records) > 1
     assert manager.index_records(records)
     assert manager.count_records("git_commit") == 1
 
@@ -100,17 +110,20 @@ async def test_commit_appears_in_search_via_source_filter(repo, kernel):
     )
 
     assert results
-    assert all(result.doc_id.startswith("git:") for result in results)
-    assert any("authentication" in result.content.lower() for result in results)
-    assert all(result.metadata.get("source_kind") == "git_commit" for result in results)
-    assert all(result.metadata.get("author") for result in results)
+    assert len(results) == 1
+    assert results[0].doc_id == f"git:{commit_hash}"
+    assert "authentication" in results[0].content.lower()
+    assert results[0].metadata.get("source_kind") == "git_commit"
+    assert results[0].metadata.get("author")
+    assert results[0].metadata.get("matched_sections")
 
 
 @pytest.mark.asyncio
 async def test_commit_absent_when_source_filter_excludes_git(repo, kernel):
     manager, orchestrator = kernel
+    repo_path, _ = repo
 
-    source = GitContentSource(repo / ".git")
+    source = GitContentSource(repo_path / ".git")
     assert manager.index_records(list(source.iter_records()))
 
     results, _, _ = await orchestrator.query(

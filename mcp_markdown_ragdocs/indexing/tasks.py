@@ -236,6 +236,22 @@ def _refresh_progress_rate(processed: int, started_at: datetime | None) -> float
     return processed / elapsed
 
 
+def _git_commit_id_from_result(result: object) -> str | None:
+    """Extract the logical commit ID from a chunk or ingestion result."""
+
+    source_id = getattr(result, "source_id", None)
+    if isinstance(source_id, str):
+        parts = source_id.split(":")
+        if len(parts) >= 2 and parts[0] == "git":
+            return ":".join(parts[:2])
+    metadata = getattr(result, "metadata", None)
+    if isinstance(metadata, dict):
+        commit_id = metadata.get("commit_id")
+        if isinstance(commit_id, str):
+            return commit_id
+    return None
+
+
 def _save_git_refresh_progress(
     git_dir: Path,
     *,
@@ -621,11 +637,17 @@ def register_tasks(
             started_at=started_at,
             processed_count=0,
             discovered_count=0,
+            processed_chunk_count=0,
+            discovered_chunk_count=0,
             error=None,
             completed_at=None,
         )
+        processed_commit_ids: set[str] = set()
+        discovered_commit_ids: set[str] = set()
         indexed = 0
         discovered = 0
+        indexed_chunks = 0
+        discovered_chunks = 0
         latest_cursor: int | None = None
         initial_embedding_metrics: dict[str, int] = {}
         try:
@@ -659,20 +681,42 @@ def register_tasks(
             initial_embedding_metrics = _embedding_cache_metrics(manager)
 
             async def _ingest() -> None:
-                nonlocal discovered, indexed, latest_cursor
+                nonlocal discovered, discovered_chunks, indexed, indexed_chunks, latest_cursor
                 async for receipt in iter_git_ingestion_receipts(
                     manager,
                     source,
                     since=since,
                     batch_size=GIT_REFRESH_BATCH_SIZE,
                 ):
-                    discovered += len(receipt.records)
-                    successful = getattr(receipt, "successful", None)
-                    indexed += (
-                        successful
-                        if isinstance(successful, int)
-                        else len(receipt.records) - receipt.failed
+                    discovered_chunks += len(receipt.records)
+                    discovered_commit_ids.update(
+                        commit_id
+                        for result in receipt.records
+                        if (commit_id := _git_commit_id_from_result(result)) is not None
                     )
+                    result_success_flags = [
+                        getattr(result, "successful", None) for result in receipt.records
+                    ]
+                    if any(isinstance(flag, bool) for flag in result_success_flags):
+                        successful_results = [
+                            result
+                            for result, successful in zip(
+                                receipt.records, result_success_flags, strict=True
+                            )
+                            if successful is True
+                        ]
+                    else:
+                        successful_results = (
+                            list(receipt.records) if receipt.failed == 0 else []
+                        )
+                    indexed_chunks += len(successful_results)
+                    processed_commit_ids.update(
+                        commit_id
+                        for result in successful_results
+                        if (commit_id := _git_commit_id_from_result(result)) is not None
+                    )
+                    indexed = len(processed_commit_ids)
+                    discovered = len(discovered_commit_ids)
                     if receipt.checkpoint is not None:
                         latest_cursor = max(latest_cursor or 0, int(receipt.checkpoint))
                     current_embedding_metrics = _embedding_cache_metrics(manager)
@@ -688,6 +732,8 @@ def register_tasks(
                             cursor=latest_cursor,
                             processed_count=indexed,
                             discovered_count=discovered,
+                            processed_chunk_count=indexed_chunks,
+                            discovered_chunk_count=discovered_chunks,
                             error=f"{receipt.failed} record(s) failed",
                             metrics=metric_deltas,
                         )
@@ -705,6 +751,8 @@ def register_tasks(
                         cursor=latest_cursor,
                         processed_count=indexed,
                         discovered_count=discovered,
+                        processed_chunk_count=indexed_chunks,
+                        discovered_chunk_count=discovered_chunks,
                         metrics=metric_deltas,
                     )
 
@@ -725,6 +773,8 @@ def register_tasks(
                 cursor=latest_cursor,
                 processed_count=indexed,
                 discovered_count=discovered,
+                processed_chunk_count=indexed_chunks,
+                discovered_chunk_count=discovered_chunks,
                 completed_at=datetime.now(UTC).isoformat(),
                 error=None,
                 metrics=metric_deltas,
@@ -748,6 +798,8 @@ def register_tasks(
                 cursor=latest_cursor,
                 processed_count=indexed,
                 discovered_count=discovered,
+                processed_chunk_count=indexed_chunks,
+                discovered_chunk_count=discovered_chunks,
                 error=str(error),
                 completed_at=datetime.now(UTC).isoformat(),
                 metrics=metric_deltas,

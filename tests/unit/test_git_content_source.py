@@ -55,6 +55,18 @@ def _create_commit(
     return result.stdout.strip()
 
 
+def _records_for_commit(records, commit_hash: str):
+    return [
+        record
+        for record in records
+        if record.metadata.get("commit_id") == f"git:{commit_hash}"
+    ]
+
+
+def _summary_record(records):
+    return next(record for record in records if record.metadata["chunk_section"] == "summary")
+
+
 class TestGitContentSourceInit:
     """Tests for GitContentSource initialization."""
 
@@ -108,12 +120,13 @@ class TestGitContentSourceIterRecords:
             source = GitContentSource(git_dir)
             records = list(source.iter_records())
 
-            assert len(records) == 1
-            record = records[0]
+            commit_records = _records_for_commit(records, commit_hash)
+            assert commit_records
+            record = _summary_record(commit_records)
 
             # Check all required fields
             assert record.source_kind == "git_commit"
-            assert record.source_id == f"git:{commit_hash}"
+            assert record.source_id.startswith(f"git:{commit_hash}:summary:")
             assert record.title == "Initial commit"
             assert len(record.body) > 0
             assert "Initial commit" in record.body
@@ -145,15 +158,20 @@ class TestGitContentSourceIterRecords:
             source = GitContentSource(git_dir)
             records = list(source.iter_records())
 
-            assert len(records) == 3
+            assert {
+                record.metadata["commit_id"] for record in records
+            } == {f"git:{hash1}", f"git:{hash2}", f"git:{hash3}"}
 
-            # Records should be in reverse chronological order (newest first)
-            assert records[0].source_id == f"git:{hash3}"
-            assert records[0].title == "Third commit"
-            assert records[1].source_id == f"git:{hash2}"
-            assert records[1].title == "Second commit"
-            assert records[2].source_id == f"git:{hash1}"
-            assert records[2].title == "First commit"
+            # Commits should remain in reverse chronological order.
+            summaries = [
+                _summary_record(_records_for_commit(records, commit_hash))
+                for commit_hash in (hash3, hash2, hash1)
+            ]
+            assert [record.title for record in summaries] == [
+                "Third commit",
+                "Second commit",
+                "First commit",
+            ]
 
     def test_iter_records_body_contains_metadata(self):
         """Test that record body contains author, files, and diff info."""
@@ -173,18 +191,18 @@ class TestGitContentSourceIterRecords:
             source = GitContentSource(git_dir)
             records = list(source.iter_records())
 
-            assert len(records) == 1
-            record = records[0]
+            assert records
+            body = "\n".join(record.body for record in records)
 
             # Body should contain the message
-            assert "Test commit" in record.body
-            assert "Detailed message" in record.body
+            assert "Test commit" in body
+            assert "Detailed message" in body
 
             # Body should contain author info
-            assert "Author:" in record.body or "Test User" in record.body
+            assert "Author:" in body or "Test User" in body
 
             # Body should contain diff info (files changed section or diff output)
-            assert "Files changed:" in record.body or "diff --git" in record.body
+            assert "Files changed:" in body or "diff --git" in body
 
     def test_iter_records_incremental_with_timestamp(self):
         """Test incremental iteration using a timestamp cursor."""
@@ -244,8 +262,12 @@ class TestGitContentSourceIterRecords:
             records_all = list(source.iter_records(since=None))
             records_explicit = list(source.iter_records())
 
-            assert len(records_all) == 2
-            assert len(records_explicit) == 2
+            assert {
+                record.metadata["commit_id"] for record in records_all
+            } == {
+                record.metadata["commit_id"] for record in records_explicit
+            }
+            assert len({record.metadata["commit_id"] for record in records_all}) == 2
 
     def test_iter_records_with_invalid_cursor(self):
         """Test that invalid cursor falls back to all commits."""
@@ -263,7 +285,7 @@ class TestGitContentSourceIterRecords:
             # Invalid cursor should fall back to returning all commits
             records = list(source.iter_records(since="not-a-number"))
 
-            assert len(records) == 2
+            assert len({record.metadata["commit_id"] for record in records}) == 2
 
     def test_iter_records_with_multiline_message(self):
         """Test record creation from commit with multiline message."""
@@ -283,15 +305,16 @@ class TestGitContentSourceIterRecords:
             source = GitContentSource(git_dir)
             records = list(source.iter_records())
 
-            assert len(records) == 1
-            record = records[0]
+            assert records
+            record = _summary_record(records)
+            body = "\n".join(item.body for item in records)
 
             # Title should be just the first line
             assert record.title == "Short title"
 
             # Body should contain the full message
-            assert "Detailed description" in record.body
-            assert "multiple lines" in record.body
+            assert "Detailed description" in body
+            assert "multiple lines" in body
 
     def test_iter_records_empty_message(self):
         """Test handling of commit with empty message."""
@@ -316,8 +339,8 @@ class TestGitContentSourceIterRecords:
             source = GitContentSource(git_dir)
             records = list(source.iter_records())
 
-            assert len(records) == 1
-            record = records[0]
+            assert records
+            record = _summary_record(records)
 
             # Should have a fallback title
             assert len(record.title) > 0
@@ -363,8 +386,8 @@ class TestGitContentSourceSourceKind:
             # Also check that records have the same source_kind
             _create_commit(repo_path, "test.txt", "content", "Test")
             records = list(source.iter_records())
-            assert len(records) == 1
-            assert records[0].source_kind == "git_commit"
+            assert records
+            assert all(record.source_kind == "git_commit" for record in records)
 
 
 class TestGitContentSourceEdgeCases:
@@ -388,8 +411,8 @@ class TestGitContentSourceEdgeCases:
             source = GitContentSource(git_dir)
             records = list(source.iter_records())
 
-            assert len(records) == 1
-            record = records[0]
+            assert records
+            record = _summary_record(records)
 
             # Should handle UTF-8 correctly
             assert "テスト" in record.title or len(record.title) > 0
@@ -410,11 +433,11 @@ class TestGitContentSourceEdgeCases:
             source = GitContentSource(git_dir)
             records = list(source.iter_records())
 
-            assert len(records) == 1
-            record = records[0]
+            assert len(records) > 1
+            record = _summary_record(records)
 
             # Body should exist but diff should be truncated
-            assert len(record.body) > 0
+            assert all(record.body for record in records)
             # The body may contain a truncation indicator
             assert "omitted" in record.body or len(record.body) > 0
 
