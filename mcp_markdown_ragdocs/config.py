@@ -167,8 +167,8 @@ class GitIndexingConfig:
 
 @dataclass
 class StoreConfig:
-    backend: str = "faiss+sqlite"  # "pgvector" or "faiss+sqlite"
-    pg_dsn: str = ""  # PostgreSQL DSN (read from SEARCHKERNEL_PG_DSN env if not set)
+    backend: str = "local"  # canonical local record stores
+    pg_dsn: str = ""  # retained for configuration-file compatibility
 
 
 @dataclass

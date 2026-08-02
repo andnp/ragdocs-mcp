@@ -166,6 +166,11 @@ class ApplicationContext:
             embedding_model_name = config.llm.embedding_model
         config.embedding.model_name = embedding_model_name
         config.llm.embedding_model = embedding_model_name
+        if config.store.backend not in {"local", "faiss+sqlite"}:
+            raise ValueError(
+                "canonical runtime supports store.backend = 'local'; "
+                f"got {config.store.backend!r}"
+            )
         embedding_provider = build_embedding_provider(config, embedding_model_name)
         local_kernel = build_local_record_kernel(
             index_path / "index.db",
