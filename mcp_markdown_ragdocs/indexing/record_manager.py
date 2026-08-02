@@ -284,15 +284,15 @@ class RecordIndexManager:
 
     async def _index_prepared(self, prepared: PreparedRecordDocument) -> None:
         old_keys = self._source_records.get(prepared.document.id, [])
-        if old_keys:
-            self.kernel.backend.delete(old_keys)
         receipt = await self.ingestor.index_records(prepared.records)
         if receipt.failed:
             errors = "; ".join(item.error or "unknown error" for item in receipt.failures)
             raise RuntimeError(errors)
-        self._source_records[prepared.document.id] = [
-            record.storage_key for record in prepared.records
-        ]
+        new_keys = [record.storage_key for record in prepared.records]
+        stale_keys = sorted(set(old_keys) - set(new_keys))
+        if stale_keys:
+            self.kernel.backend.delete(stale_keys)
+        self._source_records[prepared.document.id] = new_keys
         self._upsert_graph(prepared)
         self._state_version += 1
 
