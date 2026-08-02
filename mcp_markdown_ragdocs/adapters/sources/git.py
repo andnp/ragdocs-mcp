@@ -17,7 +17,7 @@ from mcp_markdown_ragdocs.git.commit_parser import (
     iter_commits,
     parse_commit,
 )
-from mcp_markdown_ragdocs.git.repository import get_commits_after_timestamp
+from mcp_markdown_ragdocs.git.repository import iter_commit_hashes_after_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -79,13 +79,11 @@ class GitContentSource:
                 )
                 after_timestamp = None
 
-        # Get commit hashes (newest first)
-        commit_hashes = get_commits_after_timestamp(
+        # Stream commit hashes in newest-first order.
+        commit_hashes = iter_commit_hashes_after_timestamp(
             self.git_dir,
             after_timestamp=after_timestamp,
         )
-
-        logger.debug(f"Found {len(commit_hashes)} commits in {self.repo_path.name}")
 
         for data in iter_commits(self.git_dir, commit_hashes, max_delta_lines=200):
             try:

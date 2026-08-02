@@ -3,8 +3,9 @@
 import logging
 import re
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 
 from searchkernel.api import truncate_delta
@@ -39,12 +40,12 @@ def parse_commits(
 
 def iter_commits(
     git_dir: Path,
-    commit_hashes: list[str],
+    commit_hashes: Iterable[str],
     max_delta_lines: int = 200,
 ) -> Iterator[CommitData]:
     """Yield commits in bounded batches, falling back per batch on failure."""
-    for start in range(0, len(commit_hashes), COMMIT_BATCH_SIZE):
-        batch = commit_hashes[start : start + COMMIT_BATCH_SIZE]
+    commit_hash_iterator = iter(commit_hashes)
+    while batch := list(islice(commit_hash_iterator, COMMIT_BATCH_SIZE)):
         try:
             yield from _parse_commit_batch(git_dir, batch, max_delta_lines)
         except (
