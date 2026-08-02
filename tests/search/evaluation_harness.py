@@ -4,12 +4,15 @@ from dataclasses import dataclass
 from math import log2
 from pathlib import Path
 
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import EmbeddingModel, VectorIndex
+from searchkernel.api import (
+    EmbeddingProvider,
+    build_local_record_kernel,
+    compute_doc_id,
+)
+from searchkernel.domain import Vector
+from searchkernel.embeddings import DeterministicFakeEmbeddingModel
+
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-from searchkernel.search.path_utils import compute_doc_id
-from searchkernel.storage.db import DatabaseManager
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -19,9 +22,23 @@ from mcp_markdown_ragdocs.config import (
     ProjectConfig,
     SearchConfig,
 )
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
 
 FIXTURE_CORPUS_ROOT = Path(__file__).resolve().parent.parent / "fixtures" / "search_eval"
+
+
+class _DeterministicEmbeddingProvider:
+    model_name = "__deterministic_fake__"
+    dim = 384
+
+    def __init__(self) -> None:
+        self._model = DeterministicFakeEmbeddingModel(self.dim)
+
+    def embed(self, texts: list[str]) -> list[Vector]:
+        return [self._model.get_text_embedding(text) for text in texts]
+
+    def embed_query(self, query: str) -> Vector:
+        return self._model.get_query_embedding(query)
 
 
 @dataclass(frozen=True)
@@ -184,7 +201,7 @@ class SearchEvaluationHarness:
 
 def build_search_evaluation_harness(
     tmp_path: Path,
-    embedding_model: EmbeddingModel,
+    embedding_provider: EmbeddingProvider | None = None,
     *,
     corpus_root: Path = FIXTURE_CORPUS_ROOT,
 ) -> SearchEvaluationHarness:
@@ -198,21 +215,22 @@ def build_search_evaluation_harness(
         ),
         search=SearchConfig(),
         chunking=ChunkingConfig(),
-        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        llm=LLMConfig(embedding_model="__deterministic_fake__"),
         projects=[
             ProjectConfig(name="alpha", path=str((corpus_root / "alpha").resolve())),
             ProjectConfig(name="beta", path=str((corpus_root / "beta").resolve())),
         ],
     )
 
-    vector = VectorIndex(
-        embedding_model=embedding_model,
-        embedding_workers=1,
-        torch_num_threads=1,
+    provider = embedding_provider or _DeterministicEmbeddingProvider()
+    local_kernel = build_local_record_kernel(
+        index_path / "index.db",
+        embedding_provider=provider,
+        embedding_model_name=provider.model_name,
+        embedding_dim=provider.dim,
+        vector_engine="exact",
     )
-    keyword = KeywordIndex(DatabaseManager(index_path / "keyword.db"))
-    graph = GraphStore(DatabaseManager(index_path / "graph.db"))
-    manager = IndexManager(config, vector, keyword, graph)
+    manager = RecordIndexManager(config, local_kernel, provider)
 
     corpus_files = sorted(corpus_root.rglob("*.md"))
     path_to_doc_id: dict[str, str] = {}

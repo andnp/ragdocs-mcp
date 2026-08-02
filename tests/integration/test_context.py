@@ -301,12 +301,8 @@ async def test_shutdown_persists_indices(context_with_config):
     await ctx.start(background_index=False)
     await ctx.stop()
 
-    vector_path = ctx.index_path / "vector"
-    keyword_path = ctx.index_path / "keyword"
-
-    assert vector_path.exists()
-    assert keyword_path.exists()
-    # graph data lives in SQLite (no separate directory)
+    assert (ctx.index_path / "index.db").exists()
+    assert (ctx.index_path / "record-sources.json").exists()
 
 
 @pytest.mark.asyncio

@@ -1,25 +1,27 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
 from searchkernel.domain import Record, SearchResultProvenance
 from searchkernel.ports.federation import (
     CallerAuthorizationContext,
+    JsonValue,
     SearchRequest,
 )
 
 from mcp_markdown_ragdocs.server import create_app
 
 
-def _request(**kwargs: object) -> dict[str, object]:
+def _request(**kwargs: object) -> dict[str, JsonValue]:
     return SearchRequest(
         "authentication",
         caller=CallerAuthorizationContext(
             caller_id="devkit",
             scopes=("search:read",),
         ),
-        **kwargs,
+        **cast(Any, kwargs),
     ).to_dict()
 
 

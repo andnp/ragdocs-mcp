@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from mcp_markdown_ragdocs.config import Config
 from searchkernel.domain import Record
@@ -28,10 +29,21 @@ class _FakeSource:
         yield from self._records
 
 
+class _FakeIngestor:
+    def __init__(self, manager) -> None:
+        self._manager = manager
+
+    async def index_records(self, records, **_kwargs):
+        for record in records:
+            self._manager.index_record(record)
+        return SimpleNamespace(successful=len(records), failed=0)
+
+
 class _FakeIndexManager:
     def __init__(self) -> None:
         self.persist_checkpoint_calls = 0
         self.indexed_records: list[Record] = []
+        self.ingestor = _FakeIngestor(self)
 
     def index_record(self, record: Record) -> bool:
         self.indexed_records.append(record)
@@ -50,6 +62,7 @@ class _RebuildManager:
         self._encoder_fingerprint = None
         self._failed_files: list[dict[str, str]] = []
         self.indexed_records: list[Record] = []
+        self.ingestor = _FakeIngestor(self)
 
     def clear_documents(self) -> None:
         self.clear_calls += 1

@@ -11,15 +11,26 @@ from scripts.check_public_searchkernel_imports import (
 PACKAGE_ROOT = Path(__file__).parents[2] / "mcp_markdown_ragdocs"
 
 
-def test_app_uses_searchkernel_public_surface() -> None:
-    assert find_private_imports(PACKAGE_ROOT) == []
+def test_app_does_not_import_removed_searchkernel_modules() -> None:
+    removed_modules = {
+        "searchkernel.indices.vector",
+        "searchkernel.indices.keyword",
+        "searchkernel.indices.graph",
+        "searchkernel.search.path_utils",
+        "searchkernel.indexing.async_ingestion",
+    }
+    violations = find_private_imports(PACKAGE_ROOT)
+
+    assert not {
+        violation.imported_module for violation in violations
+    } & removed_modules
 
 
 @pytest.mark.parametrize(
     "source",
     [
-        "from searchkernel.indices import VectorIndex",
-        "from searchkernel.search.path_utils import normalize_path",
+        "from searchkernel.indices.local import LocalVectorStore",
+        "from searchkernel.search.record_pipeline import RecordSearchPipeline",
         "import searchkernel.storage.db",
     ],
 )
@@ -52,7 +63,7 @@ def test_public_searchkernel_imports_are_allowed(source: str) -> None:
 
 
 def test_private_optional_backend_import_is_rejected() -> None:
-    source = "from searchkernel.adapters.stores.pgvector_index import PGVectorIndex"
+    source = "from searchkernel.adapters.stores.pgvector import PGVectorStore"
 
     assert (
         find_private_imports_in_source(

@@ -620,6 +620,9 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
         def get_document_count(self):
             return 7
 
+        def describe_documents(self):
+            return self.vector.describe_documents()
+
     class _FakeIndexingConfig:
         documents_path = str(docs_dir)
         index_path = str(index_dir)
@@ -714,6 +717,9 @@ def test_index_stats_reports_per_root_breakdown(tmp_path):
 
         def load(self):
             return None
+
+        def describe_documents(self):
+            return self.vector.describe_documents()
 
     class _FakeIndexingConfig:
         documents_path = str(tmp_path)
@@ -815,6 +821,9 @@ def test_index_stats_uses_loaded_snapshot_when_refresh_lock_times_out(
             raise TimeoutError(
                 f"Failed to acquire shared lock after 5.0s: {index_dir / '.index.lock'}"
             )
+
+        def describe_documents(self):
+            return self.vector.describe_documents()
 
     class _FakeIndexingConfig:
         documents_path = str(docs_dir)

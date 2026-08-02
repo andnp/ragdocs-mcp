@@ -321,6 +321,9 @@ def run_progressive_bootstrap(
     documents_roots: Sequence[Path],
 ) -> CoordinatorReceipt:
     """Run one bounded bootstrap source through the shared coordinator."""
+    if hasattr(manager, "kernel"):
+        return _run_canonical_bootstrap(manager, file_paths)
+
     target_paths = {
         _relative_path(file_path, documents_roots)
         for file_path in file_paths
@@ -385,6 +388,41 @@ def run_progressive_bootstrap(
             failure_mode="strict",
         )
     )
+
+
+def _run_canonical_bootstrap(
+    manager: Any,
+    file_paths: Sequence[str],
+) -> CoordinatorReceipt:
+    async def run() -> CoordinatorReceipt:
+        outcomes: list[RecordIngestionResult] = []
+        for file_path in file_paths:
+            try:
+                success = await asyncio.to_thread(manager.index_document, file_path)
+            except Exception as error:  # noqa: BLE001 - worker boundary
+                success = False
+                error_text = str(error)
+            else:
+                error_text = None if success else "record indexing failed"
+            outcomes.append(
+                RecordIngestionResult(
+                    source_kind="note",
+                    source_id=str(file_path),
+                    workspace_id=None,
+                    status="committed" if success else "failed",
+                    error=error_text,
+                )
+            )
+        ingestion = IngestionReceipt(
+            source_kind="note",
+            workspace_id=None,
+            checkpoint=None,
+            records=tuple(outcomes),
+        )
+        manager.persist()
+        return CoordinatorReceipt(ingestion=ingestion)
+
+    return asyncio.run(run())
 
 
 def _records_for_prepared_document(

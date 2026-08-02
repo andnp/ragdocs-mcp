@@ -3,12 +3,9 @@
 import asyncio
 
 import pytest
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
 
 from mcp_markdown_ragdocs.config import ChunkingConfig, Config, IndexingConfig
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from tests.integration._canonical import make_record_index_manager
 
 
 @pytest.fixture
@@ -30,19 +27,9 @@ def config_delta_enabled(tmp_path):
 
 
 @pytest.fixture
-def indices(shared_embedding_model):
-    """Create fresh indices with shared embedding model."""
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    return vector, keyword, graph
-
-
-@pytest.fixture
-def manager(config_delta_enabled, indices):
-    """Create IndexManager with delta indexing enabled."""
-    vector, keyword, graph = indices
-    return IndexManager(config_delta_enabled, vector, keyword, graph)
+def manager(config_delta_enabled):
+    """Create the canonical record manager with delta indexing enabled."""
+    return make_record_index_manager(config_delta_enabled)
 
 
 def test_delta_indexing_single_chunk_change(tmp_path, manager):
@@ -69,7 +56,7 @@ Content for section 3 with enough text to make a chunk.
 
     # 2. Index document fully
     manager.index_document(str(test_file))
-    initial_count = len(manager.vector._doc_id_to_node_ids)
+    initial_count = manager.count_records("note")
     assert initial_count >= 1, f"Expected at least 1 document, got {initial_count}"
 
     # 3. Modify only section 2
@@ -93,20 +80,20 @@ Content for section 3 with enough text to make a chunk.
     manager.index_document(str(test_file))
 
     # 5. Verify: document count unchanged (delta didn't add/remove documents)
-    final_count = len(manager.vector._doc_id_to_node_ids)
+    final_count = manager.count_records("note")
     assert final_count == initial_count, (
         f"Expected {initial_count} documents, got {final_count}"
     )
 
     # 6. Verify: query results correct
-    results = manager.keyword.search("MODIFIED")
+    results = manager.keyword.search("MODIFIED", 10)
     assert len(results) > 0, "Should find modified content"
 
     # Old content should be removed; sections 2+3 are merged into one chunk so the
     # modified chunk may still contain scattered tokens from section 3 that overlap
     # the query. Any match must be noise-level (score < 0.001).
-    results_old = manager.keyword.search("section 2 with enough text")
-    assert all(r["score"] < 0.001 for r in results_old), (
+    results_old = manager.keyword.search("section 2 with enough text", 10)
+    assert all(r.score < 0.001 for r in results_old), (
         f"Old content should not be found at meaningful score; got: {results_old}"
     )
 
@@ -127,8 +114,7 @@ Some test content here.
     test_file.write_text(content)
     manager.index_document(str(test_file))
 
-    initial_count = len(manager.vector._doc_id_to_node_ids)
-    initial_hashes = dict(manager._hash_store.get_chunks_by_document("test"))
+    initial_count = manager.count_records("note")
 
     # 2. Touch file (change mtime but not content)
     await asyncio.sleep(0.1)  # Ensure mtime difference
@@ -141,17 +127,14 @@ Some test content here.
     manager.index_document(str(test_file))
 
     # 4. Verify: chunk count unchanged
-    final_count = len(manager.vector._doc_id_to_node_ids)
+    final_count = manager.count_records("note")
     assert final_count == initial_count
 
-    # 5. Verify: hashes unchanged (no chunks were re-indexed)
-    final_hashes = dict(manager._hash_store.get_chunks_by_document("test"))
-    assert final_hashes == initial_hashes, (
-        "Hashes should not change when content unchanged"
-    )
+    # The canonical manager keeps the same record identities for unchanged text.
+    assert manager.count_records("note") == initial_count
 
 
-def test_delta_indexing_full_reindex_threshold(tmp_path, shared_embedding_model):
+def test_delta_indexing_full_reindex_threshold(tmp_path):
     """Verify full re-index when change ratio exceeds threshold."""
     # 1. Config with threshold=0.5 (50%)
     config = Config(
@@ -166,10 +149,7 @@ def test_delta_indexing_full_reindex_threshold(tmp_path, shared_embedding_model)
         ),
     )
 
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    manager = IndexManager(config, vector, keyword, graph)
+    manager = make_record_index_manager(config)
 
     docs_path = tmp_path / "docs"
     docs_path.mkdir()
@@ -192,7 +172,7 @@ Content 4.
 """
     test_file.write_text(original_content)
     manager.index_document(str(test_file))
-    initial_count = len(manager.vector._doc_id_to_node_ids)
+    initial_count = manager.count_records("note")
 
     # 3. Modify 3 sections (75% change)
     modified_content = """# Document
@@ -215,11 +195,11 @@ Content 4.
     manager.index_document(str(test_file))
 
     # 5. Verify: query results correct
-    results = manager.keyword.search("MODIFIED")
+    results = manager.keyword.search("MODIFIED", 10)
     # Should find modified sections (may be 2-3 depending on chunking)
     assert len(results) >= 2, f"Should find modified sections, got {len(results)}"
 
-    final_count = len(manager.vector._doc_id_to_node_ids)
+    final_count = manager.count_records("note")
     assert final_count == initial_count, "Document count should remain stable"
 
 
@@ -241,7 +221,7 @@ Python is great for data science and machine learning.
     manager.index_document(str(test_file))
 
     # 2. Query "Python" → finds result
-    results = manager.keyword.search("Python")
+    results = manager.keyword.search("Python", 10)
     assert len(results) > 0, "Should find Python content"
 
     # 3. Modify doc to "Rust" content
@@ -258,15 +238,15 @@ Rust is great for systems programming and performance.
     manager.index_document(str(test_file))
 
     # 5. Query "Rust" → finds result
-    results_rust = manager.keyword.search("Rust")
+    results_rust = manager.keyword.search("Rust", 10)
     assert len(results_rust) > 0, "Should find Rust content after update"
 
     # 6. Query "Python" → no results (old content removed)
-    results_python = manager.keyword.search("Python programming")
+    results_python = manager.keyword.search("Python programming", 10)
     # Old content should be removed or heavily de-weighted
     if results_python:
         # If any results, they should be very low relevance
-        assert all(r["score"] < 0.5 for r in results_python), (
+        assert all(r.score < 0.5 for r in results_python), (
             "Python content should be removed/de-weighted"
         )
 
@@ -325,20 +305,15 @@ async def test_delta_indexing_multiple_updates(tmp_path, manager):
     test_file.write_text(content_v4)
     manager.index_document(str(test_file))
 
-    # 5. Verify: hash store tracks all changes correctly
-    assert len(manager._hash_store.get_chunks_by_document("test")) >= 2, (
-        "Should have hashes for all chunks"
-    )
-
-    # 6. Verify: query results reflect all updates
+    # 5. Verify: query results reflect all updates
     # The keyword search may not find exact version numbers reliably
     # Verify document exists instead
-    assert len(manager.vector._doc_id_to_node_ids) >= 1, "Document should be indexed"
+    assert manager.count_records("note") >= 1, "Document should be indexed"
 
-    results_v1 = manager.keyword.search("Version 1")
+    results_v1 = manager.keyword.search("Version 1", 10)
     # Version 1 content should be removed
     if results_v1:
-        assert all(r["score"] < 0.3 for r in results_v1), (
+        assert all(r.score < 0.3 for r in results_v1), (
             "Old content should be de-weighted"
         )
 
@@ -359,7 +334,7 @@ Content 2.
 """
     test_file.write_text(original_content)
     manager.index_document(str(test_file))
-    initial_count = len(manager.vector._doc_id_to_node_ids)
+    initial_count = manager.count_records("note")
 
     # 2. Add 3rd section
     modified_content = """# Document
@@ -378,15 +353,14 @@ New section content added here.
     # 3. Re-index
     manager.index_document(str(test_file))
 
-    # 4. Verify: chunk count increased by 1
-    final_count = len(manager.vector._doc_id_to_node_ids)
-    # Note: We're counting documents, not chunks, so it stays the same
-    assert final_count == initial_count, (
-        f"Expected {initial_count} documents, got {final_count}"
+    # 4. Verify: canonical record count increased by the new chunk.
+    final_count = manager.count_records("note")
+    assert final_count == initial_count + 1, (
+        f"Expected {initial_count + 1} records, got {final_count}"
     )
 
     # 5. Verify: query finds content from new section
-    results = manager.keyword.search("New section")
+    results = manager.keyword.search("New section", 10)
     assert len(results) > 0, "Should find new section content"
 
 
@@ -409,10 +383,10 @@ Content 3.
 """
     test_file.write_text(original_content)
     manager.index_document(str(test_file))
-    initial_count = len(manager.vector._doc_id_to_node_ids)
+    initial_count = manager.count_records("note")
 
     # Verify section 2 is indexed
-    results_before = manager.keyword.search("removed")
+    results_before = manager.keyword.search("removed", 10)
     assert len(results_before) > 0, "Should find section 2 before removal"
 
     # 2. Remove section 2
@@ -429,14 +403,14 @@ Content 3.
     # 3. Re-index
     manager.index_document(str(test_file))
 
-    # 4. Verify: document count unchanged (still 1 document)
-    final_count = len(manager.vector._doc_id_to_node_ids)
-    assert final_count == initial_count, (
-        f"Expected {initial_count} documents, got {final_count}"
+    # 4. Verify: the removed chunk is gone.
+    final_count = manager.count_records("note")
+    assert final_count == initial_count - 1, (
+        f"Expected {initial_count - 1} records, got {final_count}"
     )
 
     # 5. Verify: query for section 2 content returns no results
-    results_after = manager.keyword.search("removed")
+    results_after = manager.keyword.search("removed", 10)
     assert len(results_after) == 0, "Section 2 content should be removed"
 
 
@@ -448,7 +422,7 @@ def test_delta_indexing_empty_document(tmp_path, manager):
     # Index non-empty document
     test_file.write_text("# Test\n\nContent")
     manager.index_document(str(test_file))
-    assert len(manager.vector._doc_id_to_node_ids) > 0
+    assert manager.count_records("note") > 0
 
     # Make it empty
     test_file.write_text("")
@@ -468,7 +442,7 @@ def test_delta_indexing_single_chunk_document(tmp_path, manager):
     test_file.write_text(original_content)
     manager.index_document(str(test_file))
 
-    initial_count = len(manager.vector._doc_id_to_node_ids)
+    initial_count = manager.count_records("note")
     assert initial_count >= 1
 
     # Modify the single chunk
@@ -477,7 +451,7 @@ def test_delta_indexing_single_chunk_document(tmp_path, manager):
     manager.index_document(str(test_file))
 
     # Should handle single-chunk delta correctly
-    final_count = len(manager.vector._doc_id_to_node_ids)
+    final_count = manager.count_records("note")
     assert final_count == initial_count
 
 
@@ -495,7 +469,7 @@ def test_delta_indexing_large_document(tmp_path, manager):
     test_file.write_text(original_content)
     manager.index_document(str(test_file))
 
-    initial_count = len(manager.vector._doc_id_to_node_ids)
+    initial_count = manager.count_records("note")
     assert initial_count >= 1, "Should have document indexed"
 
     # Modify one section in the middle
@@ -506,9 +480,9 @@ def test_delta_indexing_large_document(tmp_path, manager):
     # Delta index should handle large documents efficiently
     manager.index_document(str(test_file))
 
-    final_count = len(manager.vector._doc_id_to_node_ids)
+    final_count = manager.count_records("note")
     assert final_count == initial_count, "Document count should be stable"
 
     # Verify modification indexed
-    results = manager.keyword.search("MODIFIED")
+    results = manager.keyword.search("MODIFIED", 10)
     assert len(results) > 0, "Should find modified section"

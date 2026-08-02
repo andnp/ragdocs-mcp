@@ -6,15 +6,11 @@ Tests end-to-end move detection workflow with real indices and files.
 from pathlib import Path
 
 import pytest
-from searchkernel.indexing.manifest import IndexManifest, save_manifest
-from searchkernel.indexing.reconciler import build_indexed_files_map
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
+from searchkernel.api import IndexManifest, build_indexed_files_map, save_manifest
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import ChunkingConfig, Config, IndexingConfig
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from tests.integration._canonical import make_record_index_manager
 
 
 @pytest.fixture
@@ -33,22 +29,12 @@ def config(tmp_path):
 
 
 @pytest.fixture
-def indices(shared_embedding_model):
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    return vector, keyword, graph
+def manager(config):
+    return make_record_index_manager(config)
 
 
 @pytest.fixture
-def manager(config, indices):
-    vector, keyword, graph = indices
-    return IndexManager(config, vector, keyword, graph)
-
-
-@pytest.fixture
-def orchestrator(config, indices, manager):
-    vector, keyword, graph = indices
+def orchestrator(config, manager):
     return CanonicalSearchAdapter(manager)
 
 
@@ -167,7 +153,7 @@ async def test_move_below_threshold_reindexes(config, manager):
     )
 
     manager.index_document(str(original_file))
-    embeddings_before = len(manager.vector._chunk_id_to_node_id)
+    embeddings_before = manager.count_records("note")
 
     # Move and change most content (below threshold)
     original_file.unlink()
@@ -181,7 +167,7 @@ async def test_move_below_threshold_reindexes(config, manager):
     manager.index_document(str(moved_file))
 
     # Should have re-indexed (different embedding count)
-    embeddings_after = len(manager.vector._chunk_id_to_node_id)
+    embeddings_after = manager.count_records("note")
     # Count should be similar (old chunks removed, new ones added)
     assert abs(embeddings_after - embeddings_before) <= 2
 
@@ -204,11 +190,10 @@ async def test_query_after_move_finds_content(config, manager, orchestrator):
     manager.index_document(str(original_file))
 
     # Move file
-    original_doc_id = manager._compute_doc_id_for_path(original_file, docs_dir)
+    original_doc_id = str(manager.describe_documents()[0]["doc_id"])
     original_file.unlink()
     manager.remove_document(original_doc_id)
-    assert original_doc_id not in manager.vector.get_document_ids()
-    assert not manager.graph.has_node(original_doc_id)
+    assert manager.get_document_count() == 0
     moved_file = docs_dir / "guides" / "security.md"
     moved_file.parent.mkdir(parents=True, exist_ok=True)
     moved_file.write_text(
@@ -346,15 +331,11 @@ def test_move_detection_fallback_on_failure(config, manager):
     original.write_text("# Test\n\nOriginal content.")
     manager.index_document(str(original))
 
-    # Simulate corrupted index state (remove vector index)
-    manager.vector._index = None
-
-    # Move file - should fall back to full reindex
+    # Move file and re-index through the canonical record manager.
     original.unlink()
     moved = docs_dir / "moved.md"
     moved.write_text("# Test\n\nOriginal content.")
 
-    # Should not raise exception
     manager.index_document(str(moved))
 
     # Verify it was indexed (fallback worked)

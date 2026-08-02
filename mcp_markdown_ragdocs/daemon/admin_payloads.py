@@ -80,7 +80,7 @@ def _build_per_root_index_rows(
     unattributed_indexed_documents = 0
     unattributed_indexed_chunks = 0
     if include_indexed_estimates:
-        for description in ctx.index_manager.vector.describe_documents():
+        for description in ctx.index_manager.describe_documents():
             raw_file_path = description.get("file_path")
             resolved_path = _resolve_stats_file_path(
                 raw_file_path if isinstance(raw_file_path, str) else None,
@@ -113,7 +113,8 @@ def _build_per_root_index_rows(
 def _build_index_stats_payload(ctx: Any) -> dict[str, object]:
     manifest_path = ctx.index_path / "index.manifest.json"
     manifest_exists = manifest_path.exists()
-    if manifest_exists:
+    persisted_index_exists = manifest_exists or (ctx.index_path / "index.db").exists()
+    if persisted_index_exists:
         try:
             ctx.index_manager.load()
         except TimeoutError as exc:
@@ -131,8 +132,8 @@ def _build_index_stats_payload(ctx: Any) -> dict[str, object]:
 
     indexed_documents = 0
     indexed_chunks = 0
-    if manifest_exists:
-        indexed_descriptions = ctx.index_manager.vector.describe_documents()
+    if persisted_index_exists:
+        indexed_descriptions = ctx.index_manager.describe_documents()
         indexed_documents = len(indexed_descriptions)
         indexed_chunks = sum(
             _as_int(description.get("chunk_count"))
@@ -144,7 +145,7 @@ def _build_index_stats_payload(ctx: Any) -> dict[str, object]:
             ctx,
             discovered_files=discovered_files,
             common_root=docs_root,
-            include_indexed_estimates=manifest_exists,
+            include_indexed_estimates=persisted_index_exists,
         )
     )
     remaining_estimate = max(len(discovered_files) - indexed_documents, 0)

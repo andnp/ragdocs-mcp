@@ -23,8 +23,8 @@ def discover_modules(package_path: Path, package_name: str) -> list[str]:
 
 @pytest.fixture(scope="module")
 def src_modules():
-    src_path = Path(__file__).parent.parent.parent / "src"
-    return discover_modules(src_path, "src")
+    package_path = Path(__file__).parent.parent.parent / "mcp_markdown_ragdocs"
+    return discover_modules(package_path, "mcp_markdown_ragdocs")
 
 
 def test_all_src_modules_importable(src_modules):
@@ -49,10 +49,10 @@ def test_critical_modules_import_without_error():
         "mcp_markdown_ragdocs.server",
         "mcp_markdown_ragdocs.git.watcher",
         "mcp_markdown_ragdocs.indexing.manager",
-        "searchkernel.indices.vector",
-        "searchkernel.indices.keyword",
-        "searchkernel.indices.graph",
-        "searchkernel.search.orchestrator",
+        "searchkernel.api",
+        "searchkernel.local",
+        "searchkernel.indices.local",
+        "searchkernel.search.record_pipeline",
     ]
 
     failed = []

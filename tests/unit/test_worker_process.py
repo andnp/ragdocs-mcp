@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import signal
-from typing import Any
+from typing import Any, cast
 from pathlib import Path
 
 from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
@@ -120,7 +120,7 @@ def test_worker_process_allows_long_running_task_heartbeat(
 ):
     fake_process = _FakeProcess()
     worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
-    worker._process = fake_process
+    worker._process = cast(Any, fake_process)
 
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.worker.process._read_worker_status",

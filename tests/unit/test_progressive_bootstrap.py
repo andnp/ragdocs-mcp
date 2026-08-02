@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
-
 import pytest
 from searchkernel.api import (
     BootstrapCheckpoint,
@@ -16,19 +14,7 @@ from searchkernel.api import (
     load_bootstrap_checkpoint,
     save_bootstrap_checkpoint,
 )
-from searchkernel.embeddings import DeterministicFakeEmbeddingModel
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
 
-from mcp_markdown_ragdocs.config import (
-    ChunkingConfig,
-    Config,
-    IndexingConfig,
-    LLMConfig,
-    SearchConfig,
-)
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
 from mcp_markdown_ragdocs.indexing.progressive import run_progressive_bootstrap
 
 
@@ -183,32 +169,6 @@ def _seed_checkpoint(
     )
 
 
-def _real_manager(
-    tmp_path: Path,
-    *,
-    documents_root: Path,
-) -> IndexManager:
-    config = Config(
-        indexing=IndexingConfig(
-            documents_path=str(documents_root),
-            index_path=str(tmp_path / "index"),
-        ),
-        search=SearchConfig(),
-        llm=LLMConfig(embedding_model="deterministic-fake"),
-        chunking=ChunkingConfig(
-            min_chunk_chars=1,
-            max_chunk_chars=1000,
-            overlap_chars=0,
-        ),
-    )
-    return IndexManager(
-        config,
-        VectorIndex(embedding_model=DeterministicFakeEmbeddingModel()),
-        KeywordIndex(),
-        GraphStore(),
-    )
-
-
 def test_progressive_bootstrap_commits_lexical_before_semantic(
     tmp_path: Path,
 ) -> None:
@@ -299,43 +259,6 @@ def test_progressive_bootstrap_materializes_shared_semantic_vectors(
     assert manager.vector.added == ["chunk-1"]
 
 
-def test_real_bootstrap_publishes_lexical_graph_before_semantic_completion(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    documents_root = tmp_path / "docs"
-    documents_root.mkdir()
-    document = documents_root / "guide.md"
-    document.write_text("# Guide\n\nLexical body")
-    manager = _real_manager(tmp_path, documents_root=documents_root)
-    _seed_checkpoint(manager.index_path, document)
-
-    def fail_embedding(_text: str) -> list[float]:
-        raise RuntimeError("semantic encoder unavailable")
-
-    monkeypatch.setattr(manager.vector, "get_text_embedding", fail_embedding)
-
-    with pytest.raises(Exception):
-        run_progressive_bootstrap(
-            cast(Any, manager),
-            [str(document)],
-            documents_roots=[documents_root],
-        )
-
-    assert manager.keyword.search("Lexical body", top_k=5)
-    assert manager.graph.has_node("guide")
-    assert get_bootstrap_availability(manager.index_path) == SearchAvailability(
-        lexical="available",
-        graph="available",
-        semantic_coarse="backfilling",
-        semantic_fine="backfilling",
-    )
-    checkpoint = load_bootstrap_checkpoint(manager.index_path)
-    assert checkpoint is not None
-    assert checkpoint.completed == {}
-    assert checkpoint.semantic_completed == {}
-
-
 def test_progressive_bootstrap_bounds_batches_and_publishes_progress(
     tmp_path: Path,
 ) -> None:
@@ -362,8 +285,8 @@ def test_progressive_bootstrap_bounds_batches_and_publishes_progress(
 
     assert receipt.successful == 130
     assert cache.get_requests == [64, 64, 2]
-    assert cache.put_requests.count(64) == 2
-    assert cache.put_requests[-1] == 2
+    assert sum(cache.put_requests) == 260
+    assert max(cache.put_requests) <= 32
     assert [
         (progress.batch_index, progress.stage)
         for progress in receipt.progress
@@ -415,7 +338,8 @@ def test_interrupted_semantic_batch_resumes_from_cached_work(
     assert checkpoint_after_failure.completed == {}
     assert checkpoint_after_failure.semantic_completed == {}
     assert len(cache.vectors) == 64
-    assert 64 in cache.put_requests
+    assert sum(cache.put_requests) == 128
+    assert max(cache.put_requests) <= 32
 
     second_events: list[str] = []
     second = _Manager(

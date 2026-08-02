@@ -11,6 +11,7 @@ from threading import Barrier, Thread
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from huey import SqliteHuey
@@ -48,14 +49,17 @@ from mcp_markdown_ragdocs.indexing.tasks import (
 class FakeIndexManager:
     """Lightweight stub that records calls."""
 
+    ingestor = object()
+
     def __init__(self) -> None:
         self.indexed: list[tuple[str, bool]] = []
         self.removed: list[str] = []
         self.indexed_records: list[Record] = []
         self.persist_calls = 0
 
-    def index_document(self, file_path: str, force: bool = False) -> None:
+    def index_document(self, file_path: str, force: bool = False) -> bool:
         self.indexed.append((file_path, force))
+        return True
 
     def index_documents(
         self,
@@ -88,6 +92,10 @@ def huey_instance(tmp_path: Path) -> SqliteHuey:
     return SqliteHuey(
         name="test-tasks", filename=str(tmp_path / "tasks.db"), immediate=False
     )
+
+
+def _queue_path(huey: SqliteHuey) -> Path:
+    return Path(cast(Any, huey.storage).filename)
 
 
 @pytest.fixture()
@@ -163,7 +171,7 @@ class TestTaskRegistration:
         fake_manager: FakeIndexManager,
     ) -> None:
         register_tasks(huey_instance, fake_manager)
-        store = TaskLeaseStore(Path(huey_instance.storage.filename))
+        store = TaskLeaseStore(_queue_path(huey_instance))
         assert store.acquire_writer("startup-indexing")
 
         blocked = submit_rebuild_request(None, request_id="rebuild-blocked")
@@ -202,7 +210,7 @@ class TestTaskRegistration:
             task = huey_instance.dequeue()
             assert task is not None
             huey_instance.execute(task)
-            store = TaskLeaseStore(Path(huey_instance.storage.filename))
+            store = TaskLeaseStore(_queue_path(huey_instance))
             assert store.writer_owner() is None
 
     def test_document_and_git_tasks_reject_writes_while_rebuild_owns_writer(
@@ -211,7 +219,7 @@ class TestTaskRegistration:
         fake_manager: FakeIndexManager,
     ) -> None:
         register_tasks(huey_instance, fake_manager)
-        store = TaskLeaseStore(Path(huey_instance.storage.filename))
+        store = TaskLeaseStore(_queue_path(huey_instance))
         assert store.acquire_writer("rebuild-active")
 
         tasks_mod.index_document_task("/docs/blocked.md")
@@ -355,7 +363,7 @@ class TestTaskRegistration:
         fake_manager: FakeIndexManager,
     ) -> None:
         register_tasks(huey_instance, fake_manager)
-        store = TaskLeaseStore(Path(huey_instance.storage.filename))
+        store = TaskLeaseStore(_queue_path(huey_instance))
         assert store.acquire_writer("rebuild-active")
 
         submission = submit_refresh_git_request("/repo/.git")
@@ -913,7 +921,9 @@ class TestTaskExecution:
         from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 
         class FailingManager:
-            def index_document(self, file_path: str, force: bool = False) -> None:
+            ingestor = object()
+
+            def index_document(self, file_path: str, force: bool = False) -> bool:
                 raise RuntimeError("Simulated failure")
 
             def index_documents(
@@ -969,21 +979,16 @@ class TestTaskExecution:
 
         observed: dict[str, object] = {}
 
-        class _FakeIngestor:
-            def __init__(self, index_manager):
-                observed["index_manager"] = index_manager
-
-            async def index_records(self, records, *, checkpoint=None):
-                observed["since"] = checkpoint
-                return type("Receipt", (), {"records": (object(),)})()
+        async def _receipts(manager, source, *, since, batch_size):
+            observed["index_manager"] = manager
+            observed["repo_path"] = source.repo_path
+            observed["since"] = since
+            observed["batch_size"] = batch_size
+            yield SimpleNamespace(records=(object(),), failed=0, checkpoint=None)
 
         monkeypatch.setattr(
-            "mcp_markdown_ragdocs.indexing.tasks.AsyncIndexIngestor",
-            _FakeIngestor,
-        )
-        monkeypatch.setattr(
-            "mcp_markdown_ragdocs.adapters.sources.git.GitContentSource.iter_records",
-            lambda source, since: observed.update(repo_path=source.repo_path) or [],
+            "mcp_markdown_ragdocs.indexing.git_ingestion.iter_git_ingestion_receipts",
+            _receipts,
         )
 
         git_dir = tmp_path / "repo" / ".git"
@@ -1021,21 +1026,14 @@ class TestTaskExecution:
             updated_at=datetime.fromtimestamp(124, tz=UTC),
         )
 
-        class _FakeIngestor:
-            def __init__(self, _index_manager):
-                pass
-
-            async def index_records(self, records, *, checkpoint=None):
-                observed["since"] = checkpoint
-                return type("Receipt", (), {"records": (record,)})()
+        async def _receipts(_manager, _source, *, since, batch_size):
+            observed["since"] = since
+            observed["batch_size"] = batch_size
+            yield SimpleNamespace(records=(record,), failed=0, checkpoint="124")
 
         monkeypatch.setattr(
-            "mcp_markdown_ragdocs.indexing.tasks.AsyncIndexIngestor",
-            _FakeIngestor,
-        )
-        monkeypatch.setattr(
-            "mcp_markdown_ragdocs.adapters.sources.git.GitContentSource.iter_records",
-            lambda _source, since: [record],
+            "mcp_markdown_ragdocs.indexing.git_ingestion.iter_git_ingestion_receipts",
+            _receipts,
         )
         monkeypatch.setattr(
             "mcp_markdown_ragdocs.indexing.tasks.get_git_ref_signature",
@@ -1073,13 +1071,6 @@ class TestTaskExecution:
             lambda _git_dir: "head-1",
         )
 
-        def _unexpected_ingest(*args, **kwargs):
-            raise AssertionError("unchanged repository should not be ingested")
-
-        monkeypatch.setattr(
-            "mcp_markdown_ragdocs.indexing.tasks.AsyncIndexIngestor",
-            _unexpected_ingest,
-        )
         register_tasks(
             huey_instance,
             fake_manager,

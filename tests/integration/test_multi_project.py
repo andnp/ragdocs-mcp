@@ -1,10 +1,7 @@
 import pytest
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
 
 from mcp_markdown_ragdocs.config import Config
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from tests.integration._canonical import make_record_index_manager
 
 
 @pytest.fixture
@@ -50,7 +47,7 @@ def test_project_isolation(projects_setup):
     config_a.indexing.index_path = str(data_dir / "project_a")
     config_a.indexing.documents_path = str(project_a)
 
-    manager_a = IndexManager(config_a, VectorIndex(), KeywordIndex(), GraphStore())
+    manager_a = make_record_index_manager(config_a)
 
     doc_a = project_a / "doc.md"
     doc_a.write_text("# Project A Document")
@@ -61,22 +58,20 @@ def test_project_isolation(projects_setup):
     config_b.indexing.index_path = str(data_dir / "project_b")
     config_b.indexing.documents_path = str(project_b)
 
-    manager_b = IndexManager(config_b, VectorIndex(), KeywordIndex(), GraphStore())
+    manager_b = make_record_index_manager(config_b)
 
     doc_b = project_b / "doc.md"
     doc_b.write_text("# Project B Document")
     manager_b.index_document(str(doc_b))
     manager_b.persist()
 
-    assert (data_dir / "project_a" / "vector").exists()
-    assert (data_dir / "project_b" / "vector").exists()
+    assert (data_dir / "project_a" / "index.db").exists()
+    assert (data_dir / "project_b" / "index.db").exists()
 
     assert manager_a.get_document_count() == 1
     assert manager_b.get_document_count() == 1
 
-    manager_a_reload = IndexManager(
-        config_a, VectorIndex(), KeywordIndex(), GraphStore()
-    )
+    manager_a_reload = make_record_index_manager(config_a)
     manager_a_reload.load()
 
     assert manager_a_reload.get_document_count() == 1

@@ -1,9 +1,6 @@
 import pytest
 from searchkernel.chunking.header_chunker import HeaderBasedChunker
 from searchkernel.domain import Record
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -12,9 +9,9 @@ from mcp_markdown_ragdocs.config import (
     LLMConfig,
     SearchConfig,
 )
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
 from mcp_markdown_ragdocs.models import Document
 from mcp_markdown_ragdocs.parsers.plaintext import PlainTextParser
+from tests.integration._canonical import make_record_index_manager
 
 
 def _to_record(doc: Document) -> Record:
@@ -48,17 +45,15 @@ def config(tmp_path):
 
 
 @pytest.fixture
-def indices():
-    vector = VectorIndex()
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    return vector, keyword, graph
+def manager(config):
+    return make_record_index_manager(config)
 
 
-@pytest.fixture
-def manager(config, indices):
-    vector, keyword, graph = indices
-    return IndexManager(config, vector, keyword, graph)
+def _search_records(manager, query):
+    return [
+        manager.kernel.backend.hydrate_record(hit.storage_key)
+        for hit in manager.keyword.search(query, 5)
+    ]
 
 
 def test_index_txt_file(tmp_path, manager):
@@ -71,11 +66,11 @@ def test_index_txt_file(tmp_path, manager):
 
     manager.index_document(str(txt_file))
 
-    results = manager.vector.search("neural networks", top_k=5)
+    results = _search_records(manager, "neural networks")
 
     assert len(results) > 0
     assert any(
-        "neural networks" in r["content"].lower() for r in results if "content" in r
+        "neural networks" in r.body.lower() for r in results if r is not None
     )
 
 
@@ -133,15 +128,15 @@ def test_search_retrieves_txt_chunks(tmp_path, manager):
 
     manager.index_document(str(txt_file))
 
-    results = manager.vector.search("SQL relational database", top_k=5)
+    results = _search_records(manager, "SQL relational database")
 
     assert len(results) > 0
     found = False
     for result in results:
-        if "content" in result and "sql" in result["content"].lower():
+        if result is not None and "sql" in result.body.lower():
             found = True
-            assert result["header_path"] == ""
-            assert "database" in result["file_path"].lower()
+            assert result.metadata["header_path"] == ""
+            assert "database" in str(result.metadata["file_path"]).lower()
             break
     assert found
 
@@ -156,12 +151,12 @@ def test_mixed_md_and_txt_indexing(tmp_path, manager):
     manager.index_document(str(md_file))
     manager.index_document(str(txt_file))
 
-    md_results = manager.vector.search("markdown", top_k=5)
-    assert any("markdown" in r["content"].lower() for r in md_results if "content" in r)
+    md_results = _search_records(manager, "markdown")
+    assert any("markdown" in r.body.lower() for r in md_results if r is not None)
 
-    txt_results = manager.vector.search("plain text", top_k=5)
+    txt_results = _search_records(manager, "plain text")
     assert any(
-        "plain text" in r["content"].lower() for r in txt_results if "content" in r
+        "plain text" in r.body.lower() for r in txt_results if r is not None
     )
 
 
@@ -212,7 +207,7 @@ def test_txt_unicode_content_search(tmp_path, manager):
 
     manager.index_document(str(txt_file))
 
-    results = manager.vector.search("international characters", top_k=5)
+    results = _search_records(manager, "international characters")
     assert len(results) > 0
 
 

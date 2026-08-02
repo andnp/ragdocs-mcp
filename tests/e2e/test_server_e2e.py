@@ -7,16 +7,17 @@ real HTTP request/response testing with full component integration.
 """
 
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from searchkernel.indexing.manifest import IndexManifest, save_manifest
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
+from searchkernel.api import IndexManifest, build_local_record_kernel, save_manifest
 
 from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.record_manager import (
+    RecordIndexManager,
+    build_embedding_provider,
+)
 from mcp_markdown_ragdocs.server import create_app
 
 
@@ -28,6 +29,20 @@ def _wait_until(condition, timeout=5.0, interval=0.05):
             return True
         time.sleep(interval)
     return False
+
+
+def _create_record_manager(config: Config) -> RecordIndexManager:
+    embedding_provider = build_embedding_provider(
+        config, config.llm.resolved_embedding_model
+    )
+    local_kernel = build_local_record_kernel(
+        Path(config.indexing.index_path) / "index.db",
+        embedding_provider=embedding_provider,
+        embedding_model_name=embedding_provider.model_name,
+        embedding_dim=embedding_provider.dim,
+        vector_engine="exact",
+    )
+    return RecordIndexManager(config, local_kernel, embedding_provider)
 
 
 @pytest.fixture
@@ -273,19 +288,10 @@ def test_server_shutdown_persists_indices(client, tmp_path, test_docs_dir):
     index_path = tmp_path / "indices"
     assert index_path.exists()
 
-    # Check vector index files
-    vector_path = index_path / "vector"
-    assert vector_path.exists()
-    assert (vector_path / "docstore.json").exists()
-
-    # Check keyword index directory
-    keyword_path = index_path / "keyword"
-    assert keyword_path.exists()
-
-    # Graph data lives directly in the shared SQLite db (graph_nodes/graph_edges
-    # tables, written continuously via commit rather than an explicit persist
-    # step), not a separate graph.json snapshot.
+    # Canonical record stores share one SQLite database and the application
+    # keeps the document-to-record mapping alongside it.
     assert (index_path / "index.db").exists()
+    assert (index_path / "record-sources.json").exists()
 
     # Check manifest file
     manifest_file = index_path / "index.manifest.json"
@@ -310,10 +316,7 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
     )
     save_manifest(index_path, old_manifest)
 
-    # Create pre-existing indices with old content
-    vector = VectorIndex()
-    keyword = KeywordIndex()
-    graph = GraphStore()
+    # Create pre-existing canonical records with old content.
     old_config = Config(
         indexing=IndexingConfig(
             documents_path=str(test_docs_dir),
@@ -322,7 +325,7 @@ def test_manifest_checking_on_startup(tmp_path, test_docs_dir, monkeypatch):
         search=SearchConfig(),
         llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
     )
-    old_manager = IndexManager(old_config, vector, keyword, graph)
+    old_manager = _create_record_manager(old_config)
 
     # Index one document with old manager
     (test_docs_dir / "old_doc.md").write_text("# Old Document\n\nExisting content.")

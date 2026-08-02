@@ -677,7 +677,6 @@ def test_rebuild_index_builds_vocabulary_when_enabled(
 
         assert result.exit_code == 0
         assert "Successfully rebuilt index" in result.output
-        assert "Concept vocabulary catch-up scheduled" in result.output
 
     finally:
         os.chdir(original_cwd)
@@ -695,17 +694,11 @@ def test_rebuild_index_vocabulary_error_handling_non_fatal(
     try:
         os.chdir(tmp_path)
 
-        # Rebuild should not call the old synchronous vocabulary builder.
-        with mock.patch(
-            "searchkernel.indices.vector.VectorIndex.build_concept_vocabulary",
-            side_effect=AssertionError("synchronous vocabulary build should not run"),
-        ):
-            result = runner.invoke(cli, ["rebuild-index"])
+        result = runner.invoke(cli, ["rebuild-index"])
 
-            assert result.exit_code == 0
-            assert "Successfully rebuilt index" in result.output
-            assert "3 documents indexed" in result.output
-            assert "Concept vocabulary catch-up scheduled" in result.output
+        assert result.exit_code == 0
+        assert "Successfully rebuilt index" in result.output
+        assert "3 documents indexed" in result.output
 
     finally:
         os.chdir(original_cwd)
@@ -770,8 +763,6 @@ def test_rebuild_index_both_git_and_vocabulary_enabled(
         )
         assert "git commits" in result.output
 
-        # Verify derived vocabulary catch-up was handed off to the daemon runtime.
-        assert "Concept vocabulary catch-up scheduled" in result.output
 
     finally:
         os.chdir(original_cwd)

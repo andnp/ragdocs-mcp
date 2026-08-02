@@ -8,10 +8,8 @@ as examples for using different fixture scopes.
 from pathlib import Path
 
 import pytest
-from searchkernel.indexing.manifest import IndexManifest, load_manifest, save_manifest
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
+from searchkernel.api import IndexManifest, load_manifest, save_manifest
+from tests.integration._canonical import make_record_index_manager
 
 
 def test_persistent_config_has_correct_paths(
@@ -55,12 +53,7 @@ def test_persistent_manager_can_persist_and_load(
     manager1.persist()
 
     # Create new manager instance and load
-    vector2 = VectorIndex()
-    keyword2 = KeywordIndex()
-    graph2 = GraphStore()
-    from mcp_markdown_ragdocs.indexing.manager import IndexManager
-
-    manager2 = IndexManager(persistent_config, vector2, keyword2, graph2)
+    manager2 = make_record_index_manager(persistent_config)
     manager2.load()
 
     # Verify loaded data

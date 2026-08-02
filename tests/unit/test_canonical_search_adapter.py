@@ -1,62 +1,48 @@
+from datetime import UTC, datetime
+
 import pytest
+from searchkernel.domain import Record
 
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 
-class _Vector:
-    def __init__(self) -> None:
-        self.chunks = {
-            "chunk-a": {
-                "chunk_id": "chunk-a",
-                "doc_id": "doc-a",
-                "content": "Authentication guidance",
-                "metadata": {
-                    "source_kind": "note",
-                    "project_id": "project-a",
-                    "file_path": "a.md",
-                    "header_path": "Auth",
-                },
-            },
-            "chunk-b": {
-                "chunk_id": "chunk-b",
-                "doc_id": "doc-b",
-                "content": "Git commit authentication fix",
-                "metadata": {
-                    "source_kind": "git_commit",
-                    "project_id": "project-b",
-                    "file_path": "repo",
-                    "header_path": "Commit",
-                },
-            },
-        }
-
-    def get_chunk_by_id(self, chunk_id: str):
-        return self.chunks.get(chunk_id)
-
-
-class _Keyword:
-    def __init__(self, vector: _Vector) -> None:
-        self._vector = vector
-
-    def search(self, _query: str, top_k: int = 10):
-        return [
-            {"chunk_id": chunk_id, "doc_id": chunk["doc_id"], "score": score}
-            for chunk_id, chunk, score in (
-                ("chunk-a", self._vector.chunks["chunk-a"], 2.0),
-                ("chunk-b", self._vector.chunks["chunk-b"], 1.0),
-            )
-        ][:top_k]
-
-
-class _Manager:
-    def __init__(self) -> None:
-        self.vector = _Vector()
-        self.keyword = _Keyword(self.vector)
-
-
 @pytest.fixture
-def adapter() -> CanonicalSearchAdapter:
-    return CanonicalSearchAdapter(_Manager())
+def adapter(record_manager) -> CanonicalSearchAdapter:
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id="doc-a",
+            title="Authentication",
+            body="Authentication guidance",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={
+                "doc_id": "doc-a",
+                "chunk_id": "chunk-a",
+                "project_id": "project-a",
+                "file_path": "a.md",
+                "header_path": "Auth",
+            },
+        ),
+        Record(
+            source_kind="git_commit",
+            source_id="doc-b",
+            title="Authentication fix",
+            body="Git commit authentication fix",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={
+                "doc_id": "doc-b",
+                "chunk_id": "chunk-b",
+                "project_id": "project-b",
+                "file_path": "repo",
+                "header_path": "Commit",
+            },
+        ),
+    ]
+    assert record_manager.index_records(records) is True
+    return CanonicalSearchAdapter(record_manager)
 
 
 @pytest.mark.asyncio

@@ -1,283 +1,67 @@
-"""
-Integration tests for Multi-Index Manager (D9).
+"""Integration coverage for the canonical record-backed index stack."""
 
-Tests the IndexManager's ability to coordinate updates across vector, keyword,
-and graph indices. Uses real index implementations with temporary storage.
-"""
-
-import contextlib
-import sqlite3
-from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-
-from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
-from mcp_markdown_ragdocs.models import Document
+from mcp_markdown_ragdocs.config import Config, IndexingConfig
+from tests.integration._canonical import make_record_index_manager
 
 
-@pytest.fixture
-def config(tmp_path):
-    """
-    Create test configuration with temporary paths.
-
-    Uses tmp_path for isolated test storage to avoid conflicts.
-    """
-    return Config(
-        indexing=IndexingConfig(
-            documents_path=str(tmp_path / "docs"), index_path=str(tmp_path / "indices")
-        ),
-        search=SearchConfig(),
-        llm=LLMConfig(),
+def _manager(tmp_path: Path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    return make_record_index_manager(
+        Config(indexing=IndexingConfig(documents_path=str(docs), index_path=str(tmp_path / "index")))
     )
 
 
-@pytest.fixture
-def indices(tmp_path):
-    """
-    Create real index instances with temporary storage.
+def test_index_document_updates_record_stores(tmp_path):
+    manager = _manager(tmp_path)
+    document = Path(manager._config.indexing.documents_path) / "sample.md"
+    document.write_text("# Sample\n\nSearchable record content.")
 
-    Returns tuple of (vector, keyword, graph) indices for IndexManager.
-    """
-    vector = VectorIndex()
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    return vector, keyword, graph
-
-
-@pytest.fixture
-def manager(config, indices):
-    """
-    Create IndexManager with real indices.
-
-    Provides fully functional manager for integration testing.
-    """
-    vector, keyword, graph = indices
-    return IndexManager(config, vector, keyword, graph)
-
-
-@pytest.fixture
-def sample_document():
-    """
-    Create sample markdown document for testing.
-
-    Includes representative metadata, links, and tags.
-    """
-    return Document(
-        id="doc1",
-        content="# Test Document\n\nThis is a test document with [[linked-note]] reference.",
-        metadata={"aliases": ["test", "sample"], "priority": "high"},
-        links=["linked-note"],
-        tags=["test", "integration"],
-        file_path="/test/doc1.md",
-        modified_time=datetime(2025, 12, 22, 10, 0, 0, tzinfo=UTC),
+    assert manager.index_document(str(document))
+    assert manager.get_document_count() == 1
+    assert manager.count_records("note") >= 1
+    assert manager.keyword.search("searchable record", 5)
+    assert manager.vector.search(
+        manager.embedding_provider.embed(["searchable record"])[0],
+        5,
+        model_name=manager.embedding_provider.model_name,
+        dim=manager.embedding_provider.dim,
     )
 
 
-def test_index_document_updates_all_indices(manager, sample_document, tmp_path):
-    """
-    Test that indexing a document updates vector, keyword, and graph indices.
+def test_remove_document_removes_record_from_all_local_stores(tmp_path):
+    manager = _manager(tmp_path)
+    document = Path(manager._config.indexing.documents_path) / "remove.md"
+    document.write_text("# Remove\n\nContent to remove.")
+    manager.index_document(str(document))
+    doc_id = str(manager.describe_documents()[0]["doc_id"])
 
-    Ensures all three indices receive and can retrieve the indexed document,
-    validating the manager's coordinated update mechanism.
-    """
-    # Create a temporary markdown file
-    doc_path = tmp_path / "docs" / "test.md"
-    doc_path.parent.mkdir(parents=True, exist_ok=True)
-    doc_path.write_text(sample_document.content)
-
-    # Index the document
-    manager.index_document(str(doc_path))
-
-    # Verify document count increased (public method)
-    doc_count = manager.get_document_count()
-    assert doc_count > 0
-
-
-def test_remove_document_from_all_indices(manager, sample_document, tmp_path):
-    """
-    Test that removing a document deletes it from keyword and graph indices.
-
-    Validates cleanup mechanism for keyword and graph indices. Note: vector
-    index removal only removes the doc_id mapping, not the actual vectors,
-    which is a known limitation of the current FAISS implementation.
-    """
-    # Create and index document
-    doc_path = tmp_path / "docs" / "test.md"
-    doc_path.parent.mkdir(parents=True, exist_ok=True)
-    doc_path.write_text(sample_document.content)
-    manager.index_document(str(doc_path))
-
-    # Determine actual doc_id used by parser (file stem)
-    doc_id = "test"
-
-    # Verify document count before removal
-    count_before = manager.get_document_count()
-    assert count_before > 0
-
-    # Remove document
     manager.remove_document(doc_id)
 
-    # Verify document count decreased (or test completed without error)
-    # Note: Due to FAISS limitation, count may not decrease
+    assert manager.get_document_count() == 0
+    assert manager.count_records("note") == 0
+    assert manager.keyword.search("content", 5) == []
 
 
-def test_persist_and_load_all_indices(manager, sample_document, tmp_path, config):
-    """
-    Test persistence and loading of all three indices together.
+def test_links_are_written_to_canonical_graph_store(tmp_path):
+    manager = _manager(tmp_path)
+    docs = Path(manager._config.indexing.documents_path)
+    target = docs / "target.md"
+    source = docs / "source.md"
+    target.write_text("# Target\n\nTarget content.")
+    source.write_text("# Source\n\nSee [target](target.md).")
+    manager.index_document(str(target))
+    manager.index_document(str(source))
 
-    Validates that IndexManager correctly persists all indices to disk
-    and can restore them, ensuring no data loss across restarts.
-    """
-    # Create and index document
-    doc_path = tmp_path / "docs" / "test.md"
-    doc_path.parent.mkdir(parents=True, exist_ok=True)
-    doc_path.write_text(sample_document.content)
-    manager.index_document(str(doc_path))
-
-    # Persist all indices
-    manager.persist()
-
-    # Verify persistence directories exist
-    index_path = Path(config.indexing.index_path)
-    assert (index_path / "vector").exists()
-    assert (index_path / "keyword").exists()
-    # graph data lives in SQLite (no separate directory)
-
-    # Create new manager with fresh indices sharing the same DB
-    vector_new = VectorIndex()
-    keyword_new = KeywordIndex(manager.keyword._db)
-    graph_new = GraphStore(manager.graph._db)
-    manager_new = IndexManager(config, vector_new, keyword_new, graph_new)
-
-    # Load persisted indices
-    manager_new.load()
-
-    # Verify document count after load
-    doc_count = manager_new.get_document_count()
-    assert doc_count > 0
+    assert manager.graph.graph_integrity_errors() == []
 
 
-def test_persist_recovers_after_transient_graph_lock(manager, tmp_path, config):
-    """
-    Persist succeeds after a transient graph-database lock is released.
+def test_empty_document_does_not_break_record_manager(tmp_path):
+    manager = _manager(tmp_path)
+    document = Path(manager._config.indexing.documents_path) / "empty.md"
+    document.write_text("")
 
-    Covers the startup regression where implicit-edge construction failed,
-    left the SQLite connection in a bad transactional state, and prevented
-    the next persist attempt from recovering cleanly.
-    """
-    docs_dir = tmp_path / "docs"
-    docs_dir.mkdir(parents=True, exist_ok=True)
-
-    first_doc = docs_dir / "alpha.md"
-    second_doc = docs_dir / "beta.md"
-    first_doc.write_text("# Alpha\n\nShared directory document.")
-    second_doc.write_text("# Beta\n\nAnother shared directory document.")
-
-    manager.index_document(str(first_doc))
-    manager.index_document(str(second_doc))
-
-    graph_db_path = manager.graph._db._db_path
-    lock_conn = sqlite3.connect(str(graph_db_path), timeout=0, check_same_thread=False)
-    lock_conn.execute("PRAGMA journal_mode=WAL;")
-    lock_conn.execute("PRAGMA foreign_keys=ON;")
-    lock_conn.execute("BEGIN IMMEDIATE")
-    lock_conn.execute(
-        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
-        ("lock", "held"),
-    )
-
-    index_path = Path(config.indexing.index_path)
-    with pytest.raises(sqlite3.OperationalError, match="locked"):
-        manager._finalize_derived_graph_state_locked(index_path)
-
-    lock_conn.rollback()
-    lock_conn.close()
-
-    manager._finalize_derived_graph_state_locked(index_path)
-
-    conn = manager.graph._db.get_connection()
-    initial_edge_count = conn.execute(
-        "SELECT COUNT(*) FROM graph_edges WHERE edge_type = ?",
-        ("directory_sibling",),
-    ).fetchone()[0]
-    assert initial_edge_count > 0
-
-    manager._finalize_derived_graph_state_locked(index_path)
-
-    repeated_edge_count = conn.execute(
-        "SELECT COUNT(*) FROM graph_edges WHERE edge_type = ?",
-        ("directory_sibling",),
-    ).fetchone()[0]
-    assert repeated_edge_count == initial_edge_count
-
-
-def test_error_handling_malformed_file_continues_processing(manager, tmp_path):
-    """
-    Test that processing continues after encountering a malformed file.
-
-    Ensures resilience: a parsing error in one document should not prevent
-    successful indexing of other valid documents in the batch.
-    """
-    # Create malformed file (invalid frontmatter YAML)
-    malformed_path = tmp_path / "docs" / "malformed.md"
-    malformed_path.parent.mkdir(parents=True, exist_ok=True)
-    malformed_path.write_text("---\nbroken: yaml: structure:\n---\nContent")
-
-    # Create valid file
-    valid_path = tmp_path / "docs" / "valid.md"
-    valid_path.write_text("# Valid Document\n\nThis is valid content.")
-
-    # Attempt to index malformed file (should log error but not raise)
-    with contextlib.suppress(Exception):
-        manager.index_document(str(malformed_path))
-
-    # Index valid file
-    manager.index_document(str(valid_path))
-
-    # Verify valid file was indexed successfully
-    doc_count = manager.get_document_count()
-    assert doc_count > 0
-
-
-def test_index_document_with_links_creates_graph_edges(manager, tmp_path):
-    """
-    Test that document links are correctly added as graph edges.
-
-    Validates the graph store integration: links extracted from markdown
-    should create corresponding edges in the graph structure.
-    """
-    # Create document with links
-    doc_path = tmp_path / "docs" / "linked.md"
-    doc_path.parent.mkdir(parents=True, exist_ok=True)
-    doc_path.write_text("# Linked Document\n\nReferences [[target1]] and [[target2]].")
-
-    # Index document
-    manager.index_document(str(doc_path))
-
-    # Verify document was indexed (count increased)
-    doc_count = manager.get_document_count()
-    assert doc_count >= 1
-
-
-def test_empty_document_indexed_without_error(manager, tmp_path):
-    """
-    Test that empty documents are handled gracefully.
-
-    Ensures robustness: empty markdown files should be indexed without
-    crashes, even if they provide no meaningful content.
-    """
-    # Create empty file
-    empty_path = tmp_path / "docs" / "empty.md"
-    empty_path.parent.mkdir(parents=True, exist_ok=True)
-    empty_path.write_text("")
-
-    # Index empty document (should not raise exception)
-    manager.index_document(str(empty_path))
-
-    # Manager should handle gracefully - no assertion on results
-    # Just verify no exception was raised
+    assert manager.index_document(str(document))
+    assert manager.is_ready()

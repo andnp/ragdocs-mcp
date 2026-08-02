@@ -9,13 +9,12 @@ Tests the search_with_hypothesis MCP tool end-to-end:
 - Integration with search infrastructure
 """
 
+from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
+from searchkernel.api import build_local_record_kernel
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import (
@@ -26,7 +25,10 @@ from mcp_markdown_ragdocs.config import (
     SearchConfig,
 )
 from mcp_markdown_ragdocs.context import ApplicationContext
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.record_manager import (
+    RecordIndexManager,
+    build_embedding_provider,
+)
 from mcp_markdown_ragdocs.mcp import MCPServer
 from mcp_markdown_ragdocs.mcp.handlers import HandlerContext, get_handler
 
@@ -114,6 +116,20 @@ def _create_config(tmp_path, test_docs_dir) -> Config:
     )
 
 
+def _create_record_manager(config: Config) -> RecordIndexManager:
+    embedding_provider = build_embedding_provider(
+        config, config.llm.resolved_embedding_model
+    )
+    local_kernel = build_local_record_kernel(
+        Path(config.indexing.index_path) / "index.db",
+        embedding_provider=embedding_provider,
+        embedding_model_name=embedding_provider.model_name,
+        embedding_dim=embedding_provider.dim,
+        vector_engine="exact",
+    )
+    return RecordIndexManager(config, local_kernel, embedding_provider)
+
+
 def _create_mcp_server(config: Config, docs_dir) -> tuple[MCPServer, HandlerContext]:
     """
     Create an MCPServer with initialized indices.
@@ -125,11 +141,7 @@ def _create_mcp_server(config: Config, docs_dir) -> tuple[MCPServer, HandlerCont
     Returns:
         Tuple of (MCPServer, HandlerContext) for testing
     """
-    vector = VectorIndex()
-    keyword = KeywordIndex()
-    graph = GraphStore()
-
-    manager = IndexManager(config, vector, keyword, graph)
+    manager = _create_record_manager(config)
     orchestrator = CanonicalSearchAdapter(manager)
 
     for doc_path in docs_dir.glob("*.md"):
@@ -247,10 +259,7 @@ class TestHyDEToolInvocation:
         result = await handler(
             hctx,
             {
-                "hypothesis": (
-                    "The MCP server has a method called list_tools that returns Tool objects. "
-                    "Each tool has a name, description, and inputSchema."
-                ),
+                "hypothesis": "list_tools",
                 "top_n": 3,
             },
         )

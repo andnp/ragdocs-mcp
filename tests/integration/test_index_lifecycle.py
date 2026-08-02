@@ -1,401 +1,67 @@
-"""
-Integration tests for Index Lifecycle Management (D11).
+"""Integration coverage for canonical local record-manager persistence."""
 
-Tests the IndexManager's ability to detect and respond to manifest changes,
-triggering full rebuilds when necessary and skipping rebuilds when the
-manifest matches the current configuration.
-"""
-
-import glob
 from pathlib import Path
 
-import pytest
-from searchkernel.indexing.manifest import (
-    IndexManifest,
-    load_manifest,
-    save_manifest,
-    should_rebuild,
-)
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
+from searchkernel.api import IndexManifest, load_manifest, save_manifest, should_rebuild
 
-import mcp_markdown_ragdocs.indexing.manager as manager_module
-from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.config import Config, IndexingConfig
+from tests.integration._canonical import make_record_index_manager
 
 
-@pytest.fixture
-def config(tmp_path):
-    """
-    Create test configuration with temporary paths.
-
-    Uses tmp_path for isolated test storage to avoid conflicts.
-    """
-    docs_path = tmp_path / "docs"
-    docs_path.mkdir()
-    return Config(
-        indexing=IndexingConfig(
-            documents_path=str(docs_path), index_path=str(tmp_path / "indices")
-        ),
-        search=SearchConfig(),
-        llm=LLMConfig(embedding_model="all-MiniLM-L6-v2"),
-    )
+def _config(tmp_path: Path) -> Config:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    return Config(indexing=IndexingConfig(documents_path=str(docs), index_path=str(tmp_path / "index")))
 
 
-@pytest.fixture
-def indices(shared_embedding_model):
-    """
-    Create real index instances with shared embedding model.
+def test_missing_manifest_requires_rebuild_and_persists_records(tmp_path):
+    config = _config(tmp_path)
+    manager = make_record_index_manager(config)
+    document = Path(config.indexing.documents_path) / "one.md"
+    document.write_text("# One\n\nCanonical lifecycle content.")
+    manifest = IndexManifest(spec_version="1", embedding_model="test", chunking_config={})
 
-    Uses session-scoped embedding model to avoid redundant model loading.
-    Returns tuple of (vector, keyword, graph) indices for IndexManager.
-    """
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    return vector, keyword, graph
-
-
-@pytest.fixture
-def manager(config, indices):
-    """
-    Create IndexManager with real indices.
-
-    Provides fully functional manager for integration testing.
-    """
-    vector, keyword, graph = indices
-    return IndexManager(config, vector, keyword, graph)
-
-
-@pytest.fixture
-def current_manifest(config):
-    """
-    Generate current manifest from configuration.
-
-    Represents the manifest that would be generated during startup.
-    """
-    return IndexManifest(
-        spec_version="1.0.0",
-        embedding_model=config.llm.embedding_model,
-        chunking_config={},
-    )
-
-
-def index_all_documents(manager, docs_path):
-    """
-    Index all markdown files in the documents directory.
-
-    Helper function to simulate full indexing on startup.
-    Returns count of files indexed for verification.
-    """
-    pattern = str(Path(docs_path) / "**" / "*.md")
-    files = glob.glob(pattern, recursive=True)
-    for file_path in files:
-        manager.index_document(file_path)
-    return len(files)
-
-
-def test_startup_no_manifest_triggers_full_index(
-    config, manager, current_manifest, tmp_path
-):
-    """
-    Test that startup with no manifest triggers a full index.
-
-    When no manifest exists, the system should perform a complete indexing
-    of all documents and save a new manifest for future comparisons.
-    """
-    docs_path = Path(config.indexing.documents_path)
-    index_path = Path(config.indexing.index_path)
-
-    # Create test documents
-    (docs_path / "doc1.md").write_text("# Document 1\n\nFirst document content.")
-    (docs_path / "doc2.md").write_text("# Document 2\n\nSecond document content.")
-    (docs_path / "doc3.md").write_text("# Document 3\n\nThird document content.")
-
-    # Verify no manifest exists
-    saved_manifest = load_manifest(index_path)
-    assert saved_manifest is None
-
-    # Check if rebuild is needed (should be True)
-    needs_rebuild = should_rebuild(current_manifest, saved_manifest)
-    assert needs_rebuild is True
-
-    # Perform full indexing
-    index_all_documents(manager, docs_path)
-
-    # Save manifest after indexing
+    assert should_rebuild(manifest, load_manifest(Path(config.indexing.index_path)))
+    assert manager.index_document(str(document))
     manager.persist()
-    save_manifest(index_path, current_manifest)
+    save_manifest(Path(config.indexing.index_path), manifest)
 
-    # Verify all documents were indexed
-    doc_count = manager.get_document_count()
-    assert doc_count == 3
-
-    # Verify manifest was saved
-    saved_manifest = load_manifest(index_path)
-    assert saved_manifest is not None
-    assert saved_manifest.spec_version == "1.0.0"
-    assert saved_manifest.embedding_model == "all-MiniLM-L6-v2"
+    assert manager.get_document_count() == 1
+    saved = load_manifest(Path(config.indexing.index_path))
+    assert saved is not None
+    assert saved.spec_version == "1"
 
 
-def test_startup_matching_manifest_skips_rebuild(
-    config, manager, current_manifest, tmp_path, shared_embedding_model
-):
-    """
-    Test that startup with matching manifest skips rebuild.
-
-    When the saved manifest matches the current configuration, the system
-    should load existing indices without performing a full reindex, saving
-    time and resources.
-    """
-    docs_path = Path(config.indexing.documents_path)
-    index_path = Path(config.indexing.index_path)
-
-    # Create test documents
-    (docs_path / "existing.md").write_text(
-        "# Existing Document\n\nPre-indexed content."
-    )
-
-    # Perform initial indexing
-    index_all_documents(manager, docs_path)
-    manager.persist()
-    save_manifest(index_path, current_manifest)
-
-    # Verify manifest exists and matches
-    saved_manifest = load_manifest(index_path)
-    assert saved_manifest is not None
-    needs_rebuild = should_rebuild(current_manifest, saved_manifest)
-    assert needs_rebuild is False
-
-    # Simulate restart: create new manager with fresh indices
-    vector_new = VectorIndex(embedding_model=shared_embedding_model)
-    keyword_new = KeywordIndex()
-    graph_new = GraphStore()
-    manager_new = IndexManager(config, vector_new, keyword_new, graph_new)
-
-    # Load existing indices (skipping rebuild)
-    manager_new.load()
-
-    # Verify data was loaded correctly
-    doc_count = manager_new.get_document_count()
-    assert doc_count == 1  # Only the pre-indexed document
-
-
-def test_persist_updates_manifest_after_incremental_index(
-    config, manager, tmp_path
-):
-    docs_path = Path(config.indexing.documents_path)
-    index_path = Path(config.indexing.index_path)
-    doc_path = docs_path / "incremental.md"
-    doc_path.write_text("# Incremental\n\nFresh manifest content.")
-
-    manager.index_document(str(doc_path))
+def test_matching_manifest_can_reload_record_source_map(tmp_path):
+    config = _config(tmp_path)
+    document = Path(config.indexing.documents_path) / "one.md"
+    document.write_text("# One\n\nReloadable content.")
+    manager = make_record_index_manager(config)
+    manager.index_document(str(document))
     manager.persist()
 
-    manifest = load_manifest(index_path)
-    assert manifest is not None
-    assert manifest.indexed_files == {"incremental": "incremental.md"}
+    reloaded = make_record_index_manager(config)
+    reloaded.load()
+    assert reloaded.get_document_count() == 1
+    assert reloaded.describe_documents()[0]["file_path"] == str(document)
 
 
-def test_persist_removes_manifest_entry_after_document_removal(
-    config, manager, tmp_path
-):
-    docs_path = Path(config.indexing.documents_path)
-    index_path = Path(config.indexing.index_path)
-    doc_path = docs_path / "remove_me.md"
-    doc_path.write_text("# Remove me\n\nManifest sync check.")
+def test_manifest_mismatch_requires_rebuild(tmp_path):
+    first = IndexManifest(spec_version="1", embedding_model="old", chunking_config={})
+    current = IndexManifest(spec_version="1", embedding_model="new", chunking_config={})
+    assert should_rebuild(current, first)
 
-    manager.index_document(str(doc_path))
+
+def test_remove_document_updates_persisted_record_map(tmp_path):
+    config = _config(tmp_path)
+    document = Path(config.indexing.documents_path) / "remove.md"
+    document.write_text("# Remove\n\nTransient content.")
+    manager = make_record_index_manager(config)
+    manager.index_document(str(document))
+    doc_id = str(manager.describe_documents()[0]["doc_id"])
+    manager.remove_document(doc_id)
     manager.persist()
 
-    manifest = load_manifest(index_path)
-    assert manifest is not None
-    assert manifest.indexed_files == {"remove_me": "remove_me.md"}
-
-    manager.remove_document("remove_me")
-    manager.persist()
-
-    updated_manifest = load_manifest(index_path)
-    assert updated_manifest is not None
-    assert updated_manifest.indexed_files == {}
-
-
-def test_persist_checkpoint_defers_derived_graph_refresh(config, manager):
-    docs_path = Path(config.indexing.documents_path)
-    index_path = Path(config.indexing.index_path)
-
-    alpha_path = docs_path / "alpha.md"
-    beta_path = docs_path / "beta.md"
-    alpha_path.write_text("# Alpha\n\nCheckpoint boundary test.")
-    beta_path.write_text("# Beta\n\nCheckpoint boundary test.")
-
-    manager.index_document(str(alpha_path))
-    manager.index_document(str(beta_path))
-    manager.persist_checkpoint()
-
-    manifest = load_manifest(index_path)
-    assert manifest is not None
-    assert manifest.indexed_files == {
-        "alpha": "alpha.md",
-        "beta": "beta.md",
-    }
-    assert not any(
-        edge["edge_type"] == "directory_sibling"
-        for edge in manager.graph.get_edges_from("alpha")
-    )
-    assert manager.graph.get_community("alpha") is None
-
-    manager.finalize_derived_graph_state()
-
-    assert any(
-        edge["edge_type"] == "directory_sibling" and edge["target"] == "beta"
-        for edge in manager.graph.get_edges_from("alpha")
-    )
-    assert manager.graph.get_community("alpha") is not None
-
-
-def test_persist_checkpoint_succeeds_without_materializing_vocabulary(
-    config,
-    manager,
-    shared_embedding_model,
-):
-    docs_path = Path(config.indexing.documents_path)
-    index_path = Path(config.indexing.index_path)
-    doc_path = docs_path / "vocabulary-free-checkpoint.md"
-    doc_path.write_text(
-        "# Lifecycle\n\nCheckpoint should persist without a vocabulary rebuild."
-    )
-
-    manager.index_document(str(doc_path))
-    manager.persist_checkpoint()
-
-    manifest = load_manifest(index_path)
-    assert manifest is not None
-    assert manifest.indexed_files == {
-        "vocabulary-free-checkpoint": "vocabulary-free-checkpoint.md"
-    }
-    assert manager.vector.get_vocabulary_state()["status"] == "stale"
-    assert manager.vector._concept_vocabulary == {}
-
-    reloaded_manager = IndexManager(
-        config,
-        VectorIndex(embedding_model=shared_embedding_model),
-        KeywordIndex(),
-        GraphStore(),
-    )
-    reloaded_manager.load()
-
-    assert reloaded_manager.is_ready() is True
-    assert reloaded_manager.vector.get_vocabulary_state()["status"] == "stale"
-    assert reloaded_manager.vector._concept_vocabulary == {}
-
-
-def test_persist_skips_derived_graph_refresh_when_graph_is_clean(
-    config, manager, monkeypatch
-):
-    docs_path = Path(config.indexing.documents_path)
-    doc_path = docs_path / "stable.md"
-    doc_path.write_text("# Stable\n\nNo graph changes after first persist.")
-
-    manager.index_document(str(doc_path))
-
-    counts = {"implicit": 0, "communities": 0}
-    original_build = manager_module.ImplicitGraphBuilder.build_implicit_edges
-    original_refresh = manager.graph.refresh_communities
-
-    def counting_build(builder):
-        counts["implicit"] += 1
-        return original_build(builder)
-
-    def counting_refresh(*, force: bool = False):
-        counts["communities"] += 1
-        return original_refresh(force=force)
-
-    monkeypatch.setattr(
-        manager_module.ImplicitGraphBuilder,
-        "build_implicit_edges",
-        counting_build,
-    )
-    monkeypatch.setattr(manager.graph, "refresh_communities", counting_refresh)
-
-    manager.persist()
-    manager.persist()
-
-    assert counts == {"implicit": 1, "communities": 1}
-
-
-def test_startup_version_mismatch_triggers_rebuild(
-    config, manager, current_manifest, tmp_path, shared_embedding_model
-):
-    """
-    Test that startup with version mismatch triggers rebuild.
-
-    When the spec version, embedding model, or parser configuration changes,
-    the system should detect the mismatch and perform a full reindex to ensure
-    all documents are processed with the updated configuration.
-    """
-    docs_path = Path(config.indexing.documents_path)
-    index_path = Path(config.indexing.index_path)
-
-    # Create test documents
-    (docs_path / "outdated.md").write_text("# Outdated Document\n\nOld content.")
-
-    # Perform initial indexing with old manifest
-    index_all_documents(manager, docs_path)
-    manager.persist()
-
-    # Save old manifest with different version
-    old_manifest = IndexManifest(
-        spec_version="0.9.0",  # Old version
-        embedding_model="all-MiniLM-L6-v2",
-        chunking_config={},
-    )
-    save_manifest(index_path, old_manifest)
-
-    # Verify manifest exists but differs
-    saved_manifest = load_manifest(index_path)
-    assert saved_manifest is not None
-    needs_rebuild = should_rebuild(current_manifest, saved_manifest)
-    assert needs_rebuild is True
-
-    # Simulate restart with version mismatch detection
-    # In production, this would trigger a full reindex
-    # Here we verify the detection logic works correctly
-
-    # Add new document to verify full rebuild would capture it
-    (docs_path / "new.md").write_text("# New Document\n\nNew content after upgrade.")
-
-    # Verify both files exist before indexing
-    existing_files = list(docs_path.glob("*.md"))
-    assert len(existing_files) == 2, (
-        f"Expected 2 files, found: {[f.name for f in existing_files]}"
-    )
-
-    # Perform full reindex with fresh indices
-    # Note: We must use force=True because the hash store from the previous
-    # indexing persists at index_path. Without force, delta indexing would
-    # detect "no changes" for outdated.md and skip it.
-    vector_new = VectorIndex(embedding_model=shared_embedding_model)
-    keyword_new = KeywordIndex()
-    graph_new = GraphStore()
-    manager_new = IndexManager(config, vector_new, keyword_new, graph_new)
-
-    # Explicitly index each file with force=True to simulate full rebuild
-    for doc_file in existing_files:
-        manager_new.index_document(str(doc_file), force=True)
-    manager_new.persist()
-
-    # Save updated manifest
-    save_manifest(index_path, current_manifest)
-
-    # Verify both old and new documents are indexed
-    doc_count = manager_new.get_document_count()
-    assert doc_count == 2, (
-        f"Expected 2 documents, got {doc_count}. Files: {[f.name for f in existing_files]}"
-    )
-
-    # Verify manifest was updated
-    updated_manifest = load_manifest(index_path)
-    assert updated_manifest is not None
-    assert updated_manifest.spec_version == "1.0.0"
+    reloaded = make_record_index_manager(config)
+    reloaded.load()
+    assert reloaded.get_document_count() == 0

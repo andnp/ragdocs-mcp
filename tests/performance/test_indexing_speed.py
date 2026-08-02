@@ -2,15 +2,30 @@ import time
 from pathlib import Path
 
 import pytest
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
+from searchkernel.api import build_local_record_kernel
 
 from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.record_manager import (
+    RecordIndexManager,
+    build_embedding_provider,
+)
 
 
 pytestmark = pytest.mark.performance
+
+
+def _create_record_manager(config: Config) -> RecordIndexManager:
+    embedding_provider = build_embedding_provider(
+        config, config.llm.resolved_embedding_model
+    )
+    local_kernel = build_local_record_kernel(
+        Path(config.indexing.index_path) / "index.db",
+        embedding_provider=embedding_provider,
+        embedding_model_name=embedding_provider.model_name,
+        embedding_dim=embedding_provider.dim,
+        vector_engine="exact",
+    )
+    return RecordIndexManager(config, local_kernel, embedding_provider)
 
 
 @pytest.fixture
@@ -26,25 +41,9 @@ def config(tmp_path):
     )
 
 
-@pytest.fixture(scope="module")
-def indices(shared_embedding_model):
-    """
-    Module-scoped indices with shared embedding model.
-
-    Scope changed to 'module' to avoid redundant embedding model loading.
-    Each test creates its own documents in tmp_path, providing isolation
-    despite shared indices.
-    """
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    return vector, keyword, graph
-
-
 @pytest.fixture
-def manager(config, indices):
-    vector, keyword, graph = indices
-    return IndexManager(config, vector, keyword, graph)
+def manager(config):
+    return _create_record_manager(config)
 
 
 def create_realistic_document(doc_id: int, size: str = "medium") -> str:
@@ -213,9 +212,7 @@ def test_indexing_speed_100_documents(config, manager, tmp_path):
     )
 
 
-def test_indexing_speed_varying_document_sizes(
-    config, tmp_path, shared_embedding_model
-):
+def test_indexing_speed_varying_document_sizes(config, manager):
     """
     Benchmark indexing with varied document sizes.
 
@@ -225,8 +222,7 @@ def test_indexing_speed_varying_document_sizes(
     Note: Uses isolated indices to avoid state leakage from other tests.
     """
     sizes = ["small", "medium", "large"]
-    docs_path = tmp_path / "docs"
-    docs_path.mkdir(exist_ok=True)
+    docs_path = Path(config.indexing.documents_path)
     num_docs = len(sizes)
 
     for i, size in enumerate(sizes):
@@ -234,19 +230,11 @@ def test_indexing_speed_varying_document_sizes(
         content = create_realistic_document(i, size=size)
         doc_file.write_text(content)
 
-    # Create isolated indices for this test to avoid state leakage
-    isolated_vector = VectorIndex(embedding_model=shared_embedding_model)
-    isolated_keyword = KeywordIndex()
-    isolated_graph = GraphStore()
-    isolated_manager = IndexManager(
-        config, isolated_vector, isolated_keyword, isolated_graph
-    )
-
     # Benchmark indexing
     start_time = time.perf_counter()
 
     for doc_file in sorted(docs_path.glob("*.md")):
-        isolated_manager.index_document(str(doc_file))
+        manager.index_document(str(doc_file))
 
     end_time = time.perf_counter()
     elapsed = end_time - start_time
@@ -256,7 +244,7 @@ def test_indexing_speed_varying_document_sizes(
     avg_time_per_doc = elapsed / num_docs
 
     # Verify indexing completed
-    doc_count = isolated_manager.get_document_count()
+    doc_count = manager.get_document_count()
     assert doc_count == num_docs, f"Expected {num_docs} documents, got {doc_count}"
 
     # Report metrics

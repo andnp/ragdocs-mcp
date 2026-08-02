@@ -1,83 +1,22 @@
-"""Tests that `ApplicationContext._build_vector_store` reads `store.backend`.
-
-FAISS (`VectorIndex`) must stay the default; `store.backend = "pgvector"`
-must select the pgvector-backed adapter instead. This is the wiring that
-makes `StoreConfig.backend` genuinely consumed by the live path, rather
-than dead configuration nobody reads.
-"""
-
-from searchkernel.indices.vector import VectorIndex
+import pytest
 
 from mcp_markdown_ragdocs.config import Config
-from mcp_markdown_ragdocs.context import ApplicationContext
+from mcp_markdown_ragdocs.indexing.record_manager import build_embedding_provider
 
 
-def test_defaults_to_faiss_backend():
+def test_test_mode_builds_deterministic_provider(monkeypatch) -> None:
+    monkeypatch.setenv("MCP_RAGDOCS_TEST_FAKE_EMBEDDINGS", "1")
+
+    provider = build_embedding_provider(Config(), "ignored-in-test-mode")
+
+    assert provider.model_name == "__deterministic_fake__"
+    assert provider.dim == 384
+
+
+def test_canonical_provider_rejects_non_ollama_runtime(monkeypatch) -> None:
+    monkeypatch.delenv("MCP_RAGDOCS_TEST_FAKE_EMBEDDINGS", raising=False)
     config = Config()
+    config.embedding.provider = "unsupported"
 
-    vector = ApplicationContext._build_vector_store(config, "BAAI/bge-small-en-v1.5")
-
-    assert isinstance(vector, VectorIndex)
-
-
-def test_pgvector_backend_selects_pgvector_index(monkeypatch):
-    created_kwargs = {}
-
-    class _FakePGVectorIndex:
-        def __init__(self, **kwargs):
-            created_kwargs.update(kwargs)
-
-    monkeypatch.setattr(
-        "searchkernel.adapters.stores.pgvector_index.PGVectorIndex",
-        _FakePGVectorIndex,
-    )
-
-    config = Config()
-    config.store.backend = "pgvector"
-    config.store.pg_dsn = "postgresql://example/db"
-
-    vector = ApplicationContext._build_vector_store(config, "some-model")
-
-    assert isinstance(vector, _FakePGVectorIndex)
-    assert created_kwargs == {
-        "pg_dsn": "postgresql://example/db",
-        "embedding_model_name": "some-model",
-        "truncate_dim": None,
-    }
-
-
-def test_faiss_backend_passes_truncate_dim():
-    config = Config()
-    config.embedding.truncate_dim = 256
-
-    vector = ApplicationContext._build_vector_store(config, "BAAI/bge-small-en-v1.5")
-
-    assert isinstance(vector, VectorIndex)
-    assert vector._truncate_dim == 256
-
-
-def test_pgvector_backend_passes_truncate_dim(monkeypatch):
-    created_kwargs = {}
-
-    class _FakePGVectorIndex:
-        def __init__(self, **kwargs):
-            created_kwargs.update(kwargs)
-
-    monkeypatch.setattr(
-        "searchkernel.adapters.stores.pgvector_index.PGVectorIndex",
-        _FakePGVectorIndex,
-    )
-
-    config = Config()
-    config.store.backend = "pgvector"
-    config.store.pg_dsn = "postgresql://example/db"
-    config.embedding.truncate_dim = 128
-
-    vector = ApplicationContext._build_vector_store(config, "some-model")
-
-    assert isinstance(vector, _FakePGVectorIndex)
-    assert created_kwargs == {
-        "pg_dsn": "postgresql://example/db",
-        "embedding_model_name": "some-model",
-        "truncate_dim": 128,
-    }
+    with pytest.raises(ValueError, match="canonical indexing requires"):
+        build_embedding_provider(config, "model")

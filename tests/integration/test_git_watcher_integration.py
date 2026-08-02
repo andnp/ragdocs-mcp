@@ -2,9 +2,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
 
 from mcp_markdown_ragdocs.config import (
     Config,
@@ -15,7 +12,7 @@ from mcp_markdown_ragdocs.config import (
 )
 from mcp_markdown_ragdocs.git.repository import is_git_available
 from mcp_markdown_ragdocs.git.watcher import GitWatcher
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from tests.integration._canonical import make_record_index_manager
 
 
 def _init_git_repo(path: Path):
@@ -59,11 +56,8 @@ def test_config(tmp_path):
 
 
 @pytest.fixture
-def index_manager(test_config, shared_embedding_model):
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    return IndexManager(test_config, vector, keyword, graph)
+def index_manager(test_config):
+    return make_record_index_manager(test_config)
 
 
 @pytest.fixture

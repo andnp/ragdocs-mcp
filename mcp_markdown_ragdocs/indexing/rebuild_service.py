@@ -19,7 +19,6 @@ from mcp_markdown_ragdocs.git.repository import (
     is_git_available,
 )
 from searchkernel.api import (
-    AsyncIndexIngestor,
     Cursor,
     IngestionFailureMode,
     IngestionReceipt,
@@ -59,7 +58,7 @@ class RebuildScope:
 
 class _AsyncRecordIndexManager:
     def __init__(self, index_manager) -> None:
-        self._ingestor = AsyncIndexIngestor(index_manager)
+        self._ingestor = index_manager.ingestor
 
     async def index_records(
         self,
@@ -784,13 +783,21 @@ def run_rebuild(
         repos: list[Path] = []
         if config.git_indexing.enabled and is_git_available():
             repos = _discover_scope_git_repositories(config, scope.documents_roots)
+            valid_repos: list[Path] = []
             for repo_path in repos:
                 ref_signature = get_git_ref_signature(repo_path)
                 if ref_signature is None:
-                    raise RuntimeError(
-                        f"Unable to fingerprint Git repository: {repo_path}"
+                    _append_message(
+                        runtime_root,
+                        (
+                            "⚠️ Skipping Git repository with unavailable fingerprint: "
+                            f"{repo_path}"
+                        ),
                     )
+                    continue
+                valid_repos.append(repo_path)
                 git_targets[str(repo_path.resolve())] = ref_signature
+            repos = valid_repos
 
         identity = _rebuild_identity(
             config=config,
@@ -836,7 +843,7 @@ def run_rebuild(
                 manifest_path.unlink(missing_ok=True)
             else:
                 existing_doc_ids = _find_scope_document_ids(
-                    descriptions=index_manager.vector.describe_documents(),
+                    descriptions=index_manager.describe_documents(),
                     documents_roots=scope.documents_roots,
                     common_root=Path(config.indexing.documents_path).resolve(),
                 )

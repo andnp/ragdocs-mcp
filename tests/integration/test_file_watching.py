@@ -10,14 +10,11 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from searchkernel.indexing.discovery import get_parser_suffixes
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
+from searchkernel.api import get_parser_suffixes
 
 from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
+from tests.integration._canonical import make_record_index_manager
 
 
 @pytest.fixture
@@ -39,27 +36,13 @@ def config(tmp_path):
 
 
 @pytest.fixture
-def indices(shared_embedding_model):
-    """
-    Create real index instances.
-
-    Returns tuple of (vector, keyword, graph) indices for IndexManager.
-    """
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    return vector, keyword, graph
-
-
-@pytest.fixture
-def manager(config, indices):
+def manager(config):
     """
     Create IndexManager with real indices.
 
     Provides fully functional manager for integration testing.
     """
-    vector, keyword, graph = indices
-    return IndexManager(config, vector, keyword, graph)
+    return make_record_index_manager(config)
 
 
 @pytest.fixture
@@ -164,12 +147,9 @@ async def test_detect_file_deletion_and_remove_from_index(
         # Wait for initial indexing
         await asyncio.sleep(1.0)
 
-        doc_id = "to_delete"
-
         # Verify document exists (count > 0)
         count_before = manager.get_document_count()
         assert count_before > 0
-        assert doc_id in manager.vector._doc_id_to_node_ids
 
         # Delete the file
         test_file.unlink()
@@ -178,24 +158,13 @@ async def test_detect_file_deletion_and_remove_from_index(
         await asyncio.sleep(1.0)
 
         # Verify removal is persisted and survives reload.
-        assert doc_id not in manager.vector._doc_id_to_node_ids
-        assert doc_id in manager.vector._tombstoned_docs
+        assert manager.get_document_count() == 0
 
         manager.persist()
-        reloaded_manager = manager.__class__(
-            config,
-            manager.vector.__class__(
-                embedding_model_name=manager.vector._embedding_model_name,
-                embedding_model=manager.vector._embedding_model,
-                embedding_workers=config.indexing.embedding_workers,
-            ),
-            manager.keyword.__class__(),
-            manager.graph.__class__(),
-        )
+        reloaded_manager = make_record_index_manager(config)
         reloaded_manager.load()
 
-        assert doc_id not in reloaded_manager.vector._doc_id_to_node_ids
-        assert doc_id in reloaded_manager.vector._tombstoned_docs
+        assert reloaded_manager.get_document_count() == 0
     finally:
         await watcher.stop()
 

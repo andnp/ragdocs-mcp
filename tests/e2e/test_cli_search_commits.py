@@ -530,9 +530,10 @@ embedding_model = "local"
         # Startup performs the initial git indexing when the feature is enabled.
         result = runner.invoke(cli, ["search-commits", "test"])
 
-        # The command should succeed with the repository's three commits indexed.
+        # Startup may still be indexing asynchronously, but the query should
+        # be served successfully through the daemon's canonical git source.
         assert result.exit_code == 0
-        assert "Total commits indexed: 3" in result.output
+        assert "Found 3 results" in result.output
 
     finally:
         os.chdir(original_cwd)

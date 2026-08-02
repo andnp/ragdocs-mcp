@@ -140,7 +140,9 @@ class CanonicalSearchAdapter:
         score: float,
         provenance: SearchResultProvenance,
     ) -> ChunkResult:
-        metadata = record.metadata
+        metadata = dict(record.metadata)
+        metadata.setdefault("source_kind", record.source_kind)
+        metadata.setdefault("source_id", record.source_id)
         return ChunkResult(
             chunk_id=str(metadata.get("chunk_id", record.source_id)),
             doc_id=str(metadata.get("doc_id", record.source_id)),

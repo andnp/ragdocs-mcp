@@ -81,7 +81,9 @@ class TestHueyWorker:
         worker.start()
         try:
             assert started.wait(timeout=5.0)
-            lease_store = TaskLeaseStore(Path(huey_instance.storage.filename))
+            lease_store = TaskLeaseStore(
+                Path(str(getattr(huey_instance.storage, "filename")))
+            )
             assert lease_store.active_count() == 1
             release.set()
             deadline = time.monotonic() + 5.0
@@ -110,7 +112,9 @@ class TestHueyWorker:
         finally:
             worker.stop()
 
-        lease = TaskLeaseStore(Path(huey_instance.storage.filename)).get(result.id)
+        lease = TaskLeaseStore(
+            Path(str(getattr(huey_instance.storage, "filename")))
+        ).get(result.id)
         assert lease is not None
         assert lease.state == "failed"
         assert lease.error is not None
@@ -130,7 +134,7 @@ class TestHueyWorker:
         task = huey_instance.dequeue()
         assert task is not None
         lease_store = TaskLeaseStore(
-            Path(huey_instance.storage.filename),
+            Path(str(getattr(huey_instance.storage, "filename"))),
             timeout_seconds=1.0,
         )
         assert lease_store.claim(
@@ -174,7 +178,7 @@ class TestWorkerWithLifecycle:
         from dataclasses import dataclass, field
         from typing import Any, cast
 
-        from searchkernel.storage.db import DatabaseManager
+        from searchkernel.api import DatabaseManager
 
         from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 
@@ -231,7 +235,7 @@ class TestWorkerWithLifecycle:
         from dataclasses import dataclass, field
         from typing import Any, cast
 
-        from searchkernel.storage.db import DatabaseManager
+        from searchkernel.api import DatabaseManager
 
         from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 

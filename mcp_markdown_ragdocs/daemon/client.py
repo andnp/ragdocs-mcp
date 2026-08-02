@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+from typing import NoReturn
 
 from mcp_markdown_ragdocs.daemon import RuntimePaths
 from mcp_markdown_ragdocs.daemon.health import (
@@ -127,7 +128,7 @@ def should_retry_daemon_request(response: dict[str, object]) -> bool:
     }
 
 
-def raise_daemon_request_error(response: dict[str, object] | None) -> None:
+def raise_daemon_request_error(response: dict[str, object] | None) -> NoReturn:
     if response is None:
         raise RuntimeError(
             "Daemon unavailable. Start it with 'ragdocs daemon start' and retry."

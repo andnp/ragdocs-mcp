@@ -28,8 +28,7 @@ def test_domain_module_exists():
     # Verify key types are exported
     assert hasattr(domain, "Record")
     assert hasattr(domain, "Chunk")
-    assert hasattr(domain, "SearchResult")
-    assert hasattr(domain, "ScoredRef")
+    assert hasattr(domain, "RecordHit")
 
 
 def test_ports_module_exists():
@@ -38,7 +37,6 @@ def test_ports_module_exists():
     assert ports is not None
     # Verify key ports are exported
     assert hasattr(ports, "ContentSource")
-    assert hasattr(ports, "SearchableSource")
     assert hasattr(ports, "EmbeddingProvider")
     assert hasattr(ports, "LLMProvider")
     assert hasattr(ports, "VectorStore")
@@ -58,8 +56,7 @@ def test_domain_models_is_pure():
     # We should have Record, Chunk, etc. but not adapters
     assert "Record" in imported
     assert "Chunk" in imported
-    assert "SearchResult" in imported
-    assert "ScoredRef" in imported
+    assert "RecordHit" in imported
 
 
 def test_ports_content_source_is_protocol():

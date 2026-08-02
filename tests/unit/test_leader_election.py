@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import pytest
-from searchkernel.storage.db import DatabaseManager
+from searchkernel.api import DatabaseManager
 
 from mcp_markdown_ragdocs.lifecycle import LeaderElection, LifecycleCoordinator, LifecycleState
 

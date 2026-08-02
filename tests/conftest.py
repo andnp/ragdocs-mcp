@@ -55,11 +55,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
-from searchkernel.storage.db import DatabaseManager
+from searchkernel.api import build_local_record_kernel
+from searchkernel.domain import Vector
+from searchkernel.local import LocalRecordKernel
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -74,7 +72,7 @@ from searchkernel.embeddings import (
     TEST_FAKE_EMBEDDINGS_ENV_VAR,
     DeterministicFakeEmbeddingModel,
 )
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
 
 
 @pytest.fixture(autouse=True)
@@ -160,16 +158,9 @@ def deterministic_fake_embedding_model() -> DeterministicFakeEmbeddingModel:
 
 @pytest.fixture(autouse=True)
 def configure_embedding_mode_for_test(request, monkeypatch):
-    """Default to fake embeddings; real-model tests use the pre-cached HF models.
-
-    HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE are set globally at import time (see top
-    of this file), so real-model tests never touch the network - they require
-    scripts/download_test_models.py to have been run beforehand.
-    """
-    if request.node.get_closest_marker("real_embeddings"):
-        monkeypatch.delenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, raising=False)
-    else:
-        monkeypatch.setenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, "1")
+    """Force every test to use the deterministic, offline embedding path."""
+    del request
+    monkeypatch.setenv(TEST_FAKE_EMBEDDINGS_ENV_VAR, "1")
 
 
 # ============================================================================
@@ -179,68 +170,56 @@ def configure_embedding_mode_for_test(request, monkeypatch):
 
 @pytest.fixture(scope="session")
 def shared_embedding_model():
-    """Session-scoped embedding model shared across all tests.
-
-    Requires the model to already be cached locally (see
-    scripts/download_test_models.py) - HF_HUB_OFFLINE is set globally, so this
-    never touches the network. Uses a filelock because HuggingFace's cache
-    loading is not safe against concurrent first-access from multiple
-    pytest-xdist worker processes, even when the model is fully cached.
-    Pre-warms with a dummy embedding call to avoid first-call overhead
-    (~1-2s) during actual tests.
-    """
-    import filelock
-
-    hf_home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
-    lock_path = os.path.join(hf_home, ".model_load.lock")
-    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
-
-    try:
-        with filelock.FileLock(lock_path, timeout=300):
-            model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
-            _ = model.get_text_embedding("warmup")
-    except OSError as exc:
-        raise RuntimeError(
-            "BAAI/bge-small-en-v1.5 is not in the local HuggingFace cache and "
-            "the test suite runs offline. Run "
-            "`uv run python scripts/download_test_models.py` first."
-        ) from exc
-
-    return model
+    """Compatibility fixture returning the deterministic model used by tests."""
+    return DeterministicFakeEmbeddingModel()
 
 
-@pytest.fixture(scope="module")
-def module_vector_index(shared_embedding_model):
-    """
-    Module-scoped VectorIndex with shared embedding model.
+class DeterministicEmbeddingProvider:
+    """Canonical embedding-provider adapter for offline pytest runs."""
 
-    Use this instead of creating VectorIndex() in function-scoped fixtures
-    to avoid redundant model loading (2-4s overhead per load).
+    model_name = "__deterministic_fake__"
+    dim = 384
 
-    Note: Module scope means tests share index state. Only use when tests
-    don't mutate the index or when using tmp_path for document isolation.
-    """
-    return VectorIndex(embedding_model=shared_embedding_model)
+    def __init__(self) -> None:
+        self._model = DeterministicFakeEmbeddingModel(self.dim)
+
+    def embed(self, texts: list[str]) -> list[Vector]:
+        return [self._model.get_text_embedding(text) for text in texts]
+
+    def embed_query(self, query: str) -> Vector:
+        return self._model.get_query_embedding(query)
 
 
-@pytest.fixture(scope="module")
-def module_indices(shared_embedding_model, tmp_path_factory):
-    """
-    Module-scoped indices for integration tests.
+@pytest.fixture(scope="session")
+def deterministic_embedding_provider() -> DeterministicEmbeddingProvider:
+    """Session-scoped canonical provider with stable, network-free vectors."""
+    return DeterministicEmbeddingProvider()
 
-    Returns (vector, keyword, graph) tuple with shared embedding model.
-    Avoids redundant model loading across tests in the same module.
 
-    Note: Module scope means tests share index state. Ensure tests either:
-    1. Use separate tmp_path directories for document isolation, OR
-    2. Don't mutate index state, OR
-    3. Explicitly clear indices between tests
-    """
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    db_path = tmp_path_factory.mktemp("keyword_module") / "index.db"
-    keyword = KeywordIndex(DatabaseManager(db_path))
-    graph = GraphStore()
-    return vector, keyword, graph
+@pytest.fixture
+def local_record_kernel(
+    tmp_path: Path,
+    deterministic_embedding_provider: DeterministicEmbeddingProvider,
+) -> LocalRecordKernel:
+    """Fresh canonical local record kernel for a unit test."""
+    return build_local_record_kernel(
+        tmp_path / "records.db",
+        embedding_provider=deterministic_embedding_provider,
+        embedding_model_name=deterministic_embedding_provider.model_name,
+        embedding_dim=deterministic_embedding_provider.dim,
+        vector_engine="exact",
+    )
+
+
+@pytest.fixture
+def record_manager(
+    tmp_path: Path,
+    local_record_kernel: LocalRecordKernel,
+    deterministic_embedding_provider: DeterministicEmbeddingProvider,
+) -> RecordIndexManager:
+    """Fresh app-owned manager connected to the canonical local kernel."""
+    config = make_test_config(tmp_path)
+    return RecordIndexManager(config, local_record_kernel, deterministic_embedding_provider)
 
 
 # ============================================================================
@@ -317,7 +296,7 @@ def persistent_config(
             keyword_weight=1.0,
             recency_bias=0.5,
         ),
-        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        llm=LLMConfig(embedding_model="__deterministic_fake__"),
     )
 
 
@@ -328,38 +307,30 @@ def persistent_config(
 
 @pytest.fixture(scope="module")
 def persistent_indices_module(
-    shared_embedding_model, tmp_path_factory
-) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore]]:
-    """
-    Create module-scoped indices that persist across tests in a module.
-
-    These indices are shared across all tests in a module for performance.
-    They start fresh but can accumulate data within a module's test suite.
-
-    Yields tuple of (vector, keyword, graph) indices.
-    """
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    db_path = tmp_path_factory.mktemp("keyword_persistent_module") / "index.db"
-    keyword = KeywordIndex(DatabaseManager(db_path))
-    graph = GraphStore()
-    yield vector, keyword, graph
+    persistent_config: Config,
+    deterministic_embedding_provider: DeterministicEmbeddingProvider,
+) -> Generator[LocalRecordKernel]:
+    """Module-scoped canonical kernel backed by persistent SQLite records."""
+    yield build_local_record_kernel(
+        Path(persistent_config.indexing.index_path) / "records.db",
+        embedding_provider=deterministic_embedding_provider,
+        embedding_model_name=deterministic_embedding_provider.model_name,
+        embedding_dim=deterministic_embedding_provider.dim,
+        vector_engine="exact",
+    )
 
 
 @pytest.fixture(scope="module")
 def persistent_manager_module(
     persistent_config: Config,
-    persistent_indices_module: tuple[VectorIndex, KeywordIndex, GraphStore],
-) -> IndexManager:
-    """
-    Create module-scoped IndexManager with persistent storage.
-
-    This manager uses persistent paths and shared indices within a module.
-    Useful for testing persistence behavior and manifest checking.
-
-    Returns IndexManager configured with persistent storage.
-    """
-    vector, keyword, graph = persistent_indices_module
-    return IndexManager(persistent_config, vector, keyword, graph)
+    persistent_indices_module: LocalRecordKernel,
+    deterministic_embedding_provider: DeterministicEmbeddingProvider,
+) -> RecordIndexManager:
+    return RecordIndexManager(
+        persistent_config,
+        persistent_indices_module,
+        deterministic_embedding_provider,
+    )
 
 
 # ============================================================================
@@ -369,37 +340,30 @@ def persistent_manager_module(
 
 @pytest.fixture
 def persistent_indices_isolated(
-    shared_embedding_model, tmp_path
-) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore]]:
-    """
-    Create function-scoped indices that can use persistent storage.
-
-    Fresh indices for each test but can persist to/load from disk.
-    Provides isolation while allowing persistence testing.
-
-    Yields tuple of (vector, keyword, graph) indices.
-    """
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex(DatabaseManager(tmp_path / "index.db"))
-    graph = GraphStore()
-    yield vector, keyword, graph
+    persistent_config: Config,
+    deterministic_embedding_provider: DeterministicEmbeddingProvider,
+) -> Generator[LocalRecordKernel]:
+    """Fresh canonical kernel using the configured persistent database path."""
+    yield build_local_record_kernel(
+        Path(persistent_config.indexing.index_path) / "records.db",
+        embedding_provider=deterministic_embedding_provider,
+        embedding_model_name=deterministic_embedding_provider.model_name,
+        embedding_dim=deterministic_embedding_provider.dim,
+        vector_engine="exact",
+    )
 
 
 @pytest.fixture
 def persistent_manager_isolated(
     persistent_config: Config,
-    persistent_indices_isolated: tuple[VectorIndex, KeywordIndex, GraphStore],
-) -> IndexManager:
-    """
-    Create function-scoped IndexManager with persistent storage.
-
-    Fresh manager for each test that uses persistent paths.
-    Allows testing persistence across manager instances.
-
-    Returns IndexManager configured with persistent storage.
-    """
-    vector, keyword, graph = persistent_indices_isolated
-    return IndexManager(persistent_config, vector, keyword, graph)
+    persistent_indices_isolated: LocalRecordKernel,
+    deterministic_embedding_provider: DeterministicEmbeddingProvider,
+) -> RecordIndexManager:
+    return RecordIndexManager(
+        persistent_config,
+        persistent_indices_isolated,
+        deterministic_embedding_provider,
+    )
 
 
 # ============================================================================
@@ -433,25 +397,27 @@ def persistent_config_module(tmp_path_factory) -> Config:
             keyword_weight=1.0,
             recency_bias=0.5,
         ),
-        llm=LLMConfig(embedding_model="BAAI/bge-small-en-v1.5"),
+        llm=LLMConfig(embedding_model="__deterministic_fake__"),
     )
 
 
 @pytest.fixture
 def persistent_manager_with_module_config(
     persistent_config_module: Config,
-    persistent_indices_isolated: tuple[VectorIndex, KeywordIndex, GraphStore],
-) -> IndexManager:
-    """
-    Create function-scoped manager with module-persistent paths.
-
-    Fresh manager for each test but shares module-level storage paths.
-    Balances isolation with realistic persistence testing.
-
-    Returns IndexManager with module-scoped persistent storage.
-    """
-    vector, keyword, graph = persistent_indices_isolated
-    return IndexManager(persistent_config_module, vector, keyword, graph)
+    deterministic_embedding_provider: DeterministicEmbeddingProvider,
+) -> RecordIndexManager:
+    kernel = build_local_record_kernel(
+        Path(persistent_config_module.indexing.index_path) / "records.db",
+        embedding_provider=deterministic_embedding_provider,
+        embedding_model_name=deterministic_embedding_provider.model_name,
+        embedding_dim=deterministic_embedding_provider.dim,
+        vector_engine="exact",
+    )
+    return RecordIndexManager(
+        persistent_config_module,
+        kernel,
+        deterministic_embedding_provider,
+    )
 
 
 # ============================================================================

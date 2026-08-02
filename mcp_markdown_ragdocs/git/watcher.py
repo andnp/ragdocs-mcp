@@ -12,12 +12,10 @@ import logging
 import time
 from pathlib import Path
 
-from searchkernel.api import AsyncIndexIngestor
-
 from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from mcp_markdown_ragdocs.indexing.git_refresh_state import get_head
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager as IndexManager
 
 logger = logging.getLogger(__name__)
 
@@ -146,9 +144,7 @@ class GitWatcher:
                         )
                     )
                 )
-                receipt = await AsyncIndexIngestor(
-                    self._index_manager
-                ).index_records(
+                receipt = await self._index_manager.ingestor.index_records(
                     records,
                     checkpoint=str(since) if since is not None else None,
                 )

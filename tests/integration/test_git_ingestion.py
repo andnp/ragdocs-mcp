@@ -10,10 +10,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from searchkernel.indexing.async_ingestion import AsyncIndexIngestor
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
@@ -24,7 +20,7 @@ from mcp_markdown_ragdocs.config import (
     LLMConfig,
     SearchConfig,
 )
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from tests.integration._canonical import make_record_index_manager
 
 
 def _init_git_repo(path: Path) -> None:
@@ -64,7 +60,7 @@ def repo(tmp_path):
 
 
 @pytest.fixture
-def kernel(tmp_path, shared_embedding_model):
+def kernel(tmp_path):
     docs_dir = tmp_path / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -82,10 +78,7 @@ def kernel(tmp_path, shared_embedding_model):
         ),
     )
 
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    manager = IndexManager(config, vector, keyword, graph)
+    manager = make_record_index_manager(config)
     orchestrator = CanonicalSearchAdapter(manager)
     return manager, orchestrator
 
@@ -95,10 +88,9 @@ async def test_commit_appears_in_search_via_source_filter(repo, kernel):
     manager, orchestrator = kernel
 
     source = GitContentSource(repo / ".git")
-    receipt = await AsyncIndexIngestor(manager).index_records(
-        list(source.iter_records())
-    )
-    assert receipt.committed == 1
+    records = list(source.iter_records())
+    assert manager.index_records(records)
+    assert manager.count_records("git_commit") == 1
 
     results, _, _ = await orchestrator.query(
         "authentication token refresh bug",
@@ -119,7 +111,7 @@ async def test_commit_absent_when_source_filter_excludes_git(repo, kernel):
     manager, orchestrator = kernel
 
     source = GitContentSource(repo / ".git")
-    await AsyncIndexIngestor(manager).index_records(list(source.iter_records()))
+    assert manager.index_records(list(source.iter_records()))
 
     results, _, _ = await orchestrator.query(
         "authentication token refresh bug",

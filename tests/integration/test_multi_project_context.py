@@ -11,14 +11,9 @@ Config object on every query. This caused queries on one project's context
 to potentially return results from a different project if Config was modified.
 """
 
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from searchkernel.domain import Chunk
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import (
@@ -30,23 +25,7 @@ from mcp_markdown_ragdocs.config import (
     SearchConfig,
 )
 from mcp_markdown_ragdocs.context import ApplicationContext
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
-
-
-def _with_hash(chunk):
-    """Finalize a freshly-built domain.Chunk (test helper).
-
-    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
-    content_hash in __post_init__, and its metadata dict must stay JSON
-    serializable (it flows into index/docstore persistence), so a raw
-    datetime `modified_time` is normalized to ISO text.
-    """
-    if not chunk.content_hash:
-        chunk.content_hash = chunk.compute_content_hash()
-    modified_time = chunk.metadata.get("modified_time")
-    if hasattr(modified_time, "isoformat"):
-        chunk.metadata["modified_time"] = modified_time.isoformat()
-    return chunk
+from tests.integration._canonical import make_record, make_record_index_manager
 
 
 # ============================================================================
@@ -129,17 +108,11 @@ def test_orchestrators_for_different_projects_have_different_paths(
     not share a global state.
     """
     # Create orchestrator for Project A
-    vector_a = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
-    keyword_a = KeywordIndex()
-    graph_a = GraphStore()
-    manager_a = IndexManager(config_for_project_a, vector_a, keyword_a, graph_a)
+    manager_a = make_record_index_manager(config_for_project_a)
     orchestrator_a = CanonicalSearchAdapter(manager_a)
 
     # Create orchestrator for Project B
-    vector_b = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
-    keyword_b = KeywordIndex()
-    graph_b = GraphStore()
-    manager_b = IndexManager(config_for_project_b, vector_b, keyword_b, graph_b)
+    manager_b = make_record_index_manager(config_for_project_b)
     orchestrator_b = CanonicalSearchAdapter(manager_b)
 
     # Verify paths are different
@@ -164,28 +137,18 @@ async def test_queries_return_results_from_correct_project(
     results from the wrong project. This test verifies isolation.
     """
     # Create and populate orchestrator for Project A
-    vector_a = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
-    keyword_a = KeywordIndex()
-    graph_a = GraphStore()
-    manager_a = IndexManager(config_for_project_a, vector_a, keyword_a, graph_a)
+    manager_a = make_record_index_manager(config_for_project_a)
     orchestrator_a = CanonicalSearchAdapter(manager_a)
 
     # Add Project A specific chunk
-    chunk_a = _with_hash(Chunk(chunk_id="readme_chunk_0", record_id="readme", content="Project Alpha documentation", metadata={ "header_path": "Project A", "start_pos": 0, "end_pos": 30, "file_path": str(two_projects["project_a_docs"] / "readme.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
-    vector_a.add_chunk(chunk_a)
-    keyword_a.add_chunk(chunk_a)
+    assert manager_a.index_record(make_record("readme", "Project Alpha documentation", metadata={"file_path": str(two_projects["project_a_docs"] / "readme.md")}))
 
     # Create and populate orchestrator for Project B
-    vector_b = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
-    keyword_b = KeywordIndex()
-    graph_b = GraphStore()
-    manager_b = IndexManager(config_for_project_b, vector_b, keyword_b, graph_b)
+    manager_b = make_record_index_manager(config_for_project_b)
     orchestrator_b = CanonicalSearchAdapter(manager_b)
 
     # Add Project B specific chunk
-    chunk_b = _with_hash(Chunk(chunk_id="readme_chunk_0", record_id="readme", content="Project Beta documentation", metadata={ "header_path": "Project B", "start_pos": 0, "end_pos": 30, "file_path": str(two_projects["project_b_docs"] / "readme.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
-    vector_b.add_chunk(chunk_b)
-    keyword_b.add_chunk(chunk_b)
+    assert manager_b.index_record(make_record("readme", "Project Beta documentation", metadata={"file_path": str(two_projects["project_b_docs"] / "readme.md")}))
 
     # Query Project A for "Alpha" - should find results
     results_a, _, _ = await orchestrator_a.query("Alpha", top_k=5, top_n=5)
@@ -443,18 +406,13 @@ async def test_file_exclusions_resolve_against_orchestrator_path(
 
     This ensures file exclusion works correctly in multi-project scenarios.
     """
-    vector = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    manager = IndexManager(config_for_project_a, vector, keyword, graph)
+    manager = make_record_index_manager(config_for_project_a)
 
     orchestrator = CanonicalSearchAdapter(manager)
 
     # Add multiple chunks
     for name in ["readme", "api", "guide"]:
-        chunk = _with_hash(Chunk(chunk_id=f"{name}_chunk_0", record_id=name, content=f"Content from {name} file in Project A", metadata={ "header_path": name, "start_pos": 0, "end_pos": 50, "file_path": str(two_projects["project_a_docs"] / f"{name}.md"), "modified_time": datetime.now(UTC)}, chunk_index=0))
-        vector.add_chunk(chunk)
-        keyword.add_chunk(chunk)
+        assert manager.index_record(make_record(name, f"Content from {name} file in Project A", metadata={"file_path": str(two_projects["project_a_docs"] / f"{name}.md")}))
 
     # Change config to point elsewhere (simulating project switch)
     config_for_project_a.indexing.documents_path = str(two_projects["project_b_docs"])

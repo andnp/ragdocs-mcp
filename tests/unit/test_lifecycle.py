@@ -14,7 +14,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
-from searchkernel.storage.db import DatabaseManager
+from searchkernel.api import DatabaseManager
 
 from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 

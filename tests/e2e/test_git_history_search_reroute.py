@@ -10,10 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from searchkernel.indexing.async_ingestion import AsyncIndexIngestor
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
+from searchkernel.api import build_local_record_kernel
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
@@ -24,7 +21,11 @@ from mcp_markdown_ragdocs.config import (
     LLMConfig,
     SearchConfig,
 )
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.git_ingestion import iter_git_ingestion_receipts
+from mcp_markdown_ragdocs.indexing.record_manager import (
+    RecordIndexManager,
+    build_embedding_provider,
+)
 from mcp_markdown_ragdocs.lifecycle import LifecycleState
 from mcp_markdown_ragdocs.mcp.handlers import HandlerContext
 from mcp_markdown_ragdocs.mcp.tools.document_tools import handle_search_git_history
@@ -93,8 +94,22 @@ class _FakeCoordinator:
         return None
 
 
+def _create_record_manager(config: Config) -> RecordIndexManager:
+    embedding_provider = build_embedding_provider(
+        config, config.llm.resolved_embedding_model
+    )
+    local_kernel = build_local_record_kernel(
+        Path(config.indexing.index_path) / "index.db",
+        embedding_provider=embedding_provider,
+        embedding_model_name=embedding_provider.model_name,
+        embedding_dim=embedding_provider.dim,
+        vector_engine="exact",
+    )
+    return RecordIndexManager(config, local_kernel, embedding_provider)
+
+
 @pytest.mark.asyncio
-async def test_search_git_history_tool_routes_through_orchestrator(repo, shared_embedding_model):
+async def test_search_git_history_tool_routes_through_orchestrator(repo):
     config = Config(
         indexing=IndexingConfig(
             documents_path=str(repo), index_path=str(repo.parent / ".index_data")
@@ -108,17 +123,18 @@ async def test_search_git_history_tool_routes_through_orchestrator(repo, shared_
             overlap_chars=50,
         ),
     )
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    manager = IndexManager(config, vector, keyword, graph)
+    manager = _create_record_manager(config)
     orchestrator = CanonicalSearchAdapter(manager)
 
     source = GitContentSource(repo / ".git")
-    receipt = await AsyncIndexIngestor(manager).index_records(
-        list(source.iter_records())
-    )
-    assert receipt.committed == 1
+    receipts = [
+        receipt
+        async for receipt in iter_git_ingestion_receipts(
+            manager, source, since=None, batch_size=100
+        )
+    ]
+    assert len(receipts) == 1
+    assert receipts[0].committed == 1
 
     ctx = _ReadyContext(orchestrator, git_indexing_enabled=True, total_commits=1)
     hctx = HandlerContext(lambda: ctx, _FakeCoordinator())
@@ -136,15 +152,15 @@ async def test_search_git_history_tool_routes_through_orchestrator(repo, shared_
 
 
 @pytest.mark.asyncio
-async def test_search_git_history_tool_reports_unavailable_when_disabled(shared_embedding_model):
+async def test_search_git_history_tool_reports_unavailable_when_disabled(tmp_path):
     config = Config(
+        indexing=IndexingConfig(
+            documents_path=str(tmp_path), index_path=str(tmp_path / "indices")
+        ),
         search=SearchConfig(),
         llm=LLMConfig(embedding_model="local"),
     )
-    vector = VectorIndex(embedding_model=shared_embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    manager = IndexManager(config, vector, keyword, graph)
+    manager = _create_record_manager(config)
     orchestrator = CanonicalSearchAdapter(manager)
 
     ctx = _ReadyContext(orchestrator, git_indexing_enabled=False, total_commits=0)

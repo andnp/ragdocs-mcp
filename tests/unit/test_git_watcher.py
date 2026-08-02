@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -246,18 +247,16 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
         lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
     )
 
-    class _FakeIngestor:
-        def __init__(self, index_manager_arg):
-            observed["index_manager"] = index_manager_arg
-
-        async def index_records(self, records, *, checkpoint=None):
-            observed["records"] = records
-            observed["since"] = checkpoint
-            return type("Receipt", (), {"records": (object(),)})()
+    async def _index_records(records, *, checkpoint=None):
+        observed["records"] = records
+        observed["since"] = checkpoint
+        return type("Receipt", (), {"records": (object(),)})()
 
     monkeypatch.setattr(
-        "mcp_markdown_ragdocs.git.watcher.AsyncIndexIngestor",
-        _FakeIngestor,
+        index_manager,
+        "ingestor",
+        SimpleNamespace(index_records=_index_records),
+        raising=False,
     )
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.adapters.sources.git.GitContentSource.iter_records",
@@ -266,6 +265,5 @@ async def test_git_watcher_falls_back_to_direct_refresh_when_queue_unavailable(
 
     await watcher._batch_process({git_dir})
 
-    assert observed["index_manager"] is index_manager
     assert observed["repo_path"] == git_dir.parent
     assert observed["since"] is None

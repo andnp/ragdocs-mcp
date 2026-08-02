@@ -20,6 +20,7 @@ from searchkernel.api import (
     ModelNamespace,
     ReindexError,
     ReindexRoutine,
+    RecordBatch,
     Record,
     RecordStatus,
     RollbackMetadata,
@@ -28,6 +29,7 @@ from searchkernel.api import (
     load_manifest,
     save_manifest,
 )
+from searchkernel.domain import RecordHit, RecordIdentity, SearchFilters, Vector
 
 import mcp_markdown_ragdocs.indexing.reindex as reindex_module
 import mcp_markdown_ragdocs.indexing.tasks as tasks_module
@@ -96,19 +98,22 @@ class _RecordVectorStore:
     def load_records(self, namespace: ModelNamespace) -> list[Record]:
         return list(self.namespaces.get(namespace, {}).values())
 
+    def record_source(self, namespace: ModelNamespace) -> _RecordSource:
+        return _RecordSource(self, namespace)
+
     def search(
         self,
-        query_vector: list[float],
+        query_vector: Vector,
         k: int,
         *,
         model_name: str,
         dim: int,
-        filters: dict[str, object] | None = None,
-    ) -> list[tuple[str, float]]:
+        filters: SearchFilters | None = None,
+    ) -> list[RecordHit]:
         del query_vector, filters
         namespace = ModelNamespace(model_name, dim)
         return [
-            (storage_key, 1.0)
+            RecordHit(RecordIdentity.from_storage_key(storage_key), 1.0)
             for storage_key in list(self.namespaces.get(namespace, {}))[:k]
         ]
 
@@ -152,6 +157,35 @@ class _RecordVectorStore:
             backup_id=backup.backup_id,
             reason="test restore",
             rolled_back_at="test",
+        )
+
+
+class _RecordSource:
+    def __init__(self, store: _RecordVectorStore, namespace: ModelNamespace) -> None:
+        self._records = store.load_records(namespace)
+
+    @property
+    def total_records(self) -> int:
+        return len(self._records)
+
+    def fetch_batch(self, cursor: str | None, limit: int) -> RecordBatch:
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+        remaining = [
+            record
+            for record in self._records
+            if cursor is None or record.storage_key > cursor
+        ]
+        records = remaining[:limit]
+        next_cursor = (
+            records[-1].storage_key
+            if len(records) == limit and len(remaining) > limit
+            else None
+        )
+        return RecordBatch(
+            records=records,
+            next_cursor=next_cursor,
+            total_records=self.total_records,
         )
 
 

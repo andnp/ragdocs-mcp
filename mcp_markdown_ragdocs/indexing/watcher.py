@@ -20,7 +20,7 @@ from searchkernel.api import (
     should_include_file,
     walk_dirs_with_files,
 )
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager as IndexManager
 
 logger = logging.getLogger(__name__)
 

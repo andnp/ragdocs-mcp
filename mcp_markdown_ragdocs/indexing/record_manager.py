@@ -415,9 +415,14 @@ class RecordIndexManager:
         docs_path: Path,
         documents_roots: list[Path] | None = None,
     ) -> Any:
-        del docs_path, documents_roots
+        del documents_roots
         discovered = {self._doc_id_for_path(path): path for path in discovered_files}
         current = set(self._source_records)
+        descriptions = {
+            str(description["doc_id"]): description
+            for description in self.describe_documents()
+            if isinstance(description.get("doc_id"), str)
+        }
         added = 0
         removed = 0
         failed = 0
@@ -427,6 +432,19 @@ class RecordIndexManager:
                 if not self.index_document(path):
                     failed += 1
         for doc_id in current - set(discovered):
+            description = descriptions.get(doc_id, {})
+            raw_path = description.get("file_path")
+            stale_path = Path(str(raw_path)) if isinstance(raw_path, str) else None
+            if stale_path is not None and stale_path.exists():
+                logger.info(
+                    "Removing stale entry excluded by pattern: %s",
+                    stale_path,
+                )
+            else:
+                logger.info(
+                    "Removing stale entry; file missing: %s",
+                    stale_path or (Path(docs_path) / doc_id),
+                )
             self.remove_document(doc_id)
             removed += 1
 

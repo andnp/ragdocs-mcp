@@ -21,7 +21,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
+from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager as IndexManager
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 
 logger = logging.getLogger(__name__)

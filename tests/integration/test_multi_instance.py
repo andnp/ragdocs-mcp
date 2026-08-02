@@ -28,17 +28,10 @@ def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
         index_path=index_path,
     )
 
-    from searchkernel.indices.graph import GraphStore
-    from searchkernel.indices.keyword import KeywordIndex
-    from searchkernel.indices.vector import VectorIndex
     from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
+    from tests.integration._canonical import make_record_index_manager
 
-    from mcp_markdown_ragdocs.indexing.manager import IndexManager
-
-    vector = VectorIndex(embedding_model_name="BAAI/bge-small-en-v1.5")
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    manager = IndexManager(config, vector, keyword, graph)
+    manager = make_record_index_manager(config)
     orchestrator = CanonicalSearchAdapter(manager)
 
     ctx = ApplicationContext(

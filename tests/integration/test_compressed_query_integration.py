@@ -11,14 +11,10 @@ Tests cover:
 These tests use real embeddings and indices, avoiding mocks.
 """
 
-from collections.abc import Generator
 from pathlib import Path
 
 import numpy as np
 import pytest
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
 from mcp_markdown_ragdocs.search import (
     CanonicalSearchAdapter,
     SearchPipelineConfig,
@@ -32,8 +28,8 @@ from mcp_markdown_ragdocs.config import (
     LLMConfig,
     SearchConfig,
 )
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
 from mcp_markdown_ragdocs.models import CompressionStats
+from tests.integration._canonical import make_record_index_manager
 
 # ============================================================================
 # Fixtures
@@ -64,62 +60,46 @@ def integration_config(tmp_path_factory) -> Config:
 
 
 @pytest.fixture(scope="module")
-def embedding_model(shared_embedding_model):
+def embedding_model(integration_manager):
     """
     Reuse session-scoped embedding model for efficiency.
 
     Avoids loading the embedding model multiple times during tests.
     """
-    return shared_embedding_model
-
-
-@pytest.fixture(scope="module")
-def integration_indices(
-    embedding_model,
-) -> Generator[tuple[VectorIndex, KeywordIndex, GraphStore]]:
-    """
-    Create module-scoped indices for integration tests.
-
-    These indices are shared across tests in this module.
-    """
-    vector = VectorIndex(embedding_model=embedding_model)
-    keyword = KeywordIndex()
-    graph = GraphStore()
-    yield vector, keyword, graph
+    return integration_manager.embedding_provider
 
 
 @pytest.fixture(scope="module")
 def integration_manager(
     integration_config: Config,
-    integration_indices: tuple[VectorIndex, KeywordIndex, GraphStore],
-) -> IndexManager:
+):
     """
     Create module-scoped IndexManager for integration tests.
 
     Provides access to index management functionality.
     """
-    vector, keyword, graph = integration_indices
-    return IndexManager(integration_config, vector, keyword, graph)
+    return make_record_index_manager(integration_config)
 
 
 @pytest.fixture(scope="module")
 def integration_orchestrator(
-    integration_indices: tuple[VectorIndex, KeywordIndex, GraphStore],
     integration_config: Config,
-    integration_manager: IndexManager,
+    integration_manager,
 ) -> CanonicalSearchAdapter:
     """
     Create module-scoped SearchOrchestrator for integration tests.
 
     Provides query execution capabilities.
     """
-    vector, keyword, graph = integration_indices
-    return CanonicalSearchAdapter(integration_manager)
+    return CanonicalSearchAdapter(
+        integration_manager,
+        documents_path=Path(integration_config.indexing.documents_path),
+    )
 
 
 @pytest.fixture(scope="module")
 def indexed_documents(
-    integration_config: Config, integration_manager: IndexManager
+    integration_config: Config, integration_manager
 ) -> list[str]:
     """
     Create and index test documents for compression testing.
@@ -514,11 +494,11 @@ class TestEmbeddingsIntegration:
 
         if len(results) > 0:
             embeddings = [
-                embedding_model.get_text_embedding(r.content) for r in results
+                embedding_model.embed([r.content])[0] for r in results
             ]
 
             assert len(embeddings) == len(results)
-            assert all(len(emb) == 384 for emb in embeddings)
+            assert all(len(emb) == embedding_model.dim for emb in embeddings)
 
     @pytest.mark.asyncio
     async def test_embeddings_enable_similarity_detection(
@@ -533,7 +513,7 @@ class TestEmbeddingsIntegration:
 
         if len(results) > 1:
             embeddings = np.array(
-                [embedding_model.get_text_embedding(r.content) for r in results]
+                [embedding_model.embed([r.content])[0] for r in results]
             )
 
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)

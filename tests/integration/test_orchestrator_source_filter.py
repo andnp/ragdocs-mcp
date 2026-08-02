@@ -5,13 +5,7 @@ matching source_kind (e.g. "git_commit"), letting callers scope a query
 to one ContentSource without a separate storage/search stack per source.
 """
 
-from datetime import UTC, datetime
-
 import pytest
-from searchkernel.domain import Chunk
-from searchkernel.indices.graph import GraphStore
-from searchkernel.indices.keyword import KeywordIndex
-from searchkernel.indices.vector import VectorIndex
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 from mcp_markdown_ragdocs.config import (
@@ -21,24 +15,7 @@ from mcp_markdown_ragdocs.config import (
     LLMConfig,
     SearchConfig,
 )
-from mcp_markdown_ragdocs.indexing.manager import IndexManager
-
-
-def _with_hash(chunk):
-    """Finalize a freshly-built domain.Chunk (test helper).
-
-    domain.Chunk, unlike the legacy models.Chunk, does not auto-compute
-    content_hash in __post_init__, and its metadata dict must stay JSON
-    serializable (it flows into index/docstore persistence), so a raw
-    datetime `modified_time` is normalized to ISO text.
-    """
-    if not chunk.content_hash:
-        chunk.content_hash = chunk.compute_content_hash()
-    modified_time = chunk.metadata.get("modified_time")
-    if hasattr(modified_time, "isoformat"):
-        chunk.metadata["modified_time"] = modified_time.isoformat()
-    return chunk
-
+from tests.integration._canonical import make_record, make_record_index_manager
 
 
 @pytest.fixture
@@ -55,52 +32,43 @@ def config(tmp_path):
 
 
 @pytest.fixture
-def indices(shared_embedding_model):
-    return {
-        "vector": VectorIndex(embedding_model=shared_embedding_model),
-        "keyword": KeywordIndex(),
-        "graph": GraphStore(),
-    }
+def manager(config):
+    return make_record_index_manager(config)
 
 
 @pytest.fixture
-def manager(config, indices):
-    return IndexManager(config, indices["vector"], indices["keyword"], indices["graph"])
-
-
-@pytest.fixture
-def orchestrator(config, indices, manager):
+def orchestrator(manager):
     return CanonicalSearchAdapter(manager)
 
 
-def _make_chunk(chunk_id: str, doc_id: str, content: str, source_kind: str) -> Chunk:
-    return _with_hash(Chunk(chunk_id=chunk_id, record_id=doc_id, content=content, metadata={"source_kind": source_kind, "header_path": "", "start_pos": 0, "end_pos": len(content), "file_path": "", "modified_time": datetime.now(UTC)}, chunk_index=0))
+def _make_record(source_id: str, content: str, source_kind: str):
+    return make_record(
+        source_id,
+        content,
+        source_kind=source_kind,
+        metadata={"doc_id": source_id, "source_kind": source_kind},
+    )
 
 
-def _seed_mixed_sources(indices):
-    note_chunk = _make_chunk(
-        "note_doc_chunk_0",
+def _seed_mixed_sources(manager):
+    note_chunk = _make_record(
         "note_doc",
         "Authentication documentation covers OAuth flows for the public API.",
         "note",
     )
-    commit_chunk = _make_chunk(
-        "git:abc123_chunk_0",
+    commit_chunk = _make_record(
         "git:abc123",
         "Fix authentication bug in the public API login handler.",
         "git_commit",
     )
-    indices["vector"].add_chunk(note_chunk)
-    indices["vector"].add_chunk(commit_chunk)
-    indices["keyword"].add_chunk(note_chunk)
-    indices["keyword"].add_chunk(commit_chunk)
+    assert manager.index_records([note_chunk, commit_chunk])
 
 
 @pytest.mark.asyncio
 async def test_source_filter_restricts_results_to_matching_source_kind(
-    indices, orchestrator
+    manager, orchestrator
 ):
-    _seed_mixed_sources(indices)
+    _seed_mixed_sources(manager)
 
     results, _, _ = await orchestrator.query(
         "authentication public API",
@@ -114,8 +82,8 @@ async def test_source_filter_restricts_results_to_matching_source_kind(
 
 
 @pytest.mark.asyncio
-async def test_source_filter_none_returns_all_sources(indices, orchestrator):
-    _seed_mixed_sources(indices)
+async def test_source_filter_none_returns_all_sources(manager, orchestrator):
+    _seed_mixed_sources(manager)
 
     results, _, _ = await orchestrator.query(
         "authentication public API",
@@ -130,9 +98,9 @@ async def test_source_filter_none_returns_all_sources(indices, orchestrator):
 
 @pytest.mark.asyncio
 async def test_source_filter_excluding_all_sources_returns_no_results(
-    indices, orchestrator
+    manager, orchestrator
 ):
-    _seed_mixed_sources(indices)
+    _seed_mixed_sources(manager)
 
     results, _, _ = await orchestrator.query(
         "authentication public API",
