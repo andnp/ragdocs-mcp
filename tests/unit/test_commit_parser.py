@@ -6,6 +6,7 @@ from mcp_markdown_ragdocs.git import commit_parser
 from mcp_markdown_ragdocs.git.commit_parser import (
     CommitData,
     build_commit_document,
+    iter_commits,
     parse_commit,
     parse_commits,
 )
@@ -150,6 +151,30 @@ def test_parse_commits_falls_back_per_batch(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(commit_parser.subprocess, "run", fail_bulk_run)
 
     assert parse_commits(git_dir, commit_hashes) == expected
+
+
+def test_iter_commits_yields_before_parsing_later_batches(
+    tmp_path: Path, monkeypatch
+):
+    """The lazy parser starts work before all batches are parsed."""
+    first = CommitData("first", 1, "", "", "First", "", [], "")
+    second = CommitData("second", 2, "", "", "Second", "", [], "")
+    parsed_batches: list[tuple[str, ...]] = []
+
+    def fake_parse_batch(_git_dir, hashes, _max_delta_lines):
+        parsed_batches.append(tuple(hashes))
+        return [first] if hashes == ["first"] else [second]
+
+    monkeypatch.setattr(commit_parser, "COMMIT_BATCH_SIZE", 1)
+    monkeypatch.setattr(commit_parser, "_parse_commit_batch", fake_parse_batch)
+
+    commits = iter_commits(tmp_path / ".git", ["first", "second"])
+
+    assert parsed_batches == []
+    assert next(commits) == first
+    assert parsed_batches == [("first",)]
+    assert next(commits) == second
+    assert parsed_batches == [("first",), ("second",)]
 
 
 def test_parse_merge_commit():
