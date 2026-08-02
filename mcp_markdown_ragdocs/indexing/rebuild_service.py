@@ -4,7 +4,7 @@ import json
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,13 +24,13 @@ from searchkernel.api import (
     atomic_write_json,
     discover_files as discover_files_single_root,
     discover_files_multi_root,
-    ingest_git_source,
 )
 
 logger = logging.getLogger(__name__)
 
 REBUILD_ACTIVE_STATUSES = {"queued", "running"}
 REBUILD_TERMINAL_STATUSES = {"succeeded", "failed"}
+GIT_REBUILD_BATCH_SIZE = 25
 
 
 @dataclass(frozen=True)
@@ -50,16 +50,6 @@ class RebuildScope:
         return "global corpus"
 
 
-class _AsyncGitSource:
-    def __init__(self, source: GitContentSource) -> None:
-        self._source = source
-        self.repo_path = str(source.repo_path)
-
-    async def iter_records(self, since: Cursor | None) -> AsyncIterator[Record]:
-        for record in self._source.iter_records(since=since):
-            yield record
-
-
 class _AsyncRecordIndexManager:
     def __init__(self, index_manager) -> None:
         self._ingestor = AsyncIndexIngestor(index_manager)
@@ -76,6 +66,51 @@ class _AsyncRecordIndexManager:
             checkpoint=checkpoint,
             failure_mode=failure_mode,
         )
+
+
+def _ingest_git_repository(
+    *,
+    runtime_root: Path,
+    index_manager,
+    repo_path: Path,
+    git_commits_indexed: int,
+) -> int:
+    source = GitContentSource(repo_path)
+    batch: list[Record] = []
+    total_indexed = git_commits_indexed
+
+    for record in source.iter_records():
+        batch.append(record)
+        if len(batch) < GIT_REBUILD_BATCH_SIZE:
+            continue
+
+        receipt = asyncio.run(
+            _AsyncRecordIndexManager(index_manager).index_records(batch)
+        )
+        total_indexed += receipt.successful
+        index_manager.persist_checkpoint()
+        _update_rebuild_progress(
+            runtime_root,
+            phase="indexing_git",
+            git_commits_indexed=total_indexed,
+            git_repository_path=str(repo_path),
+        )
+        batch.clear()
+
+    if batch:
+        receipt = asyncio.run(
+            _AsyncRecordIndexManager(index_manager).index_records(batch)
+        )
+        total_indexed += receipt.successful
+        index_manager.persist_checkpoint()
+        _update_rebuild_progress(
+            runtime_root,
+            phase="indexing_git",
+            git_commits_indexed=total_indexed,
+            git_repository_path=str(repo_path),
+        )
+
+    return total_indexed
 
 
 def rebuild_status_path(runtime_root: Path) -> Path:
@@ -410,16 +445,19 @@ def run_rebuild(
                 )
 
                 for repo_path in repos:
-                    source = GitContentSource(repo_path)
-                    receipt = asyncio.run(
-                        ingest_git_source(
-                            _AsyncRecordIndexManager(index_manager),
-                            _AsyncGitSource(source),
-                        )
+                    git_commits_indexed = _ingest_git_repository(
+                        runtime_root=runtime_root,
+                        index_manager=index_manager,
+                        repo_path=repo_path,
+                        git_commits_indexed=git_commits_indexed,
                     )
-                    git_commits_indexed += receipt.successful
-                if repos:
-                    index_manager.persist_checkpoint()
+                    _append_message(
+                        runtime_root,
+                        (
+                            f"✅ Indexed git repository {repo_path} "
+                            f"({git_commits_indexed} total commits)"
+                        ),
+                    )
 
                 if repos:
                     _append_message(
