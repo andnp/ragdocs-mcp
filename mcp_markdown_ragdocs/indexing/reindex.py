@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,13 +27,17 @@ from searchkernel.api import (
     ModelLifecycleStore,
     ModelNamespace,
     ModelNamespaceStore,
+    OllamaEmbeddingProvider,
+    RecordBatch,
     Record,
+    RecordHit,
+    RecordSource,
     RecordStatus,
     ReindexError,
     ReindexRoutine,
     RollbackMetadata,
+    SearchFilters,
     ValidationResult,
-    VectorStore,
     atomic_write_json,
     load_manifest,
     save_manifest,
@@ -148,30 +152,6 @@ def reindex_status_payload(
     return payload
 
 
-class _HuggingFaceEmbeddingProvider:
-    """Adapt the supported local provider to the public kernel contract."""
-
-    def __init__(self, model_name: str, truncate_dim: int | None = None) -> None:
-        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-
-        kwargs: Any = {"model_name": model_name}
-        if truncate_dim is not None:
-            kwargs["truncate_dim"] = truncate_dim
-        self._embedder = HuggingFaceEmbedding(**kwargs)
-        self.model_name = model_name
-        native_dim = getattr(self._embedder, "embed_dim", None)
-        if not isinstance(native_dim, int) or native_dim < 1:
-            sample = self._embedder.get_text_embedding("dimension probe")
-            native_dim = len(sample)
-        self.dim = truncate_dim or native_dim
-
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        return [
-            [float(value) for value in self._embedder.get_text_embedding(text)]
-            for text in texts
-        ]
-
-
 class _DeferredEmbeddingProvider:
     """Carry model identity for lifecycle-only operations without loading a model."""
 
@@ -195,14 +175,27 @@ def build_embedding_provider(
     truncate_dim: int | None,
 ) -> EmbeddingProvider:
     provider_name = config.embedding.provider.lower()
-    if provider_name not in {"hf", "huggingface", "local"}:
+    if provider_name != "ollama":
         raise ReindexError(
             f"unsupported reindex embedding provider {config.embedding.provider!r}"
         )
-    resolved_model = (
-        resolve_embedding_model(config) if model_name == "local" else model_name
+    if truncate_dim is not None and config.embedding.dimension not in {
+        None,
+        truncate_dim,
+    }:
+        raise ReindexError(
+            "Ollama reindexing cannot change dimensions with truncate_dim; "
+            "configure embedding.dimension instead"
+        )
+    resolved_model = resolve_embedding_model(config) if model_name == "local" else model_name
+    return OllamaEmbeddingProvider(
+        resolved_model,
+        base_url=config.embedding.base_url,
+        dim=truncate_dim or config.embedding.dimension,
+        timeout=config.embedding.timeout_seconds,
+        auto_pull=config.embedding.auto_pull,
+        pull_timeout=config.embedding.pull_timeout_seconds,
     )
-    return _HuggingFaceEmbeddingProvider(resolved_model, truncate_dim)
 
 
 class ManifestModelLifecycleStore(ModelLifecycleStore):
@@ -308,10 +301,7 @@ class ManifestModelLifecycleStore(ModelLifecycleStore):
         save_manifest(self.index_path, manifest)
 
 
-class PgvectorReindexStore(
-    VectorStore,
-    ModelNamespaceStore,
-):
+class PgvectorReindexStore(ModelNamespaceStore):
     """App-owned pgvector migration seam using the public Record contract."""
 
     def __init__(self, pg_dsn: str) -> None:
@@ -471,8 +461,8 @@ class PgvectorReindexStore(
         *,
         model_name: str,
         dim: int,
-        filters: dict[str, Any] | None = None,
-    ) -> list[tuple[str, float]]:
+        filters: SearchFilters | None = None,
+    ) -> Sequence[RecordHit]:
         raise ReindexError("reindex store does not serve queries")
 
     def delete(self, record_ids: list[str]) -> None:
@@ -562,21 +552,28 @@ class PgvectorReindexStore(
                 (namespace.model_name, namespace.dim),
             )
 
-    def load_records(self, namespace: ModelNamespace) -> list[Record]:
+    def count_records(self, namespace: ModelNamespace) -> int:
         table_name = self._table_name(namespace)
         with self._connection() as connection:
             cursor = connection.cursor()
             cursor.execute(
+                "SELECT 1 FROM vector_tables WHERE model_name = %s AND dim = %s;",
+                (namespace.model_name, namespace.dim),
+            )
+            if cursor.fetchone() is None:
+                return 0
+            cursor.execute(
                 sql.SQL(
-                    "SELECT r.workspace_id, r.source_kind, r.source_id, r.title, r.body, "
-                    "r.created_at, r.updated_at, r.metadata, r.uri, r.status, r.indexed_text "
-                    "FROM {table} v JOIN records r ON r.record_id = v.record_id "
-                    "WHERE r.source_kind = 'chunk' ORDER BY v.record_id;"
+                    "SELECT COUNT(*) FROM {table} v "
+                    "JOIN records r ON r.record_id = v.record_id "
+                    "WHERE r.source_kind = 'chunk';"
                 ).format(table=sql.Identifier(table_name))
             )
-            rows = cursor.fetchall()
-        records: list[Record] = []
-        for (
+            return int(cursor.fetchone()[0])
+
+    @staticmethod
+    def _record_from_row(row: tuple[Any, ...]) -> Record:
+        (
             workspace_id,
             source_kind,
             source_id,
@@ -588,24 +585,84 @@ class PgvectorReindexStore(
             uri,
             status,
             indexed_text,
-        ) in rows:
-            raw_metadata = metadata if isinstance(metadata, dict) else json.loads(metadata)
-            records.append(
-                Record(
-                    workspace_id=workspace_id,
-                    source_kind=source_kind,
-                    source_id=source_id,
-                    title=title,
-                    body=body,
-                    created_at=created_at,
-                    updated_at=updated_at,
-                    metadata=raw_metadata,
-                    uri=uri,
-                    status=RecordStatus(status),
-                    indexed_text=indexed_text,
-                )
+        ) = row
+        raw_metadata = metadata if isinstance(metadata, dict) else json.loads(metadata)
+        return Record(
+            workspace_id=workspace_id,
+            source_kind=source_kind,
+            source_id=source_id,
+            title=title,
+            body=body,
+            created_at=created_at,
+            updated_at=updated_at,
+            metadata=raw_metadata,
+            uri=uri,
+            status=RecordStatus(status),
+            indexed_text=indexed_text,
+        )
+
+    def record_source(self, namespace: ModelNamespace) -> RecordSource:
+        return PgvectorRecordSource(self, namespace)
+
+    def load_records(self, namespace: ModelNamespace) -> list[Record]:
+        """Compatibility helper for callers that explicitly need a materialized list."""
+        source = self.record_source(namespace)
+        cursor: str | None = None
+        records: list[Record] = []
+        while True:
+            batch = source.fetch_batch(cursor, 512)
+            records.extend(batch.records)
+            if batch.next_cursor is None:
+                return records
+            cursor = batch.next_cursor
+
+
+class PgvectorRecordSource(RecordSource):
+    """Keyset-paginated source for one pgvector model namespace."""
+
+    def __init__(self, store: PgvectorReindexStore, namespace: ModelNamespace) -> None:
+        self.store = store
+        self.namespace = namespace
+        self._total_records: int | None = None
+
+    @property
+    def total_records(self) -> int | None:
+        if self._total_records is None:
+            self._total_records = self.store.count_records(self.namespace)
+        return self._total_records
+
+    def fetch_batch(self, cursor: str | None, limit: int) -> RecordBatch:
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+        table_name = self.store._table_name(self.namespace)
+        with self.store._connection() as connection:
+            db_cursor = connection.cursor()
+            query = sql.SQL(
+                "SELECT r.workspace_id, r.source_kind, r.source_id, r.title, r.body, "
+                "r.created_at, r.updated_at, r.metadata, r.uri, r.status, r.indexed_text, "
+                "r.record_id "
+                "FROM {table} v JOIN records r ON r.record_id = v.record_id "
+                "WHERE r.source_kind = 'chunk' {cursor_clause} "
+                "ORDER BY r.record_id LIMIT %s;"
+            ).format(
+                table=sql.Identifier(table_name),
+                cursor_clause=(
+                    sql.SQL("AND r.record_id > %s")
+                    if cursor is not None
+                    else sql.SQL("")
+                ),
             )
-        return records
+            parameters: tuple[Any, ...] = (cursor, limit) if cursor is not None else (limit,)
+            db_cursor.execute(query, parameters)
+            rows = db_cursor.fetchmany(limit)
+
+            records = [self.store._record_from_row(row[:-1]) for row in rows]
+        next_cursor = rows[-1][-1] if rows else None
+        return RecordBatch(
+            records=tuple(records),
+            next_cursor=next_cursor,
+            total_records=self.total_records,
+        )
 
 
 def _source_namespace(
@@ -660,7 +717,7 @@ def run_reindex_operation(
             raise ReindexError("a target model is required to start reindex")
         provider = build_embedding_provider(config, model, truncate_dim)
         source = _source_namespace(config, index_path, store)
-        records = store.load_records(source)
+        record_source = store.record_source(source)
         target = ModelNamespace(provider.model_name, provider.dim)
         migration_id = f"reindex:{target.model_name}:{target.dim}"
     elif saved_migration is None:
@@ -668,9 +725,9 @@ def run_reindex_operation(
     else:
         source = saved_migration.source
         target = saved_migration.target
-        records = store.load_records(source)
-        if not records:
-            records = store.load_records(target)
+        record_source = store.record_source(source)
+        if record_source.total_records == 0:
+            record_source = store.record_source(target)
         migration_id = saved_migration.migration_id
         provider = _DeferredEmbeddingProvider(
             target.model_name,
@@ -685,7 +742,7 @@ def run_reindex_operation(
         namespace_store=store,
     )
     routine = ReindexRoutine(
-        records,
+        record_source,
         provider,
         store,
         batch_size=max(1, config.embedding.batch_size),
@@ -713,7 +770,11 @@ def run_reindex_operation(
             "old_model": source.model_name,
             "phase": state.phase.value,
             "checkpoint": state.checkpoint,
-            "total_records": state.total_records or len(records),
+            "total_records": (
+                state.total_records
+                if state.total_records is not None
+                else (record_source.total_records or 0)
+            ),
             "error": None,
             "completed_at": datetime.now(UTC).isoformat(),
         },

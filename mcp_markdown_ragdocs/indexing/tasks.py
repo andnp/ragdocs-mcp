@@ -26,7 +26,6 @@ from mcp_markdown_ragdocs.coordination.task_submission import (
 )
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from searchkernel.api import (
-    AsyncIndexIngestor,
     has_incomplete_bootstrap_checkpoint,
     mark_bootstrap_file_completed,
     mark_bootstrap_files_completed,
@@ -62,6 +61,7 @@ logger = logging.getLogger(__name__)
 RECORD_BATCH_TASK_PRIORITY = 100
 GIT_REFRESH_TASK_PRIORITY = -10
 REINDEX_TASK_PRIORITY = 200
+GIT_REFRESH_BATCH_SIZE = 25
 WRITER_LEASE_TIMEOUT_SECONDS = 30.0
 WRITER_HEARTBEAT_INTERVAL_SECONDS = 5.0
 
@@ -73,6 +73,8 @@ __all__ = [
 
 class IndexManagerLike(Protocol):
     """Structural type for objects that can index/remove documents."""
+
+    ingestor: Any
 
     def index_document(self, file_path: str, force: bool = False) -> None: ...
     def index_documents(
@@ -544,7 +546,11 @@ def register_tasks(
         if _index_manager is None:
             logger.error("IndexManager not available for git refresh task")
             return False
+        manager = _index_manager
         from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
+        from mcp_markdown_ragdocs.indexing.git_ingestion import (
+            iter_git_ingestion_receipts,
+        )
         git_dir_path = Path(git_dir).resolve()
         repo_key = str(git_dir_path)
         with _git_refresh_lock:
@@ -570,23 +576,30 @@ def register_tasks(
             )
             since = str(max(0, cursor - 1)) if cursor is not None else None
             source = GitContentSource(git_dir_path)
-            records = source.iter_records(since=since)
-            records = list(records)
-            latest_cursor = max(
-                (int(record.updated_at.timestamp()) for record in records),
-                default=cursor,
-            )
-            receipt = asyncio.run(
-                AsyncIndexIngestor(_index_manager).index_records(
-                    records,
-                    checkpoint=since,
-                )
-            )
-            indexed = len(receipt.records)
-            if indexed:
-                _index_manager.persist()
-                if _bootstrap_index_path is not None and latest_cursor is not None:
-                    save_cursor(_bootstrap_index_path, git_dir_path, latest_cursor)
+            indexed = 0
+            latest_cursor = cursor
+
+            async def _ingest() -> None:
+                nonlocal indexed, latest_cursor
+                async for receipt in iter_git_ingestion_receipts(
+                    manager,
+                    source,
+                    since=since,
+                    batch_size=GIT_REFRESH_BATCH_SIZE,
+                ):
+                    if receipt.failed:
+                        raise RuntimeError(
+                            f"Git ingestion failed for {git_dir_path}: "
+                            f"{receipt.failed} record(s)"
+                        )
+                    indexed += len(receipt.records)
+                    if receipt.checkpoint is not None:
+                        latest_cursor = max(latest_cursor or 0, int(receipt.checkpoint))
+                    manager.persist()
+                    if _bootstrap_index_path is not None and latest_cursor is not None:
+                        save_cursor(_bootstrap_index_path, git_dir_path, latest_cursor)
+
+            asyncio.run(_ingest())
             if _bootstrap_index_path is not None and refresh_head is not None:
                 # Persist the head observed before ingestion. A commit created
                 # during the task must remain visible to the next poll.
