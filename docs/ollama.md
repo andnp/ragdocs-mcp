@@ -8,7 +8,7 @@ Install and start Ollama, then pull the configured model:
 
 ```sh
 ollama serve
-ollama pull nomic-embed-text:latest
+ollama pull nomic-embed-text-v2-moe:latest
 ```
 
 The default configuration is equivalent to:
@@ -16,12 +16,15 @@ The default configuration is equivalent to:
 ```toml
 [embedding]
 provider = "ollama"
-model_name = "nomic-embed-text:latest"
+model_name = "nomic-embed-text-v2-moe:latest"
 base_url = "http://localhost:11434"
 auto_pull = true
 timeout_seconds = 60.0
 pull_timeout_seconds = 600.0
 ```
+
+Git commits are indexed with structure-aware chunks so summaries, message
+bodies, and diffs fit within the model's 512-token context window.
 
 Set `base_url` when Ollama runs on another host. `auto_pull` can be disabled
 in production to make a missing model fail fast instead of downloading it.

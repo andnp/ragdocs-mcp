@@ -176,7 +176,7 @@ class EmbeddingConfig:
     # Embeddings are served by Ollama so worker and query processes do not
     # each load a copy of the model into Python.
     provider: str = "ollama"
-    model_name: str = "nomic-embed-text:latest"
+    model_name: str = "nomic-embed-text-v2-moe:latest"
     base_url: str = "http://localhost:11434"
     dimension: int | None = None
     timeout_seconds: float = 60.0

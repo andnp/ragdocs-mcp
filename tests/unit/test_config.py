@@ -98,7 +98,7 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         assert config.search.recency_bias == 0.5
         assert config.search.project_uplift_multiplier == 1.2
         assert config.llm.embedding_model == "local"
-        assert config.embedding.model_name == "nomic-embed-text:latest"
+        assert config.embedding.model_name == "nomic-embed-text-v2-moe:latest"
         assert config.indexing.torch_num_threads == 4
         assert config.indexing.debounce_window_seconds == 0.5
         assert config.indexing.task_backpressure_limit == 100
