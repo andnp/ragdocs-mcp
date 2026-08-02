@@ -7,7 +7,9 @@ from huey import SqliteHuey
 from huey.utils import Error
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.daemon.admin_payloads import _build_queue_status_payload
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats, purge_queue_state
+from mcp_markdown_ragdocs.indexing.git_refresh_state import save_progress
 
 
 def test_get_queue_stats_includes_pending_and_scheduled_task_details(
@@ -145,3 +147,32 @@ def test_get_queue_stats_reports_active_lease_count(tmp_path: Path) -> None:
     stats = get_queue_stats(huey)
 
     assert stats.running_count == 1
+
+
+def test_queue_status_payload_includes_git_refresh_progress(tmp_path: Path) -> None:
+    db_path = tmp_path / "queue.db"
+    huey = SqliteHuey(name="queue-progress", filename=str(db_path), immediate=False)
+    save_progress(
+        tmp_path,
+        tmp_path / "repo" / ".git",
+        {
+            "state": "running",
+            "processed_count": 2,
+            "discovered_count": 5,
+        },
+    )
+
+    payload = _build_queue_status_payload(
+        queue_path=db_path,
+        worker_running=True,
+    )
+
+    assert payload["git_refresh_progress"] == [
+        {
+            "repository_path": str((tmp_path / "repo" / ".git").resolve()),
+            "state": "running",
+            "processed_count": 2,
+            "discovered_count": 5,
+        }
+    ]
+    huey.storage.close()

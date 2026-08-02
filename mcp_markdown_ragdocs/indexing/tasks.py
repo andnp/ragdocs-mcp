@@ -35,6 +35,7 @@ from searchkernel.api import (
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
     get_head,
+    save_progress,
     save_cursor,
     save_head,
 )
@@ -207,6 +208,60 @@ class _RejectedRecordBatch:
 
 def _git_refresh_key(git_dir: str | Path) -> str:
     return str(Path(git_dir).resolve())
+
+
+def _embedding_cache_metrics(manager: IndexManagerLike) -> dict[str, int]:
+    cache = getattr(manager, "_embedding_cache", None)
+    metrics = getattr(cache, "metrics", None)
+    if metrics is None:
+        return {}
+    names = {
+        "hits": "embedding_cache_hits",
+        "misses": "embedding_cache_misses",
+        "writes": "embedding_writes",
+        "invalidations": "embedding_invalidations",
+    }
+    return {
+        output_name: int(value)
+        for metric_name, output_name in names.items()
+        if isinstance(value := getattr(metrics, metric_name, None), int)
+        and not isinstance(value, bool)
+    }
+
+
+def _refresh_progress_rate(processed: int, started_at: datetime | None) -> float:
+    if started_at is None:
+        return 0.0
+    elapsed = max((datetime.now(UTC) - started_at).total_seconds(), 0.001)
+    return processed / elapsed
+
+
+def _save_git_refresh_progress(
+    git_dir: Path,
+    *,
+    state: str,
+    started_at: datetime | None = None,
+    updated_at: datetime | None = None,
+    metrics: dict[str, int] | None = None,
+    **fields: object,
+) -> None:
+    if _bootstrap_index_path is None:
+        return
+    timestamp = updated_at or datetime.now(UTC)
+    progress: dict[str, object] = {
+        "state": state,
+        "updated_at": timestamp.isoformat(),
+    }
+    if started_at is not None:
+        progress["started_at"] = started_at.isoformat()
+    if "processed_count" in fields and isinstance(fields["processed_count"], int):
+        progress["rate_per_second"] = _refresh_progress_rate(
+            fields["processed_count"], started_at
+        )
+    progress.update(fields)
+    if metrics:
+        progress.update(metrics)
+    save_progress(_bootstrap_index_path, git_dir, progress)
 
 
 def _defer_git_refresh(git_dir: str) -> None:
@@ -559,6 +614,20 @@ def register_tasks(
                 return True
             _git_refresh_in_flight.add(repo_key)
 
+        started_at = datetime.now(UTC)
+        _save_git_refresh_progress(
+            git_dir_path,
+            state="running",
+            started_at=started_at,
+            processed_count=0,
+            discovered_count=0,
+            error=None,
+            completed_at=None,
+        )
+        indexed = 0
+        discovered = 0
+        latest_cursor: int | None = None
+        initial_embedding_metrics: dict[str, int] = {}
         try:
             refresh_head = get_git_ref_signature(git_dir_path)
             cursor = (
@@ -573,45 +642,116 @@ def register_tasks(
                 and get_head(_bootstrap_index_path, git_dir_path) == refresh_head
             ):
                 logger.debug("Skipping unchanged git repository %s", git_dir_path)
+                _save_git_refresh_progress(
+                    git_dir_path,
+                    state="skipped",
+                    started_at=started_at,
+                    cursor=cursor,
+                    processed_count=0,
+                    discovered_count=0,
+                    completed_at=datetime.now(UTC).isoformat(),
+                )
                 return True
 
             since = str(max(0, cursor - 1)) if cursor is not None else None
             source = GitContentSource(git_dir_path)
-            indexed = 0
             latest_cursor = cursor
+            initial_embedding_metrics = _embedding_cache_metrics(manager)
 
             async def _ingest() -> None:
-                nonlocal indexed, latest_cursor
+                nonlocal discovered, indexed, latest_cursor
                 async for receipt in iter_git_ingestion_receipts(
                     manager,
                     source,
                     since=since,
                     batch_size=GIT_REFRESH_BATCH_SIZE,
                 ):
+                    discovered += len(receipt.records)
+                    successful = getattr(receipt, "successful", None)
+                    indexed += (
+                        successful
+                        if isinstance(successful, int)
+                        else len(receipt.records) - receipt.failed
+                    )
+                    if receipt.checkpoint is not None:
+                        latest_cursor = max(latest_cursor or 0, int(receipt.checkpoint))
+                    current_embedding_metrics = _embedding_cache_metrics(manager)
+                    metric_deltas = {
+                        key: value - initial_embedding_metrics.get(key, 0)
+                        for key, value in current_embedding_metrics.items()
+                    }
                     if receipt.failed:
+                        _save_git_refresh_progress(
+                            git_dir_path,
+                            state="failed",
+                            started_at=started_at,
+                            cursor=latest_cursor,
+                            processed_count=indexed,
+                            discovered_count=discovered,
+                            error=f"{receipt.failed} record(s) failed",
+                            metrics=metric_deltas,
+                        )
                         raise RuntimeError(
                             f"Git ingestion failed for {git_dir_path}: "
                             f"{receipt.failed} record(s)"
                         )
-                    indexed += len(receipt.records)
-                    if receipt.checkpoint is not None:
-                        latest_cursor = max(latest_cursor or 0, int(receipt.checkpoint))
                     manager.persist()
                     if _bootstrap_index_path is not None and latest_cursor is not None:
                         save_cursor(_bootstrap_index_path, git_dir_path, latest_cursor)
+                    _save_git_refresh_progress(
+                        git_dir_path,
+                        state="running",
+                        started_at=started_at,
+                        cursor=latest_cursor,
+                        processed_count=indexed,
+                        discovered_count=discovered,
+                        metrics=metric_deltas,
+                    )
 
             asyncio.run(_ingest())
             if _bootstrap_index_path is not None and refresh_head is not None:
                 # Persist the head observed before ingestion. A commit created
                 # during the task must remain visible to the next poll.
                 save_head(_bootstrap_index_path, git_dir_path, refresh_head)
+            final_embedding_metrics = _embedding_cache_metrics(manager)
+            metric_deltas = {
+                key: value - initial_embedding_metrics.get(key, 0)
+                for key, value in final_embedding_metrics.items()
+            }
+            _save_git_refresh_progress(
+                git_dir_path,
+                state="completed",
+                started_at=started_at,
+                cursor=latest_cursor,
+                processed_count=indexed,
+                discovered_count=discovered,
+                completed_at=datetime.now(UTC).isoformat(),
+                error=None,
+                metrics=metric_deltas,
+            )
             logger.info(
                 "Task completed: refreshed git repository %s (%d commits)",
                 git_dir_path,
                 indexed,
             )
             return True
-        except Exception:
+        except Exception as error:
+            final_embedding_metrics = _embedding_cache_metrics(manager)
+            metric_deltas = {
+                key: value - initial_embedding_metrics.get(key, 0)
+                for key, value in final_embedding_metrics.items()
+            }
+            _save_git_refresh_progress(
+                git_dir_path,
+                state="failed",
+                started_at=started_at,
+                cursor=latest_cursor,
+                processed_count=indexed,
+                discovered_count=discovered,
+                error=str(error),
+                completed_at=datetime.now(UTC).isoformat(),
+                metrics=metric_deltas,
+            )
             logger.exception("Task failed: refresh git %s", git_dir_path)
             return False
         finally:
@@ -1123,6 +1263,11 @@ def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
         if _writer_is_active():
             _git_refresh_pending.add(git_dir_key)
             _git_refresh_deferred.add(git_dir_key)
+            _save_git_refresh_progress(
+                Path(git_dir),
+                state="queued",
+                queued_at=datetime.now(UTC).isoformat(),
+            )
             logger.info("Deferring git refresh while rebuild owns the writer: %s", git_dir)
             return TaskSubmissionResult(status="already_pending")
         _git_refresh_pending.add(git_dir_key)
@@ -1135,6 +1280,12 @@ def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
     ):
         with _git_refresh_lock:
             _git_refresh_pending.discard(git_dir_key)
+        _save_git_refresh_progress(
+            Path(git_dir),
+            state="backpressured",
+            error="task queue backpressure",
+            completed_at=datetime.now(UTC).isoformat(),
+        )
         return TaskSubmissionResult(status="backpressured")
     try:
         enqueued = submit_single_task(
@@ -1149,6 +1300,11 @@ def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
             _git_refresh_pending.discard(git_dir_key)
         raise
     if enqueued:
+        _save_git_refresh_progress(
+            Path(git_dir),
+            state="queued",
+            queued_at=datetime.now(UTC).isoformat(),
+        )
         return TaskSubmissionResult(status="enqueued")
     return TaskSubmissionResult(status="already_pending")
 

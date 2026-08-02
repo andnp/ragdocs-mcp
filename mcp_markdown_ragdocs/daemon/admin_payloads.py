@@ -9,6 +9,7 @@ from typing import Any, TYPE_CHECKING
 
 from mcp_markdown_ragdocs.coordination.queue import get_huey
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
+from mcp_markdown_ragdocs.indexing.git_refresh_state import list_progress
 from mcp_markdown_ragdocs.indexing.reindex import reindex_status_payload
 
 if TYPE_CHECKING:
@@ -188,6 +189,7 @@ def _build_queue_status_payload(
     )
     payload = stats.to_dict()
     payload["queue_db_path"] = str(queue_path)
+    payload["git_refresh_progress"] = list_progress(queue_path.parent)
     return payload
 
 
@@ -229,6 +231,7 @@ def _build_admin_overview_payload(
         "failed_count": task_payload["failed_count"],
         "worker_running": task_payload["worker_running"],
         "queue_stats": task_payload,
+        "git_refresh_progress": task_payload.get("git_refresh_progress", []),
         "watcher_stats": watcher_stats,
         "index_state": ctx.get_index_state().to_dict(),
         "reindex": reindex_status_payload(runtime_paths.root, ctx.index_path),

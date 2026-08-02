@@ -91,6 +91,7 @@ def build_daemon_status_payload(
                     "configured_root_count",
                     "documents_roots",
                     "project_context_mode",
+                    "git_refresh_progress",
                 )
                 if key in overview
             }

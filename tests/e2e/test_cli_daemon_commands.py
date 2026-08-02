@@ -149,6 +149,14 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
             "failed_count": 1,
             "worker_running": True,
             "worker_health": "healthy",
+            "git_refresh_progress": [
+                {
+                    "repository_path": "/docs/repo/.git",
+                    "state": "running",
+                    "processed_count": 4,
+                    "discovered_count": 10,
+                }
+            ],
         },
     )
     monkeypatch.setattr(
@@ -174,6 +182,7 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
     assert '"project_context_mode": "request_only"' in result.output
     assert '"pending_count": 3' in result.output
     assert '"worker_health": "healthy"' in result.output
+    assert '"git_refresh_progress": [' in result.output
 
 
 def test_daemon_status_json_fetches_overview_even_if_probe_not_responsive(

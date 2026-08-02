@@ -112,3 +112,22 @@ def _emit_queue_task_section(
     for task in tasks:
         for line in _format_queue_task_summary(task, details=details):
             click.echo(line)
+
+
+def _emit_git_refresh_progress(payload: object) -> None:
+    if not isinstance(payload, list):
+        return
+    rows = [row for row in payload if isinstance(row, dict)]
+    if not rows:
+        return
+
+    click.echo("Git refresh:")
+    for row in rows:
+        repository = str(row.get("repository_path") or "unknown")
+        state = str(row.get("state") or "unknown")
+        processed = row.get("processed_count")
+        discovered = row.get("discovered_count")
+        if isinstance(processed, int) and isinstance(discovered, int):
+            click.echo(f"  {repository}: {state} ({processed}/{discovered})")
+        else:
+            click.echo(f"  {repository}: {state}")

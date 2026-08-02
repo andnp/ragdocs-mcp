@@ -84,6 +84,7 @@ from mcp_markdown_ragdocs.cli_utils.queue_output import (
     _coerce_int,
     _coerce_list_of_dicts,
     _emit_queue_task_section,
+    _emit_git_refresh_progress,
     _filter_queue_status_payload,
 )
 from mcp_markdown_ragdocs.cli_utils.validators import (
@@ -562,6 +563,7 @@ def daemon_status(output_json: bool):
     if "pending_count" in payload:
         click.echo(f"Pending tasks: {payload['pending_count']}")
         click.echo(f"Failed tasks: {payload['failed_count']}")
+    _emit_git_refresh_progress(payload.get("git_refresh_progress"))
 
 
 @daemon_group.command("stop")
@@ -854,6 +856,7 @@ def queue_status(
             click.echo(
                 f"Backpressure utilization: {float(payload['backpressure_utilization']) if isinstance(payload['backpressure_utilization'], (int, float)) else 0.0:.2f}"
             )
+        _emit_git_refresh_progress(payload.get("git_refresh_progress"))
 
         task_counts = payload.get("task_counts", {})
         if isinstance(task_counts, dict) and task_counts:

@@ -26,7 +26,12 @@ from searchkernel.indexing.bootstrap_checkpoint import (
 import mcp_markdown_ragdocs.indexing.tasks as tasks_mod
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
-from mcp_markdown_ragdocs.indexing.git_refresh_state import get_cursor, save_cursor, save_head
+from mcp_markdown_ragdocs.indexing.git_refresh_state import (
+    get_cursor,
+    get_progress,
+    save_cursor,
+    save_head,
+)
 from mcp_markdown_ragdocs.indexing.tasks import (
     GIT_REFRESH_TASK_PRIORITY,
     RECORD_BATCH_TASK_PRIORITY,
@@ -1053,6 +1058,12 @@ class TestTaskExecution:
         assert observed["since"] == "122"
         assert fake_manager.persist_calls == 1
         assert get_cursor(state_root, git_dir) == 124
+        progress = get_progress(state_root, git_dir)
+        assert progress is not None
+        assert progress["state"] == "completed"
+        assert progress["cursor"] == 124
+        assert progress["processed_count"] == 1
+        assert progress["discovered_count"] == 1
 
     def test_refresh_git_task_skips_completed_head(
         self,

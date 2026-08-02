@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Lock
+from typing import Any
 
 from searchkernel.api import atomic_write_json
 
 GIT_REFRESH_STATE_FILENAME = "git-refresh-state.json"
 GIT_REFRESH_HEADS_FILENAME = "git-refresh-heads.json"
+GIT_REFRESH_PROGRESS_FILENAME = "git-refresh-progress.json"
+_PROGRESS_LOCK = Lock()
 
 
 def state_path(index_root: Path) -> Path:
@@ -84,3 +88,57 @@ def save_head(index_root: Path, git_dir: Path, head: str) -> None:
     heads = load_heads(index_root)
     heads[str(git_dir.resolve())] = head
     atomic_write_json(_heads_path(index_root), heads)
+
+
+def _progress_path(index_root: Path) -> Path:
+    return index_root / GIT_REFRESH_PROGRESS_FILENAME
+
+
+def load_progress(index_root: Path) -> dict[str, dict[str, Any]]:
+    """Load durable per-repository refresh telemetry."""
+
+    try:
+        raw = json.loads(_progress_path(index_root).read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        repo: dict(values)
+        for repo, values in raw.items()
+        if isinstance(repo, str) and isinstance(values, dict)
+    }
+
+
+def get_progress(index_root: Path, git_dir: Path) -> dict[str, Any] | None:
+    """Return the latest durable refresh telemetry for a repository."""
+
+    return load_progress(index_root).get(str(git_dir.resolve()))
+
+
+def list_progress(index_root: Path) -> list[dict[str, Any]]:
+    """Return durable refresh telemetry sorted by repository path."""
+
+    return [
+        progress
+        for _, progress in sorted(load_progress(index_root).items())
+    ]
+
+
+def save_progress(
+    index_root: Path,
+    git_dir: Path,
+    progress: dict[str, Any],
+) -> None:
+    """Atomically replace one repository's refresh telemetry."""
+
+    repo_path = str(git_dir.resolve())
+    with _PROGRESS_LOCK:
+        all_progress = load_progress(index_root)
+        all_progress[repo_path] = {
+            **all_progress.get(repo_path, {}),
+            "repository_path": repo_path,
+            **progress,
+        }
+        atomic_write_json(_progress_path(index_root), all_progress)
