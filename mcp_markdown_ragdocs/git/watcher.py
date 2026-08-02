@@ -131,24 +131,25 @@ class GitWatcher:
             git_dirs = direct_refresh_dirs
 
         from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
+        from mcp_markdown_ragdocs.indexing.git_ingestion import (
+            iter_git_ingestion_receipts,
+        )
+        from mcp_markdown_ragdocs.indexing.tasks import GIT_REFRESH_BATCH_SIZE
+
         for git_dir in git_dirs:
             try:
                 poll_started_at = int(time.time())
                 since = self._last_indexed.get(git_dir)
 
                 source = GitContentSource(git_dir)
-                records = await asyncio.to_thread(
-                    lambda: list(
-                        source.iter_records(
-                            since=str(since) if since is not None else None
-                        )
-                    )
-                )
-                receipt = await self._index_manager.ingestor.index_records(
-                    records,
-                    checkpoint=str(since) if since is not None else None,
-                )
-                indexed = len(receipt.records)
+                indexed = 0
+                async for receipt in iter_git_ingestion_receipts(
+                    self._index_manager,
+                    source,
+                    since=str(since) if since is not None else None,
+                    batch_size=GIT_REFRESH_BATCH_SIZE,
+                ):
+                    indexed += len(receipt.records)
 
                 self._last_indexed[git_dir] = poll_started_at
 
