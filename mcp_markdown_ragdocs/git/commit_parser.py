@@ -3,6 +3,7 @@
 import logging
 import re
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,12 +33,20 @@ def parse_commits(
     commit_hashes: list[str],
     max_delta_lines: int = 200,
 ) -> list[CommitData]:
-    """Extract commits in bounded batches, falling back per batch on failure."""
-    commits: list[CommitData] = []
+    """Extract all commits while preserving the list-based parser API."""
+    return list(iter_commits(git_dir, commit_hashes, max_delta_lines))
+
+
+def iter_commits(
+    git_dir: Path,
+    commit_hashes: list[str],
+    max_delta_lines: int = 200,
+) -> Iterator[CommitData]:
+    """Yield commits in bounded batches, falling back per batch on failure."""
     for start in range(0, len(commit_hashes), COMMIT_BATCH_SIZE):
         batch = commit_hashes[start : start + COMMIT_BATCH_SIZE]
         try:
-            commits.extend(_parse_commit_batch(git_dir, batch, max_delta_lines))
+            yield from _parse_commit_batch(git_dir, batch, max_delta_lines)
         except (
             OSError,
             subprocess.CalledProcessError,
@@ -49,11 +58,8 @@ def parse_commits(
                 batch[0][:8],
                 e,
             )
-            commits.extend(
-                parse_commit(git_dir, commit_hash, max_delta_lines)
-                for commit_hash in batch
-            )
-    return commits
+            for commit_hash in batch:
+                yield parse_commit(git_dir, commit_hash, max_delta_lines)
 
 
 def _parse_commit_batch(
