@@ -157,6 +157,26 @@ class TestTaskRegistration:
         assert sorted(results) == ["backpressured", "enqueued"]
         assert huey_instance.pending_count() == 1
 
+    def test_rebuild_submission_retries_while_startup_writer_is_active(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        store = TaskLeaseStore(Path(huey_instance.storage.filename))
+        assert store.acquire_writer("startup-indexing")
+
+        blocked = submit_rebuild_request(None, request_id="rebuild-blocked")
+
+        assert blocked.status == "backpressured"
+        assert huey_instance.pending_count() == 0
+
+        assert store.release_writer("startup-indexing")
+        accepted = submit_rebuild_request(None, request_id="rebuild-accepted")
+
+        assert accepted.status == "enqueued"
+        assert huey_instance.pending_count() == 1
+
     def test_rebuild_task_releases_writer_after_success_and_failure(
         self,
         huey_instance: SqliteHuey,

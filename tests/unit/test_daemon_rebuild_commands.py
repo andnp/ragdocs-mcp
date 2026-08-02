@@ -97,6 +97,48 @@ def test_run_rebuild_command_polls_until_success(monkeypatch: pytest.MonkeyPatch
     ]
 
 
+def test_run_rebuild_command_retries_transient_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitted: list[str] = []
+    sleeps: list[float] = []
+    submissions = iter(
+        [
+            {"status": "ok", "retry_later": True},
+            {"status": "ok", "already_running": False},
+        ]
+    )
+    statuses = iter(
+        [
+            {"status": "running", "messages": []},
+            {"status": "succeeded", "messages": []},
+        ]
+    )
+
+    monkeypatch.setattr(
+        rebuild_module,
+        "request_rebuild_submit_payload",
+        lambda *, project_override: next(submissions),
+    )
+    monkeypatch.setattr(
+        rebuild_module,
+        "request_rebuild_status_payload",
+        lambda *, project_override: next(statuses),
+    )
+
+    rebuild_module.run_rebuild_command(
+        project=None,
+        all_projects=False,
+        ensure_runtime_auto_registration=lambda project: None,
+        emit=emitted.append,
+        sleep=sleeps.append,
+        poll_interval_seconds=0.25,
+    )
+
+    assert sleeps == [0.25, 0.25]
+    assert emitted == []
+
+
 def test_run_rebuild_command_raises_failed_terminal_status(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         rebuild_module,
