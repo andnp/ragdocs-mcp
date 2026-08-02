@@ -561,19 +561,20 @@ def register_tasks(
 
         try:
             refresh_head = get_git_ref_signature(git_dir_path)
-            if (
-                _bootstrap_index_path is not None
-                and refresh_head is not None
-                and get_head(_bootstrap_index_path, git_dir_path) == refresh_head
-            ):
-                logger.debug("Skipping unchanged git repository %s", git_dir_path)
-                return True
-
             cursor = (
                 get_cursor(_bootstrap_index_path, git_dir_path)
                 if _bootstrap_index_path is not None
                 else None
             )
+            if (
+                _bootstrap_index_path is not None
+                and refresh_head is not None
+                and cursor is not None
+                and get_head(_bootstrap_index_path, git_dir_path) == refresh_head
+            ):
+                logger.debug("Skipping unchanged git repository %s", git_dir_path)
+                return True
+
             since = str(max(0, cursor - 1)) if cursor is not None else None
             source = GitContentSource(git_dir_path)
             indexed = 0

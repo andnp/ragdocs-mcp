@@ -1066,6 +1066,7 @@ class TestTaskExecution:
         git_dir.parent.mkdir(parents=True)
         git_dir.mkdir()
         save_head(state_root, git_dir, "head-1")
+        save_cursor(state_root, git_dir, 123)
         monkeypatch.setattr(
             "mcp_markdown_ragdocs.indexing.tasks.get_git_ref_signature",
             lambda _git_dir: "head-1",
@@ -1082,3 +1083,50 @@ class TestTaskExecution:
 
         assert huey_instance.execute(task) is True
         assert fake_manager.persist_calls == 0
+
+    def test_refresh_git_task_rebuilds_when_cursor_is_missing(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        state_root = tmp_path / "index"
+        git_dir = tmp_path / "repo" / ".git"
+        git_dir.parent.mkdir(parents=True)
+        git_dir.mkdir()
+        save_head(state_root, git_dir, "head-1")
+        record = Record(
+            source_kind="git_commit",
+            source_id="git:abc",
+            title="Commit",
+            body="Body",
+            created_at=datetime.fromtimestamp(124, tz=UTC),
+            updated_at=datetime.fromtimestamp(124, tz=UTC),
+        )
+
+        async def _receipts(_manager, _source, *, since, batch_size):
+            assert since is None
+            yield SimpleNamespace(records=(record,), failed=0, checkpoint="124")
+
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.indexing.git_ingestion.iter_git_ingestion_receipts",
+            _receipts,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.indexing.tasks.get_git_ref_signature",
+            lambda _git_dir: "head-1",
+        )
+
+        register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=state_root,
+        )
+        enqueue_refresh_git(str(git_dir))
+        task = huey_instance.dequeue()
+        assert task is not None
+
+        assert huey_instance.execute(task) is True
+        assert fake_manager.persist_calls == 1
+        assert get_cursor(state_root, git_dir) == 124
