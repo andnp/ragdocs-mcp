@@ -76,6 +76,7 @@ class CanonicalSearchAdapter:
         min_score: float | None = None,
         similarity_threshold: float | None = None,
         max_chunks_per_doc: int = 0,
+        retrieval_mode: str | None = None,
         **_: object,
     ) -> tuple[list[ChunkResult], CompressionStats, SearchStrategyStats]:
         del pipeline_config, project_context
@@ -94,6 +95,8 @@ class CanonicalSearchAdapter:
         if similarity_threshold is not None:
             filters["similarity_threshold"] = similarity_threshold
         filters["max_chunks_per_doc"] = max_chunks_per_doc
+        if retrieval_mode is not None:
+            filters["retrieval_mode"] = retrieval_mode
         limit = max(top_k, top_n)
         if max_chunks_per_doc > 0:
             limit = max(limit, top_n * max(4, max_chunks_per_doc * 2))
@@ -182,6 +185,7 @@ class CanonicalSearchAdapter:
             source_filter=source_filter,
             project_context=project_context,
             excluded_files=excluded_files,
+            retrieval_mode="semantic_only",
         )
 
     async def drain_reindex(self) -> None:

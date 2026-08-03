@@ -98,6 +98,24 @@ async def test_query_forwards_contract_filters_and_preserves_scores(adapter, mon
 
 
 @pytest.mark.asyncio
+async def test_hypothesis_query_requests_semantic_only_mode(adapter, monkeypatch):
+    calls = []
+
+    async def fake_search(query, *, limit, filters):
+        calls.append((query, limit, filters))
+        return SimpleNamespace(results=(), failures=(), degraded=False)
+
+    monkeypatch.setattr(adapter, "search", fake_search)
+
+    await adapter.query("ordinary", top_k=5, top_n=2)
+    await adapter.query_with_hypothesis("hypothesis", top_k=5, top_n=2)
+
+    assert "retrieval_mode" not in calls[0][2]
+    assert calls[1][0] == "hypothesis"
+    assert calls[1][2]["retrieval_mode"] == "semantic_only"
+
+
+@pytest.mark.asyncio
 async def test_one_per_document_overfetches_and_limits_chunks(adapter):
     results, _, _ = await adapter.query(
         "authentication",

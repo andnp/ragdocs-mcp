@@ -13,6 +13,7 @@ from mcp_markdown_ragdocs.mcp.handlers import HandlerContext
 from mcp_markdown_ragdocs.mcp.tools.document_request import normalize_query_documents_request
 from mcp_markdown_ragdocs.mcp.tools.document_tools import (
     handle_query_documents,
+    handle_search_with_hypothesis,
     handle_search_git_history,
 )
 from mcp_markdown_ragdocs.models import (
@@ -487,6 +488,50 @@ async def test_query_documents_uses_detected_project_for_active_project_scope() 
         "similarity_threshold": 0.85,
         "max_chunks_per_doc": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_hyde_handler_normalizes_exclusions_for_each_document_root() -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeOrchestrator:
+        documents_path = Path("/repo-one")
+
+        async def query_with_hypothesis(
+            self,
+            hypothesis: str,
+            *,
+            top_k: int,
+            top_n: int,
+            excluded_files,
+            project_filter,
+            project_context,
+        ):
+            captured["hypothesis"] = hypothesis
+            captured["excluded_files"] = excluded_files
+            return (
+                [],
+                CompressionStats(0, 0, 0, 0, 0, 0, 0),
+                SearchStrategyStats(0, 0, 0, 0),
+            )
+
+    ready_ctx = _ColdStartContext(IndexState(status="ready"), ready=True)
+    ready_ctx.documents_roots = [Path("/repo-one"), Path("/repo-two")]
+    ready_ctx.orchestrator = _FakeOrchestrator()
+    ready_ctx.config = SimpleNamespace(detected_project=None)
+    hctx = HandlerContext(lambda: ready_ctx, _FakeCoordinator())
+
+    contents = await handle_search_with_hypothesis(
+        hctx,
+        {
+            "hypothesis": "authentication setup",
+            "excluded_files": ["/repo-two/private.md"],
+        },
+    )
+
+    assert len(contents) == 1
+    assert captured["hypothesis"] == "authentication setup"
+    assert "private" in captured["excluded_files"]
 
 
 @pytest.mark.asyncio
