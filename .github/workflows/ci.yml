@@ -34,6 +34,9 @@ jobs:
       - name: Check searchkernel import boundary
         run: uv run python scripts/check_public_searchkernel_imports.py
 
+      - name: Run architecture boundary tests
+        run: uv run pytest -q -n 0 tests/unit/test_searchkernel_import_boundary.py
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
@@ -114,6 +117,7 @@ jobs:
         run: >-
           uv run pytest -m "not performance"
           --cov=mcp_markdown_ragdocs --cov-report=xml --cov-report=term-missing
+          --cov-fail-under=80
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
