@@ -187,7 +187,7 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
     assert captured == {
         "project_filter": [],
         "project_context": None,
-        "min_score": 0.0,
+        "min_score": None,
         "similarity_threshold": 0.85,
         "max_chunks_per_doc": 1,
     }
@@ -303,6 +303,16 @@ def test_normalize_query_documents_request_rejects_scope_projects_outside_explic
                 "scope_projects": ["proj-c"],
             }
         )
+
+
+def test_normalize_query_documents_request_preserves_min_score_omission() -> None:
+    omitted = normalize_query_documents_request({"query": "daemon startup"})
+    explicit = normalize_query_documents_request(
+        {"query": "daemon startup", "min_score": 0.0}
+    )
+
+    assert omitted.min_score is None
+    assert explicit.min_score == 0.0
 
 
 def test_normalize_query_documents_request_rejects_preferred_project_in_global_mode() -> None:
@@ -424,7 +434,7 @@ async def test_query_documents_uses_detected_project_for_active_project_scope() 
     assert captured == {
         "project_filter": [],
         "project_context": "ambient-project",
-        "min_score": 0.0,
+        "min_score": None,
         "similarity_threshold": 0.85,
         "max_chunks_per_doc": 1,
     }

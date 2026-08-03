@@ -26,7 +26,7 @@ class NormalizedQueryDocumentsRequest:
 
     query: str
     top_n: int
-    min_score: float
+    min_score: float | None
     similarity_threshold: float
     excluded_files_raw: tuple[str, ...]
     uniqueness_mode: UniquenessMode
@@ -79,8 +79,12 @@ def normalize_query_documents_request(
     top_n = validate_integer_range(
         arguments, "top_n", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N
     )
-    min_score = validate_float_range(
-        arguments, "min_score", default=0.0, min_val=0.0, max_val=1.0
+    min_score = (
+        validate_float_range(
+            arguments, "min_score", default=0.0, min_val=0.0, max_val=1.0
+        )
+        if "min_score" in arguments
+        else None
     )
     similarity_threshold = validate_float_range(
         arguments, "similarity_threshold", default=0.85, min_val=0.5, max_val=1.0

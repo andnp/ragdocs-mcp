@@ -72,6 +72,11 @@ async def test_legacy_query_documents_keeps_project_filter_default():
     assert orchestrator.query_kwargs["source_filter"] is None
 
 
+def test_query_request_preserves_min_score_omission() -> None:
+    assert QueryRequest(query="find docs").min_score is None
+    assert QueryRequest(query="find docs", min_score=0.0).min_score == 0.0
+
+
 @pytest.mark.asyncio
 async def test_legacy_query_documents_forwards_search_controls():
     app = create_app()

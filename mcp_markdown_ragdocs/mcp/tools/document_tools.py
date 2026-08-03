@@ -67,8 +67,7 @@ def get_document_tools() -> list[Tool]:
                     },
                     "min_score": {
                         "type": "number",
-                        "description": "Minimum canonical search score threshold (default: 0.0)",
-                        "default": 0.0,
+                        "description": "Optional raw RRF score threshold; omitted uses configured abstention policy",
                         "minimum": 0.0,
                         "maximum": 1.0,
                     },

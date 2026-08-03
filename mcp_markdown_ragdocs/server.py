@@ -41,7 +41,7 @@ MAX_CORRELATION_ID_LENGTH = 256
 class QueryRequest(BaseModel):
     query: str
     top_n: int = Field(default=5, ge=1, le=100, description="Maximum results to return")
-    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0)
     similarity_threshold: float = Field(default=0.85, ge=0.5, le=1.0)
     uniqueness_mode: Literal["allow_multiple", "one_per_document"] = "one_per_document"
     max_chunks_per_doc: int = Field(default=0, ge=0, le=100)
