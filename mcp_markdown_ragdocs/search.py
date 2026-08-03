@@ -50,9 +50,15 @@ class CanonicalSearchAdapter:
         )
         self._pipeline = manager.kernel.pipeline
         self._search_kernel = PipelineSearchBoundary(self._pipeline)
+        search_config = getattr(config, "search", None)
         self.search_use_case = ApplicationSearchUseCase(
             self._search_kernel,
             documents_roots=self.documents_roots,
+            default_min_score=getattr(
+                search_config,
+                "abstention_threshold",
+                None,
+            ),
         )
         self.last_query_execution_stats: dict[str, object] = {}
 

@@ -211,6 +211,7 @@ def build_search_evaluation_harness(
     embedding_provider: EmbeddingProvider | None = None,
     *,
     corpus_root: Path = FIXTURE_CORPUS_ROOT,
+    search_config: SearchConfig | None = None,
 ) -> SearchEvaluationHarness:
     corpus_root = corpus_root.resolve()
     index_path = tmp_path / "search_eval_index"
@@ -220,7 +221,7 @@ def build_search_evaluation_harness(
             documents_path=str(corpus_root),
             index_path=str(index_path),
         ),
-        search=SearchConfig(),
+        search=search_config or SearchConfig(),
         chunking=ChunkingConfig(),
         llm=LLMConfig(embedding_model="__deterministic_fake__"),
         projects=[

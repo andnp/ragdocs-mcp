@@ -151,10 +151,12 @@ class ApplicationSearchUseCase:
         search_kernel: SearchKernelBoundary,
         *,
         documents_roots: Sequence[Path],
+        default_min_score: float | None = None,
     ) -> None:
         self._search_kernel = search_kernel
         self._pipeline = search_kernel
         self._documents_roots = tuple(documents_roots)
+        self._default_min_score = default_min_score
 
     async def execute(
         self,
@@ -163,6 +165,11 @@ class ApplicationSearchUseCase:
         search: Callable[..., Awaitable[RecordSearchOutcome]] | None = None,
     ) -> SearchExecution:
         filters: dict[str, object] = {}
+        effective_min_score = (
+            request.min_score
+            if request.min_score is not None
+            else self._default_min_score
+        )
         if request.source_filter:
             filters["source_kinds"] = list(request.source_filter)
         if request.project_filter:
@@ -172,8 +179,8 @@ class ApplicationSearchUseCase:
                 filters["project_ids"] = list(request.project_filter)
         if request.excluded_files:
             filters["excluded_files"] = sorted(request.excluded_files)
-        if request.min_score is not None:
-            filters["min_score"] = request.min_score
+        if effective_min_score is not None:
+            filters["min_score"] = effective_min_score
         if request.similarity_threshold is not None:
             filters["similarity_threshold"] = request.similarity_threshold
         filters["max_chunks_per_doc"] = request.max_chunks_per_doc
@@ -203,7 +210,10 @@ class ApplicationSearchUseCase:
                 not request.project_filter
                 or _record_project_id(result.record) in request.project_filter
             )
-            and (request.min_score is None or result.score >= request.min_score)
+            and (
+                effective_min_score is None
+                or result.score >= effective_min_score
+            )
             and not self._is_excluded(result.record.metadata, request.excluded_files)
         ]
         if request.max_chunks_per_doc > 0:

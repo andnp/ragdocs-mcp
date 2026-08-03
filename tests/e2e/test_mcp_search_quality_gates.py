@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 from mcp_markdown_ragdocs.context import IndexState
+from mcp_markdown_ragdocs.config import SearchConfig
 from mcp_markdown_ragdocs.lifecycle import LifecycleState
 from mcp_markdown_ragdocs.mcp.handlers import HandlerContext, get_handler
 from mcp_markdown_ragdocs.mcp.tools.document_tools import handle_query_documents
@@ -217,6 +218,30 @@ async def test_fixture_no_answer_threshold_returns_empty(tmp_path) -> None:
     )
 
     assert results == []
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_configured_abstention_filters_unrelated_fixture_results(tmp_path) -> None:
+    harness = build_search_evaluation_harness(
+        tmp_path,
+        search_config=SearchConfig(abstention_threshold=0.02),
+    )
+
+    relevant, _, _ = await harness.orchestrator.query(
+        "Authentication Overview",
+        top_k=10,
+        top_n=3,
+    )
+    unrelated, _, _ = await harness.orchestrator.query(
+        "quantum teleportation safety protocol",
+        top_k=10,
+        top_n=3,
+    )
+
+    assert relevant
+    assert relevant[0].file_path.endswith("authentication-overview.md")
+    assert unrelated == []
 
 
 def _aggregate(results: list[SearchEvaluationCaseResult]) -> SearchEvaluationAggregate:
