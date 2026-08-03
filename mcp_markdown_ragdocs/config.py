@@ -75,24 +75,54 @@ class IndexingConfig:
 
 @dataclass
 class SearchConfig:
-    # The composition root explicitly maps the supported weights into
-    # searchkernel's RecordSearchConfig. The remaining fields are retained as
-    # compatibility settings for request-level policy and have no implicit
-    # effect on the canonical pipeline.
+    """Search settings with an explicit compatibility boundary.
+
+    Only the ranking weights affect canonical search. The remaining fields
+    remain loadable for configuration-file compatibility, but are deprecated
+    because canonical search applies request policy explicitly.
+    """
+
     semantic_weight: float = 1.0
     keyword_weight: float = 1.0
-    recency_bias: float = 0.5
-    min_confidence: float = 0.3
-    max_chunks_per_doc: int = 2
-    dedup_threshold: float = 0.80
-    reranking_enabled: bool = True
-    rerank_top_n: int = 10
-    project_uplift_multiplier: float = 1.2
+    recency_bias: float = field(
+        default=0.5,
+        metadata={"deprecated": "canonical search has no recency policy"},
+    )
+    min_confidence: float = field(
+        default=0.3,
+        metadata={"deprecated": "use request min_score"},
+    )
+    max_chunks_per_doc: int = field(
+        default=2,
+        metadata={"deprecated": "use request uniqueness_mode"},
+    )
+    dedup_threshold: float = field(
+        default=0.80,
+        metadata={"deprecated": "canonical search owns deduplication"},
+    )
+    reranking_enabled: bool = field(
+        default=True,
+        metadata={"deprecated": "canonical search does not rerank"},
+    )
+    rerank_top_n: int = field(
+        default=10,
+        metadata={"deprecated": "canonical search does not rerank"},
+    )
+    project_uplift_multiplier: float = field(
+        default=1.2,
+        metadata={"deprecated": "project scope is an explicit filter"},
+    )
 
-    def __post_init__(self):
+    @classmethod
+    def deprecated_policy_fields(cls) -> frozenset[str]:
+        return frozenset(
+            value.name for value in fields(cls)
+            if value.metadata.get("deprecated")
+        )
+
+    def __post_init__(self) -> None:
         if not math.isfinite(self.project_uplift_multiplier):
             raise ValueError("search.project_uplift_multiplier must be a finite number")
-
         if self.project_uplift_multiplier <= 0:
             raise ValueError(
                 "search.project_uplift_multiplier must be greater than 0"

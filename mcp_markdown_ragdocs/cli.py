@@ -1067,7 +1067,10 @@ def check_config_cmd(project: str | None):
         table.add_row("", "")
         table.add_row("Semantic Weight", str(config.search.semantic_weight))
         table.add_row("Keyword Weight", str(config.search.keyword_weight))
-        table.add_row("Recency Bias", str(config.search.recency_bias))
+        table.add_row(
+            "Legacy Search Policy",
+            f"{len(config.search.deprecated_policy_fields())} settings ignored",
+        )
 
         table.add_row("", "")
         table.add_row("Embedding Model", config.llm.embedding_model)
