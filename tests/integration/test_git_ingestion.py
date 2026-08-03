@@ -163,3 +163,95 @@ async def test_commit_project_filter_uses_workspace_identity(repo, tmp_path):
 
     assert results
     assert results[0].doc_id == f"git:{commit_hash}"
+
+
+@pytest.mark.asyncio
+async def test_commit_project_filter_excludes_other_repository(repo, tmp_path):
+    repo_path, commit_hash = repo
+    other_repo = tmp_path / "other-repo"
+    other_repo.mkdir()
+    _init_git_repo(other_repo)
+    other_hash = _commit(
+        other_repo,
+        "billing.py",
+        "def charge(): ...",
+        "Fix billing invoice retry bug",
+    )
+    docs_dir = tmp_path / "multi-repo-docs"
+    docs_dir.mkdir()
+    config = Config(
+        indexing=IndexingConfig(
+            documents_path=str(docs_dir),
+            index_path=str(tmp_path / ".multi-repo-index"),
+        ),
+    )
+    manager = make_record_index_manager(config)
+    orchestrator = CanonicalSearchAdapter(manager)
+    assert manager.index_records(
+        list(
+            GitContentSource(
+                repo_path / ".git",
+                workspace_id="repo-project",
+            ).iter_records()
+        )
+    )
+    assert manager.index_records(
+        list(
+            GitContentSource(
+                other_repo / ".git",
+                workspace_id="other-project",
+            ).iter_records()
+        )
+    )
+
+    results, _, _ = await orchestrator.query(
+        "authentication token refresh bug",
+        top_k=10,
+        top_n=5,
+        source_filter=["git_commit"],
+        project_filter=["repo-project"],
+    )
+
+    assert results
+    assert {result.doc_id for result in results} == {f"git:{commit_hash}"}
+    assert all(result.project_id == "repo-project" for result in results)
+    assert f"git:{other_hash}" not in {result.doc_id for result in results}
+
+
+@pytest.mark.asyncio
+async def test_git_project_attribution_reconciliation_persists(repo, kernel):
+    manager, orchestrator = kernel
+    repo_path, commit_hash = repo
+    source = GitContentSource(repo_path / ".git")
+    assert manager.index_records(list(source.iter_records()))
+    assert all(
+        row["workspace_id"] is None
+        for row in manager.kernel.backend._record_rows()
+        if row["source_kind"] == "git_commit"
+    )
+
+    repaired = manager.reconcile_git_project_attribution(
+        repo_path / ".git",
+        "repo-project",
+    )
+
+    assert repaired > 0
+    git_rows = [
+        row
+        for row in manager.kernel.backend._record_rows()
+        if row["source_kind"] == "git_commit"
+    ]
+    assert git_rows
+    assert all(row["workspace_id"] == "repo-project" for row in git_rows)
+    assert all(
+        "repo-project" in row["metadata"]
+        for row in git_rows
+    )
+    results, _, _ = await orchestrator.query(
+        "authentication token refresh bug",
+        top_k=10,
+        top_n=5,
+        source_filter=["git_commit"],
+        project_filter=["repo-project"],
+    )
+    assert [result.doc_id for result in results] == [f"git:{commit_hash}"]
