@@ -13,6 +13,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -1856,3 +1857,22 @@ class TestGetIndexState:
         assert result.indexed_count == 3
         assert result.total_count == 5
         assert result.last_error == "Some error"
+
+
+def test_git_total_counts_distinct_active_commits_in_canonical_index():
+    ctx = object.__new__(ApplicationContext)
+    ctx.git_indexing_enabled = True
+    ctx.index_manager = SimpleNamespace(
+        kernel=SimpleNamespace(
+            backend=SimpleNamespace(
+                _record_rows=lambda: [
+                    {"source_kind": "git_commit", "source_id": "git:abc:summary:0", "status": "active"},
+                    {"source_kind": "git_commit", "source_id": "git:abc:diff:0", "status": "active"},
+                    {"source_kind": "git_commit", "source_id": "git:def:summary:0", "status": "active"},
+                    {"source_kind": "git_commit", "source_id": "git:stale:summary:0", "status": "deleted"},
+                ]
+            )
+        )
+    )
+
+    assert ctx.get_total_git_commits_indexed() == 2

@@ -52,6 +52,11 @@ from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 logger = logging.getLogger(__name__)
 
 
+def _git_commit_id(source_id: str) -> str:
+    parts = source_id.split(":")
+    return ":".join(parts[:2]) if len(parts) >= 2 and parts[0] == "git" else source_id
+
+
 @dataclass
 class IndexState:
     """Tracks the current state of background indexing."""
@@ -1275,10 +1280,22 @@ class ApplicationContext:
         logger.info("Initial git commit indexing complete")
 
     def get_total_git_commits_indexed(self) -> int:
-        """Count git commits discoverable in the live index (for status/stats display)."""
+        """Count distinct active git commits in the canonical live index.
+
+        Git commits are stored as multiple chunk records.  The source map is
+        application bookkeeping and can lag records indexed through the live
+        kernel, so this count is derived from canonical records instead.
+        """
         if not self.git_indexing_enabled:
             return 0
-        return self.index_manager.count_records("git_commit")
+        rows = self.index_manager.kernel.backend._record_rows()
+        return len(
+            {
+                _git_commit_id(str(row["source_id"]))
+                for row in rows
+                if row["source_kind"] == "git_commit" and row["status"] == "active"
+            }
+        )
 
     def _ingest_git_records_into_kernel_index(self, repos: list[Path]) -> None:
         """Ingest discovered git commits into the live IndexManager as Records.
