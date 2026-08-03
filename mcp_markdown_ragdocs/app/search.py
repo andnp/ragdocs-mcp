@@ -1,0 +1,195 @@
+"""Application-owned search use case over the canonical record pipeline."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from searchkernel.api import (
+    CompressionStats,
+    Record,
+    RecordSearchOutcome,
+    SearchResultProvenance,
+    SearchStrategyStats,
+)
+
+from mcp_markdown_ragdocs.git.results import aggregate_commit_results
+from mcp_markdown_ragdocs.models import ChunkResult
+
+
+@dataclass(frozen=True)
+class SearchQuery:
+    query: str
+    top_n: int
+    top_k: int | None = None
+    project_filter: tuple[str, ...] = ()
+    source_filter: tuple[str, ...] = ()
+    project_context: str | None = None
+    excluded_files: frozenset[str] = frozenset()
+    min_score: float | None = None
+    similarity_threshold: float | None = None
+    max_chunks_per_doc: int = 0
+    retrieval_mode: str | None = None
+
+
+@dataclass(frozen=True)
+class SearchExecution:
+    results: list[ChunkResult]
+    compression_stats: CompressionStats
+    strategy_stats: SearchStrategyStats
+    query_execution_stats: dict[str, object] = field(default_factory=dict)
+
+
+class ApplicationSearchUseCase:
+    """Apply application query policy, execute search, and map results."""
+
+    def __init__(
+        self,
+        pipeline,
+        *,
+        documents_roots: Sequence[Path],
+    ) -> None:
+        self._pipeline = pipeline
+        self._documents_roots = tuple(documents_roots)
+
+    async def execute(self, request: SearchQuery) -> SearchExecution:
+        filters: dict[str, object] = {}
+        if request.source_filter:
+            filters["source_kinds"] = list(request.source_filter)
+        if request.project_filter:
+            filters["project_ids"] = list(request.project_filter)
+        if request.excluded_files:
+            filters["excluded_files"] = sorted(request.excluded_files)
+        if request.min_score is not None:
+            filters["min_score"] = request.min_score
+        if request.similarity_threshold is not None:
+            filters["similarity_threshold"] = request.similarity_threshold
+        filters["max_chunks_per_doc"] = request.max_chunks_per_doc
+        if request.retrieval_mode is not None:
+            filters["retrieval_mode"] = request.retrieval_mode
+
+        limit = max(request.top_k or 0, request.top_n)
+        if request.max_chunks_per_doc > 0:
+            limit = max(limit, request.top_n * max(4, request.max_chunks_per_doc * 2))
+        if request.source_filter == ("git_commit",):
+            limit = max(limit, request.top_n * 4)
+
+        outcome: RecordSearchOutcome = await self._pipeline.async_search(
+            request.query,
+            limit=limit,
+            filters=filters,
+        )
+        filtered_results = [
+            result
+            for result in outcome.results
+            if (
+                not request.project_filter
+                or result.record.metadata.get("project_id") in request.project_filter
+            )
+            and (request.min_score is None or result.score >= request.min_score)
+            and not self._is_excluded(result.record.metadata, request.excluded_files)
+        ]
+        if request.max_chunks_per_doc > 0:
+            counts: dict[str, int] = {}
+            limited_results = []
+            for result in filtered_results:
+                doc_id = str(
+                    result.record.metadata.get("doc_id", result.record.source_id)
+                )
+                if counts.get(doc_id, 0) >= request.max_chunks_per_doc:
+                    continue
+                counts[doc_id] = counts.get(doc_id, 0) + 1
+                limited_results.append(result)
+            filtered_results = limited_results
+
+        results = [
+            self._to_chunk_result(result.record, result.score, result.provenance)
+            for result in filtered_results
+        ]
+        if request.source_filter == ("git_commit",):
+            results = aggregate_commit_results(results)
+        results = results[: request.top_n]
+        strategy_counts = {"semantic": 0, "keyword": 0, "graph": 0, "tag_expansion": 0}
+        for result in results:
+            for strategy in result.provenance.strategies if result.provenance else ():
+                strategy_name = {"vector": "semantic", "expansion": "tag_expansion"}.get(
+                    strategy, strategy
+                )
+                if strategy_name in strategy_counts:
+                    strategy_counts[strategy_name] += 1
+        count = len(results)
+        return SearchExecution(
+            results=results,
+            compression_stats=CompressionStats(
+                len(outcome.results),
+                len(filtered_results),
+                len(filtered_results),
+                len(filtered_results),
+                len(filtered_results),
+                count,
+                0,
+            ),
+            strategy_stats=SearchStrategyStats(
+                vector_count=strategy_counts["semantic"],
+                keyword_count=strategy_counts["keyword"],
+                graph_count=strategy_counts["graph"],
+                tag_expansion_count=strategy_counts["tag_expansion"],
+            ),
+            query_execution_stats={
+                "degraded": outcome.degraded,
+                "failures": [failure.message for failure in outcome.failures],
+            },
+        )
+
+    @staticmethod
+    def _to_chunk_result(
+        record: Record,
+        score: float,
+        provenance: SearchResultProvenance,
+    ) -> ChunkResult:
+        metadata = dict(record.metadata)
+        metadata.setdefault("source_kind", record.source_kind)
+        metadata.setdefault("source_id", record.source_id)
+        return ChunkResult(
+            chunk_id=str(metadata.get("chunk_id", record.source_id)),
+            doc_id=str(metadata.get("doc_id", record.source_id)),
+            score=score,
+            header_path=str(metadata.get("header_path", "")),
+            file_path=str(metadata.get("file_path", "")),
+            project_id=metadata.get("project_id"),
+            content=record.body,
+            parent_chunk_id=metadata.get("parent_chunk_id"),
+            provenance=provenance,
+            metadata=metadata,
+        )
+
+    def _is_excluded(
+        self,
+        metadata: dict[str, object],
+        excluded_files: frozenset[str],
+    ) -> bool:
+        if not excluded_files:
+            return False
+        file_path = str(metadata.get("file_path", ""))
+        if not file_path:
+            return False
+        path = Path(file_path)
+        candidates = {
+            file_path,
+            path.name,
+            path.stem,
+            str(path.with_suffix("")),
+        }
+        resolved = path.resolve()
+        for root in self._documents_roots:
+            try:
+                relative = resolved.relative_to(root.resolve())
+                candidates.add(str(relative))
+                candidates.add(str(relative.with_suffix("")))
+            except ValueError:
+                continue
+        return bool(candidates & excluded_files)
+
+
+__all__ = ["ApplicationSearchUseCase", "SearchExecution", "SearchQuery"]
