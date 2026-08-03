@@ -692,6 +692,22 @@ class TestTaskRegistration:
         assert forced.already_pending_count == 0
         assert huey_instance.pending_count() == 1
 
+    def test_forced_index_batch_does_not_invalidate_active_claim(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        assert enqueue_index("/some/file.md") is True
+        forced = submit_index_batch(["/some/file.md"], force=True)
+
+        assert forced.enqueued_count == 1
+        first = huey_instance.dequeue()
+        second = huey_instance.dequeue()
+        assert first is not None
+        assert second is not None
+        huey_instance.execute(first)
+        huey_instance.execute(second)
+        assert fake_manager.indexed == [("/some/file.md", False)]
+
     def test_submit_remove_request_batch_deduplicates_against_pending_single_and_batch_tasks(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
@@ -742,6 +758,40 @@ class TestTaskRegistration:
 
 
 class TestTaskExecution:
+    def test_index_batch_terminalizes_partial_item_outcomes(
+        self, huey_instance: SqliteHuey, tmp_path: Path
+    ) -> None:
+        class PartialManager(FakeIndexManager):
+            def index_documents(
+                self,
+                file_paths: list[str],
+                force: bool = False,
+                persist: bool = False,
+            ) -> None:
+                del file_paths, force, persist
+                raise RuntimeError("batch failure")
+
+            def index_document(self, file_path: str, force: bool = False) -> bool:
+                if file_path.endswith("bad.md"):
+                    raise RuntimeError("item failure")
+                return super().index_document(file_path, force=force)
+
+        manager = PartialManager()
+        register_tasks(huey_instance, manager)
+        good = str(tmp_path / "good.md")
+        bad = str(tmp_path / "bad.md")
+
+        assert submit_index_batch([good, bad]).enqueued_count == 2
+        task = huey_instance.dequeue()
+        assert task is not None
+        result = huey_instance.execute(task)
+
+        assert isinstance(result, dict)
+        assert result["outcomes"] == [True, False]
+        store = WorkIntentStore(_queue_path(huey_instance))
+        assert store.find("index_document", good).state == "succeeded"
+        assert store.find("index_document", bad).state == "failed"
+
     def test_progressive_batch_task_uses_bootstrap_coordinator(
         self,
         huey_instance: SqliteHuey,
@@ -945,6 +995,38 @@ class TestTaskExecution:
 
         assert fake_manager.removed == ["docs/a", "docs/b"]
         assert fake_manager.persist_calls == 1
+
+    def test_remove_batch_terminalizes_partial_item_outcomes(
+        self, huey_instance: SqliteHuey
+    ) -> None:
+        class PartialManager(FakeIndexManager):
+            def remove_documents(
+                self, doc_ids: list[str], persist: bool = False
+            ) -> None:
+                del doc_ids, persist
+                raise RuntimeError("batch failure")
+
+            def remove_document(self, doc_id: str) -> None:
+                if doc_id == "docs/bad":
+                    raise RuntimeError("item failure")
+                super().remove_document(doc_id)
+
+        manager = PartialManager()
+        register_tasks(huey_instance, manager)
+        assert submit_remove_request_batch(["docs/good", "docs/bad"]).enqueued_count == 2
+        task = huey_instance.dequeue()
+        assert task is not None
+        result = huey_instance.execute(task)
+
+        assert isinstance(result, dict)
+        assert result["outcomes"] == [True, False]
+        store = WorkIntentStore(_queue_path(huey_instance))
+        good_intent = store.find("remove_document", str(Path("docs/good").resolve()))
+        bad_intent = store.find("remove_document", str(Path("docs/bad").resolve()))
+        assert good_intent is not None
+        assert bad_intent is not None
+        assert good_intent.state == "succeeded"
+        assert bad_intent.state == "failed"
 
     def test_end_to_end_with_worker(
         self, tmp_path: Path, fake_manager: FakeIndexManager

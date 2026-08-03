@@ -16,7 +16,9 @@ from uuid import uuid4
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import (
+    CLAIMED,
     PENDING,
+    RUNNING,
     WorkIntent,
     WorkIntentStore,
 )
@@ -162,6 +164,12 @@ def _intent_claim(
         force_reopen=force_reopen,
     )
     if intent.state != PENDING:
+        if (
+            force_reopen
+            and intent.state in {CLAIMED, RUNNING}
+            and intent.claim_token is not None
+        ):
+            return intent, intent.claim_token
         return None
     return store.claim(intent.intent_id)
 
@@ -198,6 +206,16 @@ def _release_intent(intent_id: str, claim_token: str) -> None:
 
 
 def _intent_task(operation: str):
+    def _result_outcomes(result: object, count: int) -> list[bool] | None:
+        if not isinstance(result, dict):
+            return None
+        raw_outcomes = result.get("outcomes")
+        if not isinstance(raw_outcomes, list) or len(raw_outcomes) != count:
+            return None
+        if not all(isinstance(outcome, bool) for outcome in raw_outcomes):
+            return None
+        return cast(list[bool], raw_outcomes)
+
     def _decorate(function):
         @functools.wraps(function)
         def _wrapped(*args, **kwargs):
@@ -242,16 +260,32 @@ def _intent_task(operation: str):
                 and result.get("status") in {"ok", "succeeded"}
             )
             if store is not None:
-                for item in claim_pairs:
-                    if success:
+                outcomes = _result_outcomes(result, len(claim_pairs))
+                if outcomes is None:
+                    outcomes = [success] * len(claim_pairs)
+                error = (
+                    str(result["error"])
+                    if isinstance(result, dict) and isinstance(result.get("error"), str)
+                    else "task execution failed"
+                )
+                for item, item_succeeded in zip(claim_pairs, outcomes, strict=True):
+                    if item_succeeded:
                         store.succeed(str(item[0]), str(item[1]))
                     else:
-                        store.fail(str(item[0]), str(item[1]), "task execution failed")
+                        store.fail(str(item[0]), str(item[1]), error)
             return result
 
         return _wrapped
 
     return _decorate
+
+
+def _batch_result(outcomes: list[bool], *, error: str) -> dict[str, object]:
+    return {
+        "status": "ok" if all(outcomes) else "error",
+        "error": None if all(outcomes) else error,
+        "outcomes": outcomes,
+    }
 
 
 def _writer_is_active() -> bool:
@@ -487,7 +521,7 @@ def _index_documents_batch(
         and _bootstrap_documents_roots
         and has_incomplete_bootstrap_checkpoint(_bootstrap_index_path)
     ):
-        def _progressive_operation() -> bool:
+        def _progressive_operation() -> bool | dict[str, object]:
             try:
                 receipt = run_progressive_bootstrap(
                     cast(ProgressiveIndexManager, manager),
@@ -504,11 +538,22 @@ def _index_documents_batch(
                 "Task completed: progressively indexed %d document(s)",
                 receipt.successful,
             )
-            return receipt.failed == 0
+            records = getattr(getattr(receipt, "ingestion", None), "records", ())
+            outcomes = [
+                getattr(record, "status", None) == "committed"
+                for record in records
+            ]
+            if len(outcomes) != len(unique_file_paths):
+                return receipt.failed == 0
+            return (
+                True
+                if all(outcomes)
+                else _batch_result(outcomes, error="progressive batch item failed")
+            )
 
         return _run_as_writer(_progressive_operation, busy_result=False)
 
-    def _operation() -> bool:
+    def _operation() -> bool | dict[str, object]:
         completed_paths: list[str] = []
         failures: list[str] = []
 
@@ -543,7 +588,10 @@ def _index_documents_batch(
                         "Batch fallback persist failed for %d indexed document(s)",
                         len(completed_paths),
                     )
-                    return False
+                    return _batch_result(
+                        [False] * len(unique_file_paths),
+                        error="batch persist failed",
+                    )
 
         if (
             completed_paths
@@ -561,7 +609,12 @@ def _index_documents_batch(
             len(completed_paths),
             "" if not failures else f" with {len(failures)} failure(s)",
         )
-        return not failures
+        if not failures:
+            return True
+        return _batch_result(
+            [file_path in completed_paths for file_path in unique_file_paths],
+            error="batch item failed",
+        )
 
     return _run_as_writer(_operation, busy_result=False)
 
@@ -654,7 +707,7 @@ def _remove_document(doc_id: str) -> bool:
         return False
 
 @_writer_owned_task(busy_result=False)
-def _remove_documents_batch(doc_ids: list[str]) -> bool:
+def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
     """Remove a burst of documents and persist once after the batch."""
     if _index_manager is None:
         logger.error("IndexManager not available for batch task execution")
@@ -700,7 +753,12 @@ def _remove_documents_batch(doc_ids: list[str]) -> bool:
         len(removed_doc_ids),
         "" if not failures else f" with {len(failures)} failure(s)",
     )
-    return not failures
+    if not failures:
+        return True
+    return _batch_result(
+        [doc_id in removed_doc_ids for doc_id in unique_doc_ids],
+        error="batch item failed",
+    )
 
 @_writer_owned_task(busy_result=False, on_busy=_defer_git_refresh)
 def _refresh_git_repository(git_dir: str) -> bool:
