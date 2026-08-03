@@ -9,7 +9,7 @@ import pytest
 from mcp_markdown_ragdocs.context import IndexState
 from mcp_markdown_ragdocs.lifecycle import LifecycleState
 from mcp_markdown_ragdocs.mcp.handlers import HandlerContext, get_handler
-from searchkernel.search.record_pipeline import RecordSearchError
+from mcp_markdown_ragdocs.mcp.tools.document_tools import handle_query_documents
 from tests.search.evaluation_harness import (
     SearchEvaluationCaseResult,
     SearchEvaluationAggregate,
@@ -41,6 +41,7 @@ def _ready_context(harness: Any) -> HandlerContext:
 async def _query(hctx: HandlerContext, arguments: dict[str, object]) -> dict[str, Any]:
     handler = get_handler("query_documents")
     assert handler is not None, "query_documents must remain registered"
+    assert handler is handle_query_documents, "query_documents must remain registered"
     contents = await handler(hctx, arguments)
     assert len(contents) == 1
     return json.loads(contents[0].text)
@@ -54,10 +55,6 @@ async def test_mcp_query_documents_retains_golden_quality_metrics(tmp_path) -> N
     case_results: list[SearchEvaluationCaseResult] = []
 
     for case in harness.cases:
-        # The artifact case is covered below: the installed backend currently
-        # raises on its dotted FTS query before MCP can produce an envelope.
-        if case.case_id == "artifact_fileish":
-            continue
         arguments: dict[str, object] = {"query": case.query, "top_n": case.top_n}
         if case.project_context is not None:
             arguments.update(
@@ -153,11 +150,6 @@ async def test_mcp_query_documents_handles_arbitrary_punctuation(tmp_path) -> No
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    raises=RecordSearchError,
-    reason="installed searchkernel still raises for dotted artifact FTS queries",
-)
 async def test_mcp_query_documents_does_not_leak_dotted_fts_failure(tmp_path) -> None:
     harness = build_search_evaluation_harness(tmp_path)
     payload = await _query(
