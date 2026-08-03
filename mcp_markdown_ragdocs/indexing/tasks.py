@@ -147,6 +147,17 @@ def _canonical_document_identity(document_id: str) -> str:
     return document_id
 
 
+def _unique_document_paths(file_paths: list[str]) -> list[str]:
+    unique_paths: list[str] = []
+    seen: set[str] = set()
+    for file_path in file_paths:
+        identity = _canonical_document_identity(file_path)
+        if identity not in seen:
+            seen.add(identity)
+            unique_paths.append(file_path)
+    return unique_paths
+
+
 def _intent_claim(
     operation: str,
     canonical_key: str,
@@ -1246,7 +1257,10 @@ def _get_pending_index_document_paths() -> set[str]:
     return get_pending_task_values(
         _huey,
         {"_index_document", "_index_documents_batch"},
-        value_extractor=_extract_values,
+        value_extractor=lambda task: {
+            _canonical_document_identity(value)
+            for value in _extract_values(task)
+        },
         inspection_failure_log_message="Failed to inspect pending Huey tasks; startup batch dedupe disabled",
         deserialize_failure_log_message="Failed to deserialize pending Huey task while inspecting startup queue",
     )
@@ -1358,11 +1372,12 @@ def submit_index_batch(
     if index_documents_batch_task is None or _huey is None:
         return TaskBatchSubmissionResult(
             queue_available=False,
-            requested_unique_count=len(set(file_paths)),
+            requested_unique_count=len(_unique_document_paths(file_paths)),
             enqueued_count=0,
         )
+    unique_file_paths = _unique_document_paths(file_paths)
     if _writer_is_active():
-        unique_count = len(set(file_paths))
+        unique_count = len(unique_file_paths)
         return TaskBatchSubmissionResult(
             queue_available=True,
             requested_unique_count=unique_count,
@@ -1370,13 +1385,14 @@ def submit_index_batch(
             already_pending_count=unique_count,
         )
 
-    unique_file_paths = list(dict.fromkeys(file_paths))
     pending_paths = set() if force else _get_pending_index_document_paths()
-    requested_unique_paths = set(unique_file_paths)
+    requested_unique_paths = {
+        _canonical_document_identity(file_path) for file_path in unique_file_paths
+    }
     remaining_paths = [
         file_path
         for file_path in unique_file_paths
-        if force or file_path not in pending_paths
+        if force or _canonical_document_identity(file_path) not in pending_paths
     ]
     already_pending_count = sum(
         1 for file_path in requested_unique_paths if file_path in pending_paths
@@ -1439,10 +1455,10 @@ def submit_index_request_batch(
     if index_documents_batch_task is None or _huey is None:
         return TaskBatchSubmissionResult(
             queue_available=False,
-            requested_unique_count=len(set(file_paths)),
+            requested_unique_count=len(_unique_document_paths(file_paths)),
             enqueued_count=0,
         )
-    unique_paths = list(dict.fromkeys(file_paths))
+    unique_paths = _unique_document_paths(file_paths)
     pending_paths = set() if force else _get_pending_index_document_paths()
     remaining_paths = [
         file_path
@@ -1515,7 +1531,9 @@ def get_pending_index_document_count(file_paths: list[str]) -> int:
         return 0
 
     pending_paths = _get_pending_index_document_paths()
-    unique_paths = set(file_paths)
+    unique_paths = {
+        _canonical_document_identity(file_path) for file_path in file_paths
+    }
     return sum(1 for file_path in unique_paths if file_path in pending_paths)
 
 

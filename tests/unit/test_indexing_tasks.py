@@ -692,6 +692,27 @@ class TestTaskRegistration:
         assert forced.already_pending_count == 0
         assert huey_instance.pending_count() == 1
 
+    def test_forced_index_batch_deduplicates_equivalent_paths(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        first = str(tmp_path / "docs" / ".." / "file.md")
+        equivalent = str(tmp_path / "file.md")
+
+        submission = submit_index_request_batch([first, equivalent], force=True)
+
+        assert submission.requested_unique_count == 1
+        assert submission.enqueued_count == 1
+        assert submission.already_pending_count == 0
+        task = huey_instance.dequeue()
+        assert task is not None
+        assert task.args == ([first],)
+        huey_instance.execute(task)
+        assert fake_manager.indexed == [(first, True)]
+
     def test_forced_index_batch_does_not_invalidate_active_claim(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
