@@ -531,7 +531,9 @@ async def test_hyde_handler_normalizes_exclusions_for_each_document_root() -> No
 
     assert len(contents) == 1
     assert captured["hypothesis"] == "authentication setup"
-    assert "private" in captured["excluded_files"]
+    excluded_files = captured["excluded_files"]
+    assert isinstance(excluded_files, set)
+    assert "private" in excluded_files
 
 
 @pytest.mark.asyncio

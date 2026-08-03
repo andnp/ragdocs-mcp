@@ -1862,7 +1862,7 @@ class TestGetIndexState:
 def test_git_total_counts_distinct_active_commits_in_canonical_index():
     ctx = object.__new__(ApplicationContext)
     ctx.git_indexing_enabled = True
-    ctx.index_manager = SimpleNamespace(
+    cast(Any, ctx).index_manager = SimpleNamespace(
         kernel=SimpleNamespace(
             backend=SimpleNamespace(
                 _record_rows=lambda: [

@@ -138,7 +138,7 @@ class CanonicalSearchAdapter:
         }
         strategy_counts = {"semantic": 0, "keyword": 0, "graph": 0, "tag_expansion": 0}
         for result in results:
-            for strategy in result.provenance.strategies:
+            for strategy in result.provenance.strategies if result.provenance else ():
                 strategy_name = {"vector": "semantic", "expansion": "tag_expansion"}.get(
                     strategy, strategy
                 )

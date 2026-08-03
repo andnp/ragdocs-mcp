@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -35,7 +35,7 @@ def _ready_context(harness: Any) -> HandlerContext:
         is_ready=lambda: True,
         get_index_state=lambda: IndexState(status="ready"),
     )
-    return HandlerContext(lambda: context, _ReadyCoordinator())
+    return HandlerContext(cast(Any, lambda: context), _ReadyCoordinator())
 
 
 async def _query(hctx: HandlerContext, arguments: dict[str, object]) -> dict[str, Any]:
