@@ -23,7 +23,6 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {}
 class ApplicationContextLike(Protocol):
     documents_roots: list[Path]
     orchestrator: Any
-    search_use_case: Any
     git_indexing_enabled: bool
 
     def is_ready(self) -> bool: ...
