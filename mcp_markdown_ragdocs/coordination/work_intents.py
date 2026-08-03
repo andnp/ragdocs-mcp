@@ -46,6 +46,7 @@ class WorkIntentStore:
         canonical_key: str,
         payload: dict[str, Any],
         *,
+        force_reopen: bool = False,
         now: float | None = None,
     ) -> WorkIntent:
         timestamp = time.time() if now is None else now
@@ -82,7 +83,7 @@ class WorkIntentStore:
                     "SELECT * FROM work_intents WHERE intent_id = ?",
                     (intent_id,),
                 ).fetchone()
-            elif row["state"] == FAILED:
+            elif row["state"] in {FAILED, SUCCEEDED} or force_reopen:
                 connection.execute(
                     """
                     UPDATE work_intents

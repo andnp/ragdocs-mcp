@@ -6,6 +6,7 @@ from huey import SqliteHuey
 
 from mcp_markdown_ragdocs.coordination.work_intents import (
     FAILED,
+    PENDING,
     SUCCEEDED,
     WorkIntentStore,
 )
@@ -86,8 +87,15 @@ def test_duplicate_remove_submissions_coalesce_canonical_identity(tmp_path: Path
     store = WorkIntentStore(tmp_path / "queue.db")
     active = store.list_active()
     assert active == []
-    intent = store.submit("remove_document", str(tmp_path / "doc.md"), {"doc_id": "x"})
-    assert intent.state == SUCCEEDED
+    completed = store.find("remove_document", str(tmp_path / "doc.md"))
+    assert completed is not None
+    assert completed.state == SUCCEEDED
+    reopened = store.submit(
+        "remove_document",
+        str(tmp_path / "doc.md"),
+        {"doc_id": "x"},
+    )
+    assert reopened.state == PENDING
 
 
 def test_stale_claim_cannot_terminalize_re_pended_intent(tmp_path: Path) -> None:
@@ -129,6 +137,19 @@ def test_failed_indexing_reopens_after_worker_restart(tmp_path: Path) -> None:
     assert recovered is not None
     assert recovered.state == SUCCEEDED
     assert manager.indexed == [str(tmp_path / "doc.md")]
+
+
+def test_completed_indexing_reopens_for_later_update(tmp_path: Path) -> None:
+    manager = _DeterministicIndexManager()
+    huey = _register(tmp_path, manager)
+    file_path = str(tmp_path / "doc.md")
+
+    assert tasks.submit_index_request(file_path).status == "enqueued"
+    _execute_one(huey)
+    assert tasks.submit_index_request(file_path).status == "enqueued"
+    _execute_one(huey)
+
+    assert manager.indexed == [file_path, file_path]
 
 
 def test_claim_release_reopens_intent_but_active_claim_is_exclusive(
