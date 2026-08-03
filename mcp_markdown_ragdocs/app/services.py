@@ -64,7 +64,7 @@ class ManagerIndexingService:
 class ContextLifecycleService:
     """Delegate lifecycle calls to the composed application context."""
 
-    def __init__(self, context: ApplicationContext) -> None:
+    def __init__(self, context: LifecycleService) -> None:
         self._context = context
 
     async def start(self, background_index: bool = False) -> None:

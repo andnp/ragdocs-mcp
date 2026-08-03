@@ -3,7 +3,7 @@
 import logging
 import os
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 
 from searchkernel.api import is_excluded_dir
@@ -82,7 +82,7 @@ def discover_git_repositories_multi_root(
 def iter_commit_hashes_after_timestamp(
     git_dir: Path,
     after_timestamp: int | None = None,
-) -> Iterator[str]:
+) -> Generator[str]:
     """
     Yield commit hashes after a timestamp.
 

@@ -53,7 +53,7 @@ def _result(*, project_id: str = "project-a", score: float = 0.9):
 class _Orchestrator:
     def __init__(self, result=None):
         self.result = result or _result()
-        self.calls: list[dict[str, object]] = []
+        self.calls: list[dict[str, Any]] = []
 
     async def search(self, query, *, limit, filters):
         self.calls.append({"query": query, "limit": limit, "filters": filters})
