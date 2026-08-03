@@ -92,6 +92,10 @@ def build_daemon_status_payload(
                     "documents_roots",
                     "project_context_mode",
                     "git_refresh_progress",
+                    "watcher_active",
+                    "producer_pid",
+                    "producer_started_at",
+                    "stop_reason",
                 )
                 if key in overview
             }

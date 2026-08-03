@@ -10,6 +10,12 @@ from pathlib import Path
 
 from mcp_markdown_ragdocs.daemon.management import _resolve_daemon_python, _worker_log_path
 from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
+from mcp_markdown_ragdocs.daemon.producer import (
+    ProducerMetadata,
+    read_producer_metadata,
+    read_process_start_time_ticks,
+    write_producer_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +103,26 @@ class HueyWorkerProcess:
         finally:
             stderr_handle.close()
 
+        producer_path = self._runtime_paths.producer_metadata_path
+        if producer_path is not None:
+            start_time_ticks = read_process_start_time_ticks(self._process.pid)
+            if start_time_ticks is not None:
+                previous = read_producer_metadata(producer_path)
+                write_producer_metadata(
+                    producer_path,
+                    ProducerMetadata(
+                        pid=self._process.pid,
+                        start_time_ticks=start_time_ticks,
+                        started_at=time.time(),
+                        stop_reason=(
+                            previous.stop_reason
+                            if previous is not None
+                            and previous.stop_reason == "restart"
+                            else None
+                        ),
+                    ),
+                )
+
         # Loading the embedding model can take longer than the daemon's normal
         # health interval. Keep the subprocess alive while it initializes so
         # the supervisor does not repeatedly restart a healthy-but-cold worker.
@@ -108,10 +134,21 @@ class HueyWorkerProcess:
                 return
             time.sleep(0.1)
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(self, timeout: float = 5.0, *, reason: str = "shutdown") -> None:
         process = self._process
         if process is None:
             return
+
+        producer_path = self._runtime_paths.producer_metadata_path
+        if producer_path is not None:
+            metadata = ProducerMetadata(
+                pid=process.pid,
+                start_time_ticks=read_process_start_time_ticks(process.pid) or 0,
+                started_at=time.time(),
+                status="stopped",
+                stop_reason=reason,
+            )
+            write_producer_metadata(producer_path, metadata)
 
         if process.poll() is None:
             process.send_signal(signal.SIGTERM)
@@ -125,7 +162,7 @@ class HueyWorkerProcess:
         _remove_worker_status(self._runtime_paths)
 
     def restart(self, timeout: float = 5.0) -> None:
-        self.stop(timeout=timeout)
+        self.stop(timeout=timeout, reason="restart")
         time.sleep(0.2)
         self.start()
 

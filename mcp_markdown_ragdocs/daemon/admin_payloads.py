@@ -9,6 +9,10 @@ from typing import Any, TYPE_CHECKING
 
 from mcp_markdown_ragdocs.coordination.queue import get_huey
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
+from mcp_markdown_ragdocs.daemon.producer import (
+    producer_diagnostics,
+    read_producer_metadata,
+)
 from mcp_markdown_ragdocs.indexing.git_refresh_state import list_progress
 from mcp_markdown_ragdocs.indexing.reindex import reindex_status_payload
 
@@ -207,6 +211,10 @@ def _build_admin_overview_payload(
         backpressure_limit=ctx.config.indexing.task_backpressure_limit,
     )
     watcher_stats = ctx.watcher.get_stats().to_dict() if ctx.watcher else None
+    producer_path = runtime_paths.producer_metadata_path or (
+        runtime_paths.root / "producer.json"
+    )
+    producer_payload = producer_diagnostics(read_producer_metadata(producer_path))
     return {
         "status": "ok",
         "pid": os.getpid(),
@@ -233,6 +241,7 @@ def _build_admin_overview_payload(
         "queue_stats": task_payload,
         "git_refresh_progress": task_payload.get("git_refresh_progress", []),
         "watcher_stats": watcher_stats,
+        **producer_payload,
         "index_state": ctx.get_index_state().to_dict(),
         "reindex": reindex_status_payload(runtime_paths.root, ctx.index_path),
     }

@@ -42,6 +42,7 @@ class RuntimePaths:
     metadata_path: Path
     lock_path: Path
     socket_path: Path
+    producer_metadata_path: Path | None = None
 
     @classmethod
     def resolve(cls) -> RuntimePaths:
@@ -53,6 +54,7 @@ class RuntimePaths:
             metadata_path=root / "daemon.json",
             lock_path=root / "daemon.lock",
             socket_path=_socket_path_for(root),
+            producer_metadata_path=root / "producer.json",
         )
 
     def ensure_directories(self) -> None:

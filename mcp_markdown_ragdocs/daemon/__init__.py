@@ -8,12 +8,14 @@ from mcp_markdown_ragdocs.daemon.metadata import (
     write_daemon_metadata,
 )
 from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
+from mcp_markdown_ragdocs.daemon.producer import ProducerMetadata
 
 __all__ = [
     "DaemonLockTimeoutError",
     "DaemonMetadata",
     "FilesystemLock",
     "RuntimePaths",
+    "ProducerMetadata",
     "read_daemon_metadata",
     "remove_daemon_metadata",
     "write_daemon_metadata",
