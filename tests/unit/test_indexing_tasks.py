@@ -640,6 +640,38 @@ class TestTaskRegistration:
             "/some/other.md",
         )
 
+    def test_forced_index_request_reopens_completed_intent(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        file_path = "/some/file.md"
+
+        assert tasks_mod.submit_index_request(file_path).status == "enqueued"
+        task = huey_instance.dequeue()
+        assert task is not None
+        huey_instance.execute(task)
+
+        forced = tasks_mod.submit_index_request(file_path, force=True)
+
+        assert forced.status == "enqueued"
+        assert huey_instance.pending_count() == 1
+
+    def test_forced_index_batch_reopens_completed_intents(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        file_paths = ["/some/file.md", "/some/other.md"]
+
+        assert submit_index_batch(file_paths).enqueued_count == 2
+        while (task := huey_instance.dequeue()) is not None:
+            huey_instance.execute(task)
+
+        forced = submit_index_request_batch(file_paths, force=True)
+
+        assert forced.enqueued_count == 2
+        assert forced.already_pending_count == 0
+        assert huey_instance.pending_count() == 1
+
     def test_submit_remove_request_batch_deduplicates_against_pending_single_and_batch_tasks(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:

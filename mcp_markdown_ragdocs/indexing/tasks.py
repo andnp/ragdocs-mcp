@@ -149,11 +149,18 @@ def _intent_claim(
     operation: str,
     canonical_key: str,
     payload: dict[str, object],
+    *,
+    force_reopen: bool = False,
 ) -> tuple[WorkIntent, str] | None:
     store = _intent_store()
     if store is None:
         return None
-    intent = store.submit(operation, canonical_key, payload)
+    intent = store.submit(
+        operation,
+        canonical_key,
+        payload,
+        force_reopen=force_reopen,
+    )
     if intent.state != PENDING:
         return None
     return store.claim(intent.intent_id)
@@ -162,6 +169,8 @@ def _intent_claim(
 def _intent_claim_batch(
     operation: str,
     items: list[tuple[str, dict[str, object]]],
+    *,
+    force_reopen: bool = False,
 ) -> tuple[list[tuple[str, tuple[str, str]]], int]:
     store = _intent_store()
     if store is None:
@@ -169,7 +178,12 @@ def _intent_claim_batch(
     claims: list[tuple[str, tuple[str, str]]] = []
     skipped = 0
     for canonical_key, payload in items:
-        claim = _intent_claim(operation, canonical_key, payload)
+        claim = _intent_claim(
+            operation,
+            canonical_key,
+            payload,
+            force_reopen=force_reopen,
+        )
         if claim is None:
             skipped += 1
         else:
@@ -1127,6 +1141,7 @@ def submit_index_request(file_path: str, force: bool = False) -> TaskSubmissionR
         "index_document",
         _canonical_document_identity(file_path),
         {"file_path": file_path, "force": force},
+        force_reopen=force,
     )
     if claim is None:
         return TaskSubmissionResult(status="already_pending")
@@ -1319,6 +1334,7 @@ def submit_index_batch(
             )
             for file_path in remaining_paths
         ],
+        force_reopen=force,
     )
     already_pending_count += skipped_count
     claims = [claim for _, claim in keyed_claims]
