@@ -24,8 +24,9 @@ from searchkernel.indexing.bootstrap_checkpoint import (
 )
 
 import mcp_markdown_ragdocs.indexing.tasks as tasks_mod
-from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
+from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
     get_progress,
@@ -217,6 +218,12 @@ class TestTaskRegistration:
             huey_instance.execute(task)
             store = TaskLeaseStore(_queue_path(huey_instance))
             assert store.writer_owner() is None
+            intent_store = WorkIntentStore(_queue_path(huey_instance))
+            intent = intent_store.find(
+                "rebuild_index",
+                f"__global__:{request_id}",
+            )
+            assert intent is not None
 
     def test_document_and_git_tasks_reject_writes_while_rebuild_owns_writer(
         self,

@@ -1686,7 +1686,7 @@ def submit_rebuild_request(
 
     claim = _intent_claim(
         "rebuild_index",
-        project_override or "__global__",
+        f"{project_override or '__global__'}:{request_id}",
         {"project_override": project_override, "request_id": request_id},
     )
     if claim is None:
