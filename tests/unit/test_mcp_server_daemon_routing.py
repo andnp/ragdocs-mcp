@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -143,6 +144,24 @@ async def test_mcp_server_retries_tool_call_after_timeout(monkeypatch):
 
     assert calls["count"] == 2
     assert len(contents) == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_server_bounds_slow_daemon_operation(monkeypatch):
+    server = MCPServer(project_override="docs")
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.mcp.server._MCP_DAEMON_OPERATION_TIMEOUT_SECONDS",
+        0.01,
+    )
+
+    def _slow_metadata():
+        time.sleep(0.05)
+        return Path("/tmp/ragdocs.sock"), "ready"
+
+    monkeypatch.setattr(server, "_get_daemon_metadata", _slow_metadata)
+
+    with pytest.raises(RuntimeError, match="timed out"):
+        await server._call_remote_tool("query_documents", {"query": "test"})
 
 
 @pytest.mark.asyncio

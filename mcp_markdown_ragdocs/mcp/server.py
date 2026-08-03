@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 _MCP_DAEMON_START_TIMEOUT_SECONDS = 30.0
 _MCP_DAEMON_READY_WAIT_SECONDS = 120.0
 _MCP_DAEMON_REQUEST_TIMEOUT_SECONDS = 60.0
+_MCP_DAEMON_OPERATION_TIMEOUT_SECONDS = 90.0
 _TEXT_CONTENT_TYPE: Literal["text"] = "text"
 
 
@@ -67,36 +69,49 @@ class MCPServer:
         path: str,
         payload: dict[str, object],
     ) -> dict[str, object]:
+        deadline = time.monotonic() + _MCP_DAEMON_OPERATION_TIMEOUT_SECONDS
         response = request_daemon_socket(
             socket_path,
             path,
             payload,
-            timeout_seconds=_MCP_DAEMON_REQUEST_TIMEOUT_SECONDS,
+            timeout_seconds=min(
+                _MCP_DAEMON_REQUEST_TIMEOUT_SECONDS,
+                max(0.0, deadline - time.monotonic()),
+            ),
         )
         if response.get("error") != "daemon_request_timed_out":
             return response
 
         inspection = inspect_daemon()
         if inspection.metadata is not None and inspection.running:
-            wait_for_daemon_ready(timeout_seconds=_MCP_DAEMON_READY_WAIT_SECONDS)
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                return response
+            wait_for_daemon_ready(
+                timeout_seconds=min(_MCP_DAEMON_READY_WAIT_SECONDS, remaining)
+            )
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                return response
             return request_daemon_socket(
                 socket_path,
                 path,
                 payload,
-                timeout_seconds=_MCP_DAEMON_REQUEST_TIMEOUT_SECONDS,
+                timeout_seconds=min(_MCP_DAEMON_REQUEST_TIMEOUT_SECONDS, remaining),
             )
 
         return response
 
     async def _get_remote_tools(self) -> list[Tool]:
         try:
-            socket_path, _status = await asyncio.to_thread(self._get_daemon_metadata)
-            response = await asyncio.to_thread(
-                self._request_daemon_with_retry,
-                socket_path,
-                "/api/mcp/tools",
-                {},
-            )
+            async with asyncio.timeout(_MCP_DAEMON_OPERATION_TIMEOUT_SECONDS):
+                socket_path, _status = await asyncio.to_thread(self._get_daemon_metadata)
+                response = await asyncio.to_thread(
+                    self._request_daemon_with_retry,
+                    socket_path,
+                    "/api/mcp/tools",
+                    {},
+                )
             if response.get("status") == "error":
                 raise RuntimeError(str(response.get("details") or response.get("error")))
             tools = response.get("tools")
@@ -111,6 +126,8 @@ class MCPServer:
                 for tool in tools
                 if isinstance(tool, dict)
             ]
+        except TimeoutError as exc:
+            raise RuntimeError("MCP daemon operation timed out") from exc
         except Exception as exc:
             logger.exception("Failed to fetch tools from daemon")
             raise RuntimeError(f"Daemon unavailable for MCP tools: {exc}") from exc
@@ -121,13 +138,14 @@ class MCPServer:
         arguments: dict,
     ) -> list[TextContent]:
         try:
-            socket_path, _status = await asyncio.to_thread(self._get_daemon_metadata)
-            response = await asyncio.to_thread(
-                self._request_daemon_with_retry,
-                socket_path,
-                "/api/mcp/tool",
-                {"name": name, "arguments": arguments},
-            )
+            async with asyncio.timeout(_MCP_DAEMON_OPERATION_TIMEOUT_SECONDS):
+                socket_path, _status = await asyncio.to_thread(self._get_daemon_metadata)
+                response = await asyncio.to_thread(
+                    self._request_daemon_with_retry,
+                    socket_path,
+                    "/api/mcp/tool",
+                    {"name": name, "arguments": arguments},
+                )
             if response.get("status") == "error":
                 raise RuntimeError(str(response.get("details") or response.get("error")))
             contents = response.get("contents")
@@ -141,6 +159,8 @@ class MCPServer:
                 for content in contents
                 if isinstance(content, dict)
             ]
+        except TimeoutError as exc:
+            raise RuntimeError(f"MCP daemon tool '{name}' timed out") from exc
         except Exception as exc:
             logger.exception("Failed to call daemon MCP tool %s", name)
             raise RuntimeError(f"Daemon unavailable for MCP tool '{name}': {exc}") from exc
