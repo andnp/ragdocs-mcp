@@ -20,11 +20,6 @@ from mcp.types import TextContent, Tool
 from mcp_markdown_ragdocs.daemon.health import (
     request_daemon_socket,
 )
-from mcp_markdown_ragdocs.daemon.management import (
-    inspect_daemon,
-    start_daemon,
-    wait_for_daemon_ready,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +28,26 @@ _MCP_DAEMON_READY_WAIT_SECONDS = 120.0
 _MCP_DAEMON_REQUEST_TIMEOUT_SECONDS = 60.0
 _MCP_DAEMON_OPERATION_TIMEOUT_SECONDS = 90.0
 _TEXT_CONTENT_TYPE: Literal["text"] = "text"
+
+
+def start_daemon(*args, **kwargs):
+    from mcp_markdown_ragdocs.daemon.management import start_daemon as _start_daemon
+
+    return _start_daemon(*args, **kwargs)
+
+
+def inspect_daemon(*args, **kwargs):
+    from mcp_markdown_ragdocs.daemon.management import inspect_daemon as _inspect_daemon
+
+    return _inspect_daemon(*args, **kwargs)
+
+
+def wait_for_daemon_ready(*args, **kwargs):
+    from mcp_markdown_ragdocs.daemon.management import (
+        wait_for_daemon_ready as _wait_for_daemon_ready,
+    )
+
+    return _wait_for_daemon_ready(*args, **kwargs)
 
 
 class MCPServer:
