@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+from urllib.parse import unquote, urlparse
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -378,25 +379,87 @@ class RecordIndexManager:
     def _upsert_graph(self, prepared: PreparedRecordDocument) -> None:
         if not prepared.records:
             return
-        source = prepared.records[0].identity
-        edges: list[GraphEdge] = []
-        for link in prepared.document.links:
-            target = RecordIdentity(prepared.document.project_id, "note", link)
-            edges.append(
-                GraphEdge(
-                    source=source,
-                    target=target,
-                    edge_type="links_to",
-                    weight=1.0,
+        edges = self._graph_edges_for_document(
+            prepared.document,
+            tuple(record.identity for record in prepared.records),
+        )
+        for doc_id, keys in self._source_records.items():
+            if doc_id == prepared.document.id:
+                continue
+            records = tuple(
+                self.kernel.backend.hydrate_record(key)
+                for key in keys
+            )
+            hydrated = tuple(record for record in records if record is not None)
+            if not hydrated:
+                continue
+            edges.extend(
+                self._graph_edges_for_document(
+                    hydrated[0],
+                    tuple(record.identity for record in hydrated),
                 )
             )
         if edges:
             try:
                 self.graph.upsert_edges(edges)
             except ValueError:
-                # A link may point at a document not indexed yet.  The graph
-                # remains valid and the edge can be added on its next update.
-                logger.debug("Skipping graph edges with missing targets", exc_info=True)
+                logger.debug("Skipping invalid graph edges", exc_info=True)
+
+    def _graph_edges_for_document(
+        self,
+        document: Document | Record,
+        source_identities: tuple[RecordIdentity, ...],
+    ) -> list[GraphEdge]:
+        project_id = (
+            document.project_id
+            if isinstance(document, Document)
+            else document.workspace_id
+        )
+        links = document.links if isinstance(document, Document) else document.metadata.get("links", [])
+        if not isinstance(links, list):
+            return []
+        target_ids: list[RecordIdentity] = []
+        for link in links:
+            if not isinstance(link, str):
+                continue
+            target_doc_id = self._resolve_link_doc_id(document, link)
+            if target_doc_id is None:
+                continue
+            target_keys = self._source_records.get(target_doc_id, [])
+            target_ids.extend(
+                RecordIdentity.from_storage_key(key)
+                for key in target_keys
+            )
+        return [
+            GraphEdge(source, target, "links_to", 1.0)
+            for source in source_identities
+            for target in target_ids
+            if source.workspace_id == project_id
+        ]
+
+    def _resolve_link_doc_id(self, document: Document | Record, link: str) -> str | None:
+        parsed = urlparse(link)
+        if parsed.scheme or parsed.netloc or link.startswith("#"):
+            return None
+        raw_path = unquote(parsed.path).strip()
+        if not raw_path:
+            return None
+        source_path = (
+            Path(document.file_path)
+            if isinstance(document, Document)
+            else Path(str(document.metadata.get("file_path", "")))
+        )
+        candidates = [raw_path.removesuffix(".md")]
+        if source_path:
+            linked_path = (source_path.parent / raw_path).resolve()
+            if linked_path.suffix.lower() == ".md":
+                candidates.insert(0, self._doc_id_for_path(str(linked_path)))
+            else:
+                candidates.insert(0, self._doc_id_for_path(str(linked_path.with_suffix(".md"))))
+        for candidate in candidates:
+            if candidate in self._source_records:
+                return candidate
+        return None
 
     def remove_document(self, doc_id: str) -> None:
         keys = self._source_records.pop(doc_id, [])

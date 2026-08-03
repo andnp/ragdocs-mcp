@@ -216,10 +216,12 @@ class MarkdownParser(DocumentParser):
     def _extract_wikilinks(self, root_node: Node, content_bytes: bytes):
         wikilinks = set()
         wikilink_pattern = re.compile(r"(?<!!)\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
+        markdown_link_pattern = re.compile(r"(?<!!)\[[^\]]+\]\(([^)\s]+)")
 
         text = self._get_text_excluding_code(root_node, content_bytes)
         matches = wikilink_pattern.findall(text)
         wikilinks.update(matches)
+        wikilinks.update(markdown_link_pattern.findall(text))
 
         return list(wikilinks)
 

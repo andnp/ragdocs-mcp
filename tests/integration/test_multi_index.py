@@ -58,6 +58,28 @@ def test_links_are_written_to_canonical_graph_store(tmp_path):
     assert manager.graph.graph_integrity_errors() == []
 
 
+def test_markdown_links_retrieve_indexed_target_chunks(tmp_path):
+    manager = _manager(tmp_path)
+    docs = Path(manager._config.indexing.documents_path)
+    source = docs / "source.md"
+    target = docs / "target.md"
+    source.write_text("# Source\n\nSee [target](target.md).")
+    target.write_text(
+        "# Target\n\n"
+        "This target has enough content to produce a canonical chunk identity."
+    )
+
+    manager.index_document(str(source))
+    manager.index_document(str(target))
+
+    source_record = manager.prepare_document(str(source)).records[0]
+    neighbors = manager.graph.neighbors(source_record.identity)
+
+    assert neighbors
+    assert all(neighbor.identity.source_id.startswith("target_chunk_") for neighbor in neighbors)
+    assert manager.graph.graph_integrity_errors() == []
+
+
 def test_empty_document_does_not_break_record_manager(tmp_path):
     manager = _manager(tmp_path)
     document = Path(manager._config.indexing.documents_path) / "empty.md"
