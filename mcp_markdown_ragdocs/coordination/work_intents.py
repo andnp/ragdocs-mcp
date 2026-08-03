@@ -224,6 +224,48 @@ class WorkIntentStore:
             )
             return cursor.rowcount
 
+    def reclaim_stale_claim(
+        self,
+        intent_id: str,
+        claim_token: str,
+        *,
+        now: float | None = None,
+    ) -> tuple[WorkIntent, str] | None:
+        """Replace one expired claim with a fresh token for queue recovery."""
+        timestamp = time.time() if now is None else now
+        cutoff = timestamp - self._claim_timeout_seconds
+        token = secrets.token_hex(16)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE work_intents
+                SET state = ?, claim_token = ?, claim_observed_at = ?,
+                    observed_at = ?, attempt = attempt + 1, error = NULL
+                WHERE intent_id = ? AND claim_token = ?
+                  AND state IN (?, ?) AND claim_observed_at <= ?
+                """,
+                (
+                    CLAIMED,
+                    token,
+                    timestamp,
+                    timestamp,
+                    intent_id,
+                    claim_token,
+                    CLAIMED,
+                    RUNNING,
+                    cutoff,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = connection.execute(
+                "SELECT * FROM work_intents WHERE intent_id = ?",
+                (intent_id,),
+            ).fetchone()
+            assert row is not None
+            return _row_to_intent(row), token
+
     def get(self, intent_id: str) -> WorkIntent | None:
         with self._connect() as connection:
             row = connection.execute(

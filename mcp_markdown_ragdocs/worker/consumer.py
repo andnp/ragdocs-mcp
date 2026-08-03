@@ -28,16 +28,51 @@ def _requeue_expired_leases(
     huey: SqliteHuey,
     lease_store: TaskLeaseStore,
 ) -> None:
-    WorkIntentStore(
+    intent_store = WorkIntentStore(
         cast(Any, huey.storage).filename,
         claim_timeout_seconds=LEASE_TIMEOUT_SECONDS,
-    ).recover_stale_claims()
+    )
     for lease in lease_store.reclaim_expired():
         if lease.payload is None:
             raise RuntimeError(
                 f"Expired lease {lease.task_id} has no serialized task payload"
             )
-        huey.enqueue(huey.deserialize_task(lease.payload))
+        task = huey.deserialize_task(lease.payload)
+        _refresh_task_intent_claims(intent_store, task)
+        huey.enqueue(task)
+    intent_store.recover_stale_claims()
+
+
+def _refresh_task_intent_claims(intent_store: WorkIntentStore, task: Any) -> None:
+    kwargs = getattr(task, "kwargs", None)
+    if not isinstance(kwargs, dict):
+        return
+
+    def _refresh_claim(intent_id: object, claim_token: object) -> str | None:
+        if not isinstance(intent_id, str) or not isinstance(claim_token, str):
+            return None
+        reclaimed = intent_store.reclaim_stale_claim(intent_id, claim_token)
+        return None if reclaimed is None else reclaimed[1]
+
+    intent_id = kwargs.get("intent_id")
+    claim_token = kwargs.get("claim_token")
+    refreshed_token = _refresh_claim(intent_id, claim_token)
+    if refreshed_token is not None:
+        kwargs["claim_token"] = refreshed_token
+
+    claims = kwargs.get("intent_claims")
+    if not isinstance(claims, list):
+        return
+    refreshed_claims: list[object] = []
+    for item in claims:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            refreshed_claims.append(item)
+            continue
+        refreshed = _refresh_claim(item[0], item[1])
+        refreshed_claims.append(
+            (item[0], refreshed if refreshed is not None else item[1])
+        )
+    kwargs["intent_claims"] = refreshed_claims
 
 
 class HueyWorker:

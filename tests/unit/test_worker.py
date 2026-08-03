@@ -16,6 +16,8 @@ import pytest
 from huey import SqliteHuey
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
+from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
 from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 
 
@@ -205,6 +207,63 @@ class TestHueyWorker:
         assert lease is not None
         assert lease.state == "completed"
         assert lease.attempt == 2
+
+    def test_requeues_delayed_intent_with_a_fresh_claim_token(
+        self,
+        huey_instance: SqliteHuey,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _Manager:
+            ingestor = object()
+
+            def index_document(self, file_path: str, force: bool = False) -> bool:
+                del file_path, force
+                return True
+
+            def persist(self) -> None:
+                return
+
+        indexing_tasks.register_tasks(huey_instance, _Manager())
+        queue_path = Path(str(cast(Any, huey_instance.storage).filename))
+        indexing_tasks._work_intent_store = WorkIntentStore(
+            queue_path,
+            claim_timeout_seconds=0.1,
+        )
+        assert indexing_tasks.submit_index_request("delayed.md").enqueued
+        task = huey_instance.dequeue()
+        assert task is not None
+        lease_store = TaskLeaseStore(queue_path, timeout_seconds=0.1)
+        assert lease_store.claim(
+            task.id,
+            task_name=task.name,
+            owner_token="stale-owner",
+            payload=huey_instance.serialize_task(task),
+            now=time.time() - 1.0,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_TIMEOUT_SECONDS",
+            0.1,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_RECLAIM_INTERVAL_SECONDS",
+            0.01,
+        )
+
+        worker = HueyWorker(huey_instance)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while huey_instance.pending_count() > 0 and time.monotonic() < deadline:
+                time.sleep(0.05)
+        finally:
+            worker.stop()
+
+        intent = indexing_tasks._work_intent_store.find(
+            "index_document", "delayed.md"
+        )
+        assert intent is not None
+        assert intent.state == "succeeded"
 
     def test_double_start_is_safe(self, huey_instance: SqliteHuey) -> None:
         """Starting twice doesn't create duplicate threads."""

@@ -167,3 +167,18 @@ def test_claim_release_reopens_intent_but_active_claim_is_exclusive(
     reopened = store.claim(intent.intent_id, now=6)
     assert reopened is not None
     assert reopened[0].attempt == 2
+
+
+def test_reclaim_stale_claim_replaces_token(tmp_path: Path) -> None:
+    store = WorkIntentStore(tmp_path / "queue.db", claim_timeout_seconds=10)
+    intent = store.submit("index_document", "doc.md", {"file_path": "doc.md"}, now=1)
+    claim = store.claim(intent.intent_id, now=2)
+    assert claim is not None
+
+    reclaimed = store.reclaim_stale_claim(intent.intent_id, claim[1], now=20)
+
+    assert reclaimed is not None
+    assert reclaimed[1] != claim[1]
+    assert reclaimed[0].state == "claimed"
+    assert not store.succeed(intent.intent_id, claim[1], now=21)
+    assert store.succeed(intent.intent_id, reclaimed[1], now=22)
