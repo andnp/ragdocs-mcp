@@ -62,3 +62,30 @@ def test_private_optional_backend_import_is_rejected() -> None:
         )
         != []
     )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'importlib.import_module("searchkernel.search.record_pipeline")',
+        'importlib.import_module("searchkernel.adapters.stores.pgvector_index")',
+    ],
+)
+def test_constant_dynamic_private_imports_are_rejected(source: str) -> None:
+    assert (
+        find_private_imports_in_source(
+            f"import importlib\n{source}",
+            module_name="mcp_markdown_ragdocs.adapters.pgvector",
+        )
+        != []
+    )
+
+
+def test_public_dynamic_import_is_allowed() -> None:
+    assert (
+        find_private_imports_in_source(
+            'import importlib\nimportlib.import_module("searchkernel.api")',
+            module_name="mcp_markdown_ragdocs.adapters.sources.local",
+        )
+        == []
+    )

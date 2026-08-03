@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 PUBLIC_MODULES = frozenset(
     {
         "searchkernel",
+        "searchkernel.adapters.stores",
         "searchkernel.api",
         "searchkernel.domain",
         "searchkernel.ports",
@@ -41,6 +42,17 @@ def _imported_modules(tree: ast.AST) -> Iterable[tuple[str, int]]:
             yield from ((alias.name, node.lineno) for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module is not None:
             yield node.module, node.lineno
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "importlib"
+            and node.func.attr == "import_module"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            yield node.args[0].value, node.lineno
 
 
 def find_private_imports_in_source(

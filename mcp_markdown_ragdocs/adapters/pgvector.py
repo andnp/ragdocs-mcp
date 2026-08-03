@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from importlib import import_module
 from typing import Any
+
+from searchkernel.adapters.stores import PGVectorStore, PostgresConnection
 
 
 def build_pgvector_index(
@@ -12,10 +13,5 @@ def build_pgvector_index(
     embedding_model_name: str,
     truncate_dim: int | None,
 ) -> Any:
-    module = import_module("searchkernel.adapters.stores.pgvector_index")
-    index_type = getattr(module, "PGVectorIndex")
-    return index_type(
-        pg_dsn=pg_dsn,
-        embedding_model_name=embedding_model_name,
-        truncate_dim=truncate_dim,
-    )
+    del embedding_model_name, truncate_dim
+    return PGVectorStore(PostgresConnection(pg_dsn))
