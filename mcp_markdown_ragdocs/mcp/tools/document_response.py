@@ -43,7 +43,6 @@ class QueryDocumentsScopeEnvelope:
 
 @dataclass(frozen=True)
 class QueryDocumentsResultEnvelopeItem:
-    rank: int
     chunk_id: str
     doc_id: str
     file_path: str
@@ -52,8 +51,6 @@ class QueryDocumentsResultEnvelopeItem:
     content: str
     project_id: str | None = None
     parent_chunk_id: str | None = None
-    provenance: dict[str, object] | None = None
-    include_debug: bool = False
 
     def to_dict(self) -> dict[str, object]:
         result: dict[str, object] = {
@@ -68,10 +65,6 @@ class QueryDocumentsResultEnvelopeItem:
             result["project_id"] = self.project_id
         if self.parent_chunk_id is not None:
             result["parent_chunk_id"] = self.parent_chunk_id
-        if self.include_debug:
-            result["rank"] = self.rank
-        if self.include_debug and self.provenance is not None:
-            result["provenance"] = self.provenance
         return result
 
 
@@ -136,14 +129,13 @@ class QueryDocumentsResponseEnvelope:
     status: str
     results: tuple[QueryDocumentsResultEnvelopeItem, ...]
     meta: QueryDocumentsMetaEnvelope
-    include_debug: bool = False
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
             "status": self.status,
             "results": [result.to_dict() for result in self.results],
         }
-        if self.status != "ok" or self.include_debug:
+        if self.status != "ok":
             payload["meta"] = self.meta.to_dict()
         return payload
 
@@ -162,7 +154,6 @@ def build_query_documents_response_envelope(
 ) -> QueryDocumentsResponseEnvelope:
     result_items = tuple(
         QueryDocumentsResultEnvelopeItem(
-            rank=index,
             chunk_id=result.chunk_id,
             doc_id=result.doc_id,
             file_path=result.file_path,
@@ -171,14 +162,8 @@ def build_query_documents_response_envelope(
             content=result.content,
             project_id=result.project_id,
             parent_chunk_id=result.parent_chunk_id,
-            provenance=(
-                result_provenance.to_dict()
-                if (result_provenance := getattr(result, "provenance", None)) is not None
-                else None
-            ),
-            include_debug=request.include_debug,
         )
-        for index, result in enumerate(results, start=1)
+        for result in results
     )
 
     strategy_counts = _build_strategy_counts(strategy_stats)
@@ -209,7 +194,6 @@ def build_query_documents_response_envelope(
             observed_strategies=observed_strategies,
             compression=compression_stats,
         ),
-        include_debug=request.include_debug,
     )
 
 
@@ -267,7 +251,6 @@ def build_query_documents_status_envelope(
             configured_root_count=raw_root_count,
             index_state=raw_index_state,
         ),
-        include_debug=request.include_debug if request is not None else False,
     )
 
 
@@ -310,7 +293,6 @@ def build_compact_document_results_response(
     """Render the shared compact result contract used by document searches."""
     items = [
         QueryDocumentsResultEnvelopeItem(
-            rank=index,
             chunk_id=result.chunk_id,
             doc_id=result.doc_id,
             file_path=result.file_path,
@@ -320,7 +302,7 @@ def build_compact_document_results_response(
             project_id=result.project_id,
             parent_chunk_id=result.parent_chunk_id,
         ).to_dict()
-        for index, result in enumerate(results, start=1)
+        for result in results
     ]
     return json.dumps(
         {"status": "ok", "results": items},

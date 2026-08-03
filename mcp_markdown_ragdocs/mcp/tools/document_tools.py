@@ -107,11 +107,6 @@ def get_document_tools() -> list[Tool]:
                         "description": "Result uniqueness mode: 'allow_multiple' (default) returns multiple chunks per document, 'one_per_document' returns at most one chunk per document for breadth across files",
                         "default": "allow_multiple",
                     },
-                    "include_debug": {
-                        "type": "boolean",
-                        "description": "Include diagnostic metadata and provenance (default: false)",
-                        "default": False,
-                    },
                 },
                 "required": ["query"],
             },

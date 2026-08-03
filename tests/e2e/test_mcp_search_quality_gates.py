@@ -96,7 +96,7 @@ async def test_mcp_query_documents_retains_golden_quality_metrics(tmp_path) -> N
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_mcp_query_documents_reports_truthful_metadata_and_unique_documents(tmp_path) -> None:
+async def test_mcp_query_documents_returns_unique_documents_without_debug_metadata(tmp_path) -> None:
     harness = build_search_evaluation_harness(tmp_path)
     payload = await _query(
         _ready_context(harness),
@@ -104,35 +104,15 @@ async def test_mcp_query_documents_reports_truthful_metadata_and_unique_document
             "query": "Authentication Overview",
             "top_n": 5,
             "uniqueness_mode": "one_per_document",
-            "include_debug": True,
         },
     )
 
     assert payload["status"] == "ok"
     results = payload["results"]
-    meta = payload["meta"]
     doc_ids = [result["doc_id"] for result in results]
     assert len(doc_ids) == len(set(doc_ids))
-    assert meta["uniqueness_mode"] == "one_per_document"
-    assert meta["results_count"] == len(results)
-
-    compression = meta["compression"]
-    assert compression["original_count"] >= compression["after_threshold"]
-    assert compression["after_threshold"] >= compression["after_content_dedup"]
-    assert compression["after_content_dedup"] >= compression["after_ngram_dedup"]
-    assert compression["after_ngram_dedup"] >= compression["after_dedup"]
-    assert compression["after_dedup"] >= compression["after_doc_limit"]
-    assert compression["after_doc_limit"] == len(results)
-
-    strategy_counts = meta["strategy_counts"]
-    expected_observed = [name for name, count in strategy_counts.items() if count > 0]
-    assert meta["observed_strategies"] == expected_observed
-    observed_from_provenance = {
-        {"vector": "semantic"}.get(strategy, strategy)
-        for result in results
-        for strategy in result.get("provenance", {}).get("strategies", [])
-    }
-    assert set(meta["observed_strategies"]) == observed_from_provenance
+    assert "meta" not in payload
+    assert all("provenance" not in result for result in results)
 
 
 @pytest.mark.e2e
@@ -141,12 +121,11 @@ async def test_mcp_query_documents_handles_arbitrary_punctuation(tmp_path) -> No
     harness = build_search_evaluation_harness(tmp_path)
     payload = await _query(
         _ready_context(harness),
-        {"query": "'''((((( !!! ??? :::", "top_n": 3, "include_debug": True},
+        {"query": "'''((((( !!! ??? :::", "top_n": 3},
     )
 
     assert payload["status"] == "ok"
-    assert payload["meta"]["query"] == "'''((((( !!! ??? :::"
-    assert payload["meta"]["results_count"] == len(payload["results"])
+    assert "meta" not in payload
 
 
 @pytest.mark.e2e

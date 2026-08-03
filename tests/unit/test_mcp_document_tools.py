@@ -18,7 +18,6 @@ from mcp_markdown_ragdocs.mcp.tools.document_tools import (
 )
 from mcp_markdown_ragdocs.models import (
     CompressionStats,
-    SearchResultProvenance,
     SearchStrategyStats,
 )
 
@@ -105,10 +104,6 @@ async def test_query_documents_preserves_validation_errors_during_cold_start() -
 @pytest.mark.asyncio
 async def test_query_documents_runs_immediately_when_indices_are_queryable() -> None:
     captured: dict[str, object] = {}
-    provenance = SearchResultProvenance()
-    provenance.add_strategy("semantic", rank=1, raw_score=0.91)
-    provenance.add_strategy("keyword", rank=1, raw_score=13.0)
-    provenance.project_uplift = 1.2
 
     class _FakeOrchestrator:
         documents_path = Path("/docs")
@@ -143,7 +138,7 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
                         content="Fast cold start contract.",
                         parent_chunk_id=None,
                         parent_content=None,
-                        provenance=provenance,
+                        provenance=None,
                         metadata={
                             "file_path": "docs/plan.md",
                             "header_path": "Overview",
@@ -193,13 +188,6 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
         }
     ]
 
-    debug_contents = await handle_query_documents(
-        hctx, {"query": "daemon startup", "include_debug": True}
-    )
-    debug_payload = _parse_query_documents_response(debug_contents[0].text)
-    assert debug_payload["meta"]["observed_strategies"] == ["semantic", "keyword"]
-    assert debug_payload["results"][0]["rank"] == 1
-    assert "provenance" in debug_payload["results"][0]
     assert captured == {
         "project_filter": [],
         "project_context": None,
@@ -301,42 +289,13 @@ async def test_query_documents_returns_canonical_scope_and_meta() -> None:
             "scope_projects": ["proj-a"],
             "preferred_project": "proj-a",
             "uniqueness_mode": "one_per_document",
-            "include_debug": True,
         },
     )
 
     assert len(contents) == 1
     payload = _parse_query_documents_response(contents[0].text)
-    assert payload["meta"]["query"] == "auth tokens"
-    assert payload["meta"]["uniqueness_mode"] == "one_per_document"
-    assert payload["meta"]["strategy_counts"] == {
-        "semantic": 4,
-        "keyword": 2,
-        "graph": 1,
-        "tag_expansion": 1,
-    }
-    assert payload["meta"]["observed_strategies"] == [
-        "semantic",
-        "keyword",
-        "graph",
-        "tag_expansion",
-    ]
-    assert payload["meta"]["scope"] == {
-        "mode": "explicit_projects",
-        "projects": ["proj-a"],
-        "preferred_project": "proj-a",
-        "applied_filter_projects": ["proj-a"],
-        "applied_uplift_project": "proj-a",
-    }
-    assert payload["meta"]["compression"] == {
-        "original_count": 5,
-        "after_threshold": 4,
-        "after_content_dedup": 4,
-        "after_ngram_dedup": 3,
-        "after_dedup": 3,
-        "after_doc_limit": 1,
-        "clusters_merged": 2,
-    }
+    assert "meta" not in payload
+    assert payload["results"][0]["doc_id"] == "auth-guide"
 
 
 def test_normalize_query_documents_request_rejects_scope_projects_outside_explicit_mode() -> None:
@@ -461,18 +420,11 @@ async def test_query_documents_uses_detected_project_for_active_project_scope() 
         {
             "query": "daemon startup",
             "scope_mode": "active_project",
-            "include_debug": True,
         },
     )
 
     payload = _parse_query_documents_response(contents[0].text)
-    assert payload["meta"]["scope"] == {
-        "mode": "active_project",
-        "projects": [],
-        "preferred_project": None,
-        "applied_filter_projects": [],
-        "applied_uplift_project": "ambient-project",
-    }
+    assert "meta" not in payload
     assert captured == {
         "project_filter": [],
         "project_context": "ambient-project",
