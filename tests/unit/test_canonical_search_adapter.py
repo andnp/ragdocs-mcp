@@ -13,7 +13,7 @@ def adapter(record_manager) -> CanonicalSearchAdapter:
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     records = [
         Record(
-            workspace_id="workspace",
+            workspace_id="project-a",
             source_kind="note",
             source_id="doc-a",
             title="Authentication",
@@ -29,7 +29,7 @@ def adapter(record_manager) -> CanonicalSearchAdapter:
             },
         ),
         Record(
-            workspace_id="workspace",
+            workspace_id="project-b",
             source_kind="git_commit",
             source_id="doc-b",
             title="Authentication fix",
@@ -43,6 +43,16 @@ def adapter(record_manager) -> CanonicalSearchAdapter:
                 "file_path": "repo",
                 "header_path": "Commit",
             },
+        ),
+        Record(
+            workspace_id="project-c",
+            source_kind="note",
+            source_id="doc-c",
+            title="Workspace authentication",
+            body="Workspace authentication guidance",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": "doc-c", "chunk_id": "chunk-c"},
         ),
     ]
     assert record_manager.index_records(records) is True
@@ -62,8 +72,8 @@ async def test_query_preserves_chunk_result_semantics(adapter):
     assert results[0].file_path == "a.md"
     assert results[0].metadata["source_kind"] == "note"
     assert results[0].metadata["source_id"] == "doc-a"
-    assert results[0].metadata["workspace_id"] == "workspace"
-    assert stats.original_count == 2
+    assert results[0].metadata["workspace_id"] == "project-a"
+    assert stats.original_count == 3
     assert strategy.keyword_count == 1
 
 
@@ -94,7 +104,6 @@ async def test_query_forwards_contract_filters_and_preserves_scores(adapter, mon
         "limit": 20,
         "filters": {
             "source_kinds": ["note"],
-            "project_ids": ["project-a"],
             "excluded_files": ["private.md"],
             "min_score": 0.4,
             "similarity_threshold": 0.9,
@@ -191,6 +200,18 @@ async def test_query_applies_project_filter_without_legacy_orchestrator(adapter)
     )
 
     assert [result.chunk_id for result in results] == ["chunk-b"]
+
+
+@pytest.mark.asyncio
+async def test_query_applies_workspace_identity_without_metadata_project_id(adapter):
+    results, _, _ = await adapter.query(
+        "authentication",
+        top_k=10,
+        top_n=10,
+        project_filter=["project-c"],
+    )
+
+    assert [result.chunk_id for result in results] == ["chunk-c"]
 
 
 @pytest.mark.asyncio
