@@ -8,6 +8,7 @@ from pathlib import Path
 
 from mcp.types import TextContent, Tool
 
+from mcp_markdown_ragdocs.app.search import SearchQuery
 from mcp_markdown_ragdocs.mcp.handlers import (
     MAX_TOP_N,
     MIN_TOP_N,
@@ -246,10 +247,6 @@ async def _query_documents_impl(
             for docs_root in docs_roots
         }
 
-    top_k = max(20, request.top_n * 4)
-    if request.project_filter:
-        top_k = max(top_k, request.top_n * 10)
-
     project_context = request.project_context
     if request.scope_mode == "active_project" and project_context is None:
         project_context = getattr(
@@ -258,18 +255,41 @@ async def _query_documents_impl(
             None,
         )
 
-    results, stats, strategy_stats = await ctx.orchestrator.query(
-        request.query,
-        top_k=top_k,
-        top_n=request.top_n,
-        pipeline_config=None,
-        excluded_files=excluded_files,
-        project_filter=request.project_filter,
-        project_context=project_context,
-        min_score=request.min_score,
-        similarity_threshold=request.similarity_threshold,
-        max_chunks_per_doc=request.max_chunks_per_doc,
-    )
+    search_use_case = getattr(ctx, "search_use_case", None)
+    if search_use_case is None:
+        search_use_case = getattr(ctx.orchestrator, "search_use_case", None)
+    if search_use_case is not None:
+        execution = await search_use_case.execute(
+            SearchQuery(
+                query=request.query,
+                top_n=request.top_n,
+                project_filter=tuple(request.project_filter),
+                project_context=project_context,
+                excluded_files=frozenset(excluded_files or ()),
+                min_score=request.min_score,
+                similarity_threshold=request.similarity_threshold,
+                max_chunks_per_doc=request.max_chunks_per_doc,
+            )
+        )
+        results = execution.results
+        stats = execution.compression_stats
+        strategy_stats = execution.strategy_stats
+    else:
+        top_k = max(20, request.top_n * 4)
+        if request.project_filter:
+            top_k = max(top_k, request.top_n * 10)
+        results, stats, strategy_stats = await ctx.orchestrator.query(
+            request.query,
+            top_k=top_k,
+            top_n=request.top_n,
+            pipeline_config=None,
+            excluded_files=excluded_files,
+            project_filter=request.project_filter,
+            project_context=project_context,
+            min_score=request.min_score,
+            similarity_threshold=request.similarity_threshold,
+            max_chunks_per_doc=request.max_chunks_per_doc,
+        )
     results = [
         result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
         for result in results
@@ -336,7 +356,6 @@ async def handle_search_with_hypothesis(
 
     excluded_files = None
     if excluded_files_raw:
-        docs_root = ctx.orchestrator.documents_path
         docs_roots = tuple(getattr(ctx, "documents_roots", ())) or (
             ctx.orchestrator.documents_path,
         )
@@ -346,22 +365,37 @@ async def handle_search_with_hypothesis(
             for docs_root in docs_roots
         }
 
-    top_k = max(20, top_n * 4)
-    if project_filter:
-        top_k = max(top_k, top_n * 10)
-
-    results, _, _ = await ctx.orchestrator.query_with_hypothesis(
-        hypothesis,
-        top_k=top_k,
-        top_n=top_n,
-        excluded_files=excluded_files,
-        project_filter=project_filter,
-        project_context=project_context,
-    )
-    results = [
-        result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
-        for result in results
-    ]
+    search_use_case = getattr(ctx, "search_use_case", None)
+    if search_use_case is None:
+        search_use_case = getattr(ctx.orchestrator, "search_use_case", None)
+    if search_use_case is not None:
+        execution = await search_use_case.execute(
+            SearchQuery(
+                query=hypothesis,
+                top_n=top_n,
+                project_filter=tuple(project_filter),
+                project_context=project_context,
+                excluded_files=frozenset(excluded_files or ()),
+                retrieval_mode="semantic_only",
+            )
+        )
+        results = execution.results
+    else:
+        top_k = max(20, top_n * 4)
+        if project_filter:
+            top_k = max(top_k, top_n * 10)
+        results, _, _ = await ctx.orchestrator.query_with_hypothesis(
+            hypothesis,
+            top_k=top_k,
+            top_n=top_n,
+            excluded_files=excluded_files,
+            project_filter=project_filter,
+            project_context=project_context,
+        )
+        results = [
+            result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
+            for result in results
+        ]
 
     return [
         TextContent(type="text", text=build_compact_document_results_response(results))

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
+from mcp_markdown_ragdocs.app.search import SearchQuery
 from mcp_markdown_ragdocs.coordination.queue import get_huey
 from mcp_markdown_ragdocs.daemon.mcp_requests import (
     build_mcp_tools_payload,
@@ -73,6 +74,7 @@ class _RouterContext(Protocol):
     index_path: Path
     index_manager: _RecordIndexManager
     orchestrator: Any
+    search_use_case: Any
     config: Any
     git_indexing_enabled: bool
 
@@ -561,7 +563,6 @@ def build_daemon_request_handler(
             ctx.schedule_freshness_refresh()
             query_text = str(payload.get("query", ""))
             top_n = _as_int(payload.get("top_n"), 5)
-            top_k = max(20, top_n * 4)
             project_filter_payload = payload.get("project_filter", [])
             project_filter = (
                 [str(item) for item in project_filter_payload if isinstance(item, str)]
@@ -574,24 +575,46 @@ def build_daemon_request_handler(
                 if isinstance(source_filter_payload, list)
                 else []
             )
-            if project_filter:
-                top_k = max(top_k, top_n * 10)
-            results, compression_stats, strategy_stats = await ctx.orchestrator.query(
-                query_text,
-                top_k=top_k,
-                top_n=top_n,
-                project_filter=project_filter,
-                source_filter=source_filter,
-                project_context=(
-                    str(payload.get("project_context"))
-                    if payload.get("project_context") is not None
-                    else None
-                ),
-            )
-            results = [
-                result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
-                for result in results
-            ]
+            search_use_case = getattr(ctx, "search_use_case", None)
+            if search_use_case is None:
+                search_use_case = getattr(ctx.orchestrator, "search_use_case", None)
+            if search_use_case is not None:
+                execution = await search_use_case.execute(
+                    SearchQuery(
+                        query=query_text,
+                        top_n=top_n,
+                        project_filter=tuple(project_filter),
+                        source_filter=tuple(source_filter),
+                        project_context=(
+                            str(payload.get("project_context"))
+                            if payload.get("project_context") is not None
+                            else None
+                        ),
+                    )
+                )
+                results = execution.results
+                compression_stats = execution.compression_stats
+                strategy_stats = execution.strategy_stats
+            else:
+                top_k = max(20, top_n * 4)
+                if project_filter:
+                    top_k = max(top_k, top_n * 10)
+                results, compression_stats, strategy_stats = await ctx.orchestrator.query(
+                    query_text,
+                    top_k=top_k,
+                    top_n=top_n,
+                    project_filter=project_filter,
+                    source_filter=source_filter,
+                    project_context=(
+                        str(payload.get("project_context"))
+                        if payload.get("project_context") is not None
+                        else None
+                    ),
+                )
+                results = [
+                    result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
+                    for result in results
+                ]
             await ctx.orchestrator.drain_reindex()
             return {
                 "query": query_text,

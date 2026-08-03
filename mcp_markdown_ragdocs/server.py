@@ -20,6 +20,7 @@ from searchkernel.api import (
 )
 from starlette.responses import JSONResponse
 
+from mcp_markdown_ragdocs.app.search import SearchQuery
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.federation import (
@@ -95,6 +96,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.manager = ctx.index_manager
     app.state.orchestrator = ctx.orchestrator
+    app.state.search_use_case = ctx.search_use_case
     app.state.watcher = ctx.watcher
     app.state.reconciliation_task = ctx.reconciliation_task
     app.state.index_path = ctx.index_path
@@ -110,7 +112,6 @@ def create_app():
 
     async def _execute_query(
         orchestrator,
-        config,
         query: str,
         top_n: int,
         max_chunks_per_doc: int = 0,
@@ -121,33 +122,50 @@ def create_app():
         min_score: float | None = None,
         similarity_threshold: float | None = None,
     ):
-        top_k = max(20, top_n * 4)
-        if project_filter:
-            top_k = max(top_k, top_n * 10)
-
-        results, _, _ = await orchestrator.query(
-            query,
-            top_k=top_k,
-            top_n=top_n,
-            pipeline_config=None,
-            project_filter=project_filter,
-            source_filter=source_filter,
-            project_context=project_context,
-            excluded_files=excluded_files,
-            min_score=min_score,
-            similarity_threshold=similarity_threshold,
-            max_chunks_per_doc=max_chunks_per_doc,
-        )
+        search_use_case = getattr(orchestrator, "search_use_case", None)
+        if search_use_case is not None:
+            execution = await search_use_case.execute(
+                SearchQuery(
+                    query=query,
+                    top_n=top_n,
+                    project_filter=tuple(project_filter or ()),
+                    source_filter=tuple(source_filter or ()),
+                    project_context=project_context,
+                    excluded_files=frozenset(excluded_files or ()),
+                    min_score=min_score,
+                    similarity_threshold=similarity_threshold,
+                    max_chunks_per_doc=max_chunks_per_doc,
+                )
+            )
+            results = execution.results
+        else:
+            top_k = max(20, top_n * 4)
+            if project_filter:
+                top_k = max(top_k, top_n * 10)
+            results, _, _ = await orchestrator.query(
+                query,
+                top_k=top_k,
+                top_n=top_n,
+                pipeline_config=None,
+                project_filter=project_filter,
+                source_filter=source_filter,
+                project_context=project_context,
+                excluded_files=excluded_files,
+                min_score=min_score,
+                similarity_threshold=similarity_threshold,
+                max_chunks_per_doc=max_chunks_per_doc,
+            )
 
         query_type = classify_query_type(query)
 
         formatted_results = []
         for i, result in enumerate(results):
-            result_dict = (
-                result.to_dict()
+            result = (
+                result
                 if isinstance(result, ChunkResult)
-                else ChunkResult.from_domain(result).to_dict()
+                else ChunkResult.from_domain(result)
             )
+            result_dict = result.to_dict()
             if query_type == "factual":
                 result_dict["content"] = truncate_content(result_dict["content"], 200)
             formatted_results.append(result_dict)
@@ -158,7 +176,6 @@ def create_app():
     async def query_documents(request: QueryRequest):
         results_dict = await _execute_query(
             app.state.orchestrator,
-            app.state.config,
             request.query,
             request.top_n,
             max_chunks_per_doc=(

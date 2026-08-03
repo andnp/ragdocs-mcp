@@ -48,6 +48,7 @@ from mcp_markdown_ragdocs.indexing.record_manager import (
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
+from mcp_markdown_ragdocs.app.search import ApplicationSearchUseCase
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ class ApplicationContext:
     config: Config
     index_manager: RecordIndexManager
     orchestrator: CanonicalSearchAdapter
+    search_use_case: ApplicationSearchUseCase | None = None
     record_ingestor: Any | None = None
     use_tasks: bool = False
     _watcher_lifecycle: WatcherLifecycle = field(
@@ -228,6 +230,7 @@ class ApplicationContext:
             config=config,
             index_manager=manager,
             orchestrator=orchestrator,
+            search_use_case=orchestrator.search_use_case,
             record_ingestor=record_ingestor,
             use_tasks=use_tasks,
             _watcher_lifecycle=watcher_lifecycle,
