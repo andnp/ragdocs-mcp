@@ -152,6 +152,33 @@ def test_federation_search_enforces_authorized_project_claims():
     assert response.status_code == 403
 
 
+def test_federation_search_forwards_scoped_native_filters():
+    orchestrator = _Orchestrator()
+    client = _client(orchestrator)
+    response = client.post(
+        "/v1/search",
+        json=_request(filters={"project_ids": ["project-a", "project-b"]}),
+    )
+
+    assert response.status_code == 200
+    assert orchestrator.calls[0]["filters"]["project_ids"] == [
+        "project-a",
+        "project-b",
+    ]
+
+
+def test_federation_search_uses_workspace_scope_for_one_project():
+    orchestrator = _Orchestrator()
+    client = _client(orchestrator)
+    response = client.post(
+        "/v1/search",
+        json=_request(filters={"project_ids": ["project-a"]}),
+    )
+
+    assert response.status_code == 200
+    assert orchestrator.calls[0]["filters"]["workspace_id"] == "project-a"
+
+
 def test_federation_search_honors_deadline():
     class SlowOrchestrator(_Orchestrator):
         async def search(self, query, *, limit, filters):

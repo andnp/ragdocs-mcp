@@ -158,8 +158,14 @@ async def execute_federation_search(
 
     source_kinds = _string_list(filters, "source_kinds", "source_filter")
     native_filters: dict[str, JsonValue] = dict(filters)
-    native_filters.pop("project_ids", None)
-    native_filters.pop("project_filter", None)
+    if project_filter:
+        if len(project_filter) == 1:
+            native_filters["workspace_id"] = project_filter[0]
+            native_filters.pop("project_ids", None)
+            native_filters.pop("project_filter", None)
+        else:
+            native_filters["project_ids"] = cast(list[JsonValue], project_filter)
+            native_filters.pop("project_filter", None)
     if source_kinds:
         native_filters["source_kinds"] = cast(list[JsonValue], source_kinds)
     search_limit = min(

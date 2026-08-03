@@ -104,12 +104,33 @@ async def test_query_forwards_contract_filters_and_preserves_scores(adapter, mon
         "limit": 20,
         "filters": {
             "source_kinds": ["note"],
+            "workspace_id": "project-a",
             "excluded_files": ["private.md"],
             "min_score": 0.4,
             "similarity_threshold": 0.9,
             "max_chunks_per_doc": 1,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_query_forwards_multiple_project_scopes(adapter, monkeypatch):
+    captured = {}
+
+    async def fake_search(query, *, limit, filters):
+        captured.update(query=query, limit=limit, filters=filters)
+        return SimpleNamespace(results=(), failures=(), degraded=False)
+
+    monkeypatch.setattr(adapter, "search", fake_search)
+
+    await adapter.query(
+        "authentication",
+        top_k=3,
+        top_n=2,
+        project_filter=["project-a", "project-b"],
+    )
+
+    assert captured["filters"]["project_ids"] == ["project-a", "project-b"]
 
 
 @pytest.mark.asyncio

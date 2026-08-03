@@ -141,6 +141,11 @@ class ApplicationSearchUseCase:
         filters: dict[str, object] = {}
         if request.source_filter:
             filters["source_kinds"] = list(request.source_filter)
+        if request.project_filter:
+            if len(request.project_filter) == 1:
+                filters["workspace_id"] = request.project_filter[0]
+            else:
+                filters["project_ids"] = list(request.project_filter)
         if request.excluded_files:
             filters["excluded_files"] = sorted(request.excluded_files)
         if request.min_score is not None:
