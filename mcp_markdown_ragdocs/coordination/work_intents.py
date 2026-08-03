@@ -139,12 +139,16 @@ class WorkIntentStore:
             return _row_to_intent(claimed), token
 
     def start(self, intent_id: str, claim_token: str) -> bool:
-        return self._transition(
-            intent_id,
-            claim_token,
-            from_states={CLAIMED},
-            state=RUNNING,
-        )
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE work_intents
+                SET state = ?
+                WHERE intent_id = ? AND claim_token = ? AND state = ?
+                """,
+                (RUNNING, intent_id, claim_token, CLAIMED),
+            )
+            return cursor.rowcount == 1
 
     def succeed(
         self,
@@ -224,6 +228,17 @@ class WorkIntentStore:
             row = connection.execute(
                 "SELECT * FROM work_intents WHERE intent_id = ?",
                 (intent_id,),
+            ).fetchone()
+        return None if row is None else _row_to_intent(row)
+
+    def find(self, operation: str, canonical_key: str) -> WorkIntent | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM work_intents
+                WHERE operation = ? AND canonical_key = ?
+                """,
+                (operation, canonical_key),
             ).fetchone()
         return None if row is None else _row_to_intent(row)
 
