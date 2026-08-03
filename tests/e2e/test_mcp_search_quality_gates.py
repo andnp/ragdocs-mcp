@@ -56,6 +56,8 @@ async def test_mcp_query_documents_retains_golden_quality_metrics(tmp_path) -> N
 
     for case in harness.cases:
         arguments: dict[str, object] = {"query": case.query, "top_n": case.top_n}
+        if case.min_score is not None:
+            arguments["min_score"] = case.min_score
         if case.project_context is not None:
             arguments.update(
                 {

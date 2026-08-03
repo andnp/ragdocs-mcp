@@ -51,6 +51,8 @@ class SearchEvaluationCase:
     project_context: str | None = None
     project_filter: tuple[str, ...] | None = None
     top_n: int = 5
+    min_score: float | None = None
+    expected_empty: bool = False
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,10 @@ class SearchEvaluationReport:
         for result in self.case_results:
             expected_top1 = result.case.expected_top1_path
             observed_top1 = result.top_path()
+            if result.case.expected_empty and result.ranked_paths:
+                failures.append(
+                    f"{result.case.case_id}: expected no results, got {list(result.ranked_paths)}"
+                )
             if expected_top1 is not None and observed_top1 != expected_top1:
                 failures.append(
                     f"{result.case.case_id}: expected top-1 {expected_top1}, got {observed_top1}; ranked={list(result.ranked_paths)}"
@@ -171,6 +177,7 @@ class SearchEvaluationHarness:
                 project_filter=list(case.project_filter)
                 if case.project_filter is not None
                 else None,
+                min_score=case.min_score,
             )
             ranked_doc_ids = tuple(
                 _dedupe_doc_ids([result.doc_id for result in chunk_results])
@@ -353,6 +360,12 @@ SEARCH_EVALUATION_CASES = (
         expected_top1_path="alpha/docs/token-lifecycle.md",
     ),
     SearchEvaluationCase(
+        case_id="paraphrase_refresh_expiry",
+        query="how frequently must access credentials be renewed",
+        relevant_paths=("alpha/docs/token-lifecycle.md",),
+        expected_top1_path="alpha/docs/token-lifecycle.md",
+    ),
+    SearchEvaluationCase(
         case_id="graph_adjacent_api_auth",
         query="bearer tokens protected endpoints",
         relevant_paths=(
@@ -360,6 +373,16 @@ SEARCH_EVALUATION_CASES = (
             "alpha/docs/authentication-overview.md",
         ),
         expected_top1_path="alpha/docs/api-authentication.md",
+        required_hits_at_k=((1, 1), (5, 2)),
+    ),
+    SearchEvaluationCase(
+        case_id="graph_login_flow_expiration",
+        query="login flow expiration rules",
+        relevant_paths=(
+            "alpha/docs/authentication-overview.md",
+            "alpha/docs/token-lifecycle.md",
+        ),
+        expected_top1_path="alpha/docs/authentication-overview.md",
         required_hits_at_k=((1, 1), (5, 2)),
     ),
     SearchEvaluationCase(
@@ -395,5 +418,13 @@ SEARCH_EVALUATION_CASES = (
         relevant_paths=("alpha/docs/token-lifecycle.md",),
         expected_top1_path="alpha/docs/token-lifecycle.md",
         required_hits_at_k=((1, 1), (3, 1)),
+    ),
+    SearchEvaluationCase(
+        case_id="no_answer_unrelated_topic",
+        query="quantum teleportation safety protocol",
+        relevant_paths=(),
+        min_score=0.02,
+        required_hits_at_k=(),
+        expected_empty=True,
     ),
 )
