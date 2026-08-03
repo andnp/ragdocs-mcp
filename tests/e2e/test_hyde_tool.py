@@ -10,6 +10,7 @@ Tests the search_with_hypothesis MCP tool end-to-end:
 """
 
 from pathlib import Path
+import json
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -241,7 +242,9 @@ class TestHyDEToolInvocation:
 
         assert len(result) == 1
         assert result[0].type == "text"
-        assert "HyDE Search Results" in result[0].text
+        payload = json.loads(result[0].text)
+        assert payload["status"] == "ok"
+        assert isinstance(payload["results"], list)
 
     @pytest.mark.asyncio
     async def test_invoke_finds_relevant_docs(self, tmp_path, test_docs_dir):
@@ -296,11 +299,8 @@ class TestHyDEToolInvocation:
             },
         )
 
-        count_1 = result_1[0].text.count("[1]")
-        count_5 = result_5[0].text.count("[1]")
-
-        assert count_1 <= 1
-        assert count_5 <= 1
+        assert len(json.loads(result_1[0].text)["results"]) <= 1
+        assert len(json.loads(result_5[0].text)["results"]) <= 5
 
     @pytest.mark.asyncio
     async def test_invoke_with_excluded_files(self, tmp_path, test_docs_dir):
@@ -321,11 +321,11 @@ class TestHyDEToolInvocation:
             },
         )
 
-        text = result[0].text
+        payload = json.loads(result[0].text)
         matches = [
-            line
-            for line in text.split("\n")
-            if line.startswith("[") and "config.md" in line
+            result
+            for result in payload["results"]
+            if "config.md" in result["file_path"]
         ]
         assert len(matches) == 0
 

@@ -12,6 +12,7 @@ from mcp_markdown_ragdocs.mcp.validation import (
     validate_float_range,
     validate_integer_range,
     validate_optional_string,
+    validate_boolean,
     validate_query,
     validate_string_list,
 )
@@ -33,6 +34,7 @@ class NormalizedQueryDocumentsRequest:
     scope_mode: ScopeMode
     scope_projects: tuple[str, ...] = ()
     preferred_project: str | None = None
+    include_debug: bool = False
 
     @property
     def project_filter(self) -> list[str]:
@@ -58,6 +60,7 @@ def normalize_query_documents_request(
 
     allowed_keys = {
         "excluded_files",
+        "include_debug",
         "min_score",
         "preferred_project",
         "query",
@@ -107,6 +110,7 @@ def normalize_query_documents_request(
         validate_string_list(arguments, "scope_projects", default=[])
     )
     preferred_project = validate_optional_string(arguments, "preferred_project")
+    include_debug = validate_boolean(arguments, "include_debug", default=False)
 
     if raw_scope_mode is None or raw_scope_mode == "global":
         scope_mode: ScopeMode = "global"
@@ -142,4 +146,5 @@ def normalize_query_documents_request(
         scope_mode=scope_mode,
         scope_projects=scope_projects,
         preferred_project=preferred_project,
+        include_debug=include_debug,
     )

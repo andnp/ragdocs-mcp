@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+import json
 from pathlib import Path
 
 from mcp.types import TextContent, Tool
@@ -12,7 +12,6 @@ from mcp_markdown_ragdocs.mcp.handlers import (
     MAX_TOP_N,
     MIN_TOP_N,
     HandlerContext,
-    format_search_status_text,
     tool_handler,
 )
 from mcp_markdown_ragdocs.mcp.tools.document_request import (
@@ -23,10 +22,13 @@ from mcp_markdown_ragdocs.mcp.tools.document_response import (
     build_query_documents_response_envelope,
     build_query_documents_status_envelope,
     build_query_documents_validation_error,
+    build_compact_document_results_response,
+    build_compact_error_response,
 )
 from mcp_markdown_ragdocs.mcp.validation import (
     ValidationError,
     validate_integer_range,
+    validate_boolean,
     validate_optional_string,
     validate_query,
     validate_string_list,
@@ -103,6 +105,11 @@ def get_document_tools() -> list[Tool]:
                         "enum": ["allow_multiple", "one_per_document"],
                         "description": "Result uniqueness mode: 'allow_multiple' (default) returns multiple chunks per document, 'one_per_document' returns at most one chunk per document for breadth across files",
                         "default": "allow_multiple",
+                    },
+                    "include_debug": {
+                        "type": "boolean",
+                        "description": "Include diagnostic metadata and provenance (default: false)",
+                        "default": False,
                     },
                 },
                 "required": ["query"],
@@ -191,6 +198,11 @@ def get_document_tools() -> list[Tool]:
                     "project_context": {
                         "type": "string",
                         "description": "Optional active project context used for bounded ranking uplift",
+                    },
+                    "include_diff": {
+                        "type": "boolean",
+                        "description": "Include matched diff text in each commit result (default: false)",
+                        "default": False,
                     },
                 },
                 "required": ["query"],
@@ -311,7 +323,12 @@ async def handle_search_with_hypothesis(
         project_context = validate_optional_string(arguments, "project_context")
 
     except ValidationError as e:
-        return [TextContent(type="text", text=f"Validation error: {e}")]
+        return [
+            TextContent(
+                type="text",
+                text=build_compact_error_response(f"Validation error: {e}"),
+            )
+        ]
 
     await hctx.wait_for_ready()
 
@@ -339,15 +356,9 @@ async def handle_search_with_hypothesis(
         for result in results
     ]
 
-    results_text = "\n\n".join(
-        [
-            f"[{i + 1}] {r.file_path or 'unknown'} § {r.header_path or '(no section)'} ({r.score:.2f})\n{r.content}"
-            for i, r in enumerate(results)
-        ]
-    )
-
-    response = f"# HyDE Search Results\n\n{results_text}"
-    return [TextContent(type="text", text=response)]
+    return [
+        TextContent(type="text", text=build_compact_document_results_response(results))
+    ]
 
 
 @tool_handler("search_git_history")
@@ -364,35 +375,28 @@ async def handle_search_git_history(
         before_timestamp = arguments.get("before_timestamp")
         project_filter = validate_string_list(arguments, "project_filter", default=[])
         project_context = validate_optional_string(arguments, "project_context")
+        include_diff = validate_boolean(arguments, "include_diff", default=False)
     except ValidationError as e:
-        return [TextContent(type="text", text=f"Validation error: {e}")]
+        return [TextContent(type="text", text=build_compact_error_response(str(e)))]
 
     cold_start_payload = hctx.get_nonblocking_search_payload(
         query=query,
         include_git_metadata=True,
     )
     if cold_start_payload is not None:
-        return [
-            TextContent(
-                type="text",
-                text=format_search_status_text(
-                    "Git History Search Results",
-                    cold_start_payload,
-                    include_git_metadata=True,
-                ),
-            )
-        ]
+        return [TextContent(type="text", text=json.dumps(
+            {"status": cold_start_payload.get("status", "unknown"), "results": [],
+             **({"message": cold_start_payload.get("message")} if cold_start_payload.get("message") else {}),
+             **({"error": cold_start_payload.get("error")} if cold_start_payload.get("error") else {})},
+            ensure_ascii=False, separators=(",", ":")))]
 
     await hctx.wait_for_ready()
     ctx = hctx.require_ctx()
 
     if not ctx.git_indexing_enabled:
-        return [
-            TextContent(
-                type="text",
-                text="Git history search is not available (git binary not found or disabled in config)",
-            )
-        ]
+        return [TextContent(type="text", text=json.dumps(
+            {"status": "error", "error": "git_history_unavailable", "results": []},
+            separators=(",", ":")))]
 
     # Over-fetch: a downstream files_glob/timestamp filter narrows the pool,
     # and each commit may span multiple chunks under source_filter=["git_commit"].
@@ -414,67 +418,30 @@ async def handle_search_git_history(
         :top_n
     ]
 
-    output_lines = [
-        "# Git History Search Results",
-        "",
-        f"**Query:** {query}",
-        f"**Total Commits Indexed:** {ctx.get_total_git_commits_indexed()}",
-        f"**Results Returned:** {len(commits)}",
-        "",
-    ]
-
-    for i, result in enumerate(commits, 1):
+    compact_commits = []
+    for result in commits:
         metadata = result.metadata
         commit_hash = result.doc_id.removeprefix("git:")
-        timestamp = metadata.get("timestamp")
-        commit_date = (
-            datetime.fromtimestamp(timestamp, UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
-            if isinstance(timestamp, (int, float))
-            else "unknown"
-        )
         files_changed = metadata.get("files_changed") or []
+        item = {
+            "hash": commit_hash,
+            "title": metadata.get("title", ""),
+            "author": metadata.get("author", "Unknown"),
+            "timestamp": metadata.get("timestamp"),
+            "score": result.score,
+            "files_changed": files_changed,
+        }
+        if metadata.get("committer") is not None:
+            item["committer"] = metadata["committer"]
+        if metadata.get("chunk_section") == "body" and result.content:
+            item["message"] = result.content
+        if include_diff and metadata.get("chunk_section") == "diff" and result.content:
+            item["diff"] = result.content
+        compact_commits.append(item)
 
-        output_lines.extend(
-            [
-                f"## {i}. {metadata.get('title', '(no commit message)')}",
-                "",
-                f"**Commit:** `{commit_hash[:8]}`",
-                f"**Author:** {metadata.get('author', 'Unknown')}",
-                f"**Date:** {commit_date}",
-                f"**Score:** {result.score:.3f}",
-                "",
-            ]
-        )
-
-        if result.content:
-            output_lines.extend(
-                [
-                    "### Message",
-                    "",
-                    result.content,
-                    "",
-                ]
-            )
-
-        if files_changed:
-            output_lines.extend(
-                [
-                    f"### Files Changed ({len(files_changed)})",
-                    "",
-                ]
-            )
-
-            for file_path in files_changed[:10]:
-                output_lines.append(f"- `{file_path}`")
-
-            if len(files_changed) > 10:
-                output_lines.append(f"- ... and {len(files_changed) - 10} more")
-
-            output_lines.append("")
-
-        output_lines.extend(["---", ""])
-
-    return [TextContent(type="text", text="\n".join(output_lines))]
+    return [TextContent(type="text", text=json.dumps(
+        {"status": "ok", "results": compact_commits},
+        ensure_ascii=False, separators=(",", ":")))]
 
 
 def _filter_commit_results(

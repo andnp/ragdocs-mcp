@@ -53,20 +53,24 @@ class QueryDocumentsResultEnvelopeItem:
     project_id: str | None = None
     parent_chunk_id: str | None = None
     provenance: dict[str, object] | None = None
+    include_debug: bool = False
 
     def to_dict(self) -> dict[str, object]:
         result: dict[str, object] = {
-            "rank": self.rank,
             "chunk_id": self.chunk_id,
             "doc_id": self.doc_id,
             "file_path": self.file_path,
             "header_path": self.header_path,
             "score": self.score,
             "content": self.content,
-            "project_id": self.project_id,
-            "parent_chunk_id": self.parent_chunk_id,
         }
-        if self.provenance is not None:
+        if self.project_id is not None:
+            result["project_id"] = self.project_id
+        if self.parent_chunk_id is not None:
+            result["parent_chunk_id"] = self.parent_chunk_id
+        if self.include_debug:
+            result["rank"] = self.rank
+        if self.include_debug and self.provenance is not None:
             result["provenance"] = self.provenance
         return result
 
@@ -132,21 +136,24 @@ class QueryDocumentsResponseEnvelope:
     status: str
     results: tuple[QueryDocumentsResultEnvelopeItem, ...]
     meta: QueryDocumentsMetaEnvelope
+    include_debug: bool = False
 
     @property
     def schema_version(self) -> str:
-        return "query_documents.response.v2"
+        return "query_documents.response.v3"
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "status": self.status,
             "results": [result.to_dict() for result in self.results],
-            "meta": self.meta.to_dict(),
         }
+        if self.status != "ok" or self.include_debug:
+            payload["meta"] = self.meta.to_dict()
+        return payload
 
     def render_text(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"))
 
 
 def build_query_documents_response_envelope(
@@ -174,6 +181,7 @@ def build_query_documents_response_envelope(
                 if (result_provenance := getattr(result, "provenance", None)) is not None
                 else None
             ),
+            include_debug=request.include_debug,
         )
         for index, result in enumerate(results, start=1)
     )
@@ -206,6 +214,7 @@ def build_query_documents_response_envelope(
             observed_strategies=observed_strategies,
             compression=compression_stats,
         ),
+        include_debug=request.include_debug,
     )
 
 
@@ -263,6 +272,7 @@ def build_query_documents_status_envelope(
             configured_root_count=raw_root_count,
             index_state=raw_index_state,
         ),
+        include_debug=request.include_debug if request is not None else False,
     )
 
 
@@ -297,3 +307,36 @@ def _build_strategy_counts(strategy_stats: SearchStrategyStats) -> dict[str, int
         "graph": strategy_stats.graph_count or 0,
         "tag_expansion": strategy_stats.tag_expansion_count or 0,
     }
+
+
+def build_compact_document_results_response(
+    results: list[ChunkResult],
+) -> str:
+    """Render the shared compact result contract used by document searches."""
+    items = [
+        QueryDocumentsResultEnvelopeItem(
+            rank=index,
+            chunk_id=result.chunk_id,
+            doc_id=result.doc_id,
+            file_path=result.file_path,
+            header_path=result.header_path,
+            score=result.score,
+            content=result.content,
+            project_id=result.project_id,
+            parent_chunk_id=result.parent_chunk_id,
+        ).to_dict()
+        for index, result in enumerate(results, start=1)
+    ]
+    return json.dumps(
+        {"status": "ok", "results": items},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def build_compact_error_response(message: str) -> str:
+    return json.dumps(
+        {"status": "error", "error": "validation_error", "message": message},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )

@@ -104,6 +104,7 @@ async def test_mcp_query_documents_reports_truthful_metadata_and_unique_document
             "query": "Authentication Overview",
             "top_n": 5,
             "uniqueness_mode": "one_per_document",
+            "include_debug": True,
         },
     )
 
@@ -140,7 +141,7 @@ async def test_mcp_query_documents_handles_arbitrary_punctuation(tmp_path) -> No
     harness = build_search_evaluation_harness(tmp_path)
     payload = await _query(
         _ready_context(harness),
-        {"query": "'''((((( !!! ??? :::", "top_n": 3},
+        {"query": "'''((((( !!! ??? :::", "top_n": 3, "include_debug": True},
     )
 
     assert payload["status"] == "ok"

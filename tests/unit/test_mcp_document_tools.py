@@ -74,7 +74,7 @@ async def test_query_documents_returns_initializing_text_on_true_cold_start() ->
 
     assert len(contents) == 1
     payload = _parse_query_documents_response(contents[0].text)
-    assert payload["schema_version"] == "query_documents.response.v2"
+    assert payload["schema_version"] == "query_documents.response.v3"
     assert payload["status"] == "initializing"
     assert payload["results"] == []
     assert payload["meta"]["query"] == "daemon startup"
@@ -179,19 +179,10 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
     assert len(contents) == 1
     payload = _parse_query_documents_response(contents[0].text)
     assert payload["status"] == "ok"
-    assert payload["schema_version"] == "query_documents.response.v2"
-    assert payload["meta"]["results_count"] == 1
-    assert payload["meta"]["observed_strategies"] == ["semantic", "keyword"]
-    assert payload["meta"]["scope"] == {
-        "mode": "global",
-        "projects": [],
-        "preferred_project": None,
-        "applied_filter_projects": [],
-        "applied_uplift_project": None,
-    }
+    assert payload["schema_version"] == "query_documents.response.v3"
+    assert "meta" not in payload
     assert payload["results"] == [
         {
-            "rank": 1,
             "chunk_id": "plan_chunk_1",
             "doc_id": "plan",
             "file_path": "docs/plan.md",
@@ -199,17 +190,16 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
             "score": 0.91,
             "content": "Fast cold start contract.",
             "project_id": "docs-project",
-            "parent_chunk_id": None,
-            "provenance": {
-                "strategies": ["semantic", "keyword"],
-                "strategy_details": {
-                    "semantic": {"rank": 1, "raw_score": 0.91},
-                    "keyword": {"rank": 1, "raw_score": 13.0},
-                },
-                "adjustments": {"project_uplift": 1.2},
-            },
         }
     ]
+
+    debug_contents = await handle_query_documents(
+        hctx, {"query": "daemon startup", "include_debug": True}
+    )
+    debug_payload = _parse_query_documents_response(debug_contents[0].text)
+    assert debug_payload["meta"]["observed_strategies"] == ["semantic", "keyword"]
+    assert debug_payload["results"][0]["rank"] == 1
+    assert "provenance" in debug_payload["results"][0]
     assert captured == {
         "project_filter": [],
         "project_context": None,
@@ -311,6 +301,7 @@ async def test_query_documents_returns_canonical_scope_and_meta() -> None:
             "scope_projects": ["proj-a"],
             "preferred_project": "proj-a",
             "uniqueness_mode": "one_per_document",
+            "include_debug": True,
         },
     )
 
@@ -470,6 +461,7 @@ async def test_query_documents_uses_detected_project_for_active_project_scope() 
         {
             "query": "daemon startup",
             "scope_mode": "active_project",
+            "include_debug": True,
         },
     )
 
@@ -549,7 +541,56 @@ async def test_search_git_history_returns_initializing_text_on_true_cold_start()
     contents = await handle_search_git_history(hctx, {"query": "daemon"})
 
     assert len(contents) == 1
-    assert "# Git History Search Results" in contents[0].text
-    assert "**Status:** initializing" in contents[0].text
-    assert "**Total Commits Indexed:** 7" in contents[0].text
-    assert "**Results Returned:** 0" in contents[0].text
+    payload = json.loads(contents[0].text)
+    assert payload == {
+        "status": "initializing",
+        "message": "Search indices are still initializing. Retry shortly.",
+        "results": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_search_git_history_compacts_results_and_opts_into_diff() -> None:
+    class _FakeOrchestrator:
+        async def query(self, *args, **kwargs):
+            return (
+                [
+                    SimpleNamespace(
+                        chunk_id="git-chunk",
+                        record_id="git:abc123",
+                        score=0.7,
+                        content="@@ -1 +1 @@\n-old\n+new",
+                        parent_chunk_id=None,
+                        parent_content=None,
+                        provenance=None,
+                        metadata={
+                            "title": "Update docs",
+                            "author": "Andy",
+                            "timestamp": 123,
+                            "files_changed": ["README.md"],
+                            "chunk_section": "diff",
+                        },
+                    )
+                ],
+                None,
+                None,
+            )
+
+    ctx = _ColdStartContext(IndexState(status="ready"), ready=True, commit_count=1)
+    ctx.git_indexing_enabled = True
+    ctx.orchestrator = _FakeOrchestrator()
+    hctx = HandlerContext(lambda: ctx, _FakeCoordinator())
+
+    default_payload = json.loads(
+        (await handle_search_git_history(hctx, {"query": "docs"}))[0].text
+    )
+    debug_payload = json.loads(
+        (
+            await handle_search_git_history(
+                hctx, {"query": "docs", "include_diff": True}
+            )
+        )[0].text
+    )
+
+    assert "diff" not in default_payload["results"][0]
+    assert debug_payload["results"][0]["diff"] == "@@ -1 +1 @@\n-old\n+new"

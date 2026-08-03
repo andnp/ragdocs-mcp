@@ -6,6 +6,7 @@ not the deleted commit_indexer/commit_search stack.
 """
 
 import subprocess
+import json
 from pathlib import Path
 from typing import Any
 
@@ -144,11 +145,10 @@ async def test_search_git_history_tool_routes_through_orchestrator(repo):
     )
 
     assert len(contents) == 1
-    text = contents[0].text
-    assert "# Git History Search Results" in text
-    assert "**Total Commits Indexed:** 1" in text
-    assert "**Results Returned:** 1" in text
-    assert "**Author:**" in text
+    payload = json.loads(contents[0].text)
+    assert payload["status"] == "ok"
+    assert len(payload["results"]) == 1
+    assert payload["results"][0]["author"]
 
 
 @pytest.mark.asyncio
@@ -169,4 +169,5 @@ async def test_search_git_history_tool_reports_unavailable_when_disabled(tmp_pat
     contents = await handle_search_git_history(hctx, {"query": "anything"})
 
     assert len(contents) == 1
-    assert "not available" in contents[0].text
+    payload = json.loads(contents[0].text)
+    assert payload["error"] == "git_history_unavailable"
