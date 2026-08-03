@@ -32,7 +32,7 @@ Repository = "https://github.com/yourusername/mcp-markdown-ragdocs.git"
 Issues = "https://github.com/yourusername/mcp-markdown-ragdocs/issues"
 
 [project.scripts]
-mcp-markdown-ragdocs = "mcp_markdown_ragdocs.cli:main"
+mcp-markdown-ragdocs = "mcp_markdown_ragdocs.entrypoint:main"
 
 [dependency-groups]
 dev = [
