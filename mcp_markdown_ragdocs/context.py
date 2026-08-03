@@ -52,6 +52,7 @@ from mcp_markdown_ragdocs.app.search import (
     ApplicationSearchUseCase,
     to_record_search_config,
 )
+from mcp_markdown_ragdocs.app.services import ApplicationServices, compose_services
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class ApplicationContext:
     index_manager: RecordIndexManager
     orchestrator: CanonicalSearchAdapter
     search_use_case: ApplicationSearchUseCase | None = None
+    services: ApplicationServices | None = None
     record_ingestor: Any | None = None
     use_tasks: bool = False
     _watcher_lifecycle: WatcherLifecycle = field(
@@ -230,7 +232,7 @@ class ApplicationContext:
             else:
                 logger.warning("Git binary not found - git history search disabled")
 
-        return cls(
+        context = cls(
             config=config,
             index_manager=manager,
             orchestrator=orchestrator,
@@ -247,6 +249,12 @@ class ApplicationContext:
             reconciliation_task=None,
             _active_model_identity=active_model_identity,
         )
+        context.services = compose_services(
+            context,
+            manager=manager,
+            search=orchestrator.search_use_case,
+        )
+        return context
 
     @property
     def watcher(self) -> FileWatcher | None:
