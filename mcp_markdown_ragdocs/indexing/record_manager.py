@@ -297,7 +297,7 @@ class RecordIndexManager:
                 Record(
                     source_kind="note",
                     source_id=chunk.chunk_id,
-                    title=document.id,
+                    title=str(chunk.metadata.get("header_path") or document.id),
                     body=chunk.content,
                     created_at=document.modified_time,
                     updated_at=document.modified_time,
@@ -305,6 +305,7 @@ class RecordIndexManager:
                     uri=f"file://{document.file_path}",
                     status=RecordStatus.ACTIVE,
                     workspace_id=document.project_id,
+                    indexed_text=chunk.content,
                 )
             )
         return tuple(records)

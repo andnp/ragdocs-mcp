@@ -31,6 +31,25 @@ def test_index_document_updates_record_stores(tmp_path):
     )
 
 
+def test_index_document_preserves_heading_retrieval_fields(tmp_path):
+    manager = _manager(tmp_path)
+    document = Path(manager._config.indexing.documents_path) / "headings.md"
+    document.write_text("# Guide\n\n## Authentication\n\nUse bearer tokens.")
+
+    assert manager.index_document(str(document))
+
+    records = [
+        manager.kernel.backend.hydrate_record(key)
+        for key in manager._source_records[manager.prepare_document(str(document)).document.id]
+    ]
+    authentication = next(
+        record for record in records if record and record.metadata.get("header_path") == "Guide > Authentication"
+    )
+
+    assert authentication.title == "Guide > Authentication"
+    assert authentication.indexed_text == authentication.body
+
+
 def test_remove_document_removes_record_from_all_local_stores(tmp_path):
     manager = _manager(tmp_path)
     document = Path(manager._config.indexing.documents_path) / "remove.md"
