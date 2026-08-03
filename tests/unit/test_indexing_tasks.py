@@ -789,8 +789,12 @@ class TestTaskExecution:
         assert isinstance(result, dict)
         assert result["outcomes"] == [True, False]
         store = WorkIntentStore(_queue_path(huey_instance))
-        assert store.find("index_document", good).state == "succeeded"
-        assert store.find("index_document", bad).state == "failed"
+        good_intent = store.find("index_document", good)
+        bad_intent = store.find("index_document", bad)
+        assert good_intent is not None
+        assert bad_intent is not None
+        assert good_intent.state == "succeeded"
+        assert bad_intent.state == "failed"
 
     def test_progressive_batch_task_uses_bootstrap_coordinator(
         self,

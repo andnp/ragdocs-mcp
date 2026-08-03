@@ -4,7 +4,9 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from collections.abc import Callable, Coroutine
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from searchkernel.api import Record, build_local_record_kernel
@@ -29,7 +31,7 @@ pytestmark = pytest.mark.e2e
 @dataclass
 class _Runtime:
     manager: RecordIndexManager
-    handler: object
+    handler: Callable[[str, dict[str, object]], Coroutine[Any, Any, dict[str, object]]]
     documents_roots: list[Path]
 
 
@@ -37,7 +39,7 @@ class _Coordinator:
     state = LifecycleState.READY
 
     def request_shutdown(self) -> None:
-        self.state = LifecycleState.STOPPING
+        self.state = LifecycleState.SHUTTING_DOWN
 
     async def wait_ready(self, timeout: float = 60.0) -> None:
         del timeout
@@ -145,6 +147,16 @@ async def _query(runtime: _Runtime, query: str) -> dict[str, object]:
     return response
 
 
+def _result_doc_id(payload: dict[str, object]) -> str:
+    results = payload.get("results")
+    assert isinstance(results, list) and results
+    result = results[0]
+    assert isinstance(result, dict)
+    doc_id = result.get("doc_id")
+    assert isinstance(doc_id, str)
+    return doc_id
+
+
 @pytest.mark.asyncio
 async def test_ingest_reaches_http_and_mcp_query_paths(
     tmp_path: Path,
@@ -167,13 +179,18 @@ async def test_ingest_reaches_http_and_mcp_query_paths(
     assert payload == {"status": "ok", "indexed_count": 1}
 
     http_payload = await _query(runtime, "authenticated API endpoints")
-    assert http_payload["results"][0]["doc_id"] == "ingested-auth"
+    assert _result_doc_id(http_payload) == "ingested-auth"
 
     mcp_payload = await runtime.handler(
         "/api/mcp/tool",
         {"name": "query_documents", "arguments": {"query": "Bearer tokens"}},
     )
-    text = mcp_payload["contents"][0]["text"]
+    contents = mcp_payload.get("contents")
+    assert isinstance(contents, list) and contents
+    first_content = contents[0]
+    assert isinstance(first_content, dict)
+    text = first_content.get("text")
+    assert isinstance(text, str)
     assert json.loads(text)["results"][0]["doc_id"] == "ingested-auth"
 
 
@@ -196,7 +213,7 @@ async def test_persisted_records_survive_worker_restart(
         index_path=tmp_path / "index",
     )
     response = await _query(restarted, "persistence marker")
-    assert response["results"][0]["doc_id"] == "restart-me"
+    assert _result_doc_id(response) == "restart-me"
 
 
 @pytest.mark.asyncio
@@ -215,15 +232,26 @@ async def test_deletion_and_multi_root_reconciliation_remove_stale_results(
         persist=True,
     )
 
-    assert (await _query(runtime, "alpha root marker"))["results"]
-    assert (await _query(runtime, "beta root marker"))["results"]
+    alpha_results = (await _query(runtime, "alpha root marker")).get("results")
+    beta_results = (await _query(runtime, "beta root marker")).get("results")
+    assert isinstance(alpha_results, list) and alpha_results
+    assert isinstance(beta_results, list) and beta_results
 
     alpha_id = runtime.manager._doc_id_for_path(str(root_a / "alpha.md"))
     runtime.manager.remove_document(alpha_id)
-    alpha_results = (await _query(runtime, "alpha root marker"))["results"]
-    assert all(result["doc_id"] != alpha_id for result in alpha_results)
+    alpha_results = (await _query(runtime, "alpha root marker")).get("results")
+    assert isinstance(alpha_results, list)
+    assert all(
+        isinstance(result, dict) and result.get("doc_id") != alpha_id
+        for result in alpha_results
+    )
 
     (root_b / "beta.md").unlink()
     runtime.manager.reconcile_indices([str(root_a / "alpha.md")], root_a)
-    beta_results = (await _query(runtime, "beta root marker"))["results"]
-    assert all(result["file_path"] != str(root_b / "beta.md") for result in beta_results)
+    beta_results = (await _query(runtime, "beta root marker")).get("results")
+    assert isinstance(beta_results, list)
+    assert all(
+        isinstance(result, dict)
+        and result.get("file_path") != str(root_b / "beta.md")
+        for result in beta_results
+    )

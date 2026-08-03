@@ -76,3 +76,9 @@ markers = [
 # The app-side public import boundary is checked by
 # scripts/check_public_searchkernel_imports.py because import-linter cannot
 # reliably inspect the externally installed searchkernel distribution.
+
+[tool.pyright]
+# This cache-warming script depends on llama-index's optional HuggingFace
+# integration, which is intentionally absent from the standard development
+# environment. CI executes it in the model-enabled test job.
+exclude = [".venv", "scripts/download_test_models.py"]

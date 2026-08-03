@@ -6,16 +6,11 @@ from mcp_markdown_ragdocs.git.commit_chunker import (
 from mcp_markdown_ragdocs.git.commit_parser import CommitData
 
 
-def _commit(**overrides: object) -> CommitData:
-    values: dict[str, object] = {
-        "hash": "abc123",
-        "timestamp": 1,
-        "author": "Author <author@example.com>",
-        "committer": "Committer <committer@example.com>",
-        "title": "Improve search",
-        "message": "Explain the search change.\n\nAdd retrieval coverage.",
-        "files_changed": ["src/search.py", "tests/test_search.py"],
-        "delta_truncated": (
+def _commit(
+    *,
+    author: str = "Author <author@example.com>",
+    committer: str = "Committer <committer@example.com>",
+    delta_truncated: str = (
             "diff --git a/src/search.py b/src/search.py\n"
             "@@ -1,2 +1,4 @@\n"
             "+semantic search\n"
@@ -23,9 +18,23 @@ def _commit(**overrides: object) -> CommitData:
             "@@ -1,1 +1,3 @@\n"
             "+retrieval coverage\n"
         ),
-    }
-    values.update(overrides)
-    return CommitData(**values)
+    files_changed: list[str] | None = None,
+    message: str = "Explain the search change.\n\nAdd retrieval coverage.",
+) -> CommitData:
+    return CommitData(
+        hash="abc123",
+        timestamp=1,
+        author=author,
+        committer=committer,
+        title="Improve search",
+        message=message,
+        files_changed=(
+            ["src/search.py", "tests/test_search.py"]
+            if files_changed is None
+            else files_changed
+        ),
+        delta_truncated=delta_truncated,
+    )
 
 
 def test_chunk_commit_preserves_commit_structure() -> None:

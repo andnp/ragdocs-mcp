@@ -224,6 +224,23 @@ class TestHueyWorker:
             def persist(self) -> None:
                 return
 
+            def index_documents(
+                self,
+                file_paths: list[str],
+                force: bool = False,
+                persist: bool = False,
+            ) -> None:
+                del file_paths, force, persist
+
+            def remove_document(self, doc_id: str) -> None:
+                del doc_id
+
+            def remove_documents(self, doc_ids: list[str], persist: bool = False) -> None:
+                del doc_ids, persist
+
+            def index_record(self, record: Any) -> None:
+                del record
+
         indexing_tasks.register_tasks(huey_instance, _Manager())
         queue_path = Path(str(cast(Any, huey_instance.storage).filename))
         indexing_tasks._work_intent_store = WorkIntentStore(

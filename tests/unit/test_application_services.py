@@ -31,13 +31,13 @@ async def test_context_lifecycle_service_delegates() -> None:
     calls = []
 
     class FakeContext:
-        async def start(self, *, background_index):
+        async def start(self, background_index=False):
             calls.append(("start", background_index))
 
         async def stop(self):
             calls.append(("stop",))
 
-        async def ensure_ready(self, *, timeout):
+        async def ensure_ready(self, timeout=60.0):
             calls.append(("ready", timeout))
 
         def is_ready(self):

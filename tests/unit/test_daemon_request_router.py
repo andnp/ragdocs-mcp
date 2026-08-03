@@ -40,6 +40,7 @@ class _FakeContext:
     schedule_freshness_refresh_calls: int = 0
     documents_roots: list[Path] = field(default_factory=lambda: [Path("/docs")])
     index_state: _FakeIndexState = field(default_factory=_FakeIndexState)
+    search_use_case: object | None = None
 
     def __post_init__(self) -> None:
         self.config = SimpleNamespace(

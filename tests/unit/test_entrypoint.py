@@ -11,7 +11,7 @@ def test_mcp_dispatch_bypasses_full_cli(monkeypatch):
     async def fake_mcp_main(argv):
         observed["argv"] = argv
 
-    mcp_module.main = fake_mcp_main
+    setattr(mcp_module, "main", fake_mcp_main)
     monkeypatch.setitem(sys.modules, "mcp_markdown_ragdocs.mcp.server", mcp_module)
     monkeypatch.setitem(sys.modules, "mcp_markdown_ragdocs.cli", None)
     monkeypatch.setattr(
