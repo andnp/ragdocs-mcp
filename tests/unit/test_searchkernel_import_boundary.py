@@ -65,16 +65,21 @@ def test_private_optional_backend_import_is_rejected() -> None:
 
 
 @pytest.mark.parametrize(
-    "source",
+    ("prefix", "call"),
     [
-        'importlib.import_module("searchkernel.search.record_pipeline")',
-        'importlib.import_module("searchkernel.adapters.stores.pgvector_index")',
+        ("import importlib\n", 'importlib.import_module("searchkernel.search.record_pipeline")'),
+        ("import importlib as kernel_loader\n", 'kernel_loader.import_module("searchkernel.search.record_pipeline")'),
+        ("from importlib import import_module\n", 'import_module("searchkernel.search.record_pipeline")'),
+        ("from importlib import import_module as kernel_loader\n", 'kernel_loader("searchkernel.adapters.stores.pgvector_index")'),
     ],
 )
-def test_constant_dynamic_private_imports_are_rejected(source: str) -> None:
+def test_constant_dynamic_private_imports_are_rejected(
+    prefix: str,
+    call: str,
+) -> None:
     assert (
         find_private_imports_in_source(
-            f"import importlib\n{source}",
+            f"{prefix}{call}",
             module_name="mcp_markdown_ragdocs.adapters.pgvector",
         )
         != []
@@ -85,6 +90,23 @@ def test_public_dynamic_import_is_allowed() -> None:
     assert (
         find_private_imports_in_source(
             'import importlib\nimportlib.import_module("searchkernel.api")',
+            module_name="mcp_markdown_ragdocs.adapters.sources.local",
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("prefix", "call"),
+    [
+        ("import importlib as kernel_loader\n", 'kernel_loader.import_module("searchkernel.api")'),
+        ("from importlib import import_module as kernel_loader\n", 'kernel_loader("searchkernel.api")'),
+    ],
+)
+def test_public_dynamic_import_aliases_are_allowed(prefix: str, call: str) -> None:
+    assert (
+        find_private_imports_in_source(
+            f"{prefix}{call}",
             module_name="mcp_markdown_ragdocs.adapters.sources.local",
         )
         == []

@@ -37,17 +37,34 @@ def _module_name(path: Path, package_root: Path) -> str:
 
 
 def _imported_modules(tree: ast.AST) -> Iterable[tuple[str, int]]:
+    importlib_names = {"importlib"}
+    import_module_names = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            yield from ((alias.name, node.lineno) for alias in node.names)
+            for alias in node.names:
+                if alias.name == "importlib":
+                    importlib_names.add(alias.asname or alias.name)
+                yield alias.name, node.lineno
         elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            for alias in node.names:
+                if node.module == "importlib" and alias.name == "import_module":
+                    import_module_names.add(alias.asname or alias.name)
             yield node.module, node.lineno
         elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "importlib"
+            and node.func.value.id in importlib_names
             and node.func.attr == "import_module"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            yield node.args[0].value, node.lineno
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in import_module_names
             and node.args
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
