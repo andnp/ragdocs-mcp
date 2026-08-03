@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
 
@@ -19,6 +20,19 @@ logger = logging.getLogger(__name__)
 
 LEASE_TIMEOUT_SECONDS = 30.0
 LEASE_HEARTBEAT_INTERVAL_SECONDS = 5.0
+LEASE_RECLAIM_INTERVAL_SECONDS = 5.0
+
+
+def _requeue_expired_leases(
+    huey: SqliteHuey,
+    lease_store: TaskLeaseStore,
+) -> None:
+    for lease in lease_store.reclaim_expired():
+        if lease.payload is None:
+            raise RuntimeError(
+                f"Expired lease {lease.task_id} has no serialized task payload"
+            )
+        huey.enqueue(huey.deserialize_task(lease.payload))
 
 
 class HueyWorker:
@@ -50,12 +64,7 @@ class HueyWorker:
             cast(Any, self._huey.storage).filename,
             timeout_seconds=LEASE_TIMEOUT_SECONDS,
         )
-        for lease in lease_store.reclaim_expired():
-            if lease.payload is None:
-                raise RuntimeError(
-                    f"Expired lease {lease.task_id} has no serialized task payload"
-                )
-            self._huey.enqueue(self._huey.deserialize_task(lease.payload))
+        _requeue_expired_leases(self._huey, lease_store)
 
         self._consumer = _HueyConsumerThread(
             self._huey,
@@ -107,7 +116,12 @@ class _HueyConsumerThread(threading.Thread):
         """Run the consumer loop, processing tasks from the queue."""
         logger.info("Huey consumer thread started")
         try:
+            next_reclaim_at = 0.0
             while not self._stop_event.is_set():
+                now = time.monotonic()
+                if now >= next_reclaim_at:
+                    _requeue_expired_leases(self._huey, self._lease_store)
+                    next_reclaim_at = now + LEASE_RECLAIM_INTERVAL_SECONDS
                 # Dequeue and execute one task at a time
                 task = self._huey.dequeue()
                 if task is not None:
