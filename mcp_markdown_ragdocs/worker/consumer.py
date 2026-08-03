@@ -12,6 +12,7 @@ from huey.constants import EmptyData
 from huey.utils import Error
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
@@ -27,6 +28,10 @@ def _requeue_expired_leases(
     huey: SqliteHuey,
     lease_store: TaskLeaseStore,
 ) -> None:
+    WorkIntentStore(
+        cast(Any, huey.storage).filename,
+        claim_timeout_seconds=LEASE_TIMEOUT_SECONDS,
+    ).recover_stale_claims()
     for lease in lease_store.reclaim_expired():
         if lease.payload is None:
             raise RuntimeError(

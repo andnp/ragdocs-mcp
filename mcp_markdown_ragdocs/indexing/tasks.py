@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
+import json
 import logging
 import threading
 from collections.abc import Callable
@@ -13,13 +15,17 @@ from typing import Any, TYPE_CHECKING, Protocol, cast
 from uuid import uuid4
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.work_intents import (
+    PENDING,
+    WorkIntent,
+    WorkIntentStore,
+)
 from mcp_markdown_ragdocs.coordination.task_submission import (
     coalesce_pending_first_args,
     get_pending_task_first_args,
     get_pending_task_values,
     is_backpressured,
     submit_coalesced_batch_task,
-    submit_single_task,
 )
 from mcp_markdown_ragdocs.coordination.task_submission import (
     get_pending_task_count as get_shared_pending_task_count,
@@ -102,6 +108,7 @@ _task_backpressure_limit: int = 100
 _bootstrap_index_path: Path | None = None
 _bootstrap_documents_roots: list[Path] = []
 _schedule_vocabulary_catch_up: Callable[[], bool] | None = None
+_work_intent_store: WorkIntentStore | None = None
 _git_refresh_in_flight: set[str] = set()
 _git_refresh_pending: set[str] = set()
 _git_refresh_deferred: set[str] = set()
@@ -125,6 +132,112 @@ def _writer_lease_store() -> TaskLeaseStore | None:
         cast(Any, _huey.storage).filename,
         timeout_seconds=WRITER_LEASE_TIMEOUT_SECONDS,
     )
+
+
+def _intent_store() -> WorkIntentStore | None:
+    return _work_intent_store
+
+
+def _canonical_document_identity(document_id: str) -> str:
+    path = Path(document_id).expanduser()
+    if path.is_absolute() or "/" in document_id or "\\" in document_id:
+        return str(path.resolve())
+    return document_id
+
+
+def _intent_claim(
+    operation: str,
+    canonical_key: str,
+    payload: dict[str, object],
+) -> tuple[WorkIntent, str] | None:
+    store = _intent_store()
+    if store is None:
+        return None
+    intent = store.submit(operation, canonical_key, payload)
+    if intent.state != PENDING:
+        return None
+    return store.claim(intent.intent_id)
+
+
+def _intent_claim_batch(
+    operation: str,
+    items: list[tuple[str, dict[str, object]]],
+) -> tuple[list[tuple[str, tuple[str, str]]], int]:
+    store = _intent_store()
+    if store is None:
+        return [], 0
+    claims: list[tuple[str, tuple[str, str]]] = []
+    skipped = 0
+    for canonical_key, payload in items:
+        claim = _intent_claim(operation, canonical_key, payload)
+        if claim is None:
+            skipped += 1
+        else:
+            claims.append((canonical_key, (claim[0].intent_id, claim[1])))
+    return claims, skipped
+
+
+def _release_intent(intent_id: str, claim_token: str) -> None:
+    store = _intent_store()
+    if store is not None:
+        store.release(intent_id, claim_token)
+
+
+def _intent_task(operation: str):
+    def _decorate(function):
+        @functools.wraps(function)
+        def _wrapped(*args, **kwargs):
+            intent_id = kwargs.pop("intent_id", None)
+            claim_token = kwargs.pop("claim_token", None)
+            claims = kwargs.pop("intent_claims", None)
+            claim_pairs = (
+                list(claims)
+                if isinstance(claims, list)
+                else (
+                    [(intent_id, claim_token)]
+                    if isinstance(intent_id, str) and isinstance(claim_token, str)
+                    else []
+                )
+            )
+            store = _intent_store()
+            if store is not None and claim_pairs:
+                started: list[tuple[str, str]] = []
+                for item in claim_pairs:
+                    if (
+                        not isinstance(item, (list, tuple))
+                        or len(item) != 2
+                        or not store.start(str(item[0]), str(item[1]))
+                    ):
+                        for started_id, started_token in started:
+                            store.fail(
+                                started_id,
+                                started_token,
+                                "batch claim became stale before execution",
+                            )
+                        return False
+                    started.append((str(item[0]), str(item[1])))
+            try:
+                result = function(*args, **kwargs)
+            except Exception as exc:
+                if store is not None:
+                    for item in claim_pairs:
+                        store.fail(str(item[0]), str(item[1]), f"{type(exc).__name__}: {exc}")
+                raise
+            success = result is True or (
+                isinstance(result, dict)
+                and result.get("status") in {"ok", "succeeded"}
+            )
+            if store is not None:
+                for item in claim_pairs:
+                    if success:
+                        store.succeed(str(item[0]), str(item[1]))
+                    else:
+                        store.fail(str(item[0]), str(item[1]), "task execution failed")
+            return result
+
+        return _wrapped
+
+    return _decorate
 
 
 def _writer_is_active() -> bool:
@@ -944,7 +1057,7 @@ def register_tasks(
     """
     global _huey, _index_manager, _task_backpressure_limit
     global _bootstrap_index_path, _bootstrap_documents_roots
-    global _schedule_vocabulary_catch_up
+    global _schedule_vocabulary_catch_up, _work_intent_store
     global index_document_task, index_documents_batch_task, index_records_batch_task
     global remove_document_task
     global remove_documents_batch_task, refresh_git_repository_task
@@ -955,6 +1068,7 @@ def register_tasks(
     _bootstrap_index_path = bootstrap_index_path
     _bootstrap_documents_roots = list(bootstrap_documents_roots or [])
     _schedule_vocabulary_catch_up = schedule_vocabulary_catch_up
+    _work_intent_store = WorkIntentStore(cast(Any, huey.storage).filename)
     with _git_refresh_lock:
         _git_refresh_in_flight.clear()
         _git_refresh_pending.clear()
@@ -963,14 +1077,22 @@ def register_tasks(
     registered_tasks = register_huey_tasks(
         huey,
         {
-            "index_document": _index_document,
-            "index_documents_batch": _index_documents_batch,
-            "index_records_batch": _index_records_batch,
-            "remove_document": _remove_document,
-            "remove_documents_batch": _remove_documents_batch,
-            "refresh_git_repository": _refresh_git_repository,
-            "rebuild_index": _rebuild_index,
-            "reindex_model": _reindex_model,
+            "index_document": _intent_task("index_document")(_index_document),
+            "index_documents_batch": _intent_task("index_documents_batch")(
+                _index_documents_batch
+            ),
+            "index_records_batch": _intent_task("index_records_batch")(
+                _index_records_batch
+            ),
+            "remove_document": _intent_task("remove_document")(_remove_document),
+            "remove_documents_batch": _intent_task("remove_documents_batch")(
+                _remove_documents_batch
+            ),
+            "refresh_git_repository": _intent_task("refresh_git_repository")(
+                _refresh_git_repository
+            ),
+            "rebuild_index": _intent_task("rebuild_index")(_rebuild_index),
+            "reindex_model": _intent_task("reindex_model")(_reindex_model),
         },
     )
     index_document_task = registered_tasks["index_document"]
@@ -1001,14 +1123,26 @@ def submit_index_request(file_path: str, force: bool = False) -> TaskSubmissionR
         warning_message="Skipping index enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
         return TaskSubmissionResult(status="backpressured")
-    enqueued = submit_single_task(
-        index_document_task,
-        file_path,
-        task_kwargs={"force": force},
+    claim = _intent_claim(
+        "index_document",
+        _canonical_document_identity(file_path),
+        {"file_path": file_path, "force": force},
     )
-    if enqueued:
-        return TaskSubmissionResult(status="enqueued")
-    return TaskSubmissionResult(status="already_pending")
+    if claim is None:
+        return TaskSubmissionResult(status="already_pending")
+    intent, claim_token = claim
+    try:
+        index_document_task(
+            file_path,
+            force=force,
+            intent_id=intent.intent_id,
+            claim_token=claim_token,
+        )
+    except Exception:
+        if _intent_store() is not None:
+            _release_intent(intent.intent_id, claim_token)
+        raise
+    return TaskSubmissionResult(status="enqueued")
 
 
 def _get_pending_task_first_args(task_name: str) -> set[str]:
@@ -1068,7 +1202,10 @@ def _get_pending_remove_doc_ids() -> set[str]:
     return get_pending_task_values(
         _huey,
         {"_remove_document", "_remove_documents_batch"},
-        value_extractor=_extract_values,
+        value_extractor=lambda task: {
+            _canonical_document_identity(value)
+            for value in _extract_values(task)
+        },
         inspection_failure_log_message="Failed to inspect pending Huey tasks; steady-state remove dedupe disabled",
         deserialize_failure_log_message="Failed to deserialize pending Huey task while inspecting remove queue",
     )
@@ -1173,16 +1310,39 @@ def submit_index_batch(
     )
 
     enqueued_count = 0
-    if remaining_paths:
-        if progressive:
-            index_documents_batch_task(
-                remaining_paths,
-                force=force,
-                progressive=True,
+    keyed_claims, skipped_count = _intent_claim_batch(
+        "index_document",
+        [
+            (
+                _canonical_document_identity(file_path),
+                {"file_path": file_path, "force": force},
             )
-        else:
-            index_documents_batch_task(remaining_paths, force=force)
-        enqueued_count = len(remaining_paths)
+            for file_path in remaining_paths
+        ],
+    )
+    already_pending_count += skipped_count
+    claims = [claim for _, claim in keyed_claims]
+    claim_paths = [
+        file_path
+        for file_path in remaining_paths
+        if _canonical_document_identity(file_path)
+        in {canonical_key for canonical_key, _ in keyed_claims}
+    ]
+    if claims:
+        kwargs: dict[str, object] = {
+            "force": force,
+            "intent_claims": claims,
+        }
+        if progressive:
+            kwargs["progressive"] = True
+        try:
+            index_documents_batch_task(claim_paths, **kwargs)
+        except Exception:
+            if _intent_store() is not None:
+                for intent_id, claim_token in claims:
+                    _release_intent(intent_id, claim_token)
+            raise
+        enqueued_count = len(claims)
 
     if already_pending_count > 0:
         logger.info(
@@ -1202,29 +1362,7 @@ def submit_index_request_batch(
     file_paths: list[str],
     force: bool = False,
 ) -> TaskBatchSubmissionResult:
-    if index_documents_batch_task is None:
-        return TaskBatchSubmissionResult(
-            queue_available=False,
-            requested_unique_count=len(set(file_paths)),
-            enqueued_count=0,
-        )
-    if _writer_is_active():
-        unique_count = len(set(file_paths))
-        return TaskBatchSubmissionResult(
-            queue_available=True,
-            requested_unique_count=unique_count,
-            enqueued_count=0,
-            already_pending_count=unique_count,
-        )
-
-    pending_paths = set() if force else _get_pending_index_document_paths()
-    return _submit_backpressure_limited_batch_request(
-        task_submitter=index_documents_batch_task,
-        batch_name="file",
-        items=file_paths,
-        task_kwargs={"force": force},
-        pending_items=pending_paths,
-    )
+    return submit_index_batch(file_paths, force=force)
 
 
 def submit_record_batch(
@@ -1235,10 +1373,28 @@ def submit_record_batch(
         return None
     if _writer_is_active():
         return _RejectedRecordBatch()
-    return index_records_batch_task(
-        record_payloads,
-        priority=RECORD_BATCH_TASK_PRIORITY,
+    canonical_key = hashlib.sha256(
+        json.dumps(record_payloads, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    claim = _intent_claim(
+        "index_records_batch",
+        canonical_key,
+        {"record_count": len(record_payloads)},
     )
+    if claim is None:
+        return _RejectedRecordBatch()
+    intent, claim_token = claim
+    try:
+        return index_records_batch_task(
+            record_payloads,
+            priority=RECORD_BATCH_TASK_PRIORITY,
+            intent_id=intent.intent_id,
+            claim_token=claim_token,
+        )
+    except Exception:
+        if _intent_store() is not None:
+            _release_intent(intent.intent_id, claim_token)
+        raise
 
 
 def get_pending_index_document_count(file_paths: list[str]) -> int:
@@ -1268,10 +1424,25 @@ def submit_remove_request(doc_id: str) -> TaskSubmissionResult:
         warning_message="Skipping remove enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
         return TaskSubmissionResult(status="backpressured")
-    enqueued = submit_single_task(remove_document_task, doc_id)
-    if enqueued:
-        return TaskSubmissionResult(status="enqueued")
-    return TaskSubmissionResult(status="already_pending")
+    claim = _intent_claim(
+        "remove_document",
+        _canonical_document_identity(doc_id),
+        {"doc_id": doc_id},
+    )
+    if claim is None:
+        return TaskSubmissionResult(status="already_pending")
+    intent, claim_token = claim
+    try:
+        remove_document_task(
+            doc_id,
+            intent_id=intent.intent_id,
+            claim_token=claim_token,
+        )
+    except Exception:
+        if _intent_store() is not None:
+            _release_intent(intent.intent_id, claim_token)
+        raise
+    return TaskSubmissionResult(status="enqueued")
 
 
 def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult:
@@ -1290,11 +1461,71 @@ def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult
             already_pending_count=unique_count,
         )
 
-    return _submit_backpressure_limited_batch_request(
-        task_submitter=remove_documents_batch_task,
-        batch_name="document",
-        items=doc_ids,
-        pending_items=_get_pending_remove_doc_ids(),
+    unique_doc_ids = list(dict.fromkeys(doc_ids))
+    pending_doc_ids = _get_pending_remove_doc_ids()
+    remaining_doc_ids = [
+        doc_id
+        for doc_id in unique_doc_ids
+        if _canonical_document_identity(doc_id) not in pending_doc_ids
+    ]
+    already_pending_count = len(unique_doc_ids) - len(remaining_doc_ids)
+    if not remaining_doc_ids:
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=len(unique_doc_ids),
+            enqueued_count=0,
+            already_pending_count=already_pending_count,
+        )
+    if is_backpressured(
+        _huey,
+        _task_backpressure_limit,
+        item=f"{len(remaining_doc_ids)} document(s)",
+        warning_message="Skipping document batch enqueue due to task queue backpressure (%d pending >= %d limit)",
+    ):
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=len(unique_doc_ids),
+            enqueued_count=0,
+            already_pending_count=already_pending_count,
+            backpressured_items=tuple(remaining_doc_ids),
+        )
+    keyed_claims, skipped_count = _intent_claim_batch(
+        "remove_document",
+        [
+            (
+                _canonical_document_identity(doc_id),
+                {"doc_id": doc_id},
+            )
+            for doc_id in remaining_doc_ids
+        ],
+    )
+    already_pending_count += skipped_count
+    claims = [claim for _, claim in keyed_claims]
+    claim_keys = {key for key, _ in keyed_claims}
+    task_doc_ids = [
+        doc_id
+        for doc_id in remaining_doc_ids
+        if _canonical_document_identity(doc_id) in claim_keys
+    ]
+    if not claims:
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=len(unique_doc_ids),
+            enqueued_count=0,
+            already_pending_count=already_pending_count,
+        )
+    try:
+        remove_documents_batch_task(task_doc_ids, intent_claims=claims)
+    except Exception:
+        if _intent_store() is not None:
+            for intent_id, claim_token in claims:
+                _release_intent(intent_id, claim_token)
+        raise
+    return TaskBatchSubmissionResult(
+        queue_available=True,
+        requested_unique_count=len(unique_doc_ids),
+        enqueued_count=len(task_doc_ids),
+        already_pending_count=already_pending_count,
     )
 
 
@@ -1345,19 +1576,30 @@ def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
             completed_at=datetime.now(UTC).isoformat(),
         )
         return TaskSubmissionResult(status="backpressured")
+    claim = _intent_claim(
+        "refresh_git_repository",
+        _git_refresh_key(git_dir),
+        {"git_dir": git_dir},
+    )
+    if claim is None:
+        with _git_refresh_lock:
+            _git_refresh_pending.discard(git_dir_key)
+        return TaskSubmissionResult(status="already_pending")
+    intent, claim_token = claim
     try:
-        enqueued = submit_single_task(
-            refresh_git_repository_task,
+        refresh_git_repository_task(
             git_dir,
-            task_kwargs={"priority": GIT_REFRESH_TASK_PRIORITY},
-            pending_first_args=_get_pending_refresh_git_dirs(),
-            pending_skip_log_message="Skipping git refresh enqueue for %s because a pending task already exists",
+            priority=GIT_REFRESH_TASK_PRIORITY,
+            intent_id=intent.intent_id,
+            claim_token=claim_token,
         )
     except Exception:
+        if _intent_store() is not None:
+            _release_intent(intent.intent_id, claim_token)
         with _git_refresh_lock:
             _git_refresh_pending.discard(git_dir_key)
         raise
-    if enqueued:
+    if claim:
         _save_git_refresh_progress(
             Path(git_dir),
             state="queued",
@@ -1426,9 +1668,25 @@ def submit_rebuild_request(
         writer_store.release_writer(request_id)
         return TaskSubmissionResult(status="backpressured")
 
+    claim = _intent_claim(
+        "rebuild_index",
+        project_override or "__global__",
+        {"project_override": project_override, "request_id": request_id},
+    )
+    if claim is None:
+        writer_store.release_writer(request_id)
+        return TaskSubmissionResult(status="already_pending")
+    intent, claim_token = claim
     try:
-        rebuild_index_task(project_override, request_id=request_id)
+        rebuild_index_task(
+            project_override,
+            request_id=request_id,
+            intent_id=intent.intent_id,
+            claim_token=claim_token,
+        )
     except Exception:
+        if _intent_store() is not None:
+            _release_intent(intent.intent_id, claim_token)
         writer_store.release_writer(request_id)
         raise
     return TaskSubmissionResult(status="enqueued")
@@ -1453,14 +1711,35 @@ def submit_reindex_request(
         warning_message="Skipping reindex enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
         return TaskSubmissionResult(status="backpressured")
-    reindex_model_task(
-        operation,
-        model,
-        truncate_dim,
-        old_model,
-        request_id=request_id,
-        priority=REINDEX_TASK_PRIORITY,
+    claim = _intent_claim(
+        "reindex_model",
+        f"{operation}:{model}:{truncate_dim}:{old_model}",
+        {
+            "operation": operation,
+            "model": model,
+            "truncate_dim": truncate_dim,
+            "old_model": old_model,
+            "request_id": request_id,
+        },
     )
+    if claim is None:
+        return TaskSubmissionResult(status="already_pending")
+    intent, claim_token = claim
+    try:
+        reindex_model_task(
+            operation,
+            model,
+            truncate_dim,
+            old_model,
+            request_id=request_id,
+            priority=REINDEX_TASK_PRIORITY,
+            intent_id=intent.intent_id,
+            claim_token=claim_token,
+        )
+    except Exception:
+        if _intent_store() is not None:
+            _release_intent(intent.intent_id, claim_token)
+        raise
     return TaskSubmissionResult(status="enqueued")
 
 

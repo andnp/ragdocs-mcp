@@ -1,0 +1,318 @@
+"""Durable intent state for task producers and Huey workers."""
+
+from __future__ import annotations
+
+import json
+import secrets
+import sqlite3
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+PENDING = "pending"
+CLAIMED = "claimed"
+RUNNING = "running"
+SUCCEEDED = "succeeded"
+FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class WorkIntent:
+    intent_id: str
+    operation: str
+    canonical_key: str
+    payload: dict[str, Any]
+    state: str
+    claim_token: str | None
+    claim_observed_at: float | None
+    observed_at: float
+    attempt: int
+    error: str | None
+
+
+class WorkIntentStore:
+    """SQLite-backed source of truth for producer work intents."""
+
+    def __init__(self, db_path: Path, *, claim_timeout_seconds: float = 60.0) -> None:
+        self._db_path = Path(db_path)
+        self._claim_timeout_seconds = claim_timeout_seconds
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def submit(
+        self,
+        operation: str,
+        canonical_key: str,
+        payload: dict[str, Any],
+        *,
+        now: float | None = None,
+    ) -> WorkIntent:
+        timestamp = time.time() if now is None else now
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM work_intents
+                WHERE operation = ? AND canonical_key = ?
+                """,
+                (operation, canonical_key),
+            ).fetchone()
+            if row is None:
+                intent_id = secrets.token_hex(16)
+                connection.execute(
+                    """
+                    INSERT INTO work_intents (
+                        intent_id, operation, canonical_key, payload_json,
+                        state, claim_token, claim_observed_at, observed_at,
+                        attempt, error
+                    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, 0, NULL)
+                    """,
+                    (
+                        intent_id,
+                        operation,
+                        canonical_key,
+                        encoded,
+                        PENDING,
+                        timestamp,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM work_intents WHERE intent_id = ?",
+                    (intent_id,),
+                ).fetchone()
+            elif row["state"] == FAILED:
+                connection.execute(
+                    """
+                    UPDATE work_intents
+                    SET payload_json = ?, state = ?, claim_token = NULL,
+                        claim_observed_at = NULL, observed_at = ?, error = NULL
+                    WHERE intent_id = ?
+                    """,
+                    (encoded, PENDING, timestamp, row["intent_id"]),
+                )
+                row = connection.execute(
+                    "SELECT * FROM work_intents WHERE intent_id = ?",
+                    (row["intent_id"],),
+                ).fetchone()
+            assert row is not None
+            return _row_to_intent(row)
+
+    def claim(
+        self,
+        intent_id: str,
+        *,
+        now: float | None = None,
+    ) -> tuple[WorkIntent, str] | None:
+        timestamp = time.time() if now is None else now
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM work_intents WHERE intent_id = ?",
+                (intent_id,),
+            ).fetchone()
+            if row is None or row["state"] not in {PENDING, CLAIMED}:
+                return None
+            if (
+                row["state"] == CLAIMED
+                and row["claim_observed_at"] is not None
+                and float(row["claim_observed_at"])
+                > timestamp - self._claim_timeout_seconds
+            ):
+                return None
+            token = secrets.token_hex(16)
+            connection.execute(
+                """
+                UPDATE work_intents
+                SET state = ?, claim_token = ?, claim_observed_at = ?,
+                    observed_at = ?, attempt = attempt + 1, error = NULL
+                WHERE intent_id = ?
+                """,
+                (CLAIMED, token, timestamp, timestamp, intent_id),
+            )
+            claimed = connection.execute(
+                "SELECT * FROM work_intents WHERE intent_id = ?",
+                (intent_id,),
+            ).fetchone()
+            assert claimed is not None
+            return _row_to_intent(claimed), token
+
+    def start(self, intent_id: str, claim_token: str) -> bool:
+        return self._transition(
+            intent_id,
+            claim_token,
+            from_states={CLAIMED},
+            state=RUNNING,
+        )
+
+    def succeed(
+        self,
+        intent_id: str,
+        claim_token: str,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        return self._transition(
+            intent_id,
+            claim_token,
+            from_states={CLAIMED, RUNNING},
+            state=SUCCEEDED,
+            now=now,
+        )
+
+    def fail(
+        self,
+        intent_id: str,
+        claim_token: str,
+        error: str,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        timestamp = time.time() if now is None else now
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE work_intents
+                SET state = ?, claim_token = NULL, claim_observed_at = NULL,
+                    observed_at = ?, error = ?
+                WHERE intent_id = ? AND claim_token = ?
+                  AND state IN (?, ?)
+                """,
+                (FAILED, timestamp, error, intent_id, claim_token, CLAIMED, RUNNING),
+            )
+            return cursor.rowcount == 1
+
+    def release(self, intent_id: str, claim_token: str, *, now: float | None = None) -> bool:
+        timestamp = time.time() if now is None else now
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE work_intents
+                SET state = ?, claim_token = NULL, claim_observed_at = NULL,
+                    observed_at = ?
+                WHERE intent_id = ? AND claim_token = ? AND state = ?
+                """,
+                (PENDING, timestamp, intent_id, claim_token, CLAIMED),
+            )
+            return cursor.rowcount == 1
+
+    def recover_stale_claims(self, *, now: float | None = None) -> int:
+        timestamp = time.time() if now is None else now
+        cutoff = timestamp - self._claim_timeout_seconds
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE work_intents
+                SET state = ?, claim_token = NULL, claim_observed_at = NULL,
+                    observed_at = ?, error = ?
+                WHERE state IN (?, ?) AND claim_observed_at <= ?
+                """,
+                (
+                    PENDING,
+                    timestamp,
+                    "claim expired before terminal state",
+                    CLAIMED,
+                    RUNNING,
+                    cutoff,
+                ),
+            )
+            return cursor.rowcount
+
+    def get(self, intent_id: str) -> WorkIntent | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM work_intents WHERE intent_id = ?",
+                (intent_id,),
+            ).fetchone()
+        return None if row is None else _row_to_intent(row)
+
+    def list_active(self, *, limit: int = 100) -> list[WorkIntent]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM work_intents
+                WHERE state IN (?, ?, ?)
+                ORDER BY observed_at ASC
+                LIMIT ?
+                """,
+                (PENDING, CLAIMED, RUNNING, max(1, min(limit, 1000))),
+            ).fetchall()
+        return [_row_to_intent(row) for row in rows]
+
+    def _transition(
+        self,
+        intent_id: str,
+        claim_token: str,
+        *,
+        from_states: set[str],
+        state: str,
+        now: float | None = None,
+    ) -> bool:
+        timestamp = time.time() if now is None else now
+        placeholders = ",".join("?" for _ in from_states)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE work_intents
+                SET state = ?, claim_token = NULL, claim_observed_at = NULL,
+                    observed_at = ?, error = NULL
+                WHERE intent_id = ? AND claim_token = ?
+                  AND state IN ({placeholders})
+                """,
+                (state, timestamp, intent_id, claim_token, *from_states),
+            )
+            return cursor.rowcount == 1
+
+    def _initialize(self) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS work_intents (
+                    intent_id TEXT PRIMARY KEY,
+                    operation TEXT NOT NULL,
+                    canonical_key TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    claim_token TEXT,
+                    claim_observed_at REAL,
+                    observed_at REAL NOT NULL,
+                    attempt INTEGER NOT NULL,
+                    error TEXT,
+                    UNIQUE(operation, canonical_key)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_work_intents_state_observed
+                ON work_intents (state, observed_at)
+                """
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self._db_path, timeout=30.0)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 30000")
+        return connection
+
+
+def _row_to_intent(row: sqlite3.Row) -> WorkIntent:
+    return WorkIntent(
+        intent_id=str(row["intent_id"]),
+        operation=str(row["operation"]),
+        canonical_key=str(row["canonical_key"]),
+        payload=json.loads(str(row["payload_json"])),
+        state=str(row["state"]),
+        claim_token=(
+            None if row["claim_token"] is None else str(row["claim_token"])
+        ),
+        claim_observed_at=(
+            None
+            if row["claim_observed_at"] is None
+            else float(row["claim_observed_at"])
+        ),
+        observed_at=float(row["observed_at"]),
+        attempt=int(row["attempt"]),
+        error=None if row["error"] is None else str(row["error"]),
+    )
