@@ -111,6 +111,14 @@ class SearchExecution:
     query_execution_stats: dict[str, object] = field(default_factory=dict)
 
 
+def _record_project_id(record: Record) -> str | None:
+    workspace_id = record.workspace_id
+    if workspace_id is not None:
+        return workspace_id
+    project_id = record.metadata.get("project_id")
+    return project_id if isinstance(project_id, str) else None
+
+
 class ApplicationSearchUseCase:
     """Apply application query policy, execute search, and map results."""
 
@@ -133,8 +141,6 @@ class ApplicationSearchUseCase:
         filters: dict[str, object] = {}
         if request.source_filter:
             filters["source_kinds"] = list(request.source_filter)
-        if request.project_filter:
-            filters["project_ids"] = list(request.project_filter)
         if request.excluded_files:
             filters["excluded_files"] = sorted(request.excluded_files)
         if request.min_score is not None:
@@ -166,7 +172,7 @@ class ApplicationSearchUseCase:
             for result in outcome.results
             if (
                 not request.project_filter
-                or result.record.metadata.get("project_id") in request.project_filter
+                or _record_project_id(result.record) in request.project_filter
             )
             and (request.min_score is None or result.score >= request.min_score)
             and not self._is_excluded(result.record.metadata, request.excluded_files)
