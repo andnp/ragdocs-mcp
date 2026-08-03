@@ -158,7 +158,7 @@ async def test_commit_project_filter_uses_workspace_identity(repo, tmp_path):
         top_k=10,
         top_n=5,
         source_filter=["git_commit"],
-        project_filter=["repo-project"],
+        project_filter=["other-project", "repo-project"],
     )
 
     assert results

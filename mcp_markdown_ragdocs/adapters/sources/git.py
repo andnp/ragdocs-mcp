@@ -141,6 +141,8 @@ class GitContentSource:
             "doc_id": commit_id,
             "commit_id": commit_id,
         }
+        if self.workspace_id is not None:
+            metadata["project_id"] = self.workspace_id
 
         return tuple(
             Record(

@@ -127,6 +127,7 @@ class TestGitContentSourceIterRecords:
             # Check all required fields
             assert record.source_kind == "git_commit"
             assert record.workspace_id == "workspace-a"
+            assert record.metadata["project_id"] == "workspace-a"
             assert record.source_id.startswith(f"git:{commit_hash}:summary:")
             assert record.title == "Initial commit"
             assert len(record.body) > 0
