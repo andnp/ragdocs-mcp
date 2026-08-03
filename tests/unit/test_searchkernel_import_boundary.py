@@ -7,23 +7,13 @@ from scripts.check_public_searchkernel_imports import (
     find_private_imports_in_source,
 )
 
-
 PACKAGE_ROOT = Path(__file__).parents[2] / "mcp_markdown_ragdocs"
 
 
-def test_app_does_not_import_removed_searchkernel_modules() -> None:
-    removed_modules = {
-        "searchkernel.indices.vector",
-        "searchkernel.indices.keyword",
-        "searchkernel.indices.graph",
-        "searchkernel.search.path_utils",
-        "searchkernel.indexing.async_ingestion",
-    }
+def test_app_uses_public_searchkernel_imports() -> None:
     violations = find_private_imports(PACKAGE_ROOT)
 
-    assert not {
-        violation.imported_module for violation in violations
-    } & removed_modules
+    assert violations == []
 
 
 @pytest.mark.parametrize(

@@ -31,6 +31,9 @@ jobs:
       - name: Run ruff linter
         run: uv run ruff check .
 
+      - name: Check searchkernel import boundary
+        run: uv run python scripts/check_public_searchkernel_imports.py
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
