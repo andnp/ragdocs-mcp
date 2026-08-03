@@ -10,6 +10,7 @@ import errno
 import threading
 import time
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from huey import SqliteHuey
@@ -155,6 +156,55 @@ class TestHueyWorker:
             worker.stop()
 
         assert results == [7]
+
+    def test_requeues_lease_that_expires_after_start(
+        self,
+        huey_instance: SqliteHuey,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        results: list[int] = []
+
+        @huey_instance.task()
+        def append_value(x: int) -> None:
+            results.append(x)
+
+        append_value(11)
+        task = huey_instance.dequeue()
+        assert task is not None
+        lease_store = TaskLeaseStore(
+            Path(str(cast(Any, huey_instance.storage).filename)),
+            timeout_seconds=0.1,
+        )
+        assert lease_store.claim(
+            task.id,
+            task_name=task.name,
+            owner_token="stale-owner",
+            payload=huey_instance.serialize_task(task),
+            now=time.time() + 0.2,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_TIMEOUT_SECONDS",
+            0.1,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_RECLAIM_INTERVAL_SECONDS",
+            0.01,
+        )
+
+        worker = HueyWorker(huey_instance)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while not results and time.monotonic() < deadline:
+                time.sleep(0.05)
+        finally:
+            worker.stop()
+
+        assert results == [11]
+        lease = lease_store.get(task.id)
+        assert lease is not None
+        assert lease.state == "completed"
+        assert lease.attempt == 2
 
     def test_double_start_is_safe(self, huey_instance: SqliteHuey) -> None:
         """Starting twice doesn't create duplicate threads."""
