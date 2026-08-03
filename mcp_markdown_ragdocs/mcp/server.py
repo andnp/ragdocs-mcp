@@ -14,8 +14,17 @@ os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TQDM_DISABLE", "1")
 
 from mcp.server import Server
+from mcp.server.context import ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ContentBlock,
+    ListToolsResult,
+    PaginatedRequestParams,
+    TextContent,
+    Tool,
+)
 
 from mcp_markdown_ragdocs.daemon.health import (
     request_daemon_socket,
@@ -53,18 +62,30 @@ def wait_for_daemon_ready(*args, **kwargs):
 class MCPServer:
     def __init__(self, project_override: str | None = None):
         self.project_override = project_override
-        self.server = Server("mcp-markdown-ragdocs")
+        self.server = Server(
+            "mcp-markdown-ragdocs",
+            on_list_tools=self._list_tools,
+            on_call_tool=self._call_tool,
+        )
 
-        self._setup_handlers()
+    async def _list_tools(
+        self,
+        _ctx: ServerRequestContext[object, object],
+        _params: PaginatedRequestParams | None,
+    ) -> ListToolsResult:
+        return ListToolsResult(tools=await self._get_remote_tools())
 
-    def _setup_handlers(self) -> None:
-        @self.server.list_tools()
-        async def list_tools() -> list[Tool]:
-            return await self._get_remote_tools()
-
-        @self.server.call_tool()
-        async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-            return await self._call_remote_tool(name, arguments)
+    async def _call_tool(
+        self,
+        _ctx: ServerRequestContext[object, CallToolRequestParams],
+        params: CallToolRequestParams,
+    ) -> CallToolResult:
+        return CallToolResult(
+            content=await self._call_remote_tool(
+                params.name,
+                params.arguments or {},
+            )
+        )
 
     def _get_daemon_metadata(self) -> tuple[Path, str]:
         metadata = start_daemon(
@@ -135,7 +156,7 @@ class MCPServer:
                 Tool(
                     name=str(tool.get("name", "")),
                     description=str(tool.get("description", "")),
-                    inputSchema=tool.get("inputSchema", {}),
+                    input_schema=tool.get("inputSchema", {}),
                 )
                 for tool in tools
                 if isinstance(tool, dict)
@@ -150,7 +171,7 @@ class MCPServer:
         self,
         name: str,
         arguments: dict,
-    ) -> list[TextContent]:
+    ) -> list[ContentBlock]:
         try:
             async with asyncio.timeout(_MCP_DAEMON_OPERATION_TIMEOUT_SECONDS):
                 socket_path, _status = await asyncio.to_thread(self._get_daemon_metadata)
@@ -165,14 +186,16 @@ class MCPServer:
             contents = response.get("contents")
             if not isinstance(contents, list):
                 raise TypeError("Daemon returned an invalid MCP tool response")
-            return [
-                TextContent(
-                    type=_TEXT_CONTENT_TYPE,
-                    text=str(content.get("text", "")),
-                )
-                for content in contents
-                if isinstance(content, dict)
-            ]
+            result: list[ContentBlock] = []
+            for content in contents:
+                if isinstance(content, dict):
+                    result.append(
+                        TextContent(
+                            type=_TEXT_CONTENT_TYPE,
+                            text=str(content.get("text", "")),
+                        )
+                    )
+            return result
         except TimeoutError as exc:
             raise RuntimeError(f"MCP daemon tool '{name}' timed out") from exc
         except Exception as exc:

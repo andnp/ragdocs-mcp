@@ -102,7 +102,7 @@ def test_build_mcp_tools_payload_uses_registered_tools(monkeypatch) -> None:
             SimpleNamespace(
                 name="query_documents",
                 description="Search docs",
-                inputSchema={"type": "object"},
+                input_schema={"type": "object"},
             )
         ],
     )

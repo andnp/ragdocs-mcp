@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 from pathlib import Path
 
 from mcp.types import TextContent, Tool
@@ -51,7 +51,7 @@ def get_document_tools() -> list[Tool]:
                 + "Use for discovering relevant documentation sections in a large corpus. "
                 + "Supports optional uniqueness_mode parameter for document-unique results."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "query": {
@@ -117,7 +117,7 @@ def get_document_tools() -> list[Tool]:
                 + "Useful for vague queries where you can describe the expected documentation content. "
                 + "The hypothesis is embedded and used directly for semantic search (HyDE technique)."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "hypothesis": {
@@ -158,7 +158,7 @@ def get_document_tools() -> list[Tool]:
                 + "Returns relevant commits with metadata, message, and diff context. "
                 + "Supports filtering by file glob patterns and timestamp ranges."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "query": {

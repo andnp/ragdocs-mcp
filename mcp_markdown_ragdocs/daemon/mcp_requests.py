@@ -13,13 +13,14 @@ from mcp_markdown_ragdocs.mcp.handlers import (
 )
 from mcp_markdown_ragdocs.mcp.tools.document_tools import get_document_tools
 
+
 def build_mcp_tools_payload() -> dict[str, object]:
     return {
         "tools": [
             {
                 "name": tool.name,
                 "description": tool.description,
-                "inputSchema": tool.inputSchema,
+                "inputSchema": tool.input_schema,
             }
             for tool in get_document_tools()
         ]
