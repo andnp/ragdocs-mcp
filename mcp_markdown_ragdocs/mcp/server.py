@@ -17,7 +17,6 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-import mcp_markdown_ragdocs.mcp.tools.document_tools  # noqa: F401 - registers handlers
 from mcp_markdown_ragdocs.daemon.health import (
     request_daemon_socket,
 )
