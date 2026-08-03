@@ -821,24 +821,6 @@ def _refresh_git_repository(git_dir: str) -> bool:
             if _bootstrap_index_path is not None
             else None
         )
-        if (
-            _bootstrap_index_path is not None
-            and refresh_head is not None
-            and cursor is not None
-            and get_head(_bootstrap_index_path, git_dir_path) == refresh_head
-        ):
-            logger.debug("Skipping unchanged git repository %s", git_dir_path)
-            _save_git_refresh_progress(
-                git_dir_path,
-                state="skipped",
-                started_at=started_at,
-                cursor=cursor,
-                processed_count=0,
-                discovered_count=0,
-                completed_at=datetime.now(UTC).isoformat(),
-            )
-            return True
-
         since = str(max(0, cursor - 1)) if cursor is not None else None
         config = getattr(manager, "_config", None) or load_config()
         source = GitContentSource(
@@ -862,6 +844,24 @@ def _refresh_git_repository(git_dir: str) -> bool:
                 repaired,
                 git_dir_path.parent,
             )
+        if (
+            _bootstrap_index_path is not None
+            and refresh_head is not None
+            and cursor is not None
+            and get_head(_bootstrap_index_path, git_dir_path) == refresh_head
+        ):
+            logger.debug("Skipping unchanged git repository %s", git_dir_path)
+            _save_git_refresh_progress(
+                git_dir_path,
+                state="skipped",
+                started_at=started_at,
+                cursor=cursor,
+                processed_count=0,
+                discovered_count=0,
+                completed_at=datetime.now(UTC).isoformat(),
+            )
+            return True
+
         latest_cursor = cursor
         initial_embedding_metrics = _embedding_cache_metrics(manager)
 
