@@ -1,8 +1,10 @@
 """Integration coverage for the canonical record-backed index stack."""
 
+import asyncio
 from pathlib import Path
 
 from mcp_markdown_ragdocs.config import Config, IndexingConfig
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 from tests.integration._canonical import make_record_index_manager
 
 
@@ -97,6 +99,30 @@ def test_markdown_links_retrieve_indexed_target_chunks(tmp_path):
     assert neighbors
     assert all(neighbor.identity.source_id.startswith("target_chunk_") for neighbor in neighbors)
     assert manager.graph.graph_integrity_errors() == []
+
+
+def test_root_relative_markdown_links_retrieve_graph_neighbors(tmp_path):
+    manager = _manager(tmp_path)
+    docs = Path(manager._config.indexing.documents_path)
+    source = docs / "nested" / "source.md"
+    target = docs / "target.md"
+    source.parent.mkdir()
+    source.write_text("# Source\n\nSee [target](/target.md).")
+    target.write_text("# Target\n\nRoot-relative graph target content.")
+
+    manager.index_document(str(source))
+    manager.index_document(str(target))
+
+    source_record = manager.prepare_document(str(source)).records[0]
+    assert manager.graph.neighbors(source_record.identity)
+    _, _, stats = asyncio.run(
+        CanonicalSearchAdapter(manager, documents_path=docs).query(
+            "what links to target",
+            top_k=20,
+            top_n=5,
+        )
+    )
+    assert stats.graph_count == 1
 
 
 def test_empty_document_does_not_break_record_manager(tmp_path):

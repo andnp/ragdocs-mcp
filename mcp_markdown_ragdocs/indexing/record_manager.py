@@ -13,12 +13,12 @@ import json
 import logging
 import os
 import re
-from urllib.parse import unquote, urlparse
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from searchkernel.api import (
     GraphEdge,
@@ -445,14 +445,21 @@ class RecordIndexManager:
         raw_path = unquote(parsed.path).strip()
         if not raw_path:
             return None
+        normalized_path = raw_path.lstrip("/")
         source_path = (
             Path(document.file_path)
             if isinstance(document, Document)
             else Path(str(document.metadata.get("file_path", "")))
         )
-        candidates = [raw_path.removesuffix(".md")]
+        candidates = [normalized_path.removesuffix(".md")]
         if source_path:
             linked_path = (source_path.parent / raw_path).resolve()
+            if linked_path.suffix.lower() == ".md":
+                candidates.insert(0, self._doc_id_for_path(str(linked_path)))
+            else:
+                candidates.insert(0, self._doc_id_for_path(str(linked_path.with_suffix(".md"))))
+        for root in self._documents_roots:
+            linked_path = (root / normalized_path).resolve()
             if linked_path.suffix.lower() == ".md":
                 candidates.insert(0, self._doc_id_for_path(str(linked_path)))
             else:
