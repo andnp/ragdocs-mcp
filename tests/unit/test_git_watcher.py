@@ -260,12 +260,17 @@ async def test_git_watcher_direct_refresh_accumulates_batches(
         lambda _root, _git_dir: "old-head",
     )
     monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.resolve_project_id_for_path",
+        lambda _path, _config: "repo-project",
+    )
+    monkeypatch.setattr(
         "mcp_markdown_ragdocs.git.watcher.time.time",
         lambda: 456,
     )
 
     async def _receipts(_manager, source, *, since, batch_size):
         observed["repo_path"] = source.repo_path
+        observed["workspace_id"] = source.workspace_id
         observed["since"] = since
         observed["batch_size"] = batch_size
         yield SimpleNamespace(records=(object(), object()))
@@ -280,6 +285,7 @@ async def test_git_watcher_direct_refresh_accumulates_batches(
     await watcher._batch_process({git_dir})
 
     assert observed["repo_path"] == git_dir.parent
+    assert observed["workspace_id"] == "repo-project"
     assert observed["since"] == "123"
     assert observed["batch_size"] == GIT_REFRESH_BATCH_SIZE
     assert watcher._last_indexed[git_dir] == 456

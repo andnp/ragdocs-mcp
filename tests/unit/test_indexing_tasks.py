@@ -1144,12 +1144,18 @@ class TestTaskExecution:
         tmp_path: Path,
     ) -> None:
         register_tasks(huey_instance, fake_manager)
+        cast(Any, fake_manager)._config = SimpleNamespace(
+            projects=[],
+            detected_project="repo-project",
+            indexing=SimpleNamespace(documents_path=str(tmp_path)),
+        )
 
         observed: dict[str, object] = {}
 
         async def _receipts(manager, source, *, since, batch_size):
             observed["index_manager"] = manager
             observed["repo_path"] = source.repo_path
+            observed["workspace_id"] = source.workspace_id
             observed["since"] = since
             observed["batch_size"] = batch_size
             yield SimpleNamespace(records=(object(),), failed=0, checkpoint=None)
@@ -1169,6 +1175,7 @@ class TestTaskExecution:
 
         assert observed["index_manager"] is fake_manager
         assert observed["repo_path"] == git_dir.parent
+        assert observed["workspace_id"] == "repo-project"
         assert observed["since"] is None
         assert fake_manager.persist_calls == 1
 

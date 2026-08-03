@@ -39,6 +39,7 @@ from mcp_markdown_ragdocs.config import (
     load_config,
     resolve_documents_path,
     resolve_index_path,
+    resolve_project_id_for_path,
 )
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
 from mcp_markdown_ragdocs.indexing.record_manager import (
@@ -1329,7 +1330,13 @@ class ApplicationContext:
 
         for repo_path in repos:
             try:
-                source = GitContentSource(repo_path)
+                source = GitContentSource(
+                    repo_path,
+                    workspace_id=resolve_project_id_for_path(
+                        repo_path.parent,
+                        self.config,
+                    ),
+                )
                 for record in source.iter_records():
                     self.index_manager.index_record(record)
             except Exception:
