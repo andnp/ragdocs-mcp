@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, cast
 
 
 @dataclass(frozen=True)
@@ -23,22 +23,56 @@ def write_producer_metadata(path: Path, metadata: ProducerMetadata) -> None:
     path.write_text(json.dumps(asdict(metadata), sort_keys=True), encoding="utf-8")
 
 
+def _valid_pid(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _valid_start_time_ticks(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _valid_started_at(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
 def read_producer_metadata(path: Path) -> ProducerMetadata | None:
     if not path.exists():
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        return ProducerMetadata(**cast(Any, payload))
+        if not isinstance(payload, dict):
+            return None
+        if not _valid_pid(payload.get("pid")):
+            return None
+        if not _valid_start_time_ticks(payload.get("start_time_ticks")):
+            return None
+        if not _valid_started_at(payload.get("started_at")):
+            return None
+        if not isinstance(payload.get("status", "active"), str):
+            return None
+        stop_reason = payload.get("stop_reason")
+        if stop_reason is not None and not isinstance(stop_reason, str):
+            return None
+        return ProducerMetadata(**payload)
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
 
 
 def producer_is_live(metadata: ProducerMetadata | None) -> bool:
-    if metadata is None or metadata.status != "active":
+    if (
+        metadata is None
+        or metadata.status != "active"
+        or not _valid_pid(metadata.pid)
+        or not _valid_start_time_ticks(metadata.start_time_ticks)
+    ):
         return False
     try:
         os.kill(metadata.pid, 0)
-    except (ProcessLookupError, PermissionError):
+    except (OSError, TypeError, ValueError, OverflowError):
         return False
     actual_start_time = read_process_start_time_ticks(metadata.pid)
     return actual_start_time is not None and actual_start_time == metadata.start_time_ticks

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 from mcp_markdown_ragdocs.daemon.producer import (
     ProducerMetadata,
@@ -43,6 +44,27 @@ def test_producer_metadata_rejects_invalid_payload(tmp_path: Path) -> None:
     assert producer_diagnostics(None)["watcher_active"] is False
 
 
+def test_producer_metadata_rejects_malformed_identity_fields(tmp_path: Path) -> None:
+    path = tmp_path / "producer.json"
+    valid = {
+        "pid": 123,
+        "start_time_ticks": 456,
+        "started_at": 789.0,
+        "status": "active",
+        "stop_reason": None,
+    }
+    for field, value in (
+        ("pid", "123"),
+        ("pid", 0),
+        ("start_time_ticks", "456"),
+        ("start_time_ticks", -1),
+        ("started_at", "789.0"),
+    ):
+        payload = {**valid, field: value}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        assert read_producer_metadata(path) is None
+
+
 def test_producer_liveness_requires_pid_and_start_time_match(monkeypatch) -> None:
     metadata = ProducerMetadata(pid=123, start_time_ticks=456, started_at=1.0)
     monkeypatch.setattr("mcp_markdown_ragdocs.daemon.producer.os.kill", lambda *_: None)
@@ -56,6 +78,20 @@ def test_producer_liveness_requires_pid_and_start_time_match(monkeypatch) -> Non
         "mcp_markdown_ragdocs.daemon.producer.read_process_start_time_ticks",
         lambda _pid: 999,
     )
+    assert producer_is_live(metadata) is False
+
+
+def test_producer_liveness_rejects_malformed_metadata(monkeypatch) -> None:
+    metadata = ProducerMetadata(
+        pid=cast(int, "123"),
+        start_time_ticks=cast(int, "456"),
+        started_at=1.0,
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.producer.os.kill",
+        lambda *_: (_ for _ in ()).throw(TypeError),
+    )
+
     assert producer_is_live(metadata) is False
 
 
