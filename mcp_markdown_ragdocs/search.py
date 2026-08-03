@@ -43,6 +43,9 @@ class CanonicalSearchAdapter:
         self.documents_path = documents_path or Path(
             getattr(indexing, "documents_path", ".")
         )
+        self.documents_roots = tuple(
+            Path(root) for root in getattr(manager, "_documents_roots", (self.documents_path,))
+        )
         self._pipeline = manager.kernel.pipeline
         self.last_query_execution_stats: dict[str, object] = {}
 
@@ -70,13 +73,30 @@ class CanonicalSearchAdapter:
         source_filter: Sequence[str] | None = None,
         project_context: str | None = None,
         excluded_files: set[str] | None = None,
+        min_score: float | None = None,
+        similarity_threshold: float | None = None,
+        max_chunks_per_doc: int = 0,
         **_: object,
     ) -> tuple[list[ChunkResult], CompressionStats, SearchStrategyStats]:
         del pipeline_config, project_context
         filters: dict[str, object] = {}
         if source_filter:
             filters["source_kinds"] = list(source_filter)
+        if project_filter:
+            filters["project_ids"] = list(project_filter)
+        if excluded_files:
+            filters["excluded_files"] = sorted(excluded_files)
+        # These are part of the canonical query contract.  Searchkernel may
+        # consume them in a backend/policy, while the checks below remain a
+        # defense-in-depth boundary for backends that do not.
+        if min_score is not None:
+            filters["min_score"] = min_score
+        if similarity_threshold is not None:
+            filters["similarity_threshold"] = similarity_threshold
+        filters["max_chunks_per_doc"] = max_chunks_per_doc
         limit = max(top_k, top_n)
+        if max_chunks_per_doc > 0:
+            limit = max(limit, top_n * max(4, max_chunks_per_doc * 2))
         if source_filter == ["git_commit"]:
             limit = max(limit, top_n * 4)
         outcome = await self.search(query, limit=limit, filters=filters)
@@ -87,18 +107,23 @@ class CanonicalSearchAdapter:
                 not project_filter
                 or result.record.metadata.get("project_id") in project_filter
             )
+            and (min_score is None or result.score >= min_score)
             and not self._is_excluded(result.record.metadata, excluded_files)
         ]
-        maximum_score = max(
-            (result.score for result in filtered_results),
-            default=0.0,
-        )
+        if max_chunks_per_doc > 0:
+            counts: dict[str, int] = {}
+            unique_results = []
+            for result in filtered_results:
+                doc_id = str(
+                    result.record.metadata.get("doc_id", result.record.source_id)
+                )
+                if counts.get(doc_id, 0) >= max_chunks_per_doc:
+                    continue
+                counts[doc_id] = counts.get(doc_id, 0) + 1
+                unique_results.append(result)
+            filtered_results = unique_results
         results = [
-            self._to_chunk_result(
-                result.record,
-                result.score / maximum_score if maximum_score else result.score,
-                result.provenance,
-            )
+            self._to_chunk_result(result.record, result.score, result.provenance)
             for result in filtered_results
         ]
         if source_filter == ["git_commit"]:
@@ -108,11 +133,32 @@ class CanonicalSearchAdapter:
             "degraded": outcome.degraded,
             "failures": [failure.message for failure in outcome.failures],
         }
+        strategy_counts = {"semantic": 0, "keyword": 0, "graph": 0, "tag_expansion": 0}
+        for result in results:
+            for strategy in result.provenance.strategies:
+                strategy_name = {"vector": "semantic", "expansion": "tag_expansion"}.get(
+                    strategy, strategy
+                )
+                if strategy_name in strategy_counts:
+                    strategy_counts[strategy_name] += 1
         count = len(results)
         return (
             results,
-            CompressionStats(count, count, count, count, count, count, 0),
-            SearchStrategyStats(keyword_count=count),
+            CompressionStats(
+                len(outcome.results),
+                len(filtered_results),
+                len(filtered_results),
+                len(filtered_results),
+                len(filtered_results),
+                count,
+                0,
+            ),
+            SearchStrategyStats(
+                vector_count=strategy_counts["semantic"],
+                keyword_count=strategy_counts["keyword"],
+                graph_count=strategy_counts["graph"],
+                tag_expansion_count=strategy_counts["tag_expansion"],
+            ),
         )
 
     async def query_with_hypothesis(
@@ -178,12 +224,14 @@ class CanonicalSearchAdapter:
             path.stem,
             str(path.with_suffix("")),
         }
-        try:
-            relative = path.resolve().relative_to(self.documents_path)
-            candidates.add(str(relative))
-            candidates.add(str(relative.with_suffix("")))
-        except ValueError:
-            pass
+        resolved = path.resolve()
+        for root in self.documents_roots:
+            try:
+                relative = resolved.relative_to(root.resolve())
+                candidates.add(str(relative))
+                candidates.add(str(relative.with_suffix("")))
+            except ValueError:
+                continue
         return bool(candidates & excluded_files)
 
 
