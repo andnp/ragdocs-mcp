@@ -227,8 +227,8 @@ def test_query_endpoint_accepts_requests_and_returns_results(client):
             assert isinstance(chunk_id, str)
             assert isinstance(score, (int, float))
             assert 0.0 <= score <= 1.0
-        # Highest score should be high confidence (calibrated)
-        assert results[0]["score"] > 0.95
+        # Scores are raw RRF ranking scores, not calibrated confidence.
+        assert results[0]["score"] == max(result["score"] for result in results)
 
 
 def test_file_changes_trigger_index_updates(client, test_docs_dir):
@@ -554,13 +554,12 @@ def test_query_documents_scores_descending(client):
             )
 
 
-def test_query_documents_top_score_is_high_confidence(client):
+def test_query_documents_top_score_is_ranked_first(client):
     """
-    Test that the highest score in results represents high confidence.
+    Test that the highest raw RRF score is ranked first.
 
-    Validates calibration: high-quality matches should have confidence > 0.95.
-    With sigmoid calibration, scores represent absolute confidence, not
-    relative ranking, so top score won't always be exactly 1.0.
+    Raw RRF scores express relative ranking strength rather than calibrated
+    confidence, so a good result can have a score well below 1.0.
     """
     response = client.post(
         "/query_documents",
@@ -573,9 +572,7 @@ def test_query_documents_top_score_is_high_confidence(client):
 
     if results:
         top_score = results[0]["score"]
-        assert top_score > 0.95, (
-            f"Top score should be > 0.95 (high confidence), got {top_score}"
-        )
+        assert top_score == max(result["score"] for result in results)
 
 
 def test_query_documents_validates_top_n_range(client):

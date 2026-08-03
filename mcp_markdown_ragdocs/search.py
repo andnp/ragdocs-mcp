@@ -81,10 +81,21 @@ class CanonicalSearchAdapter:
                 similarity_threshold=similarity_threshold,
                 max_chunks_per_doc=max_chunks_per_doc,
                 retrieval_mode=retrieval_mode,
-            )
+            ),
+            search=self.search,
         )
         self.last_query_execution_stats = execution.query_execution_stats
         return execution.results, execution.compression_stats, execution.strategy_stats
+
+    def _is_excluded(
+        self,
+        metadata: dict[str, object],
+        excluded_files: set[str] | None,
+    ) -> bool:
+        return self.search_use_case._is_excluded(
+            metadata,
+            frozenset(excluded_files or ()),
+        )
 
     async def query_with_hypothesis(
         self,

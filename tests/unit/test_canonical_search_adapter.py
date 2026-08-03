@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 from searchkernel.domain import Record
 
+from mcp_markdown_ragdocs.app.search import SearchQuery
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 
@@ -171,3 +172,38 @@ async def test_empty_query_returns_no_results(adapter):
     results, _, _ = await adapter.query("", top_k=10, top_n=10)
 
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_application_use_case_applies_scope_filters(adapter):
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(
+            query="authentication",
+            top_n=10,
+            project_filter=("project-b",),
+            source_filter=("git_commit",),
+        )
+    )
+
+    assert [result.chunk_id for result in execution.results] == ["chunk-b"]
+
+
+@pytest.mark.asyncio
+async def test_application_use_case_preserves_raw_rrf_order(adapter):
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="authentication", top_n=10)
+    )
+    scores = [result.score for result in execution.results]
+
+    assert scores == sorted(scores, reverse=True)
+    assert scores
+    assert scores[0] <= 1.0
+
+
+@pytest.mark.asyncio
+async def test_application_use_case_returns_empty_for_unmatched_query(adapter):
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="authentication", top_n=10, min_score=1.0)
+    )
+
+    assert execution.results == []

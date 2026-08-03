@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -72,7 +72,12 @@ class ApplicationSearchUseCase:
         self._pipeline = pipeline
         self._documents_roots = tuple(documents_roots)
 
-    async def execute(self, request: SearchQuery) -> SearchExecution:
+    async def execute(
+        self,
+        request: SearchQuery,
+        *,
+        search: Callable[..., Awaitable[RecordSearchOutcome]] | None = None,
+    ) -> SearchExecution:
         filters: dict[str, object] = {}
         if request.source_filter:
             filters["source_kinds"] = list(request.source_filter)
@@ -94,7 +99,8 @@ class ApplicationSearchUseCase:
         if request.source_filter == ("git_commit",):
             limit = max(limit, request.top_n * 4)
 
-        outcome: RecordSearchOutcome = await self._pipeline.async_search(
+        search_fn = search or self._pipeline.async_search
+        outcome: RecordSearchOutcome = await search_fn(
             request.query,
             limit=limit,
             filters=filters,
