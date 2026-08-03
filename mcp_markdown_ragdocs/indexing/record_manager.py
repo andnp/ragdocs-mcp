@@ -8,9 +8,11 @@ connects those two responsibilities.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import re
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -19,17 +21,18 @@ from typing import Any
 
 from searchkernel.api import (
     GraphEdge,
+    LocalRecordKernel,
+    OllamaEmbeddingProvider,
     Record,
     RecordIdentity,
     RecordStatus,
+    SemanticRecordIngestor,
     SQLiteEmbeddingCache,
+    Vector,
     compute_doc_id,
     compute_doc_id_multi_root,
     get_chunker,
 )
-from searchkernel.domain import Vector
-from searchkernel.ingestion.records import SemanticRecordIngestor
-from searchkernel.local import LocalRecordKernel
 
 from mcp_markdown_ragdocs.config import Config, resolve_project_id_for_path
 from mcp_markdown_ragdocs.models import Document
@@ -50,12 +53,30 @@ class _FakeEmbeddingProvider:
     dim = 384
 
     def __init__(self) -> None:
-        from searchkernel.embeddings import DeterministicFakeEmbeddingModel
-
-        self._model = DeterministicFakeEmbeddingModel(self.dim)
+        self._model = _DeterministicFakeEmbeddingModel(self.dim)
 
     def embed(self, texts: list[str]) -> list[Vector]:
-        return [self._model._vector_for_text(text) for text in texts]
+        return [self._model.vector_for_text(text) for text in texts]
+
+
+class _DeterministicFakeEmbeddingModel:
+    def __init__(self, dimension: int) -> None:
+        self.dimension = dimension
+
+    def vector_for_text(self, text: str) -> Vector:
+        vector = [0.0] * self.dimension
+        tokens = re.findall(r"\b[a-zA-Z0-9_]+\b", text.lower()) or ["__empty__"]
+        for token in tokens:
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            primary = int.from_bytes(digest[:8], "big") % self.dimension
+            secondary = int.from_bytes(digest[8:16], "big") % self.dimension
+            sign = 1.0 if digest[16] % 2 == 0 else -1.0
+            vector[primary] += 1.0
+            vector[secondary] += 0.5 * sign
+        norm = sum(value * value for value in vector) ** 0.5
+        if norm > 0:
+            vector = [value / norm for value in vector]
+        return vector
 
 
 def build_embedding_provider(config: Config, model_name: str):
@@ -70,8 +91,6 @@ def build_embedding_provider(config: Config, model_name: str):
             "canonical indexing requires embedding.provider = 'ollama'; "
             f"got {config.embedding.provider!r}"
         )
-
-    from searchkernel.adapters.embedding.ollama import OllamaEmbeddingProvider
 
     return OllamaEmbeddingProvider(
         model_name,

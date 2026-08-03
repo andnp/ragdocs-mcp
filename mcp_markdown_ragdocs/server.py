@@ -11,19 +11,21 @@ from typing import Literal
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
-from searchkernel.api import classify_query_type, load_manifest, truncate_content
-from searchkernel.ports.federation import (
+from searchkernel.api import (
     FEDERATION_CONTRACT_VERSION,
     SearchRequest,
+    classify_query_type,
+    load_manifest,
+    truncate_content,
 )
 from starlette.responses import JSONResponse
 
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.federation import (
-    FederationRequestError,
     RAGDOCS_CAPABILITIES,
     RAGDOCS_SOURCE,
+    FederationRequestError,
     execute_federation_search,
 )
 from mcp_markdown_ragdocs.models import ChunkResult

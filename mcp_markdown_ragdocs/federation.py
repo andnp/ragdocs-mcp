@@ -4,21 +4,22 @@ from collections.abc import Mapping, Sequence
 from time import monotonic
 from typing import Any, cast
 
-from searchkernel.ports.federation import (
+from searchkernel.api import (
     FEDERATION_CONTRACT_VERSION,
-    JsonValue,
     MAX_SNIPPET_LENGTH,
     MAX_TOP_K,
+    FederationSourceCapabilities,
     SearchHit,
     SearchHitProvenance,
     SearchRequest,
     SearchResponse,
-    SourceCapabilities,
     SourceIdentity,
 )
 
+type JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+
 RAGDOCS_SOURCE = SourceIdentity(source_kind="ragdocs", source_id="local")
-RAGDOCS_CAPABILITIES = SourceCapabilities(
+RAGDOCS_CAPABILITIES = FederationSourceCapabilities(
     supports_filters=True,
     supports_source_selection=False,
     supports_rerank_text=False,
