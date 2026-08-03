@@ -97,6 +97,41 @@ Application modules may import searchkernel only through public modules. The
 guard in `scripts/check_public_searchkernel_imports.py` and its corresponding
 unit test enforce this boundary.
 
+### Final application ports
+
+The runtime-facing ports are deliberately small and structural:
+
+| Port | Owner | Responsibility |
+| --- | --- | --- |
+| `SearchKernelBoundary` | `app/search.py` | Execute canonical record search |
+| `IndexingService` | `app/services.py` | Submit or perform indexing work |
+| `LifecycleService` | `app/services.py` | Start, stop, and await readiness |
+| daemon transport protocols | `daemon/transport.py` | Move request payloads across local IPC |
+| router context protocols | `daemon/request_router.py` | Supply query, queue, and admin dependencies |
+
+`PipelineSearchBoundary` is the compatibility adapter from the installed
+searchkernel pipeline to `SearchKernelBoundary`. `CanonicalSearchAdapter`
+retains the historical `query()` tuple for in-repo callers, but delegates to
+`ApplicationSearchUseCase`; it is not a second search implementation.
+`IndexManagerLike` and the task protocols are similarly structural seams for
+worker execution. These seams are intentional compatibility surfaces while
+the external searchkernel API remains the storage and retrieval authority.
+
+### Score contract
+
+The `score` returned by MCP, CLI, HTTP, and daemon query responses is the
+canonical pipeline's raw weighted Reciprocal Rank Fusion (RRF) score. It is
+used to order results and to apply an explicit `min_score` filter. It is not
+a calibrated probability, confidence value, or percentage, and application
+code must not normalize it a second time. A strong result may therefore have
+a score well below `1.0`.
+
+Search provenance retains the contributing strategies and their raw strategy
+scores. `CompressionStats` and `SearchStrategyStats` describe the execution
+path; they do not change the score contract. The golden parity and canonical
+adapter tests enforce descending raw-RRF order and guard against accidental
+score calibration at a transport boundary.
+
 ## Indexing flow
 
 The application owns source-specific ingestion:
@@ -121,6 +156,45 @@ same indexing services and publishes state consumed by the daemon.
 
 Single-process indexing remains available for HTTP deployments, tests, and
 local debugging. It is an execution-mode choice, not a separate architecture.
+
+### Durable work intent lifecycle
+
+Indexing producers write a `WorkIntent` to SQLite before submitting a Huey
+task. The operation plus canonical key is unique, so duplicate file or remove
+requests converge on one durable intent. The normal lifecycle is:
+
+```text
+submit pending → claim claimed → start running → succeed | fail
+                       │                 │
+                       └─ release/recover stale claim → pending
+```
+
+Claims carry an opaque token and observation time. A producer must claim before
+enqueueing and pass that token into the task. The worker starts and terminalizes
+only the matching claim, so an old worker cannot complete a re-pended intent.
+Failed intents can be reopened by a later submission; stale claims are
+returned to `pending` after the configured timeout.
+
+Huey dequeue leases are a separate execution guard. An active lease is
+heartbeated during work, expired leases are reclaimed with their serialized
+payload, and terminal lease state is owner-token guarded. The dequeue and lease
+claim are still separate SQLite boundaries: a crash in that narrow gap remains
+the documented at-most-once edge, while successfully claimed work is
+at-least-once through payload requeue.
+
+### Producer liveness
+
+Managed producers write `producer.json` with PID, `/proc` start-time ticks,
+status, and stop reason. `watcher_active` is true only when both the PID and
+start time still match a live process; historical watcher statistics are not
+liveness evidence. A managed restart records `stop_reason="restart"` so
+diagnostics distinguish it from a normal shutdown.
+
+Task-only producers use `GitWatcher(use_tasks=True,
+allow_direct_refresh=False)`. They observe lightweight SQLite git state and
+submit durable work instead of indexing directly. This keeps expensive writes
+in the worker and prevents a watcher restart from creating an untracked
+second indexing path.
 
 ## Transport adapters
 
@@ -161,6 +235,19 @@ Administrative endpoints are routed by `daemon/request_router.py`. They may
 inspect queue, rebuild, index, or reindex state, but they do not bypass the
 application services for normal indexing or search.
 
+### Request diagnostics
+
+The local transport client generates a `request_id` for each request, and the
+daemon preserves and echoes a caller-supplied ID. Error responses echo the ID
+when one is available, allowing client logs to correlate validation, routing,
+and worker failures without embedding transport details in domain objects.
+
+Query responses include `query_execution_stats` from the shared use case. The
+current payload reports whether search degraded and the messages for strategy
+failures. Admin responses expose queue, worker, producer, and reindex status
+separately, so `watcher_active`, queue activity, and index readiness are not
+collapsed into one ambiguous health flag.
+
 ## Reindexing and persistence
 
 Durable embedding-model migration is an application orchestration concern.
@@ -199,3 +286,26 @@ When extending the system, add behavior to the appropriate application
 service or port adapter first, then cover the public seam. Do not introduce
 private searchkernel imports, transport-specific ranking logic, or a second
 snapshot/index abstraction.
+
+## Acceptance criteria
+
+An architecture change is considered complete when:
+
+1. Production code crosses searchkernel only through its public API and the
+   import-boundary check remains green.
+2. Query transports use the shared application use case and preserve raw-RRF
+   scores, provenance, and execution diagnostics.
+3. Worker shutdown, lifecycle recovery, reindex status transitions, durable
+   intent claims, and producer PID/start-time liveness have deterministic tests
+   using `tmp_path`, real SQLite, and local fakes.
+4. The production package passes Pyright and Ruff, and the full non-performance
+   suite clears the CI coverage floor with measured margin.
+5. Runtime acceptance tests cover daemon startup, readiness, restart
+   idempotency, task-driven updates, and request diagnostics without external
+   services.
+
+Known deliberate gaps remain: legacy `faiss+sqlite` storage cannot perform a
+durable model-scoped migration; the Huey dequeue/lease boundary cannot provide
+strict exactly-once execution; and compatibility adapters still expose a few
+historical method names. These are explicit contracts, not alternate
+architecture directions.
