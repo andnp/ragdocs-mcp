@@ -221,6 +221,8 @@ class CanonicalSearchAdapter:
         if not excluded_files:
             return False
         file_path = str(metadata.get("file_path", ""))
+        if not file_path:
+            return False
         path = Path(file_path)
         candidates = {
             file_path,

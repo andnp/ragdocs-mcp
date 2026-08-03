@@ -141,6 +141,20 @@ async def test_query_applies_canonical_source_filter(adapter):
 
 
 @pytest.mark.asyncio
+async def test_exclusions_ignore_records_without_file_paths(adapter):
+    assert adapter._is_excluded({}, {"private.md"}) is False
+    results, _, _ = await adapter.query(
+        "authentication",
+        top_k=10,
+        top_n=10,
+        source_filter=["git_commit"],
+        excluded_files={"private.md"},
+    )
+
+    assert [result.chunk_id for result in results] == ["chunk-b"]
+
+
+@pytest.mark.asyncio
 async def test_query_applies_project_filter_without_legacy_orchestrator(adapter):
     results, _, _ = await adapter.query(
         "authentication",
