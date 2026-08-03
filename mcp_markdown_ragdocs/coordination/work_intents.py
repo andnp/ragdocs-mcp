@@ -83,7 +83,13 @@ class WorkIntentStore:
                     "SELECT * FROM work_intents WHERE intent_id = ?",
                     (intent_id,),
                 ).fetchone()
-            elif row["state"] in {FAILED, SUCCEEDED} or force_reopen:
+            elif row["state"] in {FAILED, SUCCEEDED} or (
+                force_reopen
+                and row["state"] in {CLAIMED, RUNNING}
+                and row["claim_observed_at"] is not None
+                and float(row["claim_observed_at"])
+                <= timestamp - self._claim_timeout_seconds
+            ):
                 connection.execute(
                     """
                     UPDATE work_intents
