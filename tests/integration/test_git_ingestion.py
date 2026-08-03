@@ -134,3 +134,32 @@ async def test_commit_absent_when_source_filter_excludes_git(repo, kernel):
     )
 
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_commit_project_filter_uses_workspace_identity(repo, tmp_path):
+    repo_path, commit_hash = repo
+    docs_dir = tmp_path / "scoped-docs"
+    docs_dir.mkdir()
+    config = Config(
+        indexing=IndexingConfig(
+            documents_path=str(docs_dir),
+            index_path=str(tmp_path / ".scoped-index"),
+        ),
+        projects=[],
+    )
+    manager = make_record_index_manager(config)
+    orchestrator = CanonicalSearchAdapter(manager)
+    source = GitContentSource(repo_path / ".git", workspace_id="repo-project")
+
+    assert manager.index_records(list(source.iter_records()))
+    results, _, _ = await orchestrator.query(
+        "authentication token refresh bug",
+        top_k=10,
+        top_n=5,
+        source_filter=["git_commit"],
+        project_filter=["repo-project"],
+    )
+
+    assert results
+    assert results[0].doc_id == f"git:{commit_hash}"

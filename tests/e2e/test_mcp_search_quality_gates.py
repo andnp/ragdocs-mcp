@@ -142,6 +142,83 @@ async def test_mcp_query_documents_does_not_leak_dotted_fts_failure(tmp_path) ->
     assert payload["status"] == "ok"
 
 
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_fixture_graph_retrieval_reports_graph_strategy(tmp_path) -> None:
+    harness = build_search_evaluation_harness(tmp_path)
+
+    results, _, strategy = await harness.orchestrator.query(
+        "what links to token lifecycle",
+        top_k=20,
+        top_n=5,
+    )
+
+    assert strategy.graph_count > 0
+    assert results[0].doc_id.endswith("token-lifecycle")
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_fixture_scoped_keyword_search_stays_in_requested_project(tmp_path) -> None:
+    harness = build_search_evaluation_harness(tmp_path)
+
+    results, _, _ = await harness.orchestrator.query(
+        "Project Rollout Checklist",
+        top_k=10,
+        top_n=5,
+        project_filter=["beta"],
+        source_filter=["note"],
+    )
+
+    assert results
+    assert all(result.project_id == "beta" for result in results)
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_fixture_typo_tolerance_keeps_authentication_result_visible(tmp_path) -> None:
+    harness = build_search_evaluation_harness(tmp_path)
+
+    results, _, _ = await harness.orchestrator.query(
+        "authentcation overview",
+        top_k=10,
+        top_n=3,
+    )
+
+    assert results
+    assert results[0].file_path.endswith("authentication-overview.md")
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_fixture_default_search_diversifies_documents(tmp_path) -> None:
+    harness = build_search_evaluation_harness(tmp_path)
+
+    results, _, _ = await harness.orchestrator.query(
+        "authentication",
+        top_k=20,
+        top_n=5,
+    )
+
+    doc_ids = [result.doc_id for result in results]
+    assert len(doc_ids) == len(set(doc_ids))
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_fixture_no_answer_threshold_returns_empty(tmp_path) -> None:
+    harness = build_search_evaluation_harness(tmp_path)
+
+    results, _, _ = await harness.orchestrator.query(
+        "quantum teleportation safety protocol",
+        top_k=20,
+        top_n=5,
+        min_score=0.02,
+    )
+
+    assert results == []
+
+
 def _aggregate(results: list[SearchEvaluationCaseResult]) -> SearchEvaluationAggregate:
     count = len(results)
     return SearchEvaluationAggregate(
