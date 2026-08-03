@@ -15,7 +15,7 @@ import os
 import re
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -36,6 +36,7 @@ from searchkernel.api import (
 )
 
 from mcp_markdown_ragdocs.config import Config, resolve_project_id_for_path
+from mcp_markdown_ragdocs.git.repository import iter_commit_hashes_after_timestamp
 from mcp_markdown_ragdocs.models import Document
 from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
 
@@ -376,6 +377,54 @@ class RecordIndexManager:
         except Exception:
             logger.exception("Failed to index record batch")
             return False
+
+    def reconcile_git_project_attribution(
+        self,
+        git_dir: Path,
+        workspace_id: str | None,
+    ) -> int:
+        """Repair project identity on existing Git records without rebuilding them."""
+        if workspace_id is None:
+            return 0
+
+        commit_ids = {
+            f"git:{commit_hash}"
+            for commit_hash in iter_commit_hashes_after_timestamp(git_dir)
+        }
+        updates: list[Record] = []
+        replacements: dict[str, str] = {}
+        for row in self.kernel.backend._record_rows():
+            if row["source_kind"] != "git_commit":
+                continue
+            source_id = str(row["source_id"])
+            commit_id = ":".join(source_id.split(":")[:2])
+            if commit_id not in commit_ids:
+                continue
+            record = self.kernel.backend.hydrate_record(row["storage_key"])
+            if record is None:
+                continue
+            metadata = dict(record.metadata)
+            if (
+                record.workspace_id == workspace_id
+                and metadata.get("project_id") == workspace_id
+            ):
+                continue
+            metadata["project_id"] = workspace_id
+            updated = replace(record, workspace_id=workspace_id, metadata=metadata)
+            updates.append(updated)
+            replacements[record.storage_key] = updated.storage_key
+
+        if not updates or not self.index_records(updates):
+            return 0
+
+        for doc_id, keys in self._source_records.items():
+            replaced = [replacements.get(key, key) for key in keys]
+            self._source_records[doc_id] = list(dict.fromkeys(replaced))
+        stale_keys = [key for key, replacement in replacements.items() if key != replacement]
+        if stale_keys:
+            self.kernel.backend.delete(stale_keys)
+        self._save_source_map()
+        return len(updates)
 
     def _upsert_graph(self, prepared: PreparedRecordDocument) -> None:
         if not prepared.records:

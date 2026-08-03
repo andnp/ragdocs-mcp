@@ -1330,12 +1330,29 @@ class ApplicationContext:
 
         for repo_path in repos:
             try:
+                workspace_id = resolve_project_id_for_path(
+                    repo_path.parent,
+                    self.config,
+                )
+                repair_attribution = getattr(
+                    self.index_manager,
+                    "reconcile_git_project_attribution",
+                    None,
+                )
+                repaired = (
+                    repair_attribution(repo_path, workspace_id)
+                    if repair_attribution is not None
+                    else 0
+                )
+                if repaired:
+                    logger.info(
+                        "Repaired project attribution for %d Git records in %s",
+                        repaired,
+                        repo_path.parent,
+                    )
                 source = GitContentSource(
                     repo_path,
-                    workspace_id=resolve_project_id_for_path(
-                        repo_path.parent,
-                        self.config,
-                    ),
+                    workspace_id=workspace_id,
                 )
                 for record in source.iter_records():
                     self.index_manager.index_record(record)
