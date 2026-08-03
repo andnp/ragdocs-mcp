@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from importlib import import_module
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from searchkernel.api import (
     CompressionStats,
@@ -82,10 +83,29 @@ def to_record_search_config(config: SearchConfig) -> RecordSearchConfig:
         base_semantic_weight=config.semantic_weight,
         base_keyword_weight=config.keyword_weight,
         base_graph_weight=1.0,
-        rerank_budget=0,
+        rerank_budget=config.rerank_budget,
         minimum_score=0.0,
         adaptive_enabled=False,
     )
+
+
+class _SentenceTransformerReranker:
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+        self._model: Any = None
+
+    def rerank(self, query: str, documents: list[str]) -> list[float]:
+        if self._model is None:
+            module = import_module("sentence_transformers")
+            self._model = module.CrossEncoder(self.model_name)
+        scores = self._model.predict([(query, document) for document in documents])
+        return [float(score) for score in scores]
+
+
+def build_reranker(config: SearchConfig):
+    if config.reranker_model is None:
+        return None
+    return _SentenceTransformerReranker(config.reranker_model)
 
 
 @dataclass(frozen=True)
@@ -292,5 +312,6 @@ __all__ = [
     "SearchExecution",
     "SearchKernelBoundary",
     "SearchQuery",
+    "build_reranker",
     "to_record_search_config",
 ]

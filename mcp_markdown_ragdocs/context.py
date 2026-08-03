@@ -50,6 +50,7 @@ from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 from mcp_markdown_ragdocs.app.search import (
     ApplicationSearchUseCase,
+    build_reranker,
     to_record_search_config,
 )
 from mcp_markdown_ragdocs.app.services import ApplicationServices, compose_services
@@ -132,8 +133,9 @@ class ApplicationContext:
         index_path_override: Path | None = None,
         documents_path_override: Path | None = None,
         global_runtime: bool = False,
+        config: Config | None = None,
     ) -> ApplicationContext:
-        config = load_config()
+        config = config or load_config()
 
         detected_project = None
         if not global_runtime:
@@ -190,6 +192,7 @@ class ApplicationContext:
             embedding_model_name=embedding_provider.model_name,
             embedding_dim=embedding_provider.dim,
             vector_engine="exact",
+            reranker=build_reranker(config.search),
             search_config=to_record_search_config(config.search),
         )
         if not lazy_embeddings:

@@ -1,4 +1,5 @@
 import logging
+import importlib.util
 import math
 import os
 import re
@@ -108,6 +109,8 @@ class SearchConfig:
         default=10,
         metadata={"deprecated": "canonical search does not rerank"},
     )
+    reranker_model: str | None = None
+    rerank_budget: int = 0
     project_uplift_multiplier: float = field(
         default=1.2,
         metadata={"deprecated": "project scope is an explicit filter"},
@@ -127,6 +130,21 @@ class SearchConfig:
             raise ValueError(
                 "search.project_uplift_multiplier must be greater than 0"
             )
+        if self.rerank_budget < 0:
+            raise ValueError("search.rerank_budget must be non-negative")
+        if self.reranker_model is not None and not self.reranker_model.strip():
+            raise ValueError("search.reranker_model must not be empty")
+        if self.rerank_budget or self.reranker_model is not None:
+            if self.reranker_model is None or self.rerank_budget < 1:
+                raise ValueError(
+                    "search.reranker_model and search.rerank_budget must be "
+                    "configured together"
+                )
+            if importlib.util.find_spec("sentence_transformers") is None:
+                raise ValueError(
+                    "search reranking requires the optional "
+                    "'sentence-transformers' dependency"
+                )
 
 
 @dataclass

@@ -49,4 +49,5 @@ def build_kernel(
         index_path_override=index_path_override,
         documents_path_override=documents_path_override,
         global_runtime=False,
+        config=config,
     )
