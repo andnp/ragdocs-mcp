@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
@@ -37,6 +38,11 @@ MAX_CORRELATION_ID_LENGTH = 256
 class QueryRequest(BaseModel):
     query: str
     top_n: int = Field(default=5, ge=1, le=100, description="Maximum results to return")
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    similarity_threshold: float = Field(default=0.85, ge=0.5, le=1.0)
+    uniqueness_mode: Literal["allow_multiple", "one_per_document"] = "allow_multiple"
+    max_chunks_per_doc: int = Field(default=0, ge=0, le=100)
+    excluded_files: list[str] = Field(default_factory=list)
     project_filter: list[str] = Field(default_factory=list)
     source_filter: list[str] | None = None
     project_context: str | None = None
@@ -109,6 +115,9 @@ def create_app():
         project_filter: list[str] | None = None,
         source_filter: list[str] | None = None,
         project_context: str | None = None,
+        excluded_files: set[str] | None = None,
+        min_score: float | None = None,
+        similarity_threshold: float | None = None,
     ):
         top_k = max(20, top_n * 4)
         if project_filter:
@@ -122,6 +131,10 @@ def create_app():
             project_filter=project_filter,
             source_filter=source_filter,
             project_context=project_context,
+            excluded_files=excluded_files,
+            min_score=min_score,
+            similarity_threshold=similarity_threshold,
+            max_chunks_per_doc=max_chunks_per_doc,
         )
 
         query_type = classify_query_type(query)
@@ -146,10 +159,16 @@ def create_app():
             app.state.config,
             request.query,
             request.top_n,
-            max_chunks_per_doc=0,
+            max_chunks_per_doc=(
+                1 if request.uniqueness_mode == "one_per_document"
+                else request.max_chunks_per_doc
+            ),
             project_filter=request.project_filter,
             source_filter=request.source_filter,
             project_context=request.project_context,
+            excluded_files=set(request.excluded_files),
+            min_score=request.min_score,
+            similarity_threshold=request.similarity_threshold,
         )
         return QueryResponse(results=results_dict)
 

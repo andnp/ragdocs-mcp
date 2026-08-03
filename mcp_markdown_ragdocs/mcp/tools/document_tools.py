@@ -64,8 +64,8 @@ def get_document_tools() -> list[Tool]:
                     },
                     "min_score": {
                         "type": "number",
-                        "description": "Minimum relevance score threshold (default: 0.3)",
-                        "default": 0.3,
+                        "description": "Minimum canonical search score threshold (default: 0.0)",
+                        "default": 0.0,
                         "minimum": 0.0,
                         "maximum": 1.0,
                     },
@@ -225,9 +225,13 @@ async def _query_documents_impl(
 
     excluded_files = None
     if request.excluded_files_raw:
-        docs_root = ctx.orchestrator.documents_path
+        docs_roots = tuple(getattr(ctx, "documents_roots", ())) or (
+            ctx.orchestrator.documents_path,
+        )
         excluded_files = {
-            normalize_path(f, docs_root) for f in request.excluded_files_raw
+            normalize_path(f, docs_root)
+            for f in request.excluded_files_raw
+            for docs_root in docs_roots
         }
 
     top_k = max(20, request.top_n * 4)
@@ -250,6 +254,9 @@ async def _query_documents_impl(
         excluded_files=excluded_files,
         project_filter=request.project_filter,
         project_context=project_context,
+        min_score=request.min_score,
+        similarity_threshold=request.similarity_threshold,
+        max_chunks_per_doc=request.max_chunks_per_doc,
     )
     results = [
         result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)

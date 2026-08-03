@@ -70,3 +70,28 @@ async def test_legacy_query_documents_keeps_project_filter_default():
 
     assert orchestrator.query_kwargs["project_filter"] == []
     assert orchestrator.query_kwargs["source_filter"] is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_query_documents_forwards_search_controls():
+    app = create_app()
+    orchestrator = FakeOrchestrator()
+    app.state.orchestrator = orchestrator
+    app.state.config = Config()
+
+    await _query_endpoint(app)(
+        QueryRequest(
+            query="filtered docs",
+            min_score=0.6,
+            similarity_threshold=0.9,
+            uniqueness_mode="one_per_document",
+            excluded_files=["private.md"],
+            project_filter=["docs"],
+            source_filter=["note"],
+        )
+    )
+
+    assert orchestrator.query_kwargs["min_score"] == 0.6
+    assert orchestrator.query_kwargs["similarity_threshold"] == 0.9
+    assert orchestrator.query_kwargs["max_chunks_per_doc"] == 1
+    assert orchestrator.query_kwargs["excluded_files"] == {"private.md"}

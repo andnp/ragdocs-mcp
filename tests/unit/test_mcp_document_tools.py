@@ -122,11 +122,17 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
             excluded_files,
             project_filter,
             project_context,
+            min_score,
+            similarity_threshold,
+            max_chunks_per_doc,
         ):
             assert query == "daemon startup"
             assert top_n == 5
             captured["project_filter"] = project_filter
             captured["project_context"] = project_context
+            captured["min_score"] = min_score
+            captured["similarity_threshold"] = similarity_threshold
+            captured["max_chunks_per_doc"] = max_chunks_per_doc
             return (
                 [
                     SimpleNamespace(
@@ -203,7 +209,13 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
             },
         }
     ]
-    assert captured == {"project_filter": [], "project_context": None}
+    assert captured == {
+        "project_filter": [],
+        "project_context": None,
+        "min_score": 0.0,
+        "similarity_threshold": 0.85,
+        "max_chunks_per_doc": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -246,6 +258,9 @@ async def test_query_documents_returns_canonical_scope_and_meta() -> None:
             excluded_files,
             project_filter,
             project_context,
+            min_score,
+            similarity_threshold,
+            max_chunks_per_doc,
         ):
             return (
                 [
@@ -416,9 +431,15 @@ async def test_query_documents_uses_detected_project_for_active_project_scope() 
             excluded_files,
             project_filter,
             project_context,
+            min_score,
+            similarity_threshold,
+            max_chunks_per_doc,
         ):
             captured["project_filter"] = project_filter
             captured["project_context"] = project_context
+            captured["min_score"] = min_score
+            captured["similarity_threshold"] = similarity_threshold
+            captured["max_chunks_per_doc"] = max_chunks_per_doc
             return (
                 [],
                 CompressionStats(
@@ -459,7 +480,13 @@ async def test_query_documents_uses_detected_project_for_active_project_scope() 
         "applied_filter_projects": [],
         "applied_uplift_project": "ambient-project",
     }
-    assert captured == {"project_filter": [], "project_context": "ambient-project"}
+    assert captured == {
+        "project_filter": [],
+        "project_context": "ambient-project",
+        "min_score": 0.0,
+        "similarity_threshold": 0.85,
+        "max_chunks_per_doc": 0,
+    }
 
 
 @pytest.mark.asyncio

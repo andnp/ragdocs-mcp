@@ -80,7 +80,7 @@ def normalize_query_documents_request(
         arguments, "top_n", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N
     )
     min_score = validate_float_range(
-        arguments, "min_score", default=0.3, min_val=0.0, max_val=1.0
+        arguments, "min_score", default=0.0, min_val=0.0, max_val=1.0
     )
     similarity_threshold = validate_float_range(
         arguments, "similarity_threshold", default=0.85, min_val=0.5, max_val=1.0
