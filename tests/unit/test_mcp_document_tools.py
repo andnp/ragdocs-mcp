@@ -189,7 +189,7 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
         "project_context": None,
         "min_score": 0.0,
         "similarity_threshold": 0.85,
-        "max_chunks_per_doc": 0,
+        "max_chunks_per_doc": 1,
     }
 
 
@@ -426,7 +426,7 @@ async def test_query_documents_uses_detected_project_for_active_project_scope() 
         "project_context": "ambient-project",
         "min_score": 0.0,
         "similarity_threshold": 0.85,
-        "max_chunks_per_doc": 0,
+        "max_chunks_per_doc": 1,
     }
 
 

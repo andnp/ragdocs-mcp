@@ -89,7 +89,7 @@ def normalize_query_documents_request(
         validate_string_list(arguments, "excluded_files", default=[])
     )
 
-    uniqueness_value = arguments.get("uniqueness_mode", "allow_multiple")
+    uniqueness_value = arguments.get("uniqueness_mode", "one_per_document")
     if uniqueness_value not in {"allow_multiple", "one_per_document"}:
         raise ValidationError(
             "Invalid uniqueness_mode: "

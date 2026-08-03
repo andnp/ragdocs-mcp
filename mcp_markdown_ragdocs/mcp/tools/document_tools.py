@@ -104,8 +104,8 @@ def get_document_tools() -> list[Tool]:
                     "uniqueness_mode": {
                         "type": "string",
                         "enum": ["allow_multiple", "one_per_document"],
-                        "description": "Result uniqueness mode: 'allow_multiple' (default) returns multiple chunks per document, 'one_per_document' returns at most one chunk per document for breadth across files",
-                        "default": "allow_multiple",
+                        "description": "Result uniqueness mode: 'one_per_document' (default) returns at most one chunk per document; 'allow_multiple' returns multiple chunks per document",
+                        "default": "one_per_document",
                     },
                 },
                 "required": ["query"],

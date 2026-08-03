@@ -94,7 +94,7 @@ class SearchConfig:
         metadata={"deprecated": "use request min_score"},
     )
     max_chunks_per_doc: int = field(
-        default=2,
+        default=1,
         metadata={"deprecated": "use request uniqueness_mode"},
     )
     dedup_threshold: float = field(

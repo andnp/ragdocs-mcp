@@ -186,6 +186,46 @@ async def test_one_per_document_overfetches_and_limits_chunks(adapter):
 
 
 @pytest.mark.asyncio
+async def test_document_search_defaults_to_one_chunk_with_multiple_override(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id=f"doc-a-chunk-{index}",
+            title="Authentication",
+            body=f"Chunk {index}",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": "doc-a", "chunk_id": f"chunk-{index}"},
+        )
+        for index in range(2)
+    ]
+    outcome = SimpleNamespace(
+        results=[
+            SimpleNamespace(record=record, score=1.0 - index * 0.1, provenance=SimpleNamespace(strategies=()))
+            for index, record in enumerate(records)
+        ],
+        failures=(),
+        degraded=False,
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return outcome
+
+    default = await adapter.search_use_case.execute(
+        SearchQuery(query="authentication", top_n=2),
+        search=fake_search,
+    )
+    multiple = await adapter.search_use_case.execute(
+        SearchQuery(query="authentication", top_n=2, max_chunks_per_doc=0),
+        search=fake_search,
+    )
+
+    assert len(default.results) == 1
+    assert len(multiple.results) == 2
+
+
+@pytest.mark.asyncio
 async def test_query_applies_canonical_source_filter(adapter):
     results, _, _ = await adapter.query(
         "authentication",

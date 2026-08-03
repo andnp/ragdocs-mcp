@@ -119,7 +119,7 @@ class SearchQuery:
     excluded_files: frozenset[str] = frozenset()
     min_score: float | None = None
     similarity_threshold: float | None = None
-    max_chunks_per_doc: int = 0
+    max_chunks_per_doc: int = 1
     retrieval_mode: str | None = None
 
 

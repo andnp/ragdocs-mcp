@@ -9,6 +9,7 @@ class TestSearchDefaults:
         config = SearchConfig()
 
         assert config.min_confidence == 0.3
+        assert config.max_chunks_per_doc == 1
         assert config.semantic_weight == 1.0
         assert config.keyword_weight == 1.0
 
