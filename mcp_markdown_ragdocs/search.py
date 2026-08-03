@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,22 @@ from mcp_markdown_ragdocs.app.search import (
     SearchQuery,
 )
 from mcp_markdown_ragdocs.models import ChunkResult
+
+
+@dataclass(frozen=True)
+class SearchPipelineConfig:
+    """Compatibility configuration for callers still passing pipeline options."""
+
+    min_confidence: float = 0.3
+    dedup_threshold: float = 0.85
+    reranking_enabled: bool = True
+
+
+def filter_by_score(
+    results: Sequence[ChunkResult],
+    min_score: float = 0.3,
+) -> list[ChunkResult]:
+    return [result for result in results if result.score >= min_score]
 
 
 class CanonicalSearchAdapter:
@@ -124,4 +141,4 @@ class CanonicalSearchAdapter:
     async def drain_reindex(self) -> None:
         return None
 
-__all__ = ["CanonicalSearchAdapter"]
+__all__ = ["CanonicalSearchAdapter", "SearchPipelineConfig", "filter_by_score"]
