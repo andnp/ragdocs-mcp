@@ -93,7 +93,9 @@ class ApplicationSearchUseCase:
         if request.retrieval_mode is not None:
             filters["retrieval_mode"] = request.retrieval_mode
 
-        limit = max(request.top_k or 0, request.top_n)
+        limit = max(20, request.top_n * 4, request.top_k or 0)
+        if request.project_filter:
+            limit = max(limit, request.top_n * 10)
         if request.max_chunks_per_doc > 0:
             limit = max(limit, request.top_n * max(4, request.max_chunks_per_doc * 2))
         if request.source_filter == ("git_commit",):

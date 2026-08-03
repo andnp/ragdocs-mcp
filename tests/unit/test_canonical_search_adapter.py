@@ -86,7 +86,7 @@ async def test_query_forwards_contract_filters_and_preserves_scores(adapter, mon
 
     assert captured == {
         "query": "authentication",
-        "limit": 8,
+        "limit": 20,
         "filters": {
             "source_kinds": ["note"],
             "project_ids": ["project-a"],
@@ -96,6 +96,27 @@ async def test_query_forwards_contract_filters_and_preserves_scores(adapter, mon
             "max_chunks_per_doc": 1,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_application_use_case_overfetches_without_explicit_top_k(
+    adapter,
+    monkeypatch,
+):
+    captured = {}
+
+    async def fake_search(query, *, limit, filters):
+        captured["limit"] = limit
+        return SimpleNamespace(results=(), failures=(), degraded=False)
+
+    monkeypatch.setattr(adapter.search_use_case._pipeline, "async_search", fake_search)
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="authentication", top_n=1, min_score=0.5)
+    )
+
+    assert captured["limit"] == 20
+    assert execution.results == []
 
 
 @pytest.mark.asyncio
