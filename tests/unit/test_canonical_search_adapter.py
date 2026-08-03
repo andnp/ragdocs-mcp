@@ -13,6 +13,7 @@ def adapter(record_manager) -> CanonicalSearchAdapter:
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     records = [
         Record(
+            workspace_id="workspace",
             source_kind="note",
             source_id="doc-a",
             title="Authentication",
@@ -28,6 +29,7 @@ def adapter(record_manager) -> CanonicalSearchAdapter:
             },
         ),
         Record(
+            workspace_id="workspace",
             source_kind="git_commit",
             source_id="doc-b",
             title="Authentication fix",
@@ -58,6 +60,9 @@ async def test_query_preserves_chunk_result_semantics(adapter):
     assert [result.chunk_id for result in results] == ["chunk-a"]
     assert results[0].doc_id == "doc-a"
     assert results[0].file_path == "a.md"
+    assert results[0].metadata["source_kind"] == "note"
+    assert results[0].metadata["source_id"] == "doc-a"
+    assert results[0].metadata["workspace_id"] == "workspace"
     assert stats.original_count == 2
     assert strategy.keyword_count == 1
 
