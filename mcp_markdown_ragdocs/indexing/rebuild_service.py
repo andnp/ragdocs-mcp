@@ -720,24 +720,24 @@ def _update_rebuild_progress(
     return write_rebuild_status(runtime_root, status)
 
 
-def run_rebuild(
-    *,
-    runtime_root: Path,
-    config: Config,
-    index_manager,
-    global_documents_roots: list[Path],
-    request_id: str,
-    project_override: str | None,
-    schedule_vocabulary_catch_up: Callable[[], bool] | None = None,
-) -> dict[str, object]:
-    scope = resolve_rebuild_scope(config, global_documents_roots, project_override)
-    checkpoint_interval = max(1, config.indexing.rebuild_checkpoint_interval)
-    total_files = 0
-    indexed_files = 0
-    removed_documents = 0
-    git_repositories = 0
-    git_commits_indexed = 0
 
+
+@dataclass(frozen=True)
+class _RebuildPreparation:
+    files_to_index: list[str]
+    repos: list[Path]
+    checkpoint: dict[str, object]
+    removed_documents: int
+    total_files: int
+
+
+def _initialize_rebuild_progress(
+    runtime_root: Path,
+    *,
+    request_id: str,
+    scope: RebuildScope,
+    checkpoint_interval: int,
+) -> None:
     _update_rebuild_progress(
         runtime_root,
         status="running",
@@ -767,214 +767,369 @@ def run_rebuild(
         git_batches_completed=0,
     )
 
-    try:
-        scope_message = (
-            f"Rebuild scope: {scope.scope_label} across {len(scope.documents_roots)} root(s)"
-        )
-        _append_message(runtime_root, scope_message)
 
-        files_to_index = _discover_scope_files(config, scope.documents_roots)
-        files_to_index = [
-            str(Path(file_path).expanduser().resolve())
-            for file_path in files_to_index
-        ]
-        document_targets = _file_targets(files_to_index)
-        git_targets: dict[str, str] = {}
-        repos: list[Path] = []
-        if config.git_indexing.enabled and is_git_available():
-            repos = _discover_scope_git_repositories(config, scope.documents_roots)
-            valid_repos: list[Path] = []
-            for repo_path in repos:
-                ref_signature = get_git_ref_signature(repo_path)
-                if ref_signature is None:
-                    _append_message(
-                        runtime_root,
-                        (
-                            "⚠️ Skipping Git repository with unavailable fingerprint: "
-                            f"{repo_path}"
-                        ),
-                    )
-                    continue
-                valid_repos.append(repo_path)
-                git_targets[str(repo_path.resolve())] = ref_signature
-            repos = valid_repos
+def _prepare_rebuild(
+    *,
+    runtime_root: Path,
+    config: Config,
+    index_manager,
+    scope: RebuildScope,
+    checkpoint_interval: int,
+    request_id: str,
+) -> _RebuildPreparation:
+    removed_documents = 0
+    scope_message = (
+        f"Rebuild scope: {scope.scope_label} across {len(scope.documents_roots)} root(s)"
+    )
+    _append_message(runtime_root, scope_message)
 
-        identity = _rebuild_identity(
-            config=config,
-            index_manager=index_manager,
-            scope=scope,
-            git_targets=git_targets,
+    files_to_index = _discover_scope_files(config, scope.documents_roots)
+    files_to_index = [
+        str(Path(file_path).expanduser().resolve())
+        for file_path in files_to_index
+    ]
+    document_targets = _file_targets(files_to_index)
+    git_targets: dict[str, str] = {}
+    repos: list[Path] = []
+    if config.git_indexing.enabled and is_git_available():
+        repos = _discover_scope_git_repositories(config, scope.documents_roots)
+        valid_repos: list[Path] = []
+        for repo_path in repos:
+            ref_signature = get_git_ref_signature(repo_path)
+            if ref_signature is None:
+                _append_message(
+                    runtime_root,
+                    (
+                        "⚠️ Skipping Git repository with unavailable fingerprint: "
+                        f"{repo_path}"
+                    ),
+                )
+                continue
+            valid_repos.append(repo_path)
+            git_targets[str(repo_path.resolve())] = ref_signature
+        repos = valid_repos
+
+    identity = _rebuild_identity(
+        config=config,
+        index_manager=index_manager,
+        scope=scope,
+        git_targets=git_targets,
+    )
+    existing_checkpoint = _load_rebuild_checkpoint(runtime_root)
+    checkpoint_is_resumable = _checkpoint_matches(
+        existing_checkpoint,
+        request_id=request_id,
+        identity=identity,
+        document_targets=document_targets,
+        git_targets=git_targets,
+    )
+    if checkpoint_is_resumable:
+        checkpoint = existing_checkpoint
+        assert checkpoint is not None
+        prior_status = read_rebuild_status(runtime_root)
+        prior_removed_documents = prior_status.get("removed_documents")
+        if isinstance(prior_removed_documents, int):
+            removed_documents = prior_removed_documents
+        _append_message(
+            runtime_root,
+            "↩️ Resuming durable rebuild progress from the last completed batch",
         )
-        existing_checkpoint = _load_rebuild_checkpoint(runtime_root)
-        checkpoint_is_resumable = _checkpoint_matches(
-            existing_checkpoint,
+    else:
+        if existing_checkpoint is not None:
+            _append_message(
+                runtime_root,
+                "⚠️ Ignoring stale or mismatched rebuild checkpoint",
+            )
+        checkpoint = _new_rebuild_checkpoint(
             request_id=request_id,
             identity=identity,
             document_targets=document_targets,
             git_targets=git_targets,
         )
-        if checkpoint_is_resumable:
-            checkpoint = existing_checkpoint
-            assert checkpoint is not None
-            prior_status = read_rebuild_status(runtime_root)
-            prior_removed_documents = prior_status.get("removed_documents")
-            if isinstance(prior_removed_documents, int):
-                removed_documents = prior_removed_documents
+        _save_rebuild_checkpoint(runtime_root, checkpoint)
+        if scope.is_global:
+            index_manager.clear_documents()
+            manifest_path = Path(config.indexing.index_path) / "index.manifest.json"
+            manifest_path.unlink(missing_ok=True)
+        else:
+            existing_doc_ids = _find_scope_document_ids(
+                descriptions=index_manager.describe_documents(),
+                documents_roots=scope.documents_roots,
+                common_root=Path(config.indexing.documents_path).resolve(),
+            )
+            if existing_doc_ids:
+                index_manager.remove_documents(existing_doc_ids, persist=False)
+                removed_documents = len(existing_doc_ids)
+                index_manager.persist_checkpoint()
+        (Path(config.indexing.index_path) / "bootstrap.checkpoint.json").unlink(
+            missing_ok=True
+        )
+
+    total_files = len(files_to_index)
+    return _RebuildPreparation(
+        files_to_index=files_to_index,
+        repos=repos,
+        checkpoint=checkpoint,
+        removed_documents=removed_documents,
+        total_files=total_files,
+    )
+
+
+def _reconcile_rebuild_documents(
+    *,
+    runtime_root: Path,
+    config: Config,
+    index_manager,
+    scope: RebuildScope,
+    checkpoint: dict[str, object],
+    files_to_index: list[str],
+    checkpoint_interval: int,
+    removed_documents: int,
+) -> int:
+    total_files = len(files_to_index)
+    _, completed_documents = _checkpoint_documents(checkpoint)
+    indexed_files = len(completed_documents)
+    _append_message(
+        runtime_root,
+        (
+            "Discovered "
+            f"{total_files} files; persisting checkpoints every {checkpoint_interval} file(s)"
+        ),
+    )
+    _update_rebuild_progress(
+        runtime_root,
+        phase="indexing_documents",
+        discovered_files=total_files,
+        indexed_files=indexed_files,
+        documents_total=total_files,
+        documents_completed=indexed_files,
+        document_batches_total=math.ceil(total_files / checkpoint_interval),
+        document_batches_completed=math.ceil(
+            indexed_files / checkpoint_interval
+        ),
+        removed_documents=removed_documents,
+    )
+
+    for file_batch in iter_rebuild_batches(files_to_index, checkpoint_interval):
+        if not file_batch:
+            continue
+
+        current_targets = _file_targets(file_batch)
+        targets, completed_documents = _checkpoint_documents(checkpoint)
+        changed_paths = [
+            path
+            for path, target in current_targets.items()
+            if targets.get(path) != target
+        ]
+        if changed_paths:
+            for path in changed_paths:
+                targets[path] = current_targets[path]
+                completed_documents.pop(path, None)
+            _save_rebuild_checkpoint(runtime_root, checkpoint)
             _append_message(
                 runtime_root,
-                "↩️ Resuming durable rebuild progress from the last completed batch",
-            )
-        else:
-            if existing_checkpoint is not None:
-                _append_message(
-                    runtime_root,
-                    "⚠️ Ignoring stale or mismatched rebuild checkpoint",
-                )
-            checkpoint = _new_rebuild_checkpoint(
-                request_id=request_id,
-                identity=identity,
-                document_targets=document_targets,
-                git_targets=git_targets,
-            )
-            _save_rebuild_checkpoint(runtime_root, checkpoint)
-            if scope.is_global:
-                index_manager.clear_documents()
-                manifest_path = Path(config.indexing.index_path) / "index.manifest.json"
-                manifest_path.unlink(missing_ok=True)
-            else:
-                existing_doc_ids = _find_scope_document_ids(
-                    descriptions=index_manager.describe_documents(),
-                    documents_roots=scope.documents_roots,
-                    common_root=Path(config.indexing.documents_path).resolve(),
-                )
-                if existing_doc_ids:
-                    index_manager.remove_documents(existing_doc_ids, persist=False)
-                    removed_documents = len(existing_doc_ids)
-                    index_manager.persist_checkpoint()
-            (Path(config.indexing.index_path) / "bootstrap.checkpoint.json").unlink(
-                missing_ok=True
+                (
+                    "⚠️ Reprocessing changed document source(s): "
+                    + ", ".join(changed_paths)
+                ),
             )
 
-        total_files = len(files_to_index)
-        _, completed_documents = _checkpoint_documents(checkpoint)
-        indexed_files = len(completed_documents)
-        _append_message(
-            runtime_root,
-            (
-                "Discovered "
-                f"{total_files} files; persisting checkpoints every {checkpoint_interval} file(s)"
-            ),
-        )
+        pending_files = [
+            file_path
+            for file_path in file_batch
+            if str(Path(file_path).resolve()) not in completed_documents
+        ]
+        checkpoint_at: float | None = None
         _update_rebuild_progress(
             runtime_root,
             phase="indexing_documents",
-            discovered_files=total_files,
+            current_document_path=(
+                pending_files[0] if pending_files else file_batch[0]
+            ),
+        )
+        if pending_files:
+            index_manager.index_documents(
+                pending_files,
+                force=True,
+                persist=False,
+            )
+            get_failed_files = getattr(index_manager, "get_failed_files", None)
+            if callable(get_failed_files):
+                raw_failed_files = get_failed_files()
+                if not isinstance(raw_failed_files, list):
+                    raw_failed_files = []
+                failed_paths = {
+                    str(Path(item["path"]).resolve())
+                    for item in raw_failed_files
+                    if isinstance(item, dict) and isinstance(item.get("path"), str)
+                }
+                batch_failures = failed_paths.intersection(
+                    {
+                        str(Path(file_path).resolve())
+                        for file_path in pending_files
+                    }
+                )
+                if batch_failures:
+                    raise RuntimeError(
+                        "Document indexing failed for: "
+                        + ", ".join(sorted(batch_failures))
+                    )
+            index_manager.persist_checkpoint()
+            targets, completed_documents = _checkpoint_documents(checkpoint)
+            for file_path in pending_files:
+                resolved_path = str(Path(file_path).resolve())
+                completed_documents[resolved_path] = targets[resolved_path]
+            _save_rebuild_checkpoint(runtime_root, checkpoint)
+            checkpoint_at = time.time()
+
+        indexed_files = len(completed_documents)
+        completed_batches = math.ceil(indexed_files / checkpoint_interval)
+        checkpoint_message = (
+            f"📍 Checkpoint persisted: {indexed_files}/{total_files} documents"
+        )
+        _append_message(runtime_root, checkpoint_message)
+        _update_rebuild_progress(
+            runtime_root,
+            phase="indexing_documents",
             indexed_files=indexed_files,
             documents_total=total_files,
             documents_completed=indexed_files,
-            document_batches_total=math.ceil(total_files / checkpoint_interval),
-            document_batches_completed=math.ceil(
-                indexed_files / checkpoint_interval
+            document_batches_total=math.ceil(
+                total_files / checkpoint_interval
             ),
-            removed_documents=removed_documents,
+            document_batches_completed=completed_batches,
+            current_document_path=None,
+            last_checkpoint_at=(
+                checkpoint_at
+                if checkpoint_at is not None
+                else read_rebuild_status(runtime_root).get("last_checkpoint_at")
+            ),
         )
 
-        for file_batch in iter_rebuild_batches(files_to_index, checkpoint_interval):
-            if not file_batch:
-                continue
+    return indexed_files
 
-            current_targets = _file_targets(file_batch)
-            targets, completed_documents = _checkpoint_documents(checkpoint)
-            changed_paths = [
-                path
-                for path, target in current_targets.items()
-                if targets.get(path) != target
-            ]
-            if changed_paths:
-                for path in changed_paths:
-                    targets[path] = current_targets[path]
-                    completed_documents.pop(path, None)
-                _save_rebuild_checkpoint(runtime_root, checkpoint)
+
+def _index_rebuild_git(
+    *,
+    runtime_root: Path,
+    config: Config,
+    index_manager,
+    repos: list[Path],
+    checkpoint: dict[str, object],
+) -> tuple[int, int]:
+    git_commits_indexed = 0
+    git_repositories = 0
+    if config.git_indexing.enabled:
+        if not is_git_available():
+            _append_message(
+                runtime_root,
+                "⚠️  Git binary not available, skipping git commit indexing",
+            )
+        else:
+            git_repositories = len(repos)
+            _update_rebuild_progress(
+                runtime_root,
+                phase="indexing_git",
+                git_repositories=git_repositories,
+                current_document_path=None,
+                current_git_repository=None,
+                git_records_completed=git_commits_indexed,
+            )
+
+            for repo_path in repos:
+                git_commits_indexed = _ingest_git_repository(
+                    runtime_root=runtime_root,
+                    index_manager=index_manager,
+                    repo_path=repo_path,
+                    git_commits_indexed=git_commits_indexed,
+                    checkpoint=checkpoint,
+                    save_checkpoint=lambda: _save_rebuild_checkpoint(
+                        runtime_root,
+                        checkpoint,
+                    ),
+                )
+                completed_git_batches = read_rebuild_status(runtime_root).get(
+                    "git_batches_completed"
+                )
+                _update_rebuild_progress(
+                    runtime_root,
+                    git_records_total=git_commits_indexed,
+                    git_records_completed=git_commits_indexed,
+                    git_batches_total=completed_git_batches,
+                )
                 _append_message(
                     runtime_root,
                     (
-                        "⚠️ Reprocessing changed document source(s): "
-                        + ", ".join(changed_paths)
+                        f"✅ Indexed git repository {repo_path} "
+                        f"({git_commits_indexed} total commits)"
                     ),
                 )
-
-            pending_files = [
-                file_path
-                for file_path in file_batch
-                if str(Path(file_path).resolve()) not in completed_documents
-            ]
-            checkpoint_at: float | None = None
-            _update_rebuild_progress(
-                runtime_root,
-                phase="indexing_documents",
-                current_document_path=(
-                    pending_files[0] if pending_files else file_batch[0]
-                ),
-            )
-            if pending_files:
-                index_manager.index_documents(
-                    pending_files,
-                    force=True,
-                    persist=False,
+                _update_rebuild_progress(
+                    runtime_root,
+                    current_git_repository=None,
                 )
-                get_failed_files = getattr(index_manager, "get_failed_files", None)
-                if callable(get_failed_files):
-                    raw_failed_files = get_failed_files()
-                    if not isinstance(raw_failed_files, list):
-                        raw_failed_files = []
-                    failed_paths = {
-                        str(Path(item["path"]).resolve())
-                        for item in raw_failed_files
-                        if isinstance(item, dict) and isinstance(item.get("path"), str)
-                    }
-                    batch_failures = failed_paths.intersection(
-                        {
-                            str(Path(file_path).resolve())
-                            for file_path in pending_files
-                        }
-                    )
-                    if batch_failures:
-                        raise RuntimeError(
-                            "Document indexing failed for: "
-                            + ", ".join(sorted(batch_failures))
-                        )
-                index_manager.persist_checkpoint()
-                targets, completed_documents = _checkpoint_documents(checkpoint)
-                for file_path in pending_files:
-                    resolved_path = str(Path(file_path).resolve())
-                    completed_documents[resolved_path] = targets[resolved_path]
-                _save_rebuild_checkpoint(runtime_root, checkpoint)
-                checkpoint_at = time.time()
 
-            indexed_files = len(completed_documents)
-            completed_batches = math.ceil(indexed_files / checkpoint_interval)
-            checkpoint_message = (
-                f"📍 Checkpoint persisted: {indexed_files}/{total_files} documents"
-            )
-            _append_message(runtime_root, checkpoint_message)
-            _update_rebuild_progress(
-                runtime_root,
-                phase="indexing_documents",
-                indexed_files=indexed_files,
-                documents_total=total_files,
-                documents_completed=indexed_files,
-                document_batches_total=math.ceil(
-                    total_files / checkpoint_interval
-                ),
-                document_batches_completed=completed_batches,
-                current_document_path=None,
-                last_checkpoint_at=(
-                    checkpoint_at
-                    if checkpoint_at is not None
-                    else read_rebuild_status(runtime_root).get("last_checkpoint_at")
-                ),
-            )
+            if repos:
+                _append_message(
+                    runtime_root,
+                    (
+                        "✅ Successfully indexed "
+                        f"{git_commits_indexed} git commits from {git_repositories} repositories"
+                    ),
+                )
+            else:
+                _append_message(runtime_root, "ℹ️  No git repositories found")
+    return git_repositories, git_commits_indexed
 
+def run_rebuild(
+    *,
+    runtime_root: Path,
+    config: Config,
+    index_manager,
+    global_documents_roots: list[Path],
+    request_id: str,
+    project_override: str | None,
+    schedule_vocabulary_catch_up: Callable[[], bool] | None = None,
+) -> dict[str, object]:
+    scope = resolve_rebuild_scope(config, global_documents_roots, project_override)
+    checkpoint_interval = max(1, config.indexing.rebuild_checkpoint_interval)
+    total_files = 0
+    indexed_files = 0
+    removed_documents = 0
+    git_repositories = 0
+    git_commits_indexed = 0
+
+    _initialize_rebuild_progress(
+        runtime_root,
+        request_id=request_id,
+        scope=scope,
+        checkpoint_interval=checkpoint_interval,
+    )
+
+    try:
+        preparation = _prepare_rebuild(
+            runtime_root=runtime_root,
+            config=config,
+            index_manager=index_manager,
+            scope=scope,
+            checkpoint_interval=checkpoint_interval,
+            request_id=request_id,
+        )
+        files_to_index = preparation.files_to_index
+        repos = preparation.repos
+        checkpoint = preparation.checkpoint
+        removed_documents = preparation.removed_documents
+        total_files = preparation.total_files
+        indexed_files = _reconcile_rebuild_documents(
+            runtime_root=runtime_root,
+            config=config,
+            index_manager=index_manager,
+            scope=scope,
+            checkpoint=checkpoint,
+            files_to_index=files_to_index,
+            checkpoint_interval=checkpoint_interval,
+            removed_documents=removed_documents,
+        )
         current_document_targets = _file_targets(
             [
                 str(Path(file_path).expanduser().resolve())
@@ -1001,66 +1156,13 @@ def run_rebuild(
         _update_rebuild_progress(runtime_root, phase="finalizing")
         index_manager.finalize_derived_graph_state()
 
-        if config.git_indexing.enabled:
-            if not is_git_available():
-                _append_message(
-                    runtime_root,
-                    "⚠️  Git binary not available, skipping git commit indexing",
-                )
-            else:
-                git_repositories = len(repos)
-                _update_rebuild_progress(
-                    runtime_root,
-                    phase="indexing_git",
-                    git_repositories=git_repositories,
-                    current_document_path=None,
-                    current_git_repository=None,
-                    git_records_completed=git_commits_indexed,
-                )
-
-                for repo_path in repos:
-                    git_commits_indexed = _ingest_git_repository(
-                        runtime_root=runtime_root,
-                        index_manager=index_manager,
-                        repo_path=repo_path,
-                        git_commits_indexed=git_commits_indexed,
-                        checkpoint=checkpoint,
-                        save_checkpoint=lambda: _save_rebuild_checkpoint(
-                            runtime_root,
-                            checkpoint,
-                        ),
-                    )
-                    completed_git_batches = read_rebuild_status(runtime_root).get(
-                        "git_batches_completed"
-                    )
-                    _update_rebuild_progress(
-                        runtime_root,
-                        git_records_total=git_commits_indexed,
-                        git_records_completed=git_commits_indexed,
-                        git_batches_total=completed_git_batches,
-                    )
-                    _append_message(
-                        runtime_root,
-                        (
-                            f"✅ Indexed git repository {repo_path} "
-                            f"({git_commits_indexed} total commits)"
-                        ),
-                    )
-                    _update_rebuild_progress(
-                        runtime_root,
-                        current_git_repository=None,
-                    )
-
-                if repos:
-                    _append_message(
-                        runtime_root,
-                        (
-                            "✅ Successfully indexed "
-                            f"{git_commits_indexed} git commits from {git_repositories} repositories"
-                        ),
-                    )
-                else:
-                    _append_message(runtime_root, "ℹ️  No git repositories found")
+        git_repositories, git_commits_indexed = _index_rebuild_git(
+            runtime_root=runtime_root,
+            config=config,
+            index_manager=index_manager,
+            repos=repos,
+            checkpoint=checkpoint,
+        )
 
         vocabulary_scheduled = False
         if schedule_vocabulary_catch_up is not None:
