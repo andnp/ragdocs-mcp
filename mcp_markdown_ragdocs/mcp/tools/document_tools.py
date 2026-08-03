@@ -337,7 +337,14 @@ async def handle_search_with_hypothesis(
     excluded_files = None
     if excluded_files_raw:
         docs_root = ctx.orchestrator.documents_path
-        excluded_files = {normalize_path(f, docs_root) for f in excluded_files_raw}
+        docs_roots = tuple(getattr(ctx, "documents_roots", ())) or (
+            ctx.orchestrator.documents_path,
+        )
+        excluded_files = {
+            normalize_path(f, docs_root)
+            for f in excluded_files_raw
+            for docs_root in docs_roots
+        }
 
     top_k = max(20, top_n * 4)
     if project_filter:
