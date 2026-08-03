@@ -9,6 +9,9 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from mcp.client import ClientSession
+from mcp.shared.memory import create_client_server_memory_streams
+from mcp.types import Tool
 
 pytest.importorskip("zmq")
 
@@ -335,6 +338,47 @@ async def test_mcp_run_stays_daemon_idle_on_startup(monkeypatch: pytest.MonkeyPa
     )
 
     await server.run()
+
+
+@pytest.mark.asyncio
+async def test_mcp_v2_stdio_initialization_lists_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = MCPServer()
+    monkeypatch.setattr(
+        server,
+        "_get_remote_tools",
+        lambda: _fake_tools(),
+    )
+
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        server_task = asyncio.create_task(
+            server.server.run(
+                *server_streams,
+                server.server.create_initialization_options(),
+            )
+        )
+        try:
+            async with ClientSession(*client_streams) as client:
+                initialization = await client.initialize()
+                listed = await client.list_tools()
+        finally:
+            server_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await server_task
+
+    assert initialization.server_info.name == "mcp-markdown-ragdocs"
+    assert [tool.name for tool in listed.tools] == ["query_documents"]
+
+
+async def _fake_tools() -> list[Tool]:
+    return [
+        Tool(
+            name="query_documents",
+            description="Search docs",
+            input_schema={"type": "object"},
+        )
+    ]
 
 
 @pytest.mark.asyncio
