@@ -5,7 +5,12 @@ from typing import Any, cast
 from pathlib import Path
 
 from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
-from mcp_markdown_ragdocs.worker.process import HueyWorkerProcess, is_expected_daemon_parent
+from mcp_markdown_ragdocs.worker.process import (
+    HueyWorkerProcess,
+    _read_worker_status,
+    _remove_worker_status,
+    is_expected_daemon_parent,
+)
 
 
 class _FakeProcess:
@@ -229,3 +234,18 @@ def test_worker_process_start_terminates_runtime_matching_workers(
     worker.start()
 
     assert terminated == [111]
+
+
+def test_worker_process_status_file_handles_invalid_json_and_cleanup(tmp_path: Path):
+    paths = _paths(tmp_path)
+    status_path = paths.root / "worker.json"
+    status_path.write_text("{invalid", encoding="utf-8")
+
+    assert _read_worker_status(paths) == {}
+
+    status_path.write_text('{"status": "ready"}', encoding="utf-8")
+    assert _read_worker_status(paths) == {"status": "ready"}
+
+    _remove_worker_status(paths)
+    _remove_worker_status(paths)
+    assert not status_path.exists()

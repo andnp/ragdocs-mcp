@@ -1,9 +1,11 @@
 from pathlib import Path
+from typing import cast
 
 import pytest
 from searchkernel.api import (
     ActiveModelMetadata,
     CURRENT_MANIFEST_SPEC_VERSION,
+    EmbeddingProvider,
     IndexManifest,
     MigrationPhase,
     MigrationState,
@@ -15,9 +17,14 @@ from searchkernel.api import (
 from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.indexing.reindex import (
     ManifestModelLifecycleStore,
+    _DeferredEmbeddingProvider,
+    PgvectorReindexStore,
+    build_embedding_provider,
     default_reindex_status,
+    read_reindex_status,
     reindex_status_payload,
     run_reindex_operation,
+    submit_reindex_status,
     write_reindex_status,
 )
 
@@ -78,3 +85,50 @@ def test_legacy_chunk_backend_rejects_durable_migration(tmp_path: Path):
             truncate_dim=None,
             old_model=None,
         )
+
+
+def test_reindex_status_recovers_from_invalid_payload(tmp_path: Path):
+    status_path = tmp_path / "reindex-status.json"
+    status_path.write_text("[]", encoding="utf-8")
+    assert read_reindex_status(tmp_path)["status"] == "idle"
+
+    status_path.write_text("{invalid", encoding="utf-8")
+    assert read_reindex_status(tmp_path)["phase"] == "idle"
+
+    queued = submit_reindex_status(
+        tmp_path,
+        operation="start",
+        request_id="request-1",
+        model="new-model",
+        truncate_dim=1024,
+        old_model="old-model",
+    )
+    assert queued["status"] == "queued"
+    assert queued["request_id"] == "request-1"
+
+
+def test_reindex_provider_and_namespace_helpers_validate_inputs(tmp_path: Path):
+    config = Config()
+    config.embedding.provider = "huggingface"
+    with pytest.raises(ReindexError, match="unsupported reindex embedding provider"):
+        build_embedding_provider(config, "new-model", None)
+
+    with pytest.raises(ReindexError, match="requires store.pg_dsn"):
+        PgvectorReindexStore("")
+
+    assert PgvectorReindexStore._sanitize_model_name("BAAI/bge-small") != ""
+    assert PgvectorReindexStore._vector_literal([1, 2.5]) == "[1.0,2.5]"
+
+    class _Provider:
+        model_name = "new-model"
+        dim = 2
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[float(len(texts))] * 2]
+
+    provider = _DeferredEmbeddingProvider(
+        "new-model",
+        2,
+        lambda: cast(EmbeddingProvider, _Provider()),
+    )
+    assert provider.embed(["one"]) == [[1.0, 1.0]]

@@ -17,6 +17,7 @@ from mcp_markdown_ragdocs.config import (
     SearchConfig,
 )
 from mcp_markdown_ragdocs.context import ApplicationContext
+from mcp_markdown_ragdocs.context import IndexState, _git_commit_id
 
 
 @pytest.fixture
@@ -49,6 +50,19 @@ def test_create_initializes_components(context_with_config):
     assert ctx.index_manager is not None
     assert ctx.orchestrator is not None
     assert ctx.watcher is None  # disabled
+
+
+def test_index_state_serializes_availability_and_git_ids():
+    state = IndexState(status="partial", indexed_count=1, total_count=2)
+    assert state.to_dict()["status"] == "partial"
+    assert _git_commit_id("git:abc123:chunk:0") == "git:abc123"
+    assert _git_commit_id("note:1") == "note:1"
+
+
+@pytest.mark.asyncio
+async def test_ensure_ready_times_out_before_bootstrap(context_with_config):
+    with pytest.raises(RuntimeError, match="timed out"):
+        await context_with_config.ensure_ready(timeout=0)
 
 
 def test_create_with_watcher_enabled(test_config, monkeypatch):
