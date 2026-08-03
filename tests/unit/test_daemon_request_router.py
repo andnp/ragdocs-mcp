@@ -252,6 +252,40 @@ async def test_search_query_route_executes_query_when_ready() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_query_route_returns_current_use_case_diagnostics() -> None:
+    ctx = _FakeContext(ready=True)
+    ctx.orchestrator.last_query_execution_stats = {
+        "degraded": False,
+        "failures": [],
+    }
+
+    async def _execute(_request):
+        return SimpleNamespace(
+            results=[],
+            compression_stats=SimpleNamespace(
+                to_dict=lambda: {"after_dedup": 0},
+            ),
+            strategy_stats=SimpleNamespace(
+                to_dict=lambda: {"vector_count": 0},
+            ),
+            query_execution_stats={
+                "degraded": True,
+                "failures": ["vector unavailable"],
+            },
+        )
+
+    ctx.search_use_case = SimpleNamespace(execute=_execute)
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    payload = await handler("/api/search/query", {"query": "degraded search"})
+
+    assert payload["query_execution_stats"] == {
+        "degraded": True,
+        "failures": ["vector unavailable"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_internal_shutdown_route_requests_shutdown() -> None:
     ctx = _FakeContext(ready=True)
     coordinator = _FakeCoordinator()

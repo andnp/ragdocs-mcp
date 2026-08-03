@@ -600,6 +600,7 @@ async def _handle_search_request(
         search_use_case = getattr(ctx, "search_use_case", None)
         if search_use_case is None:
             search_use_case = getattr(ctx.orchestrator, "search_use_case", None)
+        query_execution_stats: dict[str, object] = {}
         if search_use_case is not None:
             execution = await search_use_case.execute(
                 SearchQuery(
@@ -617,6 +618,7 @@ async def _handle_search_request(
             results = execution.results
             compression_stats = execution.compression_stats
             strategy_stats = execution.strategy_stats
+            query_execution_stats = execution.query_execution_stats
         else:
             top_k = max(20, top_n * 4)
             if project_filter:
@@ -637,13 +639,14 @@ async def _handle_search_request(
                 result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
                 for result in results
             ]
+            query_execution_stats = ctx.orchestrator.last_query_execution_stats or {}
         await ctx.orchestrator.drain_reindex()
         return {
             "query": query_text,
             "results": [result.to_dict() for result in results],
             "compression_stats": compression_stats.to_dict(),
             "strategy_stats": strategy_stats.to_dict(),
-            "query_execution_stats": ctx.orchestrator.last_query_execution_stats or {},
+            "query_execution_stats": query_execution_stats,
         }
     if path == "/api/search/git-history":
         if not ctx.git_indexing_enabled:
