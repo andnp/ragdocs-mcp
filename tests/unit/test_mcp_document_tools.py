@@ -74,14 +74,10 @@ async def test_query_documents_returns_initializing_text_on_true_cold_start() ->
     assert len(contents) == 1
     payload = _parse_query_documents_response(contents[0].text)
     assert "schema_version" not in payload
-    assert payload["status"] == "initializing"
-    assert payload["results"] == []
-    assert payload["meta"]["query"] == "daemon startup"
-    assert payload["meta"]["index_state"] == {
-        "status": "indexing",
-        "indexed_count": 0,
-        "total_count": 12,
-        "last_error": None,
+    assert payload == {
+        "status": "initializing",
+        "message": "Search indices are still initializing. Retry shortly.",
+        "results": [],
     }
 
 
@@ -97,8 +93,8 @@ async def test_query_documents_preserves_validation_errors_during_cold_start() -
     assert len(contents) == 1
     payload = _parse_query_documents_response(contents[0].text)
     assert payload["status"] == "error"
-    assert payload["meta"]["error"] == "validation_error"
-    assert "cannot be empty" in payload["meta"]["message"]
+    assert payload["error"] == "validation_error"
+    assert "cannot be empty" in payload["message"]
 
 
 @pytest.mark.asyncio
@@ -215,9 +211,9 @@ async def test_query_documents_rejects_legacy_scope_aliases() -> None:
 
     payload = _parse_query_documents_response(contents[0].text)
     assert payload["status"] == "error"
-    assert payload["meta"]["error"] == "validation_error"
+    assert payload["error"] == "validation_error"
     assert (
-        payload["meta"]["message"]
+        payload["message"]
         == "Unexpected parameter(s): project_context, project_filter. query_documents now accepts canonical scope fields only"
     )
 

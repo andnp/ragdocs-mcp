@@ -35,7 +35,7 @@ from mcp_markdown_ragdocs.mcp.validation import (
     validate_string_list,
 )
 from mcp_markdown_ragdocs.models import ChunkResult
-from searchkernel.api import classify_query_type, normalize_path
+from searchkernel.api import normalize_path
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +216,6 @@ async def _query_documents_impl(
     if cold_start_payload is not None:
         status = str(cold_start_payload.get("status", "initializing"))
         response = build_query_documents_status_envelope(
-            request,
             status=status,
             payload=cold_start_payload,
         ).render_text()
@@ -267,13 +266,11 @@ async def _query_documents_impl(
             )
         )
         results = execution.results
-        stats = execution.compression_stats
-        strategy_stats = execution.strategy_stats
     else:
         top_k = max(20, request.top_n * 4)
         if request.project_filter:
             top_k = max(top_k, request.top_n * 10)
-        results, stats, strategy_stats = await ctx.orchestrator.query(
+        results, _, _ = await ctx.orchestrator.query(
             request.query,
             top_k=top_k,
             top_n=request.top_n,
@@ -290,14 +287,8 @@ async def _query_documents_impl(
         for result in results
     ]
 
-    query_type = classify_query_type(request.query)
     response = build_query_documents_response_envelope(
-        request,
-        query_type=query_type,
         results=results,
-        strategy_stats=strategy_stats,
-        compression_stats=stats,
-        effective_project_context=project_context,
     ).render_text()
 
     return [TextContent(type="text", text=response)]
