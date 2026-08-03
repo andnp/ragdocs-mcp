@@ -43,6 +43,7 @@ from mcp_markdown_ragdocs.indexing.rebuild_service import (
     run_rebuild,
     write_rebuild_status,
 )
+from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
 from mcp_markdown_ragdocs.indexing.reindex import (
     run_reindex_operation,
     write_reindex_status,
@@ -306,6 +307,628 @@ def _flush_deferred_git_refreshes() -> None:
             )
 
 
+def _index_document(file_path: str, force: bool = False) -> bool:
+    """Index or re-index a single document."""
+    if _index_manager is None:
+        logger.error("IndexManager not available for task execution")
+        return False
+    manager = _index_manager
+
+    def _operation() -> bool:
+        try:
+            manager.index_document(file_path, force=force)
+            manager.persist()
+            if _bootstrap_index_path is not None and _bootstrap_documents_roots:
+                mark_bootstrap_file_completed(
+                    _bootstrap_index_path,
+                    _bootstrap_documents_roots,
+                    file_path,
+                )
+            logger.info("Task completed: indexed %s", file_path)
+            return True
+        except Exception:
+            logger.exception("Task failed: index %s", file_path)
+            return False
+
+    return _run_as_writer(_operation, busy_result=False)
+
+def _index_documents_batch(
+    file_paths: list[str],
+    force: bool = False,
+    progressive: bool = False,
+) -> bool:
+    """Index a burst of documents and persist once after the batch."""
+    if _index_manager is None:
+        logger.error("IndexManager not available for batch task execution")
+        return False
+    manager = _index_manager
+
+    unique_file_paths = list(dict.fromkeys(file_paths))
+    if not unique_file_paths:
+        return True
+
+    progressive_index = getattr(
+        _index_manager,
+        "prepare_progressive_document",
+        None,
+    )
+    if (
+        progressive
+        and not force
+        and progressive_index is not None
+        and _bootstrap_index_path is not None
+        and _bootstrap_documents_roots
+        and has_incomplete_bootstrap_checkpoint(_bootstrap_index_path)
+    ):
+        def _progressive_operation() -> bool:
+            try:
+                receipt = run_progressive_bootstrap(
+                    cast(ProgressiveIndexManager, manager),
+                    unique_file_paths,
+                    documents_roots=_bootstrap_documents_roots,
+                )
+            except Exception:
+                logger.exception(
+                    "Progressive bootstrap task failed for %d document(s)",
+                    len(unique_file_paths),
+                )
+                return False
+            logger.info(
+                "Task completed: progressively indexed %d document(s)",
+                receipt.successful,
+            )
+            return receipt.failed == 0
+
+        return _run_as_writer(_progressive_operation, busy_result=False)
+
+    def _operation() -> bool:
+        completed_paths: list[str] = []
+        failures: list[str] = []
+
+        try:
+            manager.index_documents(
+                unique_file_paths,
+                force=force,
+                persist=True,
+            )
+            completed_paths = unique_file_paths
+        except Exception:
+            logger.warning(
+                "Batch index task failed; retrying files individually before one final persist",
+                exc_info=True,
+            )
+            for file_path in unique_file_paths:
+                try:
+                    manager.index_document(file_path, force=force)
+                    completed_paths.append(file_path)
+                except Exception:
+                    failures.append(file_path)
+                    logger.exception(
+                        "Task failed within batch: index %s",
+                        file_path,
+                    )
+
+            if completed_paths:
+                try:
+                    manager.persist()
+                except Exception:
+                    logger.exception(
+                        "Batch fallback persist failed for %d indexed document(s)",
+                        len(completed_paths),
+                    )
+                    return False
+
+        if (
+            completed_paths
+            and _bootstrap_index_path is not None
+            and _bootstrap_documents_roots
+        ):
+            mark_bootstrap_files_completed(
+                _bootstrap_index_path,
+                _bootstrap_documents_roots,
+                completed_paths,
+            )
+
+        logger.info(
+            "Task completed: indexed %d document(s) in batch%s",
+            len(completed_paths),
+            "" if not failures else f" with {len(failures)} failure(s)",
+        )
+        return not failures
+
+    return _run_as_writer(_operation, busy_result=False)
+
+@_writer_owned_task(
+    busy_result={
+        "status": "error",
+        "error": "index_writer_busy",
+        "details": "Index writer is owned by a rebuild. Retry shortly.",
+    }
+)
+def _index_records_batch(
+    record_payloads: list[dict[str, object]],
+) -> dict[str, object]:
+    """Deserialize, index, and persist a Record batch in the worker.
+
+    Record ingestion comes from separate applications, so keeping the
+    entire write path in the worker prevents the daemon and worker from
+    mutating the same persisted index concurrently.
+    """
+    if _index_manager is None:
+        logger.error("IndexManager not available for record batch task")
+        return {
+            "status": "error",
+            "error": "record_queue_unavailable",
+            "details": "Index worker is not configured.",
+        }
+    from mcp_markdown_ragdocs.daemon.record_rpc import (
+        RecordSerializationError,
+        deserialize_record,
+    )
+
+    records = []
+    for index, payload in enumerate(record_payloads):
+        try:
+            records.append(deserialize_record(payload))
+        except RecordSerializationError as exc:
+            return {
+                "status": "error",
+                "error": "invalid_record",
+                "record_index": index,
+                "details": str(exc),
+            }
+
+    if not records:
+        return {"status": "ok", "indexed_count": 0}
+
+    for index, record in enumerate(records):
+        try:
+            _index_manager.index_record(record)
+        except Exception as exc:
+            logger.exception(
+                "Task failed within record batch at index %d",
+                index,
+            )
+            return {
+                "status": "error",
+                "error": "record_indexing_failed",
+                "record_index": index,
+                "indexed_count": index,
+                "details": str(exc),
+            }
+
+    try:
+        _index_manager.persist()
+    except Exception as exc:
+        logger.exception("Task failed to persist record batch")
+        return {
+            "status": "error",
+            "error": "record_indexing_failed",
+            "indexed_count": len(records),
+            "details": str(exc),
+        }
+
+    logger.info("Task completed: indexed %d record(s) in batch", len(records))
+    return {"status": "ok", "indexed_count": len(records)}
+
+@_writer_owned_task(busy_result=False)
+def _remove_document(doc_id: str) -> bool:
+    """Remove a document from all indices."""
+    if _index_manager is None:
+        logger.error("IndexManager not available for task execution")
+        return False
+    try:
+        _index_manager.remove_document(doc_id)
+        _index_manager.persist()
+        logger.info("Task completed: removed %s", doc_id)
+        return True
+    except Exception:
+        logger.exception("Task failed: remove %s", doc_id)
+        return False
+
+@_writer_owned_task(busy_result=False)
+def _remove_documents_batch(doc_ids: list[str]) -> bool:
+    """Remove a burst of documents and persist once after the batch."""
+    if _index_manager is None:
+        logger.error("IndexManager not available for batch task execution")
+        return False
+    unique_doc_ids = list(dict.fromkeys(doc_ids))
+    if not unique_doc_ids:
+        return True
+
+    removed_doc_ids: list[str] = []
+    failures: list[str] = []
+
+    try:
+        _index_manager.remove_documents(unique_doc_ids, persist=True)
+        removed_doc_ids = unique_doc_ids
+    except Exception:
+        logger.warning(
+            "Batch remove task failed; retrying documents individually before one final persist",
+            exc_info=True,
+        )
+        for doc_id in unique_doc_ids:
+            try:
+                _index_manager.remove_document(doc_id)
+                removed_doc_ids.append(doc_id)
+            except Exception:
+                failures.append(doc_id)
+                logger.exception(
+                    "Task failed within batch: remove %s",
+                    doc_id,
+                )
+
+        if removed_doc_ids:
+            try:
+                _index_manager.persist()
+            except Exception:
+                logger.exception(
+                    "Batch fallback persist failed for %d removed document(s)",
+                    len(removed_doc_ids),
+                )
+                return False
+
+    logger.info(
+        "Task completed: removed %d document(s) in batch%s",
+        len(removed_doc_ids),
+        "" if not failures else f" with {len(failures)} failure(s)",
+    )
+    return not failures
+
+@_writer_owned_task(busy_result=False, on_busy=_defer_git_refresh)
+def _refresh_git_repository(git_dir: str) -> bool:
+    """Refresh the git index for one repository."""
+    if _index_manager is None:
+        logger.error("IndexManager not available for git refresh task")
+        return False
+    manager = _index_manager
+    from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
+    from mcp_markdown_ragdocs.indexing.git_ingestion import (
+        iter_git_ingestion_receipts,
+    )
+    git_dir_path = Path(git_dir).resolve()
+    repo_key = str(git_dir_path)
+    with _git_refresh_lock:
+        if repo_key in _git_refresh_in_flight:
+            logger.info("Skipping git refresh already running for %s", git_dir_path)
+            return True
+        _git_refresh_in_flight.add(repo_key)
+
+    started_at = datetime.now(UTC)
+    _save_git_refresh_progress(
+        git_dir_path,
+        state="running",
+        started_at=started_at,
+        processed_count=0,
+        discovered_count=0,
+        processed_chunk_count=0,
+        discovered_chunk_count=0,
+        error=None,
+        completed_at=None,
+    )
+    processed_commit_ids: set[str] = set()
+    discovered_commit_ids: set[str] = set()
+    indexed = 0
+    discovered = 0
+    indexed_chunks = 0
+    discovered_chunks = 0
+    latest_cursor: int | None = None
+    initial_embedding_metrics: dict[str, int] = {}
+    try:
+        refresh_head = get_git_ref_signature(git_dir_path)
+        cursor = (
+            get_cursor(_bootstrap_index_path, git_dir_path)
+            if _bootstrap_index_path is not None
+            else None
+        )
+        if (
+            _bootstrap_index_path is not None
+            and refresh_head is not None
+            and cursor is not None
+            and get_head(_bootstrap_index_path, git_dir_path) == refresh_head
+        ):
+            logger.debug("Skipping unchanged git repository %s", git_dir_path)
+            _save_git_refresh_progress(
+                git_dir_path,
+                state="skipped",
+                started_at=started_at,
+                cursor=cursor,
+                processed_count=0,
+                discovered_count=0,
+                completed_at=datetime.now(UTC).isoformat(),
+            )
+            return True
+
+        since = str(max(0, cursor - 1)) if cursor is not None else None
+        source = GitContentSource(git_dir_path)
+        latest_cursor = cursor
+        initial_embedding_metrics = _embedding_cache_metrics(manager)
+
+        async def _ingest() -> None:
+            nonlocal discovered, discovered_chunks, indexed, indexed_chunks, latest_cursor
+            async for receipt in iter_git_ingestion_receipts(
+                manager,
+                source,
+                since=since,
+                batch_size=GIT_REFRESH_BATCH_SIZE,
+            ):
+                discovered_chunks += len(receipt.records)
+                discovered_commit_ids.update(
+                    commit_id
+                    for result in receipt.records
+                    if (commit_id := _git_commit_id_from_result(result)) is not None
+                )
+                result_success_flags = [
+                    getattr(result, "successful", None) for result in receipt.records
+                ]
+                if any(isinstance(flag, bool) for flag in result_success_flags):
+                    successful_results = [
+                        result
+                        for result, successful in zip(
+                            receipt.records, result_success_flags, strict=True
+                        )
+                        if successful is True
+                    ]
+                else:
+                    successful_results = (
+                        list(receipt.records) if receipt.failed == 0 else []
+                    )
+                indexed_chunks += len(successful_results)
+                processed_commit_ids.update(
+                    commit_id
+                    for result in successful_results
+                    if (commit_id := _git_commit_id_from_result(result)) is not None
+                )
+                indexed = len(processed_commit_ids)
+                discovered = len(discovered_commit_ids)
+                if receipt.checkpoint is not None:
+                    latest_cursor = max(latest_cursor or 0, int(receipt.checkpoint))
+                current_embedding_metrics = _embedding_cache_metrics(manager)
+                metric_deltas = {
+                    key: value - initial_embedding_metrics.get(key, 0)
+                    for key, value in current_embedding_metrics.items()
+                }
+                if receipt.failed:
+                    _save_git_refresh_progress(
+                        git_dir_path,
+                        state="failed",
+                        started_at=started_at,
+                        cursor=latest_cursor,
+                        processed_count=indexed,
+                        discovered_count=discovered,
+                        processed_chunk_count=indexed_chunks,
+                        discovered_chunk_count=discovered_chunks,
+                        error=f"{receipt.failed} record(s) failed",
+                        metrics=metric_deltas,
+                    )
+                    raise RuntimeError(
+                        f"Git ingestion failed for {git_dir_path}: "
+                        f"{receipt.failed} record(s)"
+                    )
+                manager.persist()
+                if _bootstrap_index_path is not None and latest_cursor is not None:
+                    save_cursor(_bootstrap_index_path, git_dir_path, latest_cursor)
+                _save_git_refresh_progress(
+                    git_dir_path,
+                    state="running",
+                    started_at=started_at,
+                    cursor=latest_cursor,
+                    processed_count=indexed,
+                    discovered_count=discovered,
+                    processed_chunk_count=indexed_chunks,
+                    discovered_chunk_count=discovered_chunks,
+                    metrics=metric_deltas,
+                )
+
+        asyncio.run(_ingest())
+        if _bootstrap_index_path is not None and refresh_head is not None:
+            # Persist the head observed before ingestion. A commit created
+            # during the task must remain visible to the next poll.
+            save_head(_bootstrap_index_path, git_dir_path, refresh_head)
+        final_embedding_metrics = _embedding_cache_metrics(manager)
+        metric_deltas = {
+            key: value - initial_embedding_metrics.get(key, 0)
+            for key, value in final_embedding_metrics.items()
+        }
+        _save_git_refresh_progress(
+            git_dir_path,
+            state="completed",
+            started_at=started_at,
+            cursor=latest_cursor,
+            processed_count=indexed,
+            discovered_count=discovered,
+            processed_chunk_count=indexed_chunks,
+            discovered_chunk_count=discovered_chunks,
+            completed_at=datetime.now(UTC).isoformat(),
+            error=None,
+            metrics=metric_deltas,
+        )
+        logger.info(
+            "Task completed: refreshed git repository %s (%d commits)",
+            git_dir_path,
+            indexed,
+        )
+        return True
+    except Exception as error:
+        final_embedding_metrics = _embedding_cache_metrics(manager)
+        metric_deltas = {
+            key: value - initial_embedding_metrics.get(key, 0)
+            for key, value in final_embedding_metrics.items()
+        }
+        _save_git_refresh_progress(
+            git_dir_path,
+            state="failed",
+            started_at=started_at,
+            cursor=latest_cursor,
+            processed_count=indexed,
+            discovered_count=discovered,
+            processed_chunk_count=indexed_chunks,
+            discovered_chunk_count=discovered_chunks,
+            error=str(error),
+            completed_at=datetime.now(UTC).isoformat(),
+            metrics=metric_deltas,
+        )
+        logger.exception("Task failed: refresh git %s", git_dir_path)
+        return False
+    finally:
+        with _git_refresh_lock:
+            _git_refresh_in_flight.discard(repo_key)
+            if repo_key not in _git_refresh_deferred:
+                _git_refresh_pending.discard(repo_key)
+
+def _rebuild_index(project_override: str | None, request_id: str) -> bool:
+    """Run a daemon-owned rebuild inside the long-lived worker runtime."""
+    if _index_manager is None:
+        logger.error("IndexManager not available for rebuild task execution")
+        return False
+    if _bootstrap_index_path is None:
+        logger.error("Runtime root not configured for rebuild task execution")
+        return False
+    runtime_root = _bootstrap_index_path
+    manager = _index_manager
+
+    from mcp_markdown_ragdocs.config import load_config
+
+    def _operation() -> dict[str, object]:
+        try:
+            return run_rebuild(
+                runtime_root=runtime_root,
+                config=load_config(),
+                index_manager=manager,
+                global_documents_roots=_bootstrap_documents_roots,
+                request_id=request_id,
+                project_override=project_override,
+                schedule_vocabulary_catch_up=None,
+            )
+        except Exception as exc:
+            logger.exception("Task failed: rebuild index")
+            return {"status": "failed", "error": str(exc)}
+
+    payload = _run_as_writer(
+        _operation,
+        owner_token=request_id,
+        busy_result={"status": "failed", "error": "index_writer_busy"},
+    )
+    if payload.get("error") != "index_writer_busy":
+        payload = write_rebuild_status(
+            runtime_root,
+            {
+                **payload,
+                "writer_owned": False,
+                "writer_owner": None,
+            },
+        )
+    if payload.get("status") == "succeeded" and _schedule_vocabulary_catch_up is not None:
+        try:
+            scheduled = bool(_schedule_vocabulary_catch_up())
+        except Exception:
+            logger.warning(
+                "Failed to schedule vocabulary catch-up after rebuild",
+                exc_info=True,
+            )
+        else:
+            if scheduled:
+                write_rebuild_status(
+                    runtime_root,
+                    {
+                        **payload,
+                        "vocabulary_catch_up_scheduled": True,
+                    },
+                )
+    return payload.get("status") == "succeeded"
+
+@_writer_owned_task(
+    busy_result={
+        "status": "error",
+        "error": "index_writer_busy",
+        "details": "Index writer is owned by a rebuild. Retry shortly.",
+    }
+)
+def _reindex_model(
+    operation: str,
+    model: str | None,
+    truncate_dim: int | None,
+    old_model: str | None,
+    request_id: str,
+) -> dict[str, object]:
+    """Run one durable model-migration operation in the worker."""
+    if _index_manager is None:
+        return {"status": "error", "error": "reindex_queue_unavailable"}
+    if _bootstrap_index_path is None:
+        return {"status": "error", "error": "reindex_runtime_unavailable"}
+    from mcp_markdown_ragdocs.config import load_config
+
+    runtime_root = _bootstrap_index_path
+    write_reindex_status(
+        runtime_root,
+        {
+            "status": "running",
+            "operation": operation,
+            "request_id": request_id,
+            "model": model,
+            "truncate_dim": truncate_dim,
+            "old_model": old_model,
+            "phase": "running",
+            "started_at": datetime.now(UTC).isoformat(),
+            "error": None,
+        },
+    )
+    try:
+        config = getattr(_index_manager, "_config", None) or load_config()
+        state = run_reindex_operation(
+            config=config,
+            index_path=runtime_root,
+            runtime_root=runtime_root,
+            operation=operation,
+            model=model,
+            truncate_dim=truncate_dim,
+            old_model=old_model,
+        )
+
+        namespace = state.source if state.phase.value == "rollback" else state.target
+        replace_vector_store = getattr(
+            _index_manager,
+            "replace_vector_store",
+            None,
+        )
+        if callable(replace_vector_store):
+            from mcp_markdown_ragdocs.context import ApplicationContext
+
+            config.llm.embedding_model = namespace.model_name
+            config.embedding.truncate_dim = namespace.dim
+            replace_vector_store(
+                ApplicationContext._build_vector_store(
+                    config,
+                    namespace.model_name,
+                )
+            )
+        return {
+            "status": "ok",
+            "request_id": request_id,
+            "phase": state.phase.value,
+        }
+    except Exception as exc:
+        logger.exception("Task failed: model reindex")
+        write_reindex_status(
+            runtime_root,
+            {
+                "status": "failed",
+                "operation": operation,
+                "request_id": request_id,
+                "model": model,
+                "truncate_dim": truncate_dim,
+                "old_model": old_model,
+                "phase": "failed",
+                "error": str(exc),
+                "completed_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        return {
+            "status": "error",
+            "request_id": request_id,
+            "error": str(exc),
+        }
+
 def register_tasks(
     huey: SqliteHuey,
     index_manager: IndexManagerLike,
@@ -337,644 +960,27 @@ def register_tasks(
         _git_refresh_pending.clear()
         _git_refresh_deferred.clear()
 
-    @huey.task()
-    def _index_document(file_path: str, force: bool = False) -> bool:
-        """Index or re-index a single document."""
-        if _index_manager is None:
-            logger.error("IndexManager not available for task execution")
-            return False
-        manager = _index_manager
-
-        def _operation() -> bool:
-            try:
-                manager.index_document(file_path, force=force)
-                manager.persist()
-                if _bootstrap_index_path is not None and _bootstrap_documents_roots:
-                    mark_bootstrap_file_completed(
-                        _bootstrap_index_path,
-                        _bootstrap_documents_roots,
-                        file_path,
-                    )
-                logger.info("Task completed: indexed %s", file_path)
-                return True
-            except Exception:
-                logger.exception("Task failed: index %s", file_path)
-                return False
-
-        return _run_as_writer(_operation, busy_result=False)
-
-    @huey.task()
-    def _index_documents_batch(
-        file_paths: list[str],
-        force: bool = False,
-        progressive: bool = False,
-    ) -> bool:
-        """Index a burst of documents and persist once after the batch."""
-        if _index_manager is None:
-            logger.error("IndexManager not available for batch task execution")
-            return False
-        manager = _index_manager
-
-        unique_file_paths = list(dict.fromkeys(file_paths))
-        if not unique_file_paths:
-            return True
-
-        progressive_index = getattr(
-            _index_manager,
-            "prepare_progressive_document",
-            None,
-        )
-        if (
-            progressive
-            and not force
-            and progressive_index is not None
-            and _bootstrap_index_path is not None
-            and _bootstrap_documents_roots
-            and has_incomplete_bootstrap_checkpoint(_bootstrap_index_path)
-        ):
-            def _progressive_operation() -> bool:
-                try:
-                    receipt = run_progressive_bootstrap(
-                        cast(ProgressiveIndexManager, manager),
-                        unique_file_paths,
-                        documents_roots=_bootstrap_documents_roots,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Progressive bootstrap task failed for %d document(s)",
-                        len(unique_file_paths),
-                    )
-                    return False
-                logger.info(
-                    "Task completed: progressively indexed %d document(s)",
-                    receipt.successful,
-                )
-                return receipt.failed == 0
-
-            return _run_as_writer(_progressive_operation, busy_result=False)
-
-        def _operation() -> bool:
-            completed_paths: list[str] = []
-            failures: list[str] = []
-
-            try:
-                manager.index_documents(
-                    unique_file_paths,
-                    force=force,
-                    persist=True,
-                )
-                completed_paths = unique_file_paths
-            except Exception:
-                logger.warning(
-                    "Batch index task failed; retrying files individually before one final persist",
-                    exc_info=True,
-                )
-                for file_path in unique_file_paths:
-                    try:
-                        manager.index_document(file_path, force=force)
-                        completed_paths.append(file_path)
-                    except Exception:
-                        failures.append(file_path)
-                        logger.exception(
-                            "Task failed within batch: index %s",
-                            file_path,
-                        )
-
-                if completed_paths:
-                    try:
-                        manager.persist()
-                    except Exception:
-                        logger.exception(
-                            "Batch fallback persist failed for %d indexed document(s)",
-                            len(completed_paths),
-                        )
-                        return False
-
-            if (
-                completed_paths
-                and _bootstrap_index_path is not None
-                and _bootstrap_documents_roots
-            ):
-                mark_bootstrap_files_completed(
-                    _bootstrap_index_path,
-                    _bootstrap_documents_roots,
-                    completed_paths,
-                )
-
-            logger.info(
-                "Task completed: indexed %d document(s) in batch%s",
-                len(completed_paths),
-                "" if not failures else f" with {len(failures)} failure(s)",
-            )
-            return not failures
-
-        return _run_as_writer(_operation, busy_result=False)
-
-    @huey.task()
-    @_writer_owned_task(
-        busy_result={
-            "status": "error",
-            "error": "index_writer_busy",
-            "details": "Index writer is owned by a rebuild. Retry shortly.",
-        }
+    registered_tasks = register_huey_tasks(
+        huey,
+        {
+            "index_document": _index_document,
+            "index_documents_batch": _index_documents_batch,
+            "index_records_batch": _index_records_batch,
+            "remove_document": _remove_document,
+            "remove_documents_batch": _remove_documents_batch,
+            "refresh_git_repository": _refresh_git_repository,
+            "rebuild_index": _rebuild_index,
+            "reindex_model": _reindex_model,
+        },
     )
-    def _index_records_batch(
-        record_payloads: list[dict[str, object]],
-    ) -> dict[str, object]:
-        """Deserialize, index, and persist a Record batch in the worker.
-
-        Record ingestion comes from separate applications, so keeping the
-        entire write path in the worker prevents the daemon and worker from
-        mutating the same persisted index concurrently.
-        """
-        if _index_manager is None:
-            logger.error("IndexManager not available for record batch task")
-            return {
-                "status": "error",
-                "error": "record_queue_unavailable",
-                "details": "Index worker is not configured.",
-            }
-        from mcp_markdown_ragdocs.daemon.record_rpc import (
-            RecordSerializationError,
-            deserialize_record,
-        )
-
-        records = []
-        for index, payload in enumerate(record_payloads):
-            try:
-                records.append(deserialize_record(payload))
-            except RecordSerializationError as exc:
-                return {
-                    "status": "error",
-                    "error": "invalid_record",
-                    "record_index": index,
-                    "details": str(exc),
-                }
-
-        if not records:
-            return {"status": "ok", "indexed_count": 0}
-
-        for index, record in enumerate(records):
-            try:
-                _index_manager.index_record(record)
-            except Exception as exc:
-                logger.exception(
-                    "Task failed within record batch at index %d",
-                    index,
-                )
-                return {
-                    "status": "error",
-                    "error": "record_indexing_failed",
-                    "record_index": index,
-                    "indexed_count": index,
-                    "details": str(exc),
-                }
-
-        try:
-            _index_manager.persist()
-        except Exception as exc:
-            logger.exception("Task failed to persist record batch")
-            return {
-                "status": "error",
-                "error": "record_indexing_failed",
-                "indexed_count": len(records),
-                "details": str(exc),
-            }
-
-        logger.info("Task completed: indexed %d record(s) in batch", len(records))
-        return {"status": "ok", "indexed_count": len(records)}
-
-    @huey.task()
-    @_writer_owned_task(busy_result=False)
-    def _remove_document(doc_id: str) -> bool:
-        """Remove a document from all indices."""
-        if _index_manager is None:
-            logger.error("IndexManager not available for task execution")
-            return False
-        try:
-            _index_manager.remove_document(doc_id)
-            _index_manager.persist()
-            logger.info("Task completed: removed %s", doc_id)
-            return True
-        except Exception:
-            logger.exception("Task failed: remove %s", doc_id)
-            return False
-
-    @huey.task()
-    @_writer_owned_task(busy_result=False)
-    def _remove_documents_batch(doc_ids: list[str]) -> bool:
-        """Remove a burst of documents and persist once after the batch."""
-        if _index_manager is None:
-            logger.error("IndexManager not available for batch task execution")
-            return False
-        unique_doc_ids = list(dict.fromkeys(doc_ids))
-        if not unique_doc_ids:
-            return True
-
-        removed_doc_ids: list[str] = []
-        failures: list[str] = []
-
-        try:
-            _index_manager.remove_documents(unique_doc_ids, persist=True)
-            removed_doc_ids = unique_doc_ids
-        except Exception:
-            logger.warning(
-                "Batch remove task failed; retrying documents individually before one final persist",
-                exc_info=True,
-            )
-            for doc_id in unique_doc_ids:
-                try:
-                    _index_manager.remove_document(doc_id)
-                    removed_doc_ids.append(doc_id)
-                except Exception:
-                    failures.append(doc_id)
-                    logger.exception(
-                        "Task failed within batch: remove %s",
-                        doc_id,
-                    )
-
-            if removed_doc_ids:
-                try:
-                    _index_manager.persist()
-                except Exception:
-                    logger.exception(
-                        "Batch fallback persist failed for %d removed document(s)",
-                        len(removed_doc_ids),
-                    )
-                    return False
-
-        logger.info(
-            "Task completed: removed %d document(s) in batch%s",
-            len(removed_doc_ids),
-            "" if not failures else f" with {len(failures)} failure(s)",
-        )
-        return not failures
-
-    @huey.task()
-    @_writer_owned_task(busy_result=False, on_busy=_defer_git_refresh)
-    def _refresh_git_repository(git_dir: str) -> bool:
-        """Refresh the git index for one repository."""
-        if _index_manager is None:
-            logger.error("IndexManager not available for git refresh task")
-            return False
-        manager = _index_manager
-        from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
-        from mcp_markdown_ragdocs.indexing.git_ingestion import (
-            iter_git_ingestion_receipts,
-        )
-        git_dir_path = Path(git_dir).resolve()
-        repo_key = str(git_dir_path)
-        with _git_refresh_lock:
-            if repo_key in _git_refresh_in_flight:
-                logger.info("Skipping git refresh already running for %s", git_dir_path)
-                return True
-            _git_refresh_in_flight.add(repo_key)
-
-        started_at = datetime.now(UTC)
-        _save_git_refresh_progress(
-            git_dir_path,
-            state="running",
-            started_at=started_at,
-            processed_count=0,
-            discovered_count=0,
-            processed_chunk_count=0,
-            discovered_chunk_count=0,
-            error=None,
-            completed_at=None,
-        )
-        processed_commit_ids: set[str] = set()
-        discovered_commit_ids: set[str] = set()
-        indexed = 0
-        discovered = 0
-        indexed_chunks = 0
-        discovered_chunks = 0
-        latest_cursor: int | None = None
-        initial_embedding_metrics: dict[str, int] = {}
-        try:
-            refresh_head = get_git_ref_signature(git_dir_path)
-            cursor = (
-                get_cursor(_bootstrap_index_path, git_dir_path)
-                if _bootstrap_index_path is not None
-                else None
-            )
-            if (
-                _bootstrap_index_path is not None
-                and refresh_head is not None
-                and cursor is not None
-                and get_head(_bootstrap_index_path, git_dir_path) == refresh_head
-            ):
-                logger.debug("Skipping unchanged git repository %s", git_dir_path)
-                _save_git_refresh_progress(
-                    git_dir_path,
-                    state="skipped",
-                    started_at=started_at,
-                    cursor=cursor,
-                    processed_count=0,
-                    discovered_count=0,
-                    completed_at=datetime.now(UTC).isoformat(),
-                )
-                return True
-
-            since = str(max(0, cursor - 1)) if cursor is not None else None
-            source = GitContentSource(git_dir_path)
-            latest_cursor = cursor
-            initial_embedding_metrics = _embedding_cache_metrics(manager)
-
-            async def _ingest() -> None:
-                nonlocal discovered, discovered_chunks, indexed, indexed_chunks, latest_cursor
-                async for receipt in iter_git_ingestion_receipts(
-                    manager,
-                    source,
-                    since=since,
-                    batch_size=GIT_REFRESH_BATCH_SIZE,
-                ):
-                    discovered_chunks += len(receipt.records)
-                    discovered_commit_ids.update(
-                        commit_id
-                        for result in receipt.records
-                        if (commit_id := _git_commit_id_from_result(result)) is not None
-                    )
-                    result_success_flags = [
-                        getattr(result, "successful", None) for result in receipt.records
-                    ]
-                    if any(isinstance(flag, bool) for flag in result_success_flags):
-                        successful_results = [
-                            result
-                            for result, successful in zip(
-                                receipt.records, result_success_flags, strict=True
-                            )
-                            if successful is True
-                        ]
-                    else:
-                        successful_results = (
-                            list(receipt.records) if receipt.failed == 0 else []
-                        )
-                    indexed_chunks += len(successful_results)
-                    processed_commit_ids.update(
-                        commit_id
-                        for result in successful_results
-                        if (commit_id := _git_commit_id_from_result(result)) is not None
-                    )
-                    indexed = len(processed_commit_ids)
-                    discovered = len(discovered_commit_ids)
-                    if receipt.checkpoint is not None:
-                        latest_cursor = max(latest_cursor or 0, int(receipt.checkpoint))
-                    current_embedding_metrics = _embedding_cache_metrics(manager)
-                    metric_deltas = {
-                        key: value - initial_embedding_metrics.get(key, 0)
-                        for key, value in current_embedding_metrics.items()
-                    }
-                    if receipt.failed:
-                        _save_git_refresh_progress(
-                            git_dir_path,
-                            state="failed",
-                            started_at=started_at,
-                            cursor=latest_cursor,
-                            processed_count=indexed,
-                            discovered_count=discovered,
-                            processed_chunk_count=indexed_chunks,
-                            discovered_chunk_count=discovered_chunks,
-                            error=f"{receipt.failed} record(s) failed",
-                            metrics=metric_deltas,
-                        )
-                        raise RuntimeError(
-                            f"Git ingestion failed for {git_dir_path}: "
-                            f"{receipt.failed} record(s)"
-                        )
-                    manager.persist()
-                    if _bootstrap_index_path is not None and latest_cursor is not None:
-                        save_cursor(_bootstrap_index_path, git_dir_path, latest_cursor)
-                    _save_git_refresh_progress(
-                        git_dir_path,
-                        state="running",
-                        started_at=started_at,
-                        cursor=latest_cursor,
-                        processed_count=indexed,
-                        discovered_count=discovered,
-                        processed_chunk_count=indexed_chunks,
-                        discovered_chunk_count=discovered_chunks,
-                        metrics=metric_deltas,
-                    )
-
-            asyncio.run(_ingest())
-            if _bootstrap_index_path is not None and refresh_head is not None:
-                # Persist the head observed before ingestion. A commit created
-                # during the task must remain visible to the next poll.
-                save_head(_bootstrap_index_path, git_dir_path, refresh_head)
-            final_embedding_metrics = _embedding_cache_metrics(manager)
-            metric_deltas = {
-                key: value - initial_embedding_metrics.get(key, 0)
-                for key, value in final_embedding_metrics.items()
-            }
-            _save_git_refresh_progress(
-                git_dir_path,
-                state="completed",
-                started_at=started_at,
-                cursor=latest_cursor,
-                processed_count=indexed,
-                discovered_count=discovered,
-                processed_chunk_count=indexed_chunks,
-                discovered_chunk_count=discovered_chunks,
-                completed_at=datetime.now(UTC).isoformat(),
-                error=None,
-                metrics=metric_deltas,
-            )
-            logger.info(
-                "Task completed: refreshed git repository %s (%d commits)",
-                git_dir_path,
-                indexed,
-            )
-            return True
-        except Exception as error:
-            final_embedding_metrics = _embedding_cache_metrics(manager)
-            metric_deltas = {
-                key: value - initial_embedding_metrics.get(key, 0)
-                for key, value in final_embedding_metrics.items()
-            }
-            _save_git_refresh_progress(
-                git_dir_path,
-                state="failed",
-                started_at=started_at,
-                cursor=latest_cursor,
-                processed_count=indexed,
-                discovered_count=discovered,
-                processed_chunk_count=indexed_chunks,
-                discovered_chunk_count=discovered_chunks,
-                error=str(error),
-                completed_at=datetime.now(UTC).isoformat(),
-                metrics=metric_deltas,
-            )
-            logger.exception("Task failed: refresh git %s", git_dir_path)
-            return False
-        finally:
-            with _git_refresh_lock:
-                _git_refresh_in_flight.discard(repo_key)
-                if repo_key not in _git_refresh_deferred:
-                    _git_refresh_pending.discard(repo_key)
-
-    @huey.task()
-    def _rebuild_index(project_override: str | None, request_id: str) -> bool:
-        """Run a daemon-owned rebuild inside the long-lived worker runtime."""
-        if _index_manager is None:
-            logger.error("IndexManager not available for rebuild task execution")
-            return False
-        if _bootstrap_index_path is None:
-            logger.error("Runtime root not configured for rebuild task execution")
-            return False
-        runtime_root = _bootstrap_index_path
-        manager = _index_manager
-
-        from mcp_markdown_ragdocs.config import load_config
-
-        def _operation() -> dict[str, object]:
-            try:
-                return run_rebuild(
-                    runtime_root=runtime_root,
-                    config=load_config(),
-                    index_manager=manager,
-                    global_documents_roots=_bootstrap_documents_roots,
-                    request_id=request_id,
-                    project_override=project_override,
-                    schedule_vocabulary_catch_up=None,
-                )
-            except Exception as exc:
-                logger.exception("Task failed: rebuild index")
-                return {"status": "failed", "error": str(exc)}
-
-        payload = _run_as_writer(
-            _operation,
-            owner_token=request_id,
-            busy_result={"status": "failed", "error": "index_writer_busy"},
-        )
-        if payload.get("error") != "index_writer_busy":
-            payload = write_rebuild_status(
-                runtime_root,
-                {
-                    **payload,
-                    "writer_owned": False,
-                    "writer_owner": None,
-                },
-            )
-        if payload.get("status") == "succeeded" and _schedule_vocabulary_catch_up is not None:
-            try:
-                scheduled = bool(_schedule_vocabulary_catch_up())
-            except Exception:
-                logger.warning(
-                    "Failed to schedule vocabulary catch-up after rebuild",
-                    exc_info=True,
-                )
-            else:
-                if scheduled:
-                    write_rebuild_status(
-                        runtime_root,
-                        {
-                            **payload,
-                            "vocabulary_catch_up_scheduled": True,
-                        },
-                    )
-        return payload.get("status") == "succeeded"
-
-    @huey.task()
-    @_writer_owned_task(
-        busy_result={
-            "status": "error",
-            "error": "index_writer_busy",
-            "details": "Index writer is owned by a rebuild. Retry shortly.",
-        }
-    )
-    def _reindex_model(
-        operation: str,
-        model: str | None,
-        truncate_dim: int | None,
-        old_model: str | None,
-        request_id: str,
-    ) -> dict[str, object]:
-        """Run one durable model-migration operation in the worker."""
-        if _index_manager is None:
-            return {"status": "error", "error": "reindex_queue_unavailable"}
-        if _bootstrap_index_path is None:
-            return {"status": "error", "error": "reindex_runtime_unavailable"}
-        from mcp_markdown_ragdocs.config import load_config
-
-        runtime_root = _bootstrap_index_path
-        write_reindex_status(
-            runtime_root,
-            {
-                "status": "running",
-                "operation": operation,
-                "request_id": request_id,
-                "model": model,
-                "truncate_dim": truncate_dim,
-                "old_model": old_model,
-                "phase": "running",
-                "started_at": datetime.now(UTC).isoformat(),
-                "error": None,
-            },
-        )
-        try:
-            config = getattr(_index_manager, "_config", None) or load_config()
-            state = run_reindex_operation(
-                config=config,
-                index_path=runtime_root,
-                runtime_root=runtime_root,
-                operation=operation,
-                model=model,
-                truncate_dim=truncate_dim,
-                old_model=old_model,
-            )
-
-            namespace = state.source if state.phase.value == "rollback" else state.target
-            replace_vector_store = getattr(
-                _index_manager,
-                "replace_vector_store",
-                None,
-            )
-            if callable(replace_vector_store):
-                from mcp_markdown_ragdocs.context import ApplicationContext
-
-                config.llm.embedding_model = namespace.model_name
-                config.embedding.truncate_dim = namespace.dim
-                replace_vector_store(
-                    ApplicationContext._build_vector_store(
-                        config,
-                        namespace.model_name,
-                    )
-                )
-            return {
-                "status": "ok",
-                "request_id": request_id,
-                "phase": state.phase.value,
-            }
-        except Exception as exc:
-            logger.exception("Task failed: model reindex")
-            write_reindex_status(
-                runtime_root,
-                {
-                    "status": "failed",
-                    "operation": operation,
-                    "request_id": request_id,
-                    "model": model,
-                    "truncate_dim": truncate_dim,
-                    "old_model": old_model,
-                    "phase": "failed",
-                    "error": str(exc),
-                    "completed_at": datetime.now(UTC).isoformat(),
-                },
-            )
-            return {
-                "status": "error",
-                "request_id": request_id,
-                "error": str(exc),
-            }
-
-    index_document_task = _index_document
-    index_documents_batch_task = _index_documents_batch
-    index_records_batch_task = _index_records_batch
-    remove_document_task = _remove_document
-    remove_documents_batch_task = _remove_documents_batch
-    refresh_git_repository_task = _refresh_git_repository
-    rebuild_index_task = _rebuild_index
-    reindex_model_task = _reindex_model
+    index_document_task = registered_tasks["index_document"]
+    index_documents_batch_task = registered_tasks["index_documents_batch"]
+    index_records_batch_task = registered_tasks["index_records_batch"]
+    remove_document_task = registered_tasks["remove_document"]
+    remove_documents_batch_task = registered_tasks["remove_documents_batch"]
+    refresh_git_repository_task = registered_tasks["refresh_git_repository"]
+    rebuild_index_task = registered_tasks["rebuild_index"]
+    reindex_model_task = registered_tasks["reindex_model"]
     logger.info("Indexing tasks registered with Huey")
 
 
