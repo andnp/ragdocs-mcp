@@ -154,6 +154,7 @@ async def test_fixture_graph_retrieval_reports_graph_strategy(tmp_path) -> None:
         top_n=5,
     )
 
+    assert strategy.graph_count is not None
     assert strategy.graph_count > 0
     assert results[0].doc_id.endswith("token-lifecycle")
 
