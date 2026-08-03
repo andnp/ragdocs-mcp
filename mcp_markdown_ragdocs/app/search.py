@@ -9,13 +9,32 @@ from pathlib import Path
 from searchkernel.api import (
     CompressionStats,
     Record,
+    RecordSearchConfig,
     RecordSearchOutcome,
     SearchResultProvenance,
     SearchStrategyStats,
 )
 
+from mcp_markdown_ragdocs.config import SearchConfig
 from mcp_markdown_ragdocs.git.results import aggregate_commit_results
 from mcp_markdown_ragdocs.models import ChunkResult
+
+
+def to_record_search_config(config: SearchConfig) -> RecordSearchConfig:
+    """Map supported application settings without calibrating raw RRF scores.
+
+    Deduplication, document limits, and score thresholds remain query policy;
+    recency, project uplift, and reranking have no canonical pipeline equivalent.
+    """
+    return RecordSearchConfig(
+        weighted_rrf_enabled=True,
+        base_semantic_weight=config.semantic_weight,
+        base_keyword_weight=config.keyword_weight,
+        base_graph_weight=1.0,
+        rerank_budget=0,
+        minimum_score=0.0,
+        adaptive_enabled=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -192,4 +211,9 @@ class ApplicationSearchUseCase:
         return bool(candidates & excluded_files)
 
 
-__all__ = ["ApplicationSearchUseCase", "SearchExecution", "SearchQuery"]
+__all__ = [
+    "ApplicationSearchUseCase",
+    "SearchExecution",
+    "SearchQuery",
+    "to_record_search_config",
+]

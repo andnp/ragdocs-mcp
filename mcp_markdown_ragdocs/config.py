@@ -75,16 +75,10 @@ class IndexingConfig:
 
 @dataclass
 class SearchConfig:
-    # `reranking_enabled`, `rerank_top_n`, and `project_uplift_multiplier` will
-    # not turn up in a grep of mcp_markdown_ragdocs/ for their field names --
-    # that is NOT a sign they're inert. context.py passes this whole Config
-    # object straight into searchkernel's SearchOrchestrator, which stores it
-    # verbatim and reads config.search.<field> directly (see
-    # searchkernel.ports.orchestrator_config.OrchestratorSearchTuning, a
-    # runtime-checkable Protocol that SearchConfig structurally satisfies).
-    # DedupRerankStage/RerankStage and ProjectUpliftStage consume these three
-    # fields on every query. Verify wiring here by checking who constructs
-    # SearchOrchestrator, not by grepping for the field name.
+    # The composition root explicitly maps the supported weights into
+    # searchkernel's RecordSearchConfig. The remaining fields are retained as
+    # compatibility settings for request-level policy and have no implicit
+    # effect on the canonical pipeline.
     semantic_weight: float = 1.0
     keyword_weight: float = 1.0
     recency_bias: float = 0.5

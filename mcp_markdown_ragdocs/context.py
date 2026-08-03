@@ -48,7 +48,10 @@ from mcp_markdown_ragdocs.indexing.record_manager import (
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-from mcp_markdown_ragdocs.app.search import ApplicationSearchUseCase
+from mcp_markdown_ragdocs.app.search import (
+    ApplicationSearchUseCase,
+    to_record_search_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +188,7 @@ class ApplicationContext:
             embedding_model_name=embedding_provider.model_name,
             embedding_dim=embedding_provider.dim,
             vector_engine="exact",
+            search_config=to_record_search_config(config.search),
         )
         if not lazy_embeddings:
             logger.info("Embedding provider is daemon-backed; no in-process warmup needed")
