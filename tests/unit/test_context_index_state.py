@@ -1836,6 +1836,30 @@ class TestIsReadyMethods:
         assert mock_context.is_fully_ready() is True
 
 
+def test_index_state_status_is_partial_during_semantic_backfill() -> None:
+    state = IndexState(
+        status="ready",
+        indexed_count=2,
+        total_count=2,
+        availability=SearchAvailability(
+            lexical="available",
+            graph="available",
+            semantic_coarse="complete",
+            semantic_fine="backfilling",
+        ),
+    )
+
+    payload = state.to_dict()
+
+    assert payload["status"] == "partial"
+    assert payload["availability"] == {
+        "lexical": "available",
+        "graph": "available",
+        "semantic_coarse": "complete",
+        "semantic_fine": "backfilling",
+    }
+
+
 class TestGetIndexState:
     """Tests for get_index_state() method."""
 

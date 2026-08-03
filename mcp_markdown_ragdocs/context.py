@@ -74,8 +74,12 @@ class IndexState:
     availability: SearchAvailability | None = None
 
     def to_dict(self) -> dict[str, object]:
+        status = self.status
+        if status == "ready" and self.availability is not None:
+            if not self.availability.is_fully_ready():
+                status = "partial"
         payload: dict[str, object] = {
-            "status": self.status,
+            "status": status,
             "indexed_count": self.indexed_count,
             "total_count": self.total_count,
             "last_error": self.last_error,
