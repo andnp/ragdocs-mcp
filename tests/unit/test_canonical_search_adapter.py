@@ -226,6 +226,42 @@ async def test_document_search_defaults_to_one_chunk_with_multiple_override(adap
 
 
 @pytest.mark.asyncio
+async def test_abstention_threshold_keeps_relevant_raw_scores_only(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    scores = (0.08, 0.015, 0.004)
+    outcome = SimpleNamespace(
+        results=[
+            SimpleNamespace(
+                record=Record(
+                    source_kind="note",
+                    source_id=f"score-{index}",
+                    title="Score fixture",
+                    body=f"Fixture {index}",
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    metadata={"doc_id": f"doc-{index}", "chunk_id": f"chunk-{index}"},
+                ),
+                score=score,
+                provenance=SimpleNamespace(strategies=()),
+            )
+            for index, score in enumerate(scores)
+        ],
+        failures=(),
+        degraded=False,
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return outcome
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="fixture", top_n=5, min_score=0.01),
+        search=fake_search,
+    )
+
+    assert [result.score for result in execution.results] == [0.08, 0.015]
+
+
+@pytest.mark.asyncio
 async def test_query_applies_canonical_source_filter(adapter):
     results, _, _ = await adapter.query(
         "authentication",
