@@ -1378,7 +1378,45 @@ def submit_index_request_batch(
     file_paths: list[str],
     force: bool = False,
 ) -> TaskBatchSubmissionResult:
-    return submit_index_batch(file_paths, force=force)
+    if index_documents_batch_task is None or _huey is None:
+        return TaskBatchSubmissionResult(
+            queue_available=False,
+            requested_unique_count=len(set(file_paths)),
+            enqueued_count=0,
+        )
+    unique_paths = list(dict.fromkeys(file_paths))
+    pending_paths = set() if force else _get_pending_index_document_paths()
+    remaining_paths = [
+        file_path
+        for file_path in unique_paths
+        if force or file_path not in pending_paths
+    ]
+    already_pending_count = len(unique_paths) - len(remaining_paths)
+    if is_backpressured(
+        _huey,
+        _task_backpressure_limit,
+        item=f"{len(remaining_paths)} file(s)",
+        warning_message=(
+            "Skipping %s due to task queue backpressure "
+            "(%d pending >= %d limit)"
+        ),
+    ):
+        return TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=len(unique_paths),
+            enqueued_count=0,
+            already_pending_count=already_pending_count,
+            backpressured_items=tuple(remaining_paths),
+        )
+    submission = submit_index_batch(remaining_paths, force=force)
+    return TaskBatchSubmissionResult(
+        queue_available=True,
+        requested_unique_count=len(unique_paths),
+        enqueued_count=submission.enqueued_count,
+        already_pending_count=already_pending_count
+        + submission.already_pending_count,
+        backpressured_items=submission.backpressured_items,
+    )
 
 
 def submit_record_batch(
@@ -1496,7 +1534,7 @@ def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult
         _huey,
         _task_backpressure_limit,
         item=f"{len(remaining_doc_ids)} document(s)",
-        warning_message="Skipping document batch enqueue due to task queue backpressure (%d pending >= %d limit)",
+        warning_message="Skipping %s due to task queue backpressure (%d pending >= %d limit)",
     ):
         return TaskBatchSubmissionResult(
             queue_available=True,

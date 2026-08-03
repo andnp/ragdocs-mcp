@@ -261,6 +261,15 @@ class TestTaskRegistration:
         assert enqueue_index("/some/file.md") is False
         assert enqueue_remove("some-doc") is False
 
+    def test_submit_index_request_batch_reports_unavailable_queue(self) -> None:
+        submission = submit_index_request_batch(
+            ["/some/file.md", "/some/file.md", "/some/other.md"]
+        )
+
+        assert submission.queue_available is False
+        assert submission.requested_unique_count == 2
+        assert submission.enqueued_count == 0
+
     def test_enqueue_with_registration_returns_true(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
@@ -629,7 +638,10 @@ class TestTaskRegistration:
         assert third_task.args == (["/some/new.md"],)
 
     def test_submit_index_request_batch_reports_only_unrepresented_items_as_backpressured(
-        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
 
@@ -646,6 +658,7 @@ class TestTaskRegistration:
             "/some/new.md",
             "/some/other.md",
         )
+        assert "Skipping 2 file(s) due to task queue backpressure" in caplog.text
 
     def test_forced_index_request_reopens_completed_intent(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -705,7 +718,10 @@ class TestTaskRegistration:
         assert third_task.args == (["docs/new"],)
 
     def test_submit_remove_request_batch_reports_only_unrepresented_items_as_backpressured(
-        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
 
@@ -722,6 +738,7 @@ class TestTaskRegistration:
             "docs/new",
             "docs/other",
         )
+        assert "Skipping 2 document(s) due to task queue backpressure" in caplog.text
 
 
 class TestTaskExecution:
