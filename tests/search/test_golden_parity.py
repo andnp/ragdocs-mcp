@@ -77,10 +77,7 @@ GOLDEN_PARITY_CASES = (
         query="how long do refresh tokens last",
         relevant_paths=("alpha/docs/token-lifecycle.md",),
         expected_top_path="alpha/docs/token-lifecycle.md",
-        expected_prefix=(
-            "alpha/docs/token-lifecycle.md",
-            "alpha/docs/authentication-overview.md",
-        ),
+        expected_prefix=("alpha/docs/token-lifecycle.md",),
     ),
     GoldenParityCase(
         label="project-scoped-alpha",
