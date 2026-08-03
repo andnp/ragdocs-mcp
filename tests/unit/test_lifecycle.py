@@ -302,6 +302,40 @@ class TestDoubleSignal:
         coord._cancel_emergency_timer()
 
 
+class TestLifecycleRecovery:
+    @pytest.mark.asyncio
+    async def test_start_failure_cleans_context_and_terminates(self) -> None:
+        class _FailingContext(FakeContext):
+            async def start(self, background_index: bool = False) -> None:
+                raise RuntimeError("bootstrap failed")
+
+            async def stop(self) -> None:
+                self.stopped = True
+
+        ctx = _FailingContext()
+        coord = _make_coordinator()
+
+        with pytest.raises(RuntimeError, match="bootstrap failed"):
+            await coord.start(cast(Any, ctx))
+
+        assert coord.state == LifecycleState.TERMINATED
+        assert getattr(ctx, "stopped", False) is True
+
+    @pytest.mark.asyncio
+    async def test_background_readiness_failure_is_reported_to_waiters(self) -> None:
+        class _FailingReadyContext(FakeContext):
+            async def ensure_ready(self, timeout: float = 60.0) -> None:
+                raise RuntimeError("index load failed")
+
+        coord = _make_coordinator()
+        await coord.start(cast(Any, _FailingReadyContext()), background_index=True)
+        assert coord._readiness_task is not None
+        await asyncio.gather(coord._readiness_task, return_exceptions=True)
+
+        with pytest.raises(RuntimeError, match="index load failed"):
+            await coord.wait_ready(timeout=0.1)
+
+
 class TestWorkerSupervision:
     @pytest.mark.asyncio
     async def test_supervision_restarts_unhealthy_worker(self) -> None:

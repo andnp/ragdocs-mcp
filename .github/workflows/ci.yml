@@ -117,7 +117,7 @@ jobs:
         run: >-
           uv run pytest -m "not performance"
           --cov=mcp_markdown_ragdocs --cov-report=xml --cov-report=term-missing
-          --cov-fail-under=80
+          --cov-fail-under=81
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

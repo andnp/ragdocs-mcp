@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import signal
 from typing import Any, cast
 from pathlib import Path
@@ -37,6 +38,17 @@ class _FakeProcess:
     def kill(self):
         self.kill_calls += 1
         self._returncode = -9
+
+
+class _HungProcess(_FakeProcess):
+    def send_signal(self, sig: int):
+        self.signals.append(sig)
+
+    def wait(self, timeout: float):
+        self.wait_calls.append(timeout)
+        if self._returncode is not None:
+            return self._returncode
+        raise subprocess.TimeoutExpired("worker", timeout)
 
 
 def _paths(tmp_path: Path) -> RuntimePaths:
@@ -116,6 +128,25 @@ def test_worker_process_stop_sends_sigterm(monkeypatch, tmp_path: Path):
     worker.stop(timeout=2.0)
 
     assert fake_process.signals == [signal.SIGTERM]
+    assert worker.is_running is False
+
+
+def test_worker_process_stop_kills_when_sigterm_times_out(
+    monkeypatch,
+    tmp_path: Path,
+):
+    fake_process = _HungProcess()
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.worker.process._read_process_start_time_ticks",
+        lambda _pid: 4242,
+    )
+    worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
+    worker._process = cast(Any, fake_process)
+
+    worker.stop(timeout=0.0)
+
+    assert fake_process.signals == [signal.SIGTERM]
+    assert fake_process.kill_calls == 1
     assert worker.is_running is False
 
 
@@ -249,3 +280,62 @@ def test_worker_process_status_file_handles_invalid_json_and_cleanup(tmp_path: P
     _remove_worker_status(paths)
     _remove_worker_status(paths)
     assert not status_path.exists()
+
+
+def test_worker_process_health_rejects_stale_or_mismatched_status(
+    monkeypatch,
+    tmp_path: Path,
+):
+    fake_process = _FakeProcess()
+    worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
+    worker._process = cast(Any, fake_process)
+
+    for status in (
+        {"status": "starting", "pid": fake_process.pid, "heartbeat": 100.0},
+        {"status": "ready", "pid": fake_process.pid + 1, "heartbeat": 100.0},
+        {"status": "ready", "pid": fake_process.pid, "heartbeat": "now"},
+    ):
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.process._read_worker_status",
+            lambda _paths, status=status: status,
+        )
+        assert worker.is_healthy() is False
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.worker.process._read_worker_status",
+        lambda _paths: {
+            "status": "ready",
+            "pid": fake_process.pid,
+            "heartbeat": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.worker.process.time.time",
+        lambda: 401.0,
+    )
+    assert worker.is_healthy() is False
+
+
+def test_worker_process_argument_helpers_match_exact_sequences(tmp_path: Path):
+    paths = _paths(tmp_path)
+    argv = [
+        "python",
+        "-m",
+        "mcp_markdown_ragdocs.cli",
+        "worker-run",
+        "--queue-db",
+        str(paths.queue_db_path),
+        "--index-root",
+        str(paths.root),
+    ]
+
+    from mcp_markdown_ragdocs.worker.process import (
+        _argv_contains_sequence,
+        _read_option_value,
+    )
+
+    assert _argv_contains_sequence(argv, ("-m", "mcp_markdown_ragdocs.cli", "worker-run"))
+    assert not _argv_contains_sequence(argv, ("worker-run", "--index-root"))
+    assert _read_option_value(argv, "--queue-db") == str(paths.queue_db_path.resolve())
+    assert _read_option_value(argv, "--missing") is None
+    assert _read_option_value(["--queue-db"], "--queue-db") is None

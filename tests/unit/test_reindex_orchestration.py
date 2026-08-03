@@ -67,6 +67,19 @@ def test_manifest_lifecycle_persists_active_model_and_checkpoint(tmp_path: Path)
     assert loaded["checkpoint"] == 4
 
 
+def test_manifest_lifecycle_rejects_missing_namespace_store_and_stale_cas(
+    tmp_path: Path,
+) -> None:
+    source = ModelNamespace("old-model", 2)
+    target = ModelNamespace("new-model", 3)
+    store = ManifestModelLifecycleStore(tmp_path, source_namespace=source)
+
+    with pytest.raises(ReindexError, match="namespace storage"):
+        store.ensure_namespace(target)
+    assert store.compare_and_set_active_model(ActiveModelMetadata(target), ActiveModelMetadata(source)) is False
+    assert store.load_migration("missing") is None
+
+
 def test_status_defaults_are_explicit_and_durable(tmp_path: Path):
     assert default_reindex_status()["status"] == "idle"
     write_reindex_status(tmp_path, {"status": "running", "phase": "backfill"})

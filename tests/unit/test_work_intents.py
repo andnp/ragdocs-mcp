@@ -129,3 +129,20 @@ def test_failed_indexing_reopens_after_worker_restart(tmp_path: Path) -> None:
     assert recovered is not None
     assert recovered.state == SUCCEEDED
     assert manager.indexed == [str(tmp_path / "doc.md")]
+
+
+def test_claim_release_reopens_intent_but_active_claim_is_exclusive(
+    tmp_path: Path,
+) -> None:
+    store = WorkIntentStore(tmp_path / "queue.db", claim_timeout_seconds=10)
+    intent = store.submit("index_document", "doc.md", {"file_path": "doc.md"}, now=1)
+
+    first = store.claim(intent.intent_id, now=2)
+    assert first is not None
+    assert store.claim(intent.intent_id, now=3) is None
+    assert store.succeed(intent.intent_id, "wrong-token", now=4) is False
+    assert store.release(intent.intent_id, first[1], now=5) is True
+
+    reopened = store.claim(intent.intent_id, now=6)
+    assert reopened is not None
+    assert reopened[0].attempt == 2
