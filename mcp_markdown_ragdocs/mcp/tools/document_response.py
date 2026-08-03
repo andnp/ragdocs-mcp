@@ -138,13 +138,8 @@ class QueryDocumentsResponseEnvelope:
     meta: QueryDocumentsMetaEnvelope
     include_debug: bool = False
 
-    @property
-    def schema_version(self) -> str:
-        return "query_documents.response.v3"
-
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
-            "schema_version": self.schema_version,
             "status": self.status,
             "results": [result.to_dict() for result in self.results],
         }

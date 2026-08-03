@@ -74,7 +74,7 @@ async def test_query_documents_returns_initializing_text_on_true_cold_start() ->
 
     assert len(contents) == 1
     payload = _parse_query_documents_response(contents[0].text)
-    assert payload["schema_version"] == "query_documents.response.v3"
+    assert "schema_version" not in payload
     assert payload["status"] == "initializing"
     assert payload["results"] == []
     assert payload["meta"]["query"] == "daemon startup"
@@ -179,7 +179,7 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
     assert len(contents) == 1
     payload = _parse_query_documents_response(contents[0].text)
     assert payload["status"] == "ok"
-    assert payload["schema_version"] == "query_documents.response.v3"
+    assert "schema_version" not in payload
     assert "meta" not in payload
     assert payload["results"] == [
         {

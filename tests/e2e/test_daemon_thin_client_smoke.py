@@ -244,7 +244,7 @@ async def test_daemon_backed_mcp_query_documents_smoke(
             assert contents is not None
             assert len(contents) == 1
             payload = json.loads(contents[0].text)
-            assert payload["schema_version"] == "query_documents.response.v3"
+            assert "schema_version" not in payload
             assert payload["status"] == "ok"
             assert isinstance(payload["results"], list)
             await _wait_for_daemon_socket(runtime_paths.socket_path)
