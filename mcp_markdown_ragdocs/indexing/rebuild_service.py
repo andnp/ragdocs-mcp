@@ -7,11 +7,16 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
-from mcp_markdown_ragdocs.config import Config, detect_project, resolve_documents_path
+from mcp_markdown_ragdocs.config import (
+    Config,
+    detect_project,
+    resolve_documents_path,
+    resolve_project_id_for_path,
+)
 from mcp_markdown_ragdocs.git.repository import (
     discover_git_repositories,
     discover_git_repositories_multi_root,
@@ -250,10 +255,12 @@ def _ingest_git_repository(
     index_manager,
     repo_path: Path,
     git_commits_indexed: int,
+    workspace_id: str | None = None,
     checkpoint: dict[str, object] | None = None,
     save_checkpoint: Callable[[], None] | None = None,
 ) -> int:
     source = GitContentSource(repo_path)
+    source.workspace_id = workspace_id
     batch: list[Record] = []
     total_indexed = git_commits_indexed
     repo_checkpoint: dict[str, object] | None = None
@@ -319,6 +326,8 @@ def _ingest_git_repository(
         )
 
     for record in source.iter_records():
+        if workspace_id is not None and record.workspace_id != workspace_id:
+            record = replace(record, workspace_id=workspace_id)
         batch.append(record)
         if len(batch) < GIT_REBUILD_BATCH_SIZE:
             continue
@@ -1042,6 +1051,10 @@ def _index_rebuild_git(
                     index_manager=index_manager,
                     repo_path=repo_path,
                     git_commits_indexed=git_commits_indexed,
+                    workspace_id=resolve_project_id_for_path(
+                        repo_path.parent,
+                        config,
+                    ),
                     checkpoint=checkpoint,
                     save_checkpoint=lambda: _save_rebuild_checkpoint(
                         runtime_root,

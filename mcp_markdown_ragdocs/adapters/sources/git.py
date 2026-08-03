@@ -31,7 +31,7 @@ class GitContentSource:
 
     source_kind: str = "git_commit"
 
-    def __init__(self, git_dir: Path):
+    def __init__(self, git_dir: Path, workspace_id: str | None = None):
         """
         Initialize a git content source.
 
@@ -53,6 +53,7 @@ class GitContentSource:
             )
 
         self.repo_path = self.git_dir.parent
+        self.workspace_id = workspace_id
 
     def iter_records(self, since: Cursor | None = None) -> Iterable[Record]:
         """
@@ -143,6 +144,7 @@ class GitContentSource:
 
         return tuple(
             Record(
+                workspace_id=self.workspace_id,
                 source_kind=self.source_kind,
                 source_id=f"{commit_id}:{chunk.section}:{chunk.section_index}",
                 title=commit_data.title or "(no commit message)",

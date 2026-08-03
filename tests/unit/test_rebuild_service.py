@@ -11,12 +11,13 @@ import mcp_markdown_ragdocs.indexing.rebuild_service as rebuild_service
 
 
 class _FakeSource:
-    def __init__(self, _repo_path: Path) -> None:
+    def __init__(self, _repo_path: Path, workspace_id: str | None = None) -> None:
         timestamp = datetime(2026, 1, 1, tzinfo=UTC)
         self._records = [
             Record(
                 source_kind="git_commit",
                 source_id=f"git:{index}",
+                workspace_id=workspace_id,
                 title=f"Commit {index}",
                 body="Body",
                 created_at=timestamp,
@@ -141,10 +142,12 @@ def test_ingest_git_repository_checkpoints_bounded_batches(
         index_manager=manager,
         repo_path=tmp_path / ".git",
         git_commits_indexed=5,
+        workspace_id="project-a",
     )
 
     assert total_indexed == 32
     assert len(manager.indexed_records) == 27
+    assert {record.workspace_id for record in manager.indexed_records} == {"project-a"}
     assert manager.persist_checkpoint_calls == 2
     assert [entry["git_commits_indexed"] for entry in progress] == [30, 32]
     assert all(entry["phase"] == "indexing_git" for entry in progress)

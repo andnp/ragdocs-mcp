@@ -117,7 +117,7 @@ class TestGitContentSourceIterRecords:
             )
 
             git_dir = repo_path / ".git"
-            source = GitContentSource(git_dir)
+            source = GitContentSource(git_dir, workspace_id="workspace-a")
             records = list(source.iter_records())
 
             commit_records = _records_for_commit(records, commit_hash)
@@ -126,6 +126,7 @@ class TestGitContentSourceIterRecords:
 
             # Check all required fields
             assert record.source_kind == "git_commit"
+            assert record.workspace_id == "workspace-a"
             assert record.source_id.startswith(f"git:{commit_hash}:summary:")
             assert record.title == "Initial commit"
             assert len(record.body) > 0
