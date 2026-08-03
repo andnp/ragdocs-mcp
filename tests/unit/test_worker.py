@@ -7,6 +7,7 @@ Commit 3.2: Verifies the Huey consumer thread lifecycle.
 from __future__ import annotations
 
 import errno
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -241,7 +242,7 @@ class TestHueyWorker:
             def index_record(self, record: Any) -> None:
                 del record
 
-        indexing_tasks.register_tasks(huey_instance, _Manager())
+        indexing_tasks.register_tasks(huey_instance, cast(Any, _Manager()))
         queue_path = Path(str(cast(Any, huey_instance.storage).filename))
         indexing_tasks._work_intent_store = WorkIntentStore(
             queue_path,
@@ -278,6 +279,119 @@ class TestHueyWorker:
 
         intent = indexing_tasks._work_intent_store.find(
             "index_document", "delayed.md"
+        )
+        assert intent is not None
+        assert intent.state == "succeeded"
+
+    def test_delayed_queued_intent_survives_claim_timeout(
+        self,
+        huey_instance: SqliteHuey,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class _Manager:
+            ingestor = object()
+
+            def index_document(self, file_path: str, force: bool = False) -> bool:
+                del file_path, force
+                return True
+
+            def persist(self) -> None:
+                return
+
+        indexing_tasks.register_tasks(huey_instance, cast(Any, _Manager()))
+        queue_path = Path(str(cast(Any, huey_instance.storage).filename))
+        indexing_tasks._work_intent_store = WorkIntentStore(
+            queue_path,
+            claim_timeout_seconds=0.1,
+        )
+        assert indexing_tasks.submit_index_request("queued.md").enqueued
+        with sqlite3.connect(queue_path) as connection:
+            connection.execute(
+                "UPDATE work_intents SET claim_observed_at = ?",
+                (time.time() - 1.0,),
+            )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_TIMEOUT_SECONDS",
+            0.1,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_RECLAIM_INTERVAL_SECONDS",
+            0.01,
+        )
+
+        worker = HueyWorker(huey_instance)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while huey_instance.pending_count() > 0 and time.monotonic() < deadline:
+                time.sleep(0.05)
+        finally:
+            worker.stop()
+
+        intent = indexing_tasks._work_intent_store.find("index_document", "queued.md")
+        assert intent is not None
+        assert intent.state == "succeeded"
+
+    def test_long_running_intent_claim_is_not_recovered(
+        self,
+        huey_instance: SqliteHuey,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        class _Manager:
+            ingestor = object()
+
+            def index_document(self, file_path: str, force: bool = False) -> bool:
+                del file_path, force
+                started.set()
+                release.wait(timeout=5.0)
+                return True
+
+            def persist(self) -> None:
+                return
+
+        indexing_tasks.register_tasks(huey_instance, cast(Any, _Manager()))
+        queue_path = Path(str(cast(Any, huey_instance.storage).filename))
+        indexing_tasks._work_intent_store = WorkIntentStore(
+            queue_path,
+            claim_timeout_seconds=0.1,
+        )
+        assert indexing_tasks.submit_index_request("long-running.md").enqueued
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_TIMEOUT_SECONDS",
+            0.1,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_HEARTBEAT_INTERVAL_SECONDS",
+            0.01,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_RECLAIM_INTERVAL_SECONDS",
+            0.01,
+        )
+
+        worker = HueyWorker(huey_instance)
+        worker.start()
+        try:
+            assert started.wait(timeout=5.0)
+            time.sleep(0.25)
+            intent = indexing_tasks._work_intent_store.find(
+                "index_document", "long-running.md"
+            )
+            assert intent is not None
+            assert intent.state == "running"
+            release.set()
+            deadline = time.monotonic() + 5.0
+            while huey_instance.pending_count() > 0 and time.monotonic() < deadline:
+                time.sleep(0.05)
+        finally:
+            release.set()
+            worker.stop()
+
+        intent = indexing_tasks._work_intent_store.find(
+            "index_document", "long-running.md"
         )
         assert intent is not None
         assert intent.state == "succeeded"

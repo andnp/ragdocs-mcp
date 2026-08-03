@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from mcp_markdown_ragdocs.coordination.task_leases import (
+    DEFAULT_LEASE_TIMEOUT_SECONDS,
+)
+
 PENDING = "pending"
 CLAIMED = "claimed"
 RUNNING = "running"
@@ -34,7 +38,12 @@ class WorkIntent:
 class WorkIntentStore:
     """SQLite-backed source of truth for producer work intents."""
 
-    def __init__(self, db_path: Path, *, claim_timeout_seconds: float = 60.0) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        claim_timeout_seconds: float = DEFAULT_LEASE_TIMEOUT_SECONDS,
+    ) -> None:
         self._db_path = Path(db_path)
         self._claim_timeout_seconds = claim_timeout_seconds
         self._db_path.parent.mkdir(parents=True, exist_ok=True)

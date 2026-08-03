@@ -11,7 +11,10 @@ from typing import TYPE_CHECKING, Any, cast
 from huey.constants import EmptyData
 from huey.utils import Error
 
-from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.task_leases import (
+    DEFAULT_LEASE_TIMEOUT_SECONDS,
+    TaskLeaseStore,
+)
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 
 if TYPE_CHECKING:
@@ -19,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-LEASE_TIMEOUT_SECONDS = 30.0
+LEASE_TIMEOUT_SECONDS = DEFAULT_LEASE_TIMEOUT_SECONDS
 LEASE_HEARTBEAT_INTERVAL_SECONDS = 5.0
 LEASE_RECLAIM_INTERVAL_SECONDS = 5.0
 
@@ -40,7 +43,6 @@ def _requeue_expired_leases(
         task = huey.deserialize_task(lease.payload)
         _refresh_task_intent_claims(intent_store, task)
         huey.enqueue(task)
-    intent_store.recover_stale_claims()
 
 
 def _refresh_task_intent_claims(intent_store: WorkIntentStore, task: Any) -> None:

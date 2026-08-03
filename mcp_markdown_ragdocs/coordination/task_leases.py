@@ -19,6 +19,7 @@ COMPLETED_LEASE = "completed"
 FAILED_LEASE = "failed"
 RECLAIMED_LEASE = "reclaimed"
 INDEX_WRITER_RESOURCE = "index-writer"
+DEFAULT_LEASE_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,12 @@ class TaskLease:
 class TaskLeaseStore:
     """Stores task ownership in the same SQLite database as Huey."""
 
-    def __init__(self, db_path: Path, *, timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        timeout_seconds: float = DEFAULT_LEASE_TIMEOUT_SECONDS,
+    ) -> None:
         self._db_path = Path(db_path)
         self._timeout_seconds = timeout_seconds
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
