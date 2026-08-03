@@ -12,7 +12,7 @@ import logging
 import time
 from pathlib import Path
 
-from mcp_markdown_ragdocs.config import Config
+from mcp_markdown_ragdocs.config import Config, resolve_project_id_for_path
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from mcp_markdown_ragdocs.indexing.git_refresh_state import get_head
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager as IndexManager
@@ -141,7 +141,13 @@ class GitWatcher:
                 poll_started_at = int(time.time())
                 since = self._last_indexed.get(git_dir)
 
-                source = GitContentSource(git_dir)
+                source = GitContentSource(
+                    git_dir,
+                    workspace_id=resolve_project_id_for_path(
+                        git_dir.parent,
+                        self._config,
+                    ),
+                )
                 indexed = 0
                 async for receipt in iter_git_ingestion_receipts(
                     self._index_manager,

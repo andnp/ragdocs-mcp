@@ -779,6 +779,10 @@ def _refresh_git_repository(git_dir: str) -> bool:
         return False
     manager = _index_manager
     from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
+    from mcp_markdown_ragdocs.config import (
+        load_config,
+        resolve_project_id_for_path,
+    )
     from mcp_markdown_ragdocs.indexing.git_ingestion import (
         iter_git_ingestion_receipts,
     )
@@ -836,7 +840,14 @@ def _refresh_git_repository(git_dir: str) -> bool:
             return True
 
         since = str(max(0, cursor - 1)) if cursor is not None else None
-        source = GitContentSource(git_dir_path)
+        config = getattr(manager, "_config", None) or load_config()
+        source = GitContentSource(
+            git_dir_path,
+            workspace_id=resolve_project_id_for_path(
+                git_dir_path.parent,
+                config,
+            ),
+        )
         latest_cursor = cursor
         initial_embedding_metrics = _embedding_cache_metrics(manager)
 
