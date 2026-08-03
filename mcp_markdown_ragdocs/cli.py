@@ -1115,6 +1115,12 @@ def check_config_cmd(project: str | None):
 @click.option(
     "--top-n", default=5, type=int, help="Maximum number of results (default: 5)"
 )
+@click.option(
+    "--min-score",
+    default=None,
+    type=float,
+    help="Optional raw RRF score floor; calibrate before relying on abstention",
+)
 @click.option("--debug", is_flag=True, help="Display intermediate search statistics")
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
@@ -1128,6 +1134,7 @@ def query(
     query_text: str,
     output_json: bool,
     top_n: int,
+    min_score: float | None,
     debug: bool,
     project: str | None,
     project_filter: tuple[str, ...],
@@ -1135,15 +1142,21 @@ def query(
     try:
         console = Console()
         validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
+        if min_score is not None:
+            if not 0.0 <= min_score <= 1.0:
+                raise ValueError("--min-score must be between 0.0 and 1.0")
 
+        request_payload: dict[str, object] = {
+            "query": query_text,
+            "top_n": top_n,
+            "project_filter": list(project_filter),
+            "project_context": project,
+        }
+        if min_score is not None:
+            request_payload["min_score"] = min_score
         daemon_payload = _request_daemon_json(
             "/api/search/query",
-            {
-                "query": query_text,
-                "top_n": top_n,
-                "project_filter": list(project_filter),
-                "project_context": project,
-            },
+            request_payload,
             project_override=project,
             auto_start=True,
             allow_error=True,

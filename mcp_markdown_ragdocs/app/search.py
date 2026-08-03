@@ -84,7 +84,11 @@ def to_record_search_config(config: SearchConfig) -> RecordSearchConfig:
         base_keyword_weight=config.keyword_weight,
         base_graph_weight=1.0,
         rerank_budget=config.rerank_budget,
-        minimum_score=0.0,
+        minimum_score=(
+            config.abstention_threshold
+            if config.abstention_threshold is not None
+            else 0.0
+        ),
         adaptive_enabled=False,
     )
 

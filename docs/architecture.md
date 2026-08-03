@@ -132,6 +132,11 @@ path; they do not change the score contract. The golden parity and canonical
 adapter tests enforce descending raw-RRF order and guard against accidental
 score calibration at a transport boundary.
 
+An optional `search.abstention_threshold` can supply a raw-score floor, but it
+defaults to unset. Calibrate it against deterministic relevant, unrelated, and
+low-score queries before activation; do not infer a universal threshold from
+the score range of a single corpus.
+
 ## Indexing flow
 
 The application owns source-specific ingestion:

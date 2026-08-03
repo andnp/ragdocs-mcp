@@ -83,6 +83,7 @@ class _FakeContext:
         project_filter,
         source_filter,
         project_context,
+        min_score: float | None = None,
     ):
         self.query_calls.append(
             {
@@ -94,6 +95,8 @@ class _FakeContext:
                 "project_context": project_context,
             }
         )
+        if min_score is not None:
+            self.query_calls[-1]["min_score"] = min_score
         return [], SimpleNamespace(to_dict=lambda: {"after_dedup": 0}), SimpleNamespace(to_dict=lambda: {"vector_count": 0})
 
     async def _drain_reindex(self) -> None:
@@ -250,6 +253,20 @@ async def test_search_query_route_executes_query_when_ready() -> None:
             "project_context": "proj-a",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_search_query_route_forwards_raw_min_score() -> None:
+    ctx = _FakeContext(ready=True)
+    coordinator = _FakeCoordinator()
+    handler = build_daemon_request_handler(_build_dependencies(ctx, coordinator))
+
+    await handler(
+        "/api/search/query",
+        {"query": "low confidence", "min_score": 0.025},
+    )
+
+    assert ctx.query_calls[0]["min_score"] == 0.025
 
 
 @pytest.mark.asyncio

@@ -93,6 +93,15 @@ class SearchConfig:
         default=0.3,
         metadata={"deprecated": "use request min_score"},
     )
+    abstention_threshold: float | None = field(
+        default=None,
+        metadata={
+            "description": (
+                "Optional raw RRF score floor for abstention; calibrate against "
+                "labeled queries before enabling."
+            )
+        },
+    )
     max_chunks_per_doc: int = field(
         default=1,
         metadata={"deprecated": "use request uniqueness_mode"},
@@ -129,6 +138,13 @@ class SearchConfig:
         if self.project_uplift_multiplier <= 0:
             raise ValueError(
                 "search.project_uplift_multiplier must be greater than 0"
+            )
+        if self.abstention_threshold is not None and not (
+            math.isfinite(self.abstention_threshold)
+            and 0.0 <= self.abstention_threshold <= 1.0
+        ):
+            raise ValueError(
+                "search.abstention_threshold must be between 0 and 1"
             )
         if self.rerank_budget < 0:
             raise ValueError("search.rerank_budget must be non-negative")

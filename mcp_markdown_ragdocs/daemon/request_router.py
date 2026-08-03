@@ -597,6 +597,12 @@ async def _handle_search_request(
             if isinstance(source_filter_payload, list)
             else []
         )
+        min_score = payload.get("min_score")
+        parsed_min_score = (
+            float(min_score)
+            if isinstance(min_score, (int, float))
+            else None
+        )
         search_use_case = getattr(ctx, "search_use_case", None)
         if search_use_case is None:
             search_use_case = getattr(ctx.orchestrator, "search_use_case", None)
@@ -613,6 +619,7 @@ async def _handle_search_request(
                         if payload.get("project_context") is not None
                         else None
                     ),
+                    min_score=parsed_min_score,
                 )
             )
             results = execution.results
@@ -623,17 +630,22 @@ async def _handle_search_request(
             top_k = max(20, top_n * 4)
             if project_filter:
                 top_k = max(top_k, top_n * 10)
-            results, compression_stats, strategy_stats = await ctx.orchestrator.query(
-                query_text,
-                top_k=top_k,
-                top_n=top_n,
-                project_filter=project_filter,
-                source_filter=source_filter,
-                project_context=(
+            query_kwargs: dict[str, object] = {
+                "top_k": top_k,
+                "top_n": top_n,
+                "project_filter": project_filter,
+                "source_filter": source_filter,
+                "project_context": (
                     str(payload.get("project_context"))
                     if payload.get("project_context") is not None
                     else None
                 ),
+            }
+            if parsed_min_score is not None:
+                query_kwargs["min_score"] = parsed_min_score
+            results, compression_stats, strategy_stats = await ctx.orchestrator.query(
+                query_text,
+                **query_kwargs,
             )
             results = [
                 result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
