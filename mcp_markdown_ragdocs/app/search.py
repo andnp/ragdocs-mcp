@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 from searchkernel.api import (
     CompressionStats,
@@ -18,6 +19,48 @@ from searchkernel.api import (
 from mcp_markdown_ragdocs.config import SearchConfig
 from mcp_markdown_ragdocs.git.results import aggregate_commit_results
 from mcp_markdown_ragdocs.models import ChunkResult
+
+
+class SearchKernelBoundary(Protocol):
+    """Public application boundary for canonical record search."""
+
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filters: dict[str, object],
+    ) -> RecordSearchOutcome: ...
+
+
+class PipelineSearchBoundary:
+    """Adapt the canonical pipeline to the application-owned boundary."""
+
+    def __init__(self, pipeline) -> None:
+        self._pipeline = pipeline
+
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filters: dict[str, object],
+    ) -> RecordSearchOutcome:
+        return await self._pipeline.async_search(
+            query,
+            limit=limit,
+            filters=dict(filters),
+        )
+
+    async def async_search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filters: dict[str, object],
+    ) -> RecordSearchOutcome:
+        """Retain the pipeline method name for in-repo compatibility tests."""
+        return await self.search(query, limit=limit, filters=filters)
 
 
 def to_record_search_config(config: SearchConfig) -> RecordSearchConfig:
@@ -65,11 +108,12 @@ class ApplicationSearchUseCase:
 
     def __init__(
         self,
-        pipeline,
+        search_kernel: SearchKernelBoundary,
         *,
         documents_roots: Sequence[Path],
     ) -> None:
-        self._pipeline = pipeline
+        self._search_kernel = search_kernel
+        self._pipeline = search_kernel
         self._documents_roots = tuple(documents_roots)
 
     async def execute(
@@ -101,12 +145,14 @@ class ApplicationSearchUseCase:
         if request.source_filter == ("git_commit",):
             limit = max(limit, request.top_n * 4)
 
-        search_fn = search or self._pipeline.async_search
-        outcome: RecordSearchOutcome = await search_fn(
-            request.query,
-            limit=limit,
-            filters=filters,
-        )
+        if search is None:
+            outcome = await self._pipeline.async_search(
+                request.query,
+                limit=limit,
+                filters=filters,
+            )
+        else:
+            outcome = await search(request.query, limit=limit, filters=filters)
         filtered_results = [
             result
             for result in outcome.results
@@ -176,6 +222,8 @@ class ApplicationSearchUseCase:
         provenance: SearchResultProvenance,
     ) -> ChunkResult:
         metadata = dict(record.metadata)
+        metadata.setdefault("record_id", record.storage_key)
+        metadata.setdefault("workspace_id", record.workspace_id)
         metadata.setdefault("source_kind", record.source_kind)
         metadata.setdefault("source_id", record.source_id)
         return ChunkResult(
@@ -221,7 +269,9 @@ class ApplicationSearchUseCase:
 
 __all__ = [
     "ApplicationSearchUseCase",
+    "PipelineSearchBoundary",
     "SearchExecution",
+    "SearchKernelBoundary",
     "SearchQuery",
     "to_record_search_config",
 ]
