@@ -21,6 +21,7 @@ class IndexingService(Protocol):
     def index_record(self, record: Record) -> Any: ...
     def get_document_count(self) -> int: ...
     def is_ready(self) -> bool: ...
+    def task_target(self) -> Any: ...
 
 
 class LifecycleService(Protocol):
@@ -55,6 +56,9 @@ class ManagerIndexingService:
 
     def is_ready(self) -> bool:
         return self._manager.is_ready()
+
+    def task_target(self) -> Any:
+        return self._manager
 
 
 class ContextLifecycleService:
