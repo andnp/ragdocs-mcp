@@ -195,15 +195,22 @@ async def _run_worker_forever_async(
         index_path_override=index_root,
         global_runtime=True,
     )
+    services = getattr(ctx, "services", None)
+    indexing = getattr(services, "indexing", None) or ctx.index_manager
+    task_target = (
+        indexing.task_target()
+        if hasattr(indexing, "task_target")
+        else indexing
+    )
     try:
-        ctx.index_manager.load()
+        indexing.load()
     except Exception:
         logger.info("Worker runtime starting with fresh indices", exc_info=True)
 
     huey = get_huey(queue_db)
     register_tasks(
         huey,
-        ctx.index_manager,
+        task_target,
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         bootstrap_index_path=ctx.index_path,
         bootstrap_documents_roots=ctx.documents_roots,
@@ -241,7 +248,7 @@ async def _run_worker_forever_async(
         if repos:
             git_watcher = GitWatcher(
                 git_repos=repos,
-                index_manager=ctx.index_manager,
+                index_manager=task_target,
                 config=ctx.config,
                 poll_interval=ctx.config.git_indexing.poll_interval_seconds,
                 use_tasks=True,
