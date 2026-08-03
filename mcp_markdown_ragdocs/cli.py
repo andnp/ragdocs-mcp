@@ -61,6 +61,7 @@ if _should_reexec_into_repo_venv():
     _reexec_into_repo_venv()
 
 from datetime import UTC
+from typing import Any
 
 import click
 import uvicorn
@@ -196,7 +197,7 @@ async def _run_worker_forever_async(
         global_runtime=True,
     )
     services = getattr(ctx, "services", None)
-    indexing = getattr(services, "indexing", None) or ctx.index_manager
+    indexing: Any = getattr(services, "indexing", None) or ctx.index_manager
     task_target = (
         indexing.task_target()
         if hasattr(indexing, "task_target")

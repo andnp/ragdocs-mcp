@@ -32,6 +32,14 @@ class SearchKernelBoundary(Protocol):
         filters: dict[str, object],
     ) -> RecordSearchOutcome: ...
 
+    async def async_search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filters: dict[str, object],
+    ) -> RecordSearchOutcome: ...
+
 
 class PipelineSearchBoundary:
     """Adapt the canonical pipeline to the application-owned boundary."""
