@@ -182,3 +182,42 @@ def test_reclaim_stale_claim_replaces_token(tmp_path: Path) -> None:
     assert reclaimed[0].state == "claimed"
     assert not store.succeed(intent.intent_id, claim[1], now=21)
     assert store.succeed(intent.intent_id, reclaimed[1], now=22)
+
+
+def test_force_reopen_preserves_active_claim(tmp_path: Path) -> None:
+    store = WorkIntentStore(tmp_path / "queue.db", claim_timeout_seconds=10)
+    intent = store.submit("index_document", "doc.md", {"file_path": "old"}, now=1)
+    claim = store.claim(intent.intent_id, now=2)
+    assert claim is not None
+
+    submitted = store.submit(
+        "index_document",
+        "doc.md",
+        {"file_path": "new"},
+        force_reopen=True,
+        now=3,
+    )
+
+    assert submitted.state == "claimed"
+    assert submitted.claim_token == claim[1]
+    assert submitted.payload == {"file_path": "old"}
+    assert store.start(intent.intent_id, claim[1])
+
+
+def test_force_reopen_allows_stale_claim(tmp_path: Path) -> None:
+    store = WorkIntentStore(tmp_path / "queue.db", claim_timeout_seconds=10)
+    intent = store.submit("index_document", "doc.md", {"file_path": "old"}, now=1)
+    claim = store.claim(intent.intent_id, now=2)
+    assert claim is not None
+
+    submitted = store.submit(
+        "index_document",
+        "doc.md",
+        {"file_path": "new"},
+        force_reopen=True,
+        now=20,
+    )
+
+    assert submitted.state == PENDING
+    assert submitted.claim_token is None
+    assert submitted.payload == {"file_path": "new"}
