@@ -138,6 +138,10 @@ class SearchExecution:
 
 _DEFAULT_ABSTENTION_SCORE = 0.01
 _DEFAULT_VECTOR_ABSTENTION_SCORE = 0.02
+_DEFAULT_HYBRID_KEYWORD_SIGNAL = 0.01
+_QUERY_STOP_WORDS = frozenset(
+    {"a", "an", "and", "are", "be", "for", "how", "in", "is", "must", "of", "the", "to"}
+)
 
 
 def _record_project_id(record: Record) -> str | None:
@@ -168,6 +172,7 @@ def _default_match_for_query(query: str, result: Any) -> bool:
     tokens = set(re.findall(r"[a-z0-9_./-]+", query.lower()))
     if not tokens:
         return False
+    meaningful_tokens = tokens - _QUERY_STOP_WORDS
     searchable_metadata = " ".join(
         str(value)
         for value in (
@@ -183,15 +188,23 @@ def _default_match_for_query(query: str, result: Any) -> bool:
         return True
     provenance = result.provenance
     strategies = getattr(provenance, "strategies", ()) if provenance else ()
-    return "keyword" in strategies and any(
-        token in record.body.lower() for token in tokens
-    )
+    body_tokens = set(re.findall(r"[a-z0-9_./-]+", record.body.lower()))
+    overlap = meaningful_tokens & body_tokens
+    return "keyword" in strategies and bool(overlap)
 
 
 def _default_result_is_credible(query: str, result: Any) -> bool:
     if _default_match_for_query(query, result):
         return True
-    strategies = getattr(result.provenance, "strategies", ()) if result.provenance else ()
+    provenance = result.provenance
+    strategies = set(getattr(provenance, "strategies", ()) if provenance else ())
+    if {"keyword", "vector"} <= strategies:
+        details = getattr(provenance, "strategy_details", {})
+        keyword = details.get("keyword") if hasattr(details, "get") else None
+        return (
+            getattr(keyword, "raw_score", 0.0)
+            >= _DEFAULT_HYBRID_KEYWORD_SIGNAL
+        )
     if "vector" in strategies and not {"keyword", "graph"} & set(strategies):
         return result.score >= _DEFAULT_VECTOR_ABSTENTION_SCORE
     return result.score >= _DEFAULT_ABSTENTION_SCORE

@@ -668,6 +668,146 @@ async def test_default_abstention_keeps_low_score_lexical_match(adapter):
 
 
 @pytest.mark.asyncio
+async def test_default_abstention_drops_unrelated_hybrid_matches(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id=f"unrelated-{index}",
+            title="Deployment",
+            body="Container rollout instructions",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": f"unrelated-{index}", "file_path": "deploy.md"},
+        )
+        for index in range(3)
+    ]
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=score,
+                    provenance=SimpleNamespace(
+                        strategies=("keyword", "vector"),
+                        strategy_details={
+                            "keyword": SimpleNamespace(rank=rank, raw_score=1e-6),
+                            "vector": SimpleNamespace(rank=rank, raw_score=0.2),
+                        },
+                    ),
+                )
+                for rank, (record, score) in enumerate(
+                    zip(records, (0.0236, 0.0201, 0.0178), strict=True),
+                    start=1,
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="quantum entanglement recipe for Mars", top_n=5),
+        search=fake_search,
+    )
+
+    assert execution.results == []
+
+
+@pytest.mark.asyncio
+async def test_default_abstention_drops_scoped_unrelated_hybrid_matches(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="scoped-unrelated",
+        title="Deployment",
+        body="Container rollout instructions",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={
+            "doc_id": "scoped-unrelated",
+            "file_path": "deploy.md",
+            "project_id": "mcp-markdown-ragdocs",
+        },
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.0236,
+                    provenance=SimpleNamespace(
+                        strategies=("keyword", "vector"),
+                        strategy_details={
+                            "keyword": SimpleNamespace(rank=1, raw_score=1e-6),
+                            "vector": SimpleNamespace(rank=1, raw_score=0.2),
+                        },
+                    ),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(
+            query="quantum entanglement recipe for Mars",
+            top_n=5,
+            project_filter=("mcp-markdown-ragdocs",),
+        ),
+        search=fake_search,
+    )
+
+    assert execution.results == []
+
+
+@pytest.mark.asyncio
+async def test_default_abstention_keeps_semantic_paraphrase_with_keyword_signal(
+    adapter,
+):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="token-lifecycle",
+        title="Token Lifecycle",
+        body="Refresh tokens expire after 30 days. Access tokens expire after 15 minutes.",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "token-lifecycle", "file_path": "tokens.md"},
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.018,
+                    provenance=SimpleNamespace(
+                        strategies=("keyword", "vector"),
+                        strategy_details={
+                            "keyword": SimpleNamespace(rank=1, raw_score=0.9915),
+                            "vector": SimpleNamespace(rank=1, raw_score=0.1755),
+                        },
+                    ),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(
+            query="how frequently must access credentials be renewed",
+            top_n=1,
+        ),
+        search=fake_search,
+    )
+
+    assert [result.doc_id for result in execution.results] == ["token-lifecycle"]
+
+
+@pytest.mark.asyncio
 async def test_artifact_symbol_query_promotes_matching_header_path(adapter):
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     records = [
