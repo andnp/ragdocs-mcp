@@ -260,7 +260,10 @@ class ZMQTransportServer:
                         },
                         request_id,
                     )
-                return _attach_request_id(asdict(metadata), request_id)
+                return _attach_request_id(
+                    cast(dict[str, object], asdict(metadata)),
+                    request_id,
+                )
 
             if self._request_handler is None:
                 return _attach_request_id(

@@ -71,8 +71,8 @@ class ChunkResult:
     provenance: SearchResultProvenance | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
-    def to_dict(self):
-        result = {
+    def to_dict(self) -> dict[str, object]:
+        result: dict[str, object] = {
             "chunk_id": self.chunk_id,
             "doc_id": self.doc_id,
             "score": self.score,

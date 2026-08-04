@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from mcp_markdown_ragdocs.coordination.queue import get_huey
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
@@ -112,7 +112,11 @@ def _build_per_root_index_rows(
             0,
         )
 
-    return rows, unattributed_indexed_documents, unattributed_indexed_chunks
+    return (
+        cast(list[dict[str, object]], rows),
+        unattributed_indexed_documents,
+        unattributed_indexed_chunks,
+    )
 
 
 def _build_index_stats_payload(ctx: Any) -> dict[str, object]:

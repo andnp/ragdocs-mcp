@@ -167,7 +167,7 @@ def create_app():
             )
             result_dict = result.to_dict()
             if query_type == "factual":
-                result_dict["content"] = truncate_content(result_dict["content"], 200)
+                result_dict["content"] = truncate_content(result.content, 200)
             formatted_results.append(result_dict)
 
         return formatted_results

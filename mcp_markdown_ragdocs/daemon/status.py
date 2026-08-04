@@ -57,7 +57,7 @@ def build_daemon_status_payload(
         "%Y-%m-%d %H:%M:%S", time.localtime(inspection.metadata.started_at)
     )
 
-    payload = {
+    payload: dict[str, object] = {
         "status": state,
         "pid": inspection.metadata.pid,
         "lifecycle": inspection.metadata.status,
