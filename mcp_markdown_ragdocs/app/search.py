@@ -140,6 +140,8 @@ class SearchExecution:
 _DEFAULT_ABSTENTION_SCORE = 0.01
 _DEFAULT_VECTOR_ABSTENTION_SCORE = 0.03
 _DEFAULT_HYBRID_KEYWORD_SIGNAL = 0.01
+_DEFAULT_HYBRID_MAX_KEYWORD_RANK = 5
+_DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP = 2
 _QUERY_STOP_WORDS = frozenset(
     {"a", "an", "and", "are", "be", "for", "how", "in", "is", "must", "of", "the", "to"}
 )
@@ -236,7 +238,11 @@ def _default_match_for_query(query: str, result: Any) -> bool:
     strategies = getattr(provenance, "strategies", ()) if provenance else ()
     body_tokens = set(re.findall(r"[a-z0-9_./-]+", record.body.lower()))
     overlap = meaningful_tokens & body_tokens
-    return "keyword" in strategies and bool(overlap)
+    if "keyword" not in strategies:
+        return False
+    if set(strategies) == {"keyword"}:
+        return bool(overlap)
+    return len(overlap) >= _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP
 
 
 def _default_result_is_credible(query: str, result: Any) -> bool:
@@ -249,8 +255,11 @@ def _default_result_is_credible(query: str, result: Any) -> bool:
     if {"keyword", "vector"} <= strategies:
         details = getattr(provenance, "strategy_details", {})
         keyword = details.get("keyword") if hasattr(details, "get") else None
+        keyword_rank = getattr(keyword, "rank", None)
         return (
-            getattr(keyword, "raw_score", 0.0)
+            isinstance(keyword_rank, int)
+            and keyword_rank <= _DEFAULT_HYBRID_MAX_KEYWORD_RANK
+            and getattr(keyword, "raw_score", 0.0)
             >= _DEFAULT_HYBRID_KEYWORD_SIGNAL
         )
     if strategies == {"keyword"}:

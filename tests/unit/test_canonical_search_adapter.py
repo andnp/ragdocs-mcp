@@ -767,6 +767,95 @@ async def test_default_abstention_drops_unrelated_hybrid_matches(adapter):
 
 
 @pytest.mark.asyncio
+async def test_default_abstention_drops_weak_ranked_hybrid_with_generic_overlap(
+    adapter,
+):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="cartpole-protocol",
+        title="001-cartpole-ppo-structured-missingness",
+        body=(
+            "Secondary metrics. Evaluation protocol. Use a fixed seed set across "
+            "all baselines."
+        ),
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={
+            "doc_id": "cartpole-protocol",
+            "file_path": "001-cartpole-ppo-structured-missingness.md",
+            "header_path": "Metrics and Evaluation Protocol",
+        },
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.02804878048780488,
+                    provenance=SimpleNamespace(
+                        strategies=("keyword", "vector"),
+                        strategy_details={
+                            "keyword": SimpleNamespace(rank=22, raw_score=6.861064460761092),
+                            "vector": SimpleNamespace(rank=22, raw_score=0.24118660390377045),
+                        },
+                    ),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="quantum banana protocol for lunar goats", top_n=5),
+        search=fake_search,
+    )
+
+    assert execution.results == []
+
+
+@pytest.mark.asyncio
+async def test_default_abstention_keeps_multiple_meaningful_hybrid_tokens(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="goat-protocol",
+        title="Evaluation notes",
+        body="Protocol evaluation for lunar goats",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "goat-protocol", "file_path": "goats.md"},
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.028,
+                    provenance=SimpleNamespace(
+                        strategies=("keyword", "vector"),
+                        strategy_details={
+                            "keyword": SimpleNamespace(rank=22, raw_score=1e-6),
+                            "vector": SimpleNamespace(rank=22, raw_score=0.2),
+                        },
+                    ),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="quantum banana protocol for lunar goats", top_n=5),
+        search=fake_search,
+    )
+
+    assert [result.doc_id for result in execution.results] == ["goat-protocol"]
+
+
+@pytest.mark.asyncio
 async def test_default_abstention_drops_scoped_unrelated_hybrid_matches(adapter):
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     record = Record(
