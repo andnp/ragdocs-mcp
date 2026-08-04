@@ -6,6 +6,7 @@ from pathlib import Path
 
 from searchkernel.api import (
     EmbeddingProvider,
+    RecordIdentity,
     build_local_record_kernel,
     compute_doc_id,
 )
@@ -23,7 +24,10 @@ from mcp_markdown_ragdocs.config import (
     ProjectConfig,
     SearchConfig,
 )
-from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
+from mcp_markdown_ragdocs.indexing.record_manager import (
+    RecordIndexManager,
+    install_bidirectional_graph_store,
+)
 
 FIXTURE_CORPUS_ROOT = Path(__file__).resolve().parent.parent / "fixtures" / "search_eval"
 
@@ -234,7 +238,11 @@ def build_search_evaluation_harness(
     provider = embedding_provider or _DeterministicEmbeddingProvider()
     kernel_holder: dict[str, object] = {}
     search_policy = build_record_search_policy(
-        lambda: kernel_holder["kernel"].keyword_store  # type: ignore[union-attr]
+        lambda: kernel_holder["kernel"].keyword_store,  # type: ignore[union-attr]
+        lambda identity: kernel_holder["kernel"].backend.hydrate_record(identity),  # type: ignore[union-attr]
+        lambda incoming: kernel_holder["kernel"].pipeline._graph_store.set_direction(  # type: ignore[union-attr]
+            incoming
+        ),
     )
     local_kernel = build_local_record_kernel(
         index_path / "index.db",
@@ -246,6 +254,15 @@ def build_search_evaluation_harness(
     )
     kernel_holder["kernel"] = local_kernel
     manager = RecordIndexManager(config, local_kernel, provider)
+    kernel_holder["manager"] = manager
+    install_bidirectional_graph_store(
+        local_kernel,
+        lambda: tuple(
+            RecordIdentity.from_storage_key(key)
+            for keys in manager._source_records.values()
+            for key in keys
+        ),
+    )
 
     corpus_files = sorted(corpus_root.rglob("*.md"))
     path_to_doc_id: dict[str, str] = {}

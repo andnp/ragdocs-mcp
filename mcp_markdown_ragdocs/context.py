@@ -14,6 +14,7 @@ from searchkernel.api import (
     build_local_record_kernel,
     PublicIndexStateSnapshot,
     Record,
+    RecordIdentity,
     SearchAvailability,
     build_file_stamps,
     build_indexed_files_map,
@@ -45,6 +46,7 @@ from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
 from mcp_markdown_ragdocs.indexing.record_manager import (
     RecordIndexManager,
     build_embedding_provider,
+    install_bidirectional_graph_store,
 )
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
@@ -194,7 +196,11 @@ class ApplicationContext:
         embedding_provider = build_embedding_provider(config, embedding_model_name)
         kernel_holder: dict[str, Any] = {}
         search_policy = build_record_search_policy(
-            lambda: kernel_holder["kernel"].keyword_store
+            lambda: kernel_holder["kernel"].keyword_store,
+            lambda identity: kernel_holder["kernel"].backend.hydrate_record(identity),
+            lambda incoming: kernel_holder["kernel"].pipeline._graph_store.set_direction(
+                incoming
+            ),
         )
         local_kernel = build_local_record_kernel(
             index_path / "index.db",
@@ -216,6 +222,15 @@ class ApplicationContext:
             embedding_provider,
             documents_roots=documents_roots,
         )
+        install_bidirectional_graph_store(
+            local_kernel,
+            lambda: tuple(
+                RecordIdentity.from_storage_key(key)
+                for keys in manager._source_records.values()
+                for key in keys
+            ),
+        )
+        kernel_holder["manager"] = manager
         orchestrator = CanonicalSearchAdapter(
             manager,
             documents_path=Path(documents_path),

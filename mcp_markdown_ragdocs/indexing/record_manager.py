@@ -8,6 +8,7 @@ connects those two responsibilities.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
@@ -22,6 +23,7 @@ from urllib.parse import unquote, urlparse
 
 from searchkernel.api import (
     GraphEdge,
+    GraphNeighbor,
     LocalRecordKernel,
     OllamaEmbeddingProvider,
     Record,
@@ -41,6 +43,67 @@ from mcp_markdown_ragdocs.models import Document
 from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
 
 logger = logging.getLogger(__name__)
+
+
+class _BidirectionalGraphStore:
+    def __init__(self, graph_store: Any, identities: Any) -> None:
+        self._graph_store = graph_store
+        self._identities = identities
+        self._incoming = contextvars.ContextVar("graph_incoming", default=False)
+
+    def set_direction(self, incoming: bool) -> None:
+        self._incoming.set(incoming)
+
+    def neighbors_many(self, identities, *, depth: int, max_neighbors: int | None = None):
+        if self._incoming.get():
+            return self.incoming_neighbors_many(
+                identities,
+                depth=depth,
+                max_neighbors=max_neighbors,
+            )
+        return self._graph_store.neighbors_many(
+            identities,
+            depth=depth,
+            max_neighbors=max_neighbors,
+        )
+
+    def incoming_neighbors_many(
+        self,
+        identities,
+        *,
+        depth: int,
+        max_neighbors: int | None = None,
+    ):
+        requested = {identity.storage_key for identity in identities}
+        incoming = {identity.storage_key: [] for identity in identities}
+        outgoing = self._graph_store.neighbors_many(
+            self._identities(),
+            depth=depth,
+            max_neighbors=None,
+        )
+        for source_key, neighbors in outgoing.items():
+            source = RecordIdentity.from_storage_key(source_key)
+            for neighbor in neighbors:
+                if neighbor.identity.storage_key not in requested:
+                    continue
+                incoming[neighbor.identity.storage_key].append(
+                    GraphNeighbor(source, neighbor.edge_type, neighbor.weight)
+                )
+        for key, neighbors in incoming.items():
+            neighbors.sort(key=lambda item: (-item.weight, item.identity.storage_key))
+            if max_neighbors is not None:
+                incoming[key] = neighbors[:max_neighbors]
+        return incoming
+
+
+def install_bidirectional_graph_store(
+    kernel: LocalRecordKernel,
+    identities: Any,
+) -> None:
+    kernel.pipeline._graph_store = _BidirectionalGraphStore(  # type: ignore[attr-defined]
+        kernel.graph_store,
+        identities,
+    )
 
 
 def _git_commit_id(source_id: str) -> str:
@@ -300,6 +363,14 @@ class RecordIndexManager:
                 "tags": document.tags,
                 **chunk.metadata,
             }
+            metadata.setdefault(
+                "_chunk_parent_storage_key",
+                RecordIdentity(
+                    document.project_id,
+                    "note",
+                    chunk.chunk_id,
+                ).storage_key,
+            )
             records.append(
                 Record(
                     source_kind="note",
@@ -363,7 +434,7 @@ class RecordIndexManager:
             )
             self._save_source_map()
             return True
-        except Exception as error:  # noqa: BLE001 - indexing boundary records failures
+        except Exception as error:
             self._failed_files.append(
                 {"path": file_path, "error": str(error)}
             )
@@ -454,7 +525,7 @@ class RecordIndexManager:
 
     def _rebuild_graph(self) -> None:
         edges: list[GraphEdge] = []
-        for doc_id, keys in self._source_records.items():
+        for keys in self._source_records.values():
             records = tuple(
                 self.kernel.backend.hydrate_record(key)
                 for key in keys
@@ -574,7 +645,7 @@ class RecordIndexManager:
 
     def finalize_derived_graph_state(self) -> None:
         """Compatibility hook; graph edges are written with each record batch."""
-        return None
+        return
 
     def load(self) -> None:
         self._source_records = self._load_source_map()

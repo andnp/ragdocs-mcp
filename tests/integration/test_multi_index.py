@@ -98,31 +98,131 @@ async def test_natural_language_graph_query_resolves_target_scope_and_provenance
 
 
 @pytest.mark.asyncio
+async def test_chunk_target_resolves_parent_for_document_graph_neighbors(
+    tmp_path: Path,
+) -> None:
+    if not _resolver_supported():
+        pytest.skip("requires Searchkernel graph_target_resolver support")
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    manager = make_record_index_manager(
+        Config(indexing=IndexingConfig(documents_path=str(docs), index_path=str(tmp_path / "index"))),
+        documents_roots=[docs],
+    )
+    target_parent_a = make_record(
+        "target-a_parent_0",
+        "Target context",
+        workspace_id="project-a",
+        metadata={"doc_id": "target-a", "file_path": str(docs / "target-a.md")},
+    )
+    target_chunk_a = make_record(
+        "target-a_chunk_26",
+        "Hybrid Search Strategy",
+        workspace_id="project-a",
+        metadata={
+            "doc_id": "target-a",
+            "parent_chunk_id": "target-a_parent_0",
+            "file_path": str(docs / "target-a.md"),
+        },
+    )
+    target_parent_b = make_record(
+        "target-b_parent_0",
+        "Target context",
+        workspace_id="project-b",
+        metadata={"doc_id": "target-b", "file_path": str(docs / "target-b.md")},
+    )
+    target_chunk_b = make_record(
+        "target-b_chunk_26",
+        "Hybrid Search Strategy",
+        workspace_id="project-b",
+        metadata={
+            "doc_id": "target-b",
+            "parent_chunk_id": "target-b_parent_0",
+            "file_path": str(docs / "target-b.md"),
+        },
+    )
+    neighbor_a = make_record(
+        "neighbor-a_parent_0",
+        "Authentication notes",
+        workspace_id="project-a",
+        metadata={"doc_id": "neighbor-a", "file_path": str(docs / "neighbor-a.md")},
+    )
+    neighbor_b = make_record(
+        "neighbor-b_parent_0",
+        "Authentication notes",
+        workspace_id="project-b",
+        metadata={"doc_id": "neighbor-b", "file_path": str(docs / "neighbor-b.md")},
+    )
+    assert manager.index_records(
+        [
+            target_parent_a,
+            target_chunk_a,
+            target_parent_b,
+            target_chunk_b,
+            neighbor_a,
+            neighbor_b,
+        ]
+    )
+    manager.graph.upsert_edges(
+        [
+            GraphEdge(target_parent_a.identity, neighbor_a.identity, "links_to", 1.0),
+            GraphEdge(target_parent_b.identity, neighbor_b.identity, "links_to", 1.0),
+        ]
+    )
+
+    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+        "What pages does Hybrid Search Strategy link to?",
+        top_k=20,
+        top_n=5,
+        project_filter=["project-a"],
+    )
+
+    assert [result.doc_id for result in results] == ["target-a", "neighbor-a"]
+    assert [result.metadata["source_id"] for result in results] == [
+        "target-a_chunk_26",
+        "neighbor-a_parent_0",
+    ]
+    assert [result.project_id for result in results] == ["project-a", "project-a"]
+    assert strategy.graph_count == 1
+    assert results[1].provenance is not None
+    assert "graph" in results[1].provenance.strategies
+
+
+@pytest.mark.asyncio
 async def test_natural_language_graph_query_has_empty_neighbor_lane(tmp_path: Path) -> None:
     if not _resolver_supported():
         pytest.skip("requires Searchkernel graph_target_resolver support")
 
     manager = _manager(tmp_path)
     docs = Path(manager._config.indexing.documents_path)
-    isolated = replace(
-        make_record(
-            "isolated",
-            "Isolated Target",
-            workspace_id="project-a",
-            metadata={"file_path": str(docs / "isolated.md")},
-        ),
-        title="Isolated Target",
+    isolated_parent = make_record(
+        "isolated_parent_0",
+        "Isolated context",
+        workspace_id="project-a",
+        metadata={"doc_id": "isolated", "file_path": str(docs / "isolated.md")},
     )
-    assert manager.index_record(isolated)
+    isolated_chunk = make_record(
+        "isolated_chunk_26",
+        "Isolated Target",
+        workspace_id="project-a",
+        metadata={
+            "doc_id": "isolated",
+            "parent_chunk_id": "isolated_parent_0",
+            "file_path": str(docs / "isolated.md"),
+        },
+    )
+    assert manager.index_records([isolated_parent, isolated_chunk])
 
     results, _, strategy = await CanonicalSearchAdapter(manager).query(
-        "What documents are neighbors of Isolated Target?",
+        "What pages does Isolated Target link to?",
         top_k=20,
         top_n=5,
         project_filter=["project-a"],
     )
 
     assert [result.file_path for result in results] == [str(docs / "isolated.md")]
+    assert results[0].metadata["source_id"] == "isolated_chunk_26"
     assert strategy.graph_count == 0
     assert results[0].provenance is not None
     assert "graph" not in results[0].provenance.strategies
@@ -227,13 +327,17 @@ def test_root_relative_markdown_links_retrieve_graph_neighbors(tmp_path):
 
     source_record = manager.prepare_document(str(source)).records[0]
     assert manager.graph.neighbors(source_record.identity)
-    _, _, stats = asyncio.run(
+    results, _, stats = asyncio.run(
         CanonicalSearchAdapter(manager, documents_path=docs).query(
             "what links to target",
             top_k=20,
             top_n=5,
         )
     )
+    assert [result.file_path for result in results] == [str(source)]
+    assert results[0].metadata["source_id"] == "nested/source_chunk_0"
+    assert results[0].provenance is not None
+    assert "graph" in results[0].provenance.strategies
     assert stats.graph_count == 1
 
 

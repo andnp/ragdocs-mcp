@@ -12,6 +12,8 @@ from typing import Any, Protocol, cast
 from searchkernel.api import (
     CompressionStats,
     Record,
+    RecordHit,
+    RecordIdentity,
     RecordSearchConfig,
     RecordSearchOutcome,
     RecordSearchPolicy,
@@ -58,7 +60,7 @@ class PipelineSearchBoundary:
         filters: dict[str, object],
     ) -> RecordSearchOutcome:
         return await self._pipeline.async_search(
-            query,
+            _normalize_graph_query(query),
             limit=limit,
             filters=dict(filters),
         )
@@ -72,6 +74,16 @@ class PipelineSearchBoundary:
     ) -> RecordSearchOutcome:
         """Retain the pipeline method name for in-repo compatibility tests."""
         return await self.search(query, limit=limit, filters=filters)
+
+
+def _normalize_graph_query(query: str) -> str:
+    return re.sub(
+        r"^what\s+links to\s+",
+        "Which pages link to ",
+        query,
+        count=1,
+        flags=re.IGNORECASE,
+    )
 
 
 def to_record_search_config(config: SearchConfig) -> RecordSearchConfig:
@@ -155,11 +167,29 @@ _GRAPH_TARGET_PREFIXES = (
         r"^show me\s+(?:pages|documents|notes)\s+that\s+(?:link to|embed)\s+",
         re.IGNORECASE,
     ),
+    re.compile(r"^what\s+links to\s+", re.IGNORECASE),
+)
+_GRAPH_TARGET_SUFFIXES = (
+    re.compile(
+        r"^what\s+(?:pages|documents|notes)\s+does\s+(.+?)\s+link to$",
+        re.IGNORECASE,
+    ),
+)
+_GRAPH_INBOUND_PREFIXES = (
+    re.compile(
+        r"^(?:which|what)\s+(?:pages|documents|notes)\s+link to\s+",
+        re.IGNORECASE,
+    ),
+    re.compile(r"^what\s+links to\s+", re.IGNORECASE),
 )
 
 
 def _graph_target_query(query: str) -> str:
-    normalized = " ".join(query.strip().split())
+    normalized = " ".join(query.strip().split()).strip(" .?!")
+    for suffix in _GRAPH_TARGET_SUFFIXES:
+        match = suffix.match(normalized)
+        if match is not None:
+            return match.group(1).strip(" .?!")
     for prefix in _GRAPH_TARGET_PREFIXES:
         target = prefix.sub("", normalized, count=1).strip(" .?!")
         if target != normalized:
@@ -167,17 +197,57 @@ def _graph_target_query(query: str) -> str:
     return normalized
 
 
-def build_record_search_policy(keyword_store: Any) -> RecordSearchPolicy | None:
+def _graph_query_is_inbound(query: str) -> bool:
+    normalized = " ".join(query.strip().split()).strip(" .?!")
+    return any(pattern.match(normalized) is not None for pattern in _GRAPH_INBOUND_PREFIXES)
+
+
+def build_record_search_policy(
+    keyword_store: Any,
+    record_hydrator: Any = None,
+    graph_direction_setter: Any = None,
+) -> RecordSearchPolicy | None:
     """Wire target resolution when the installed kernel exposes the policy hook."""
     if not any(field.name == "graph_target_resolver" for field in fields(RecordSearchPolicy)):
         return None
 
     async def resolve_graph_target(query: str, context: Any):
+        if callable(graph_direction_setter):
+            graph_direction_setter(_graph_query_is_inbound(query))
         target_query = _graph_target_query(query)
         filters = dict(getattr(context, "filters", {}))
         limit = max(20, int(getattr(context, "limit", 20)))
         store: Any = keyword_store() if callable(keyword_store) else keyword_store
-        return store.search(target_query, limit, filters)
+        hits = store.search(target_query, limit, filters)
+        if not callable(record_hydrator):
+            normalized_hits = hits
+        else:
+            normalized: dict[str, RecordHit] = {}
+            for hit in hits:
+                record = cast(Record | None, record_hydrator(hit.identity))
+                parent_chunk_id = (
+                    record.metadata.get("parent_chunk_id")
+                    if record is not None
+                    else None
+                )
+                identity = (
+                    RecordIdentity(
+                        hit.workspace_id,
+                        hit.source_kind,
+                        parent_chunk_id,
+                    )
+                    if isinstance(parent_chunk_id, str) and parent_chunk_id
+                    else hit.identity
+                )
+                candidate = RecordHit(identity, hit.score)
+                previous = normalized.get(candidate.storage_key)
+                if previous is None or candidate.score > previous.score:
+                    normalized[candidate.storage_key] = candidate
+            normalized_hits = sorted(
+                normalized.values(),
+                key=lambda hit: (-hit.score, hit.storage_key),
+            )
+        return normalized_hits
 
     return cast(Any, RecordSearchPolicy)(
         graph_target_resolver=resolve_graph_target
