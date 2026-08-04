@@ -596,7 +596,62 @@ async def test_document_search_prefers_notes_over_pathless_git_records(adapter):
         search=fake_search,
     )
 
-    assert [result.doc_id for result in execution.results] == ["note", "git:commit"]
+    assert [result.doc_id for result in execution.results] == ["note"]
+
+
+@pytest.mark.asyncio
+async def test_default_documents_exclude_self_referential_pathless_git_results(
+    adapter,
+):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="git_commit",
+        source_id="git:abstention",
+        title="Fix search regression",
+        body="quantum entanglement recipe for Mars",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={
+            "doc_id": "git:abstention",
+            "commit_id": "git:abstention",
+            "project_id": "mcp-markdown-ragdocs",
+        },
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.049,
+                    provenance=SimpleNamespace(
+                        strategies=("keyword", "vector"),
+                        strategy_details={
+                            "keyword": SimpleNamespace(rank=1, raw_score=49.0),
+                            "vector": SimpleNamespace(rank=1, raw_score=0.28),
+                        },
+                    ),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    default_execution = await adapter.search_use_case.execute(
+        SearchQuery(query="quantum entanglement recipe for Mars", top_n=5),
+        search=fake_search,
+    )
+    git_execution = await adapter.search_use_case.execute(
+        SearchQuery(
+            query="quantum entanglement recipe for Mars",
+            top_n=5,
+            source_filter=("git_commit",),
+        ),
+        search=fake_search,
+    )
+
+    assert default_execution.results == []
+    assert [result.doc_id for result in git_execution.results] == ["git:abstention"]
 
 
 @pytest.mark.asyncio

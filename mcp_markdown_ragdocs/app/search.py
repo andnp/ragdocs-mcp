@@ -165,6 +165,14 @@ def _document_source_rank(request: SearchQuery, result: Any) -> int:
     return 1
 
 
+def _is_pathless_git_record(result: Any) -> bool:
+    record = result.record
+    source_kind = record.source_kind or record.metadata.get("source_kind")
+    return source_kind == "git_commit" and not (
+        record.metadata.get("file_path") or record.uri
+    )
+
+
 def _default_match_for_query(query: str, result: Any) -> bool:
     """Keep low-score records with an application-visible lexical signal."""
     record = result.record
@@ -313,6 +321,10 @@ class ApplicationSearchUseCase:
                 or result.score >= effective_min_score
             )
             and not self._is_excluded(result.record.metadata, request.excluded_files)
+            and (
+                request.source_filter == ("git_commit",)
+                or not _is_pathless_git_record(result)
+            )
         ]
         if (
             request.min_score is None

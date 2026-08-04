@@ -82,7 +82,7 @@ async def test_source_filter_restricts_results_to_matching_source_kind(
 
 
 @pytest.mark.asyncio
-async def test_source_filter_none_returns_all_sources(manager, orchestrator):
+async def test_source_filter_none_excludes_pathless_git_sources(manager, orchestrator):
     _seed_mixed_sources(manager)
 
     results, _, _ = await orchestrator.query(
@@ -93,7 +93,7 @@ async def test_source_filter_none_returns_all_sources(manager, orchestrator):
 
     doc_ids = {result.doc_id for result in results}
     assert "note_doc" in doc_ids
-    assert "git:abc123" in doc_ids
+    assert "git:abc123" not in doc_ids
 
 
 @pytest.mark.asyncio
