@@ -152,6 +152,7 @@ class SearchExecution:
 _DEFAULT_ABSTENTION_SCORE = 0.01
 _DEFAULT_VECTOR_ABSTENTION_SCORE = 0.03
 _DEFAULT_HYBRID_KEYWORD_SIGNAL = 0.01
+_DEFAULT_STRONG_KEYWORD_SIGNAL = 0.5
 _DEFAULT_HYBRID_MAX_KEYWORD_RANK = 5
 _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP = 2
 _QUERY_STOP_WORDS = frozenset(
@@ -354,7 +355,7 @@ def _default_result_is_credible(query: str, result: Any) -> bool:
             isinstance(keyword_rank, int)
             and keyword_rank <= _DEFAULT_HYBRID_MAX_KEYWORD_RANK
             and getattr(keyword, "raw_score", 0.0)
-            >= _DEFAULT_HYBRID_KEYWORD_SIGNAL
+            >= _DEFAULT_STRONG_KEYWORD_SIGNAL
         )
     if strategies == {"keyword"}:
         return False

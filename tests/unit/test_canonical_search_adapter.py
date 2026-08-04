@@ -816,6 +816,46 @@ async def test_default_abstention_drops_weak_ranked_hybrid_with_generic_overlap(
 
 
 @pytest.mark.asyncio
+async def test_default_abstention_drops_weak_mixed_vocabulary_hybrid(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="live-operations",
+        title="Operations",
+        body="Live deployment guidance for lunar operations.",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "live-operations", "file_path": "operations.md"},
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.031,
+                    provenance=SimpleNamespace(
+                        strategies=("keyword", "vector"),
+                        strategy_details={
+                            "keyword": SimpleNamespace(rank=1, raw_score=0.08),
+                            "vector": SimpleNamespace(rank=1, raw_score=0.24),
+                        },
+                    ),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="live lunar-goat quantum", top_n=5),
+        search=fake_search,
+    )
+
+    assert execution.results == []
+
+
+@pytest.mark.asyncio
 async def test_default_abstention_keeps_multiple_meaningful_hybrid_tokens(adapter):
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     record = Record(

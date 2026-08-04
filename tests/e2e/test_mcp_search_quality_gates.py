@@ -12,8 +12,8 @@ from mcp_markdown_ragdocs.lifecycle import LifecycleState
 from mcp_markdown_ragdocs.mcp.handlers import HandlerContext, get_handler
 from mcp_markdown_ragdocs.mcp.tools.document_tools import handle_query_documents
 from tests.search.evaluation_harness import (
-    SearchEvaluationCaseResult,
     SearchEvaluationAggregate,
+    SearchEvaluationCaseResult,
     SearchEvaluationReport,
     build_search_evaluation_harness,
     compute_ranking_metrics,
@@ -269,6 +269,22 @@ async def test_fixture_abstention_rejects_unrelated_and_keeps_hybrid_match(tmp_p
     assert {"keyword", "vector"} <= set(provenance.strategies)
     assert strategy.keyword_count is not None and strategy.keyword_count > 0
     assert strategy.vector_count is not None and strategy.vector_count > 0
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_fixture_abstention_rejects_mixed_vocabulary_query(tmp_path) -> None:
+    harness = build_search_evaluation_harness(tmp_path)
+
+    results, _, strategy = await harness.orchestrator.query(
+        "live lunar-goat quantum",
+        top_k=20,
+        top_n=5,
+    )
+
+    assert results == []
+    assert strategy.keyword_count == 0
+    assert strategy.vector_count == 0
 
 
 @pytest.mark.e2e
