@@ -137,7 +137,7 @@ class SearchExecution:
 
 
 _DEFAULT_ABSTENTION_SCORE = 0.01
-_DEFAULT_VECTOR_ABSTENTION_SCORE = 0.02
+_DEFAULT_VECTOR_ABSTENTION_SCORE = 0.025
 _DEFAULT_HYBRID_KEYWORD_SIGNAL = 0.01
 _QUERY_STOP_WORDS = frozenset(
     {"a", "an", "and", "are", "be", "for", "how", "in", "is", "must", "of", "the", "to"}
@@ -205,6 +205,8 @@ def _default_result_is_credible(query: str, result: Any) -> bool:
             getattr(keyword, "raw_score", 0.0)
             >= _DEFAULT_HYBRID_KEYWORD_SIGNAL
         )
+    if strategies == {"keyword"}:
+        return False
     if "vector" in strategies and not {"keyword", "graph"} & set(strategies):
         return result.score >= _DEFAULT_VECTOR_ABSTENTION_SCORE
     return result.score >= _DEFAULT_ABSTENTION_SCORE

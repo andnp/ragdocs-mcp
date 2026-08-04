@@ -763,6 +763,108 @@ async def test_default_abstention_drops_scoped_unrelated_hybrid_matches(adapter)
 
 
 @pytest.mark.asyncio
+async def test_default_abstention_drops_global_vector_and_stopword_matches(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id=source_id,
+            title="Deployment",
+            body="Container rollout instructions",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": source_id, "file_path": f"{source_id}.md"},
+        )
+        for source_id in ("vector-a", "vector-b", "keyword-a", "keyword-b")
+    ]
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=records[0],
+                    score=0.0213,
+                    provenance=SimpleNamespace(strategies=("vector",)),
+                ),
+                SimpleNamespace(
+                    record=records[1],
+                    score=0.0203,
+                    provenance=SimpleNamespace(strategies=("vector",)),
+                ),
+                SimpleNamespace(
+                    record=records[2],
+                    score=0.0147,
+                    provenance=SimpleNamespace(strategies=("keyword",)),
+                ),
+                SimpleNamespace(
+                    record=records[3],
+                    score=0.0137,
+                    provenance=SimpleNamespace(strategies=("keyword",)),
+                ),
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="quantum entanglement recipe for Mars", top_n=5),
+        search=fake_search,
+    )
+
+    assert execution.results == []
+
+
+@pytest.mark.asyncio
+async def test_default_abstention_drops_scoped_stopword_only_matches(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id=f"scoped-{index}",
+            title="Deployment",
+            body="Container rollout instructions",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={
+                "doc_id": f"scoped-{index}",
+                "file_path": f"scoped-{index}.md",
+                "project_id": "mcp-markdown-ragdocs",
+            },
+        )
+        for index in range(5)
+    ]
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=score,
+                    provenance=SimpleNamespace(strategies=("keyword",)),
+                )
+                for record, score in zip(
+                    records,
+                    (0.0147, 0.0144, 0.0141, 0.0139, 0.0137),
+                    strict=True,
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(
+            query="quantum entanglement recipe for Mars",
+            top_n=5,
+            project_filter=("mcp-markdown-ragdocs",),
+        ),
+        search=fake_search,
+    )
+
+    assert execution.results == []
+
+
+@pytest.mark.asyncio
 async def test_default_abstention_keeps_semantic_paraphrase_with_keyword_signal(
     adapter,
 ):
