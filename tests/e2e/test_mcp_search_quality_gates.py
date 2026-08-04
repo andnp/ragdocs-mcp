@@ -145,6 +145,25 @@ async def test_mcp_query_documents_does_not_leak_dotted_fts_failure(tmp_path) ->
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
+async def test_fixture_artifact_query_returns_markdown_reference(tmp_path) -> None:
+    harness = build_search_evaluation_harness(tmp_path)
+
+    results, _, strategy = await harness.orchestrator.query(
+        "mcp_server.py list_tools call_tool",
+        top_k=20,
+        top_n=3,
+    )
+
+    assert results
+    assert results[0].file_path.endswith("src-mcp_server-py.md")
+    assert all(result.file_path.endswith(".md") for result in results)
+    assert strategy.keyword_count is not None and strategy.keyword_count > 0
+    assert results[0].provenance is not None
+    assert "keyword" in results[0].provenance.strategies
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
 async def test_fixture_graph_retrieval_reports_graph_strategy(tmp_path) -> None:
     harness = build_search_evaluation_harness(tmp_path)
 
