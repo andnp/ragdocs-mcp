@@ -43,6 +43,7 @@ from mcp_markdown_ragdocs.models import Document
 from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
 
 logger = logging.getLogger(__name__)
+_GRAPH_IDENTITY_BATCH_SIZE = 100
 
 
 class _BidirectionalGraphStore:
@@ -133,11 +134,16 @@ class _BidirectionalGraphStore:
     ):
         requested = {identity.storage_key for identity in identities}
         incoming = {identity.storage_key: [] for identity in identities}
-        outgoing = self._graph_store.neighbors_many(
-            self._identities(),
-            depth=depth,
-            max_neighbors=None,
-        )
+        outgoing = {}
+        all_identities = self._identities()
+        for start in range(0, len(all_identities), _GRAPH_IDENTITY_BATCH_SIZE):
+            outgoing.update(
+                self._graph_store.neighbors_many(
+                    all_identities[start : start + _GRAPH_IDENTITY_BATCH_SIZE],
+                    depth=depth,
+                    max_neighbors=None,
+                )
+            )
         for source_key, neighbors in outgoing.items():
             source = RecordIdentity.from_storage_key(source_key)
             for neighbor in neighbors:
@@ -602,12 +608,23 @@ class RecordIndexManager:
             hydrated = tuple(record for record in records if record is not None)
             if not hydrated:
                 continue
-            edges.extend(
-                self._graph_edges_for_document(
-                    hydrated[0],
-                    tuple(record.identity for record in hydrated),
+            for record in hydrated:
+                source_identities = [record.identity]
+                parent_chunk_id = record.metadata.get("parent_chunk_id")
+                if isinstance(parent_chunk_id, str) and parent_chunk_id:
+                    source_identities.append(
+                        RecordIdentity(
+                            record.workspace_id,
+                            record.source_kind,
+                            parent_chunk_id,
+                        )
+                    )
+                edges.extend(
+                    self._graph_edges_for_document(
+                        record,
+                        tuple(dict.fromkeys(source_identities)),
+                    )
                 )
-            )
         if edges:
             try:
                 self.graph.upsert_edges(edges)

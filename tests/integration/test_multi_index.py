@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import fields, replace
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from searchkernel.api import GraphEdge, RecordSearchPolicy
@@ -246,6 +247,58 @@ async def test_chunk_target_resolves_parent_for_document_graph_neighbors(
 
 
 @pytest.mark.asyncio
+async def test_outbound_query_uses_links_from_child_chunks(tmp_path: Path) -> None:
+    if not _resolver_supported():
+        pytest.skip("requires Searchkernel graph_target_resolver support")
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    manager = make_record_index_manager(
+        Config(indexing=IndexingConfig(documents_path=str(docs), index_path=str(tmp_path / "index"))),
+        documents_roots=[docs],
+    )
+    target_parent = make_record(
+        "target_parent_0",
+        "Target context",
+        workspace_id="project-a",
+        metadata={"doc_id": "target", "file_path": str(docs / "target.md")},
+    )
+    target_chunk = make_record(
+        "target_chunk_26",
+        "Hybrid Search Strategy",
+        workspace_id="project-a",
+        metadata={
+            "doc_id": "target",
+            "parent_chunk_id": "target_parent_0",
+            "file_path": str(docs / "target.md"),
+            "links": ["neighbor-a.md"],
+        },
+    )
+    neighbor = make_record(
+        "neighbor-a",
+        "Authentication notes",
+        workspace_id="project-a",
+        metadata={"file_path": str(docs / "neighbor-a.md")},
+    )
+    assert manager.index_records([target_parent, target_chunk, neighbor])
+    manager.rebuild_graph()
+
+    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+        "What pages does Hybrid Search Strategy link to?",
+        top_k=20,
+        top_n=5,
+        project_filter=["project-a"],
+    )
+
+    neighbor_result = next(result for result in results if result.doc_id == "neighbor-a")
+    assert neighbor_result.file_path == str(docs / "neighbor-a.md")
+    assert neighbor_result.provenance is not None
+    assert "graph" in neighbor_result.provenance.strategies
+    assert strategy.graph_count is not None
+    assert strategy.graph_count >= 1
+
+
+@pytest.mark.asyncio
 async def test_natural_language_graph_query_has_empty_neighbor_lane(tmp_path: Path) -> None:
     if not _resolver_supported():
         pytest.skip("requires Searchkernel graph_target_resolver support")
@@ -282,6 +335,35 @@ async def test_natural_language_graph_query_has_empty_neighbor_lane(tmp_path: Pa
     assert strategy.graph_count == 0
     assert results[0].provenance is not None
     assert "graph" not in results[0].provenance.strategies
+
+
+def test_reverse_graph_scan_batches_large_identity_sets(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    records = [
+        make_record(
+            f"record-{index}",
+            f"Indexed record {index}",
+            workspace_id="project-a",
+            metadata={"file_path": str(tmp_path / "docs" / f"{index}.md")},
+        )
+        for index in range(1_005)
+    ]
+    source = records[0]
+    target = records[-1]
+    assert manager.index_records(records)
+    manager.graph.upsert_edges(
+        [GraphEdge(source.identity, target.identity, "links_to", 1.0)]
+    )
+
+    graph_store = cast(Any, manager.kernel.pipeline._graph_store)
+    incoming = graph_store.incoming_neighbors_many(
+        [target.identity],
+        depth=1,
+    )
+
+    assert [neighbor.identity.source_id for neighbor in incoming[target.storage_key]] == [
+        source.source_id
+    ]
 
 
 def test_index_document_updates_record_stores(tmp_path):
