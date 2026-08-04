@@ -322,7 +322,12 @@ def run_progressive_bootstrap(
 ) -> CoordinatorReceipt:
     """Run one bounded bootstrap source through the shared coordinator."""
     if hasattr(manager, "kernel"):
-        receipt = _run_canonical_bootstrap(manager, file_paths)
+        pending_paths = _pending_canonical_paths(
+            manager.index_path,
+            file_paths,
+            documents_roots,
+        )
+        receipt = _run_canonical_bootstrap(manager, pending_paths)
         successful_paths = [
             record.source_id
             for record in receipt.ingestion.records
@@ -333,7 +338,7 @@ def run_progressive_bootstrap(
             list(documents_roots),
             successful_paths,
         )
-        if len(successful_paths) == len(file_paths):
+        if len(successful_paths) == len(pending_paths):
             publish_bootstrap_availability(
                 manager.index_path,
                 SearchAvailability(
@@ -409,6 +414,28 @@ def run_progressive_bootstrap(
             failure_mode="strict",
         )
     )
+
+
+def _pending_canonical_paths(
+    index_path: Path,
+    file_paths: Sequence[str],
+    documents_roots: Sequence[Path],
+) -> list[str]:
+    checkpoint = load_bootstrap_checkpoint(index_path)
+    if checkpoint is None:
+        return list(file_paths)
+
+    pending_paths: list[str] = []
+    for file_path in file_paths:
+        relative_path = _relative_path(file_path, documents_roots)
+        if (
+            relative_path in checkpoint.targets
+            and checkpoint.completed.get(relative_path)
+            == checkpoint.targets[relative_path]
+        ):
+            continue
+        pending_paths.append(file_path)
+    return pending_paths
 
 
 def _run_canonical_bootstrap(
