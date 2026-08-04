@@ -147,6 +147,19 @@ def _record_project_id(record: Record) -> str | None:
     return project_id if isinstance(project_id, str) else None
 
 
+def _document_source_rank(request: SearchQuery, result: Any) -> int:
+    """Prefer addressable documents over pathless history in document search."""
+    if request.source_filter == ("git_commit",):
+        return 0
+    record = result.record
+    source_kind = record.source_kind or record.metadata.get("source_kind")
+    if source_kind == "git_commit" and not (
+        record.metadata.get("file_path") or record.uri
+    ):
+        return 0
+    return 1
+
+
 def _default_match_for_query(query: str, result: Any) -> bool:
     """Keep low-score records with an application-visible lexical signal."""
     record = result.record
@@ -287,9 +300,10 @@ class ApplicationSearchUseCase:
                 if result.score >= _DEFAULT_ABSTENTION_SCORE
                 or _default_match_for_query(request.query, result)
             ]
-        if any(_metadata_query_rank(request.query, result) for result in filtered_results):
+        if request.source_filter != ("git_commit",):
             filtered_results.sort(
                 key=lambda result: (
+                    _document_source_rank(request, result),
                     _metadata_query_rank(request.query, result),
                     result.score,
                 ),
@@ -357,6 +371,8 @@ class ApplicationSearchUseCase:
         metadata.setdefault("workspace_id", record.workspace_id)
         metadata.setdefault("source_kind", record.source_kind)
         metadata.setdefault("source_id", record.source_id)
+        project_id = _record_project_id(record)
+        metadata.setdefault("project_id", project_id)
         file_path = str(metadata.get("file_path") or "")
         if not file_path and record.uri:
             file_path = record.uri.removeprefix("file://")
@@ -367,7 +383,7 @@ class ApplicationSearchUseCase:
             score=score,
             header_path=header_path,
             file_path=file_path,
-            project_id=metadata.get("project_id"),
+            project_id=project_id,
             content=record.body,
             parent_chunk_id=metadata.get("parent_chunk_id"),
             provenance=provenance,
