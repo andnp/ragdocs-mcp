@@ -174,6 +174,9 @@ async def test_fixture_scoped_keyword_search_stays_in_requested_project(tmp_path
 
     assert results
     assert all(result.project_id == "beta" for result in results)
+    assert [result.score for result in results] == sorted(
+        (result.score for result in results), reverse=True
+    )
 
 
 @pytest.mark.e2e
@@ -219,6 +222,50 @@ async def test_fixture_no_answer_threshold_returns_empty(tmp_path) -> None:
     )
 
     assert results == []
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_fixture_abstention_rejects_unrelated_and_keeps_hybrid_match(tmp_path) -> None:
+    harness = build_search_evaluation_harness(tmp_path)
+
+    unrelated, _, _ = await harness.orchestrator.query(
+        "quantum teleportation safety protocol",
+        top_k=20,
+        top_n=5,
+    )
+    relevant, _, strategy = await harness.orchestrator.query(
+        "how frequently must access credentials be renewed",
+        top_k=20,
+        top_n=5,
+        min_score=0.03,
+    )
+
+    assert unrelated == []
+    assert relevant
+    assert relevant[0].file_path.endswith("token-lifecycle.md")
+    assert relevant[0].score >= 0.03
+    provenance = relevant[0].provenance
+    assert provenance is not None
+    assert {"keyword", "vector"} <= set(provenance.strategies)
+    assert strategy.keyword_count is not None and strategy.keyword_count > 0
+    assert strategy.vector_count is not None and strategy.vector_count > 0
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_fixture_global_scores_are_monotonic(tmp_path) -> None:
+    harness = build_search_evaluation_harness(tmp_path)
+
+    results, _, _ = await harness.orchestrator.query(
+        "authentication",
+        top_k=20,
+        top_n=5,
+    )
+
+    scores = [result.score for result in results]
+    assert scores == sorted(scores, reverse=True)
+    assert all(0.0 <= score <= 1.0 for score in scores)
 
 
 @pytest.mark.e2e
