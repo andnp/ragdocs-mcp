@@ -166,6 +166,10 @@ def _as_float(value: object) -> float:
     return float(value) if isinstance(value, (int, float)) else 0.0
 
 
+def _as_text(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
 async def _run_worker_forever_async(
     project: str | None,
     queue_db: Path,
@@ -1228,12 +1232,12 @@ def query(
         if results:
             console.print(f"[bold]Found {len(results)} results:[/bold]\n")
             for idx, result in enumerate(results, 1):
-                panel_content = [
+                panel_content: list[str] = [
                     f"[yellow]Document:[/yellow] {result.get('doc_id', '')}",
                     f"[magenta]Section:[/magenta] {result.get('header_path') or '(no section)'}",
                     f"[blue]File:[/blue] {result.get('file_path') or '(unknown)'}",
                     "",
-                    result.get("content", ""),
+                    _as_text(result.get("content")),
                 ]
                 print_result_panel(
                     console,

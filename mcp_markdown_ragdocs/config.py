@@ -770,6 +770,8 @@ def load_config():
     chunking_data = config_data.get(
         "chunking", config_data.get("chunking_documents", {})
     )
+    if not isinstance(chunking_data, dict):
+        chunking_data = {}
     chunking = _load_dataclass_from_dict(ChunkingConfig, chunking_data)
 
     # Load store config; pg_dsn defaults to env var if not in config
