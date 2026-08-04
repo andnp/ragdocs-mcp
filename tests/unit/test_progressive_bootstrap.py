@@ -146,10 +146,21 @@ class _CanonicalManager(_Manager):
         super().__init__(index_path, [])
         self.kernel = object()
         self.indexed: list[str] = []
+        self.graph_rebuild_calls = 0
+        self.update_graph_flags: list[bool] = []
 
-    def index_document(self, file_path: str) -> bool:
+    def index_document(
+        self,
+        file_path: str,
+        *,
+        update_graph: bool = True,
+    ) -> bool:
         self.indexed.append(file_path)
+        self.update_graph_flags.append(update_graph)
         return True
+
+    def rebuild_graph(self) -> None:
+        self.graph_rebuild_calls += 1
 
 
 def _seed_checkpoint(
@@ -223,6 +234,8 @@ def test_canonical_bootstrap_marks_checkpoint_complete(
     checkpoint = load_bootstrap_checkpoint(index_path)
     assert receipt.successful == 1
     assert manager.indexed == [str(second)]
+    assert manager.update_graph_flags == [False]
+    assert manager.graph_rebuild_calls == 1
     assert manager.persist_calls == 1
     assert checkpoint is not None
     assert checkpoint.complete is True

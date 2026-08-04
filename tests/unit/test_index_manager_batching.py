@@ -15,6 +15,24 @@ def test_index_documents_indexes_the_complete_batch(record_manager) -> None:
     assert (Path(record_manager.index_path) / "record-sources.json").exists()
 
 
+def test_index_documents_rebuilds_graph_once(record_manager, monkeypatch) -> None:
+    docs_dir = Path(record_manager._config.indexing.documents_path)
+    first = create_test_document(docs_dir, "guide", "# Guide\n\nFirst batch document")
+    second = create_test_document(docs_dir, "api", "# API\n\nSecond batch document")
+    rebuild_calls = 0
+    rebuild_graph = record_manager._rebuild_graph
+
+    def tracked_rebuild_graph() -> None:
+        nonlocal rebuild_calls
+        rebuild_calls += 1
+        rebuild_graph()
+
+    monkeypatch.setattr(record_manager, "_rebuild_graph", tracked_rebuild_graph)
+    record_manager.index_documents([first, second])
+
+    assert rebuild_calls == 1
+
+
 def test_remove_documents_removes_the_complete_batch(record_manager) -> None:
     docs_dir = Path(record_manager._config.indexing.documents_path)
     first = create_test_document(docs_dir, "guide", "# Guide\n\nFirst batch document")
