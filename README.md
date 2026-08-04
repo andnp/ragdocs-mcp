@@ -112,6 +112,14 @@ If no configuration file exists, the server uses these defaults:
 - Server: `127.0.0.1:8000`
 - Index storage: `.index_data/`
 
+### Search scope
+
+Document search indexes configured Markdown and plain-text files. Git commits
+are available through the explicit `search-commits` interface. Source files are
+not implicitly indexed: a query such as `src/search/orchestrator.py` may find a
+Markdown reference to that path, but it does not promise source-file retrieval.
+The search evaluation corpus treats these as document-reference cases.
+
 ### CLI Commands
 
 #### Start MCP Server (stdio)

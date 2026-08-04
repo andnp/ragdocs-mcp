@@ -387,7 +387,7 @@ SEARCH_EVALUATION_CASES = (
         required_hits_at_k=((1, 1), (5, 2)),
     ),
     SearchEvaluationCase(
-        case_id="artifact_fileish",
+        case_id="artifact_reference",
         query="mcp_server.py list_tools call_tool",
         relevant_paths=("alpha/docs/src-mcp_server-py.md",),
         expected_top1_path="alpha/docs/src-mcp_server-py.md",

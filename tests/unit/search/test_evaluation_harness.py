@@ -1,4 +1,4 @@
-from tests.search.evaluation_harness import compute_ranking_metrics
+from tests.search.evaluation_harness import SEARCH_EVALUATION_CASES, compute_ranking_metrics
 
 
 def test_compute_ranking_metrics_uses_document_level_ranks() -> None:
@@ -13,3 +13,11 @@ def test_compute_ranking_metrics_uses_document_level_ranks() -> None:
     assert metrics.recall_at_5 == 1.0
     assert round(metrics.ndcg_at_3, 3) == 0.693
     assert round(metrics.ndcg_at_5, 3) == 0.693
+
+
+def test_artifact_case_covers_document_reference_scope() -> None:
+    case = next(case for case in SEARCH_EVALUATION_CASES if case.case_id == "artifact_reference")
+
+    assert ".py" in case.query
+    assert case.expected_top1_path is not None
+    assert case.expected_top1_path.endswith(".md")
