@@ -531,10 +531,11 @@ def _index_documents_batch(
         "prepare_progressive_document",
         None,
     )
+    canonical_index = hasattr(_index_manager, "kernel")
     if (
         progressive
         and not force
-        and progressive_index is not None
+        and (progressive_index is not None or canonical_index)
         and _bootstrap_index_path is not None
         and _bootstrap_documents_roots
         and has_incomplete_bootstrap_checkpoint(_bootstrap_index_path)
