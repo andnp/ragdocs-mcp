@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from importlib import import_module
@@ -135,12 +136,42 @@ class SearchExecution:
     query_execution_stats: dict[str, object] = field(default_factory=dict)
 
 
+_DEFAULT_ABSTENTION_SCORE = 0.01
+
+
 def _record_project_id(record: Record) -> str | None:
     workspace_id = record.workspace_id
     if workspace_id is not None:
         return workspace_id
     project_id = record.metadata.get("project_id")
     return project_id if isinstance(project_id, str) else None
+
+
+def _default_match_for_query(query: str, result: Any) -> bool:
+    """Keep low-score records with an application-visible lexical signal."""
+    record = result.record
+    metadata = record.metadata
+    tokens = set(re.findall(r"[a-z0-9_./-]+", query.lower()))
+    if not tokens:
+        return False
+    searchable_metadata = " ".join(
+        str(value)
+        for value in (
+            record.title,
+            metadata.get("header_path"),
+            metadata.get("file_path"),
+        )
+        if value
+    ).lower()
+    if query.lower() in searchable_metadata or tokens <= set(
+        re.findall(r"[a-z0-9_./-]+", searchable_metadata)
+    ):
+        return True
+    provenance = result.provenance
+    strategies = getattr(provenance, "strategies", ()) if provenance else ()
+    return "keyword" in strategies and any(
+        token in record.body.lower() for token in tokens
+    )
 
 
 class ApplicationSearchUseCase:
@@ -216,6 +247,17 @@ class ApplicationSearchUseCase:
             )
             and not self._is_excluded(result.record.metadata, request.excluded_files)
         ]
+        if (
+            request.min_score is None
+            and self._default_min_score is None
+            and request.source_filter != ("git_commit",)
+        ):
+            filtered_results = [
+                result
+                for result in filtered_results
+                if result.score >= _DEFAULT_ABSTENTION_SCORE
+                or _default_match_for_query(request.query, result)
+            ]
         if request.max_chunks_per_doc > 0:
             counts: dict[str, int] = {}
             limited_results = []
@@ -276,6 +318,7 @@ class ApplicationSearchUseCase:
     ) -> ChunkResult:
         metadata = dict(record.metadata)
         metadata.setdefault("record_id", record.storage_key)
+        metadata.setdefault("title", record.title)
         metadata.setdefault("workspace_id", record.workspace_id)
         metadata.setdefault("source_kind", record.source_kind)
         metadata.setdefault("source_id", record.source_id)

@@ -351,3 +351,106 @@ async def test_application_use_case_returns_empty_for_unmatched_query(adapter):
     )
 
     assert execution.results == []
+
+
+@pytest.mark.asyncio
+async def test_default_abstention_drops_unrelated_low_score_records(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="unrelated",
+        title="Deployment",
+        body="Container rollout instructions",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "unrelated", "file_path": "deploy.md"},
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.004,
+                    provenance=SimpleNamespace(strategies=("vector",)),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="quantum entanglement", top_n=5),
+        search=fake_search,
+    )
+
+    assert execution.results == []
+
+
+@pytest.mark.asyncio
+async def test_default_abstention_keeps_exact_title_low_score(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="exact-title",
+        title="Quantum Entanglement",
+        body="Reference notes",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "exact-title", "file_path": "quantum.md"},
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.004,
+                    provenance=SimpleNamespace(strategies=("vector",)),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="quantum entanglement", top_n=5),
+        search=fake_search,
+    )
+
+    assert [result.doc_id for result in execution.results] == ["exact-title"]
+    assert execution.results[0].metadata["title"] == "Quantum Entanglement"
+
+
+@pytest.mark.asyncio
+async def test_explicit_zero_score_override_keeps_low_score_record(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="override",
+        title="Deployment",
+        body="Container rollout instructions",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "override", "file_path": "deploy.md"},
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.004,
+                    provenance=SimpleNamespace(strategies=("vector",)),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="quantum entanglement", top_n=5, min_score=0.0),
+        search=fake_search,
+    )
+
+    assert [result.doc_id for result in execution.results] == ["override"]
