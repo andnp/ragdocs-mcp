@@ -322,7 +322,28 @@ def run_progressive_bootstrap(
 ) -> CoordinatorReceipt:
     """Run one bounded bootstrap source through the shared coordinator."""
     if hasattr(manager, "kernel"):
-        return _run_canonical_bootstrap(manager, file_paths)
+        receipt = _run_canonical_bootstrap(manager, file_paths)
+        successful_paths = [
+            record.source_id
+            for record in receipt.ingestion.records
+            if record.status == "committed"
+        ]
+        mark_bootstrap_files_completed(
+            manager.index_path,
+            list(documents_roots),
+            successful_paths,
+        )
+        if len(successful_paths) == len(file_paths):
+            publish_bootstrap_availability(
+                manager.index_path,
+                SearchAvailability(
+                    lexical="available",
+                    graph="available",
+                    semantic_coarse="complete",
+                    semantic_fine="complete",
+                ),
+            )
+        return receipt
 
     target_paths = {
         _relative_path(file_path, documents_roots)
