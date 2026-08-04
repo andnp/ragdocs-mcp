@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 from searchkernel.api import build_local_record_kernel
 from searchkernel.domain import Record, RecordStatus
+from searchkernel.embeddings import TEST_FAKE_EMBEDDINGS_ENV_VAR
 
 from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.indexing.record_manager import (
@@ -22,6 +24,7 @@ def make_record_index_manager(
 ) -> RecordIndexManager:
     """Build the same local record stack used by the application context."""
 
+    os.environ.setdefault(TEST_FAKE_EMBEDDINGS_ENV_VAR, "1")
     model_name = config.embedding.model_name
     embedding_provider = build_embedding_provider(config, model_name)
     kernel = build_local_record_kernel(
