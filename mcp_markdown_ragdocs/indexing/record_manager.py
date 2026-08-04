@@ -67,6 +67,20 @@ class _BidirectionalGraphStore:
             max_neighbors=max_neighbors,
         )
 
+    def neighbors(self, identity, *, depth: int, max_neighbors: int | None = None):
+        return self.neighbors_many(
+            [identity],
+            depth=depth,
+            max_neighbors=max_neighbors,
+        )[identity.storage_key]
+
+    def incoming_neighbors(self, identity, *, depth: int, max_neighbors: int | None = None):
+        return self.incoming_neighbors_many(
+            [identity],
+            depth=depth,
+            max_neighbors=max_neighbors,
+        )[identity.storage_key]
+
     def incoming_neighbors_many(
         self,
         identities,
