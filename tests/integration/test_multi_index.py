@@ -356,6 +356,7 @@ def test_reverse_graph_scan_batches_large_identity_sets(tmp_path: Path) -> None:
     )
 
     graph_store = cast(Any, manager.kernel.pipeline._graph_store)
+    graph_store._identities = lambda: pytest.fail("native reverse traversal was skipped")
     incoming = graph_store.incoming_neighbors_many(
         [target.identity],
         depth=1,

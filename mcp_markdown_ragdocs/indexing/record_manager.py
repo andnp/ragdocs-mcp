@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import unquote, urlparse
 
 from searchkernel.api import (
@@ -65,7 +65,13 @@ class _BidirectionalGraphStore:
         )
         self._direction.set(normalized)
 
-    def neighbors_many(self, identities, *, depth: int, max_neighbors: int | None = None):
+    def neighbors_many(
+        self,
+        identities: Sequence[RecordIdentity],
+        *,
+        depth: int,
+        max_neighbors: int | None = None,
+    ) -> dict[str, Sequence[GraphNeighbor]]:
         direction = self._direction.get()
         if direction == "incoming":
             return self.incoming_neighbors_many(
@@ -100,25 +106,40 @@ class _BidirectionalGraphStore:
 
     def _outgoing_neighbors_many(
         self,
-        identities,
+        identities: Sequence[RecordIdentity],
         *,
         depth: int,
         max_neighbors: int | None = None,
-    ):
-        return self._graph_store.neighbors_many(
-            identities,
-            depth=depth,
-            max_neighbors=max_neighbors,
+    ) -> dict[str, Sequence[GraphNeighbor]]:
+        return cast(
+            dict[str, Sequence[GraphNeighbor]],
+            self._graph_store.neighbors_many(
+                identities,
+                depth=depth,
+                max_neighbors=max_neighbors,
+            ),
         )
 
-    def neighbors(self, identity, *, depth: int, max_neighbors: int | None = None):
+    def neighbors(
+        self,
+        identity: RecordIdentity,
+        *,
+        depth: int,
+        max_neighbors: int | None = None,
+    ) -> Sequence[GraphNeighbor]:
         return self.neighbors_many(
             [identity],
             depth=depth,
             max_neighbors=max_neighbors,
         )[identity.storage_key]
 
-    def incoming_neighbors(self, identity, *, depth: int, max_neighbors: int | None = None):
+    def incoming_neighbors(
+        self,
+        identity: RecordIdentity,
+        *,
+        depth: int,
+        max_neighbors: int | None = None,
+    ) -> Sequence[GraphNeighbor]:
         return self.incoming_neighbors_many(
             [identity],
             depth=depth,
@@ -127,14 +148,26 @@ class _BidirectionalGraphStore:
 
     def incoming_neighbors_many(
         self,
-        identities,
+        identities: Sequence[RecordIdentity],
         *,
         depth: int,
         max_neighbors: int | None = None,
-    ):
+    ) -> dict[str, Sequence[GraphNeighbor]]:
+        native_loader = getattr(self._graph_store, "incoming_neighbors_many", None)
+        if callable(native_loader):
+            return cast(
+                dict[str, Sequence[GraphNeighbor]],
+                native_loader(
+                    identities,
+                    depth=depth,
+                    max_neighbors=max_neighbors,
+                ),
+            )
         requested = {identity.storage_key for identity in identities}
-        incoming = {identity.storage_key: [] for identity in identities}
-        outgoing = {}
+        incoming: dict[str, list[GraphNeighbor]] = {
+            identity.storage_key: [] for identity in identities
+        }
+        outgoing: dict[str, Sequence[GraphNeighbor]] = {}
         all_identities = self._identities()
         for start in range(0, len(all_identities), _GRAPH_IDENTITY_BATCH_SIZE):
             outgoing.update(
@@ -156,7 +189,7 @@ class _BidirectionalGraphStore:
             neighbors.sort(key=lambda item: (-item.weight, item.identity.storage_key))
             if max_neighbors is not None:
                 incoming[key] = neighbors[:max_neighbors]
-        return incoming
+        return cast(dict[str, Sequence[GraphNeighbor]], incoming)
 
 
 def _merge_graph_neighbors(first, second, max_neighbors: int | None):
