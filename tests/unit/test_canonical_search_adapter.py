@@ -309,6 +309,7 @@ async def test_query_applies_workspace_identity_without_metadata_project_id(adap
     )
 
     assert [result.chunk_id for result in results] == ["chunk-c"]
+    assert results[0].project_id == "project-c"
 
 
 @pytest.mark.asyncio
@@ -546,3 +547,211 @@ async def test_filename_query_promotes_matching_metadata_before_score_order(adap
         "target.md",
         "other.md",
     ]
+
+
+@pytest.mark.asyncio
+async def test_document_search_prefers_notes_over_pathless_git_records(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id="note",
+            title="Authentication guide",
+            body="Documentation",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": "note", "file_path": "auth.md"},
+        ),
+        Record(
+            source_kind="git_commit",
+            source_id="git:commit",
+            title="Authentication fix",
+            body="Commit history",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": "git:commit", "commit_id": "git:commit"},
+        ),
+    ]
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=records[1],
+                    score=0.9,
+                    provenance=SimpleNamespace(strategies=("keyword",)),
+                ),
+                SimpleNamespace(
+                    record=records[0],
+                    score=0.2,
+                    provenance=SimpleNamespace(strategies=("keyword",)),
+                ),
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="authentication", top_n=2, max_chunks_per_doc=0),
+        search=fake_search,
+    )
+
+    assert [result.doc_id for result in execution.results] == ["note", "git:commit"]
+
+
+@pytest.mark.asyncio
+async def test_default_abstention_drops_medium_vector_only_match(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="unrelated",
+        title="Deployment",
+        body="Container rollout instructions",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "unrelated", "file_path": "deploy.md"},
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.015,
+                    provenance=SimpleNamespace(strategies=("vector",)),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="quantum entanglement", top_n=5),
+        search=fake_search,
+    )
+
+    assert execution.results == []
+
+
+@pytest.mark.asyncio
+async def test_default_abstention_keeps_low_score_lexical_match(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="lexical",
+        title="Reference",
+        body="Quantum notes",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "lexical", "file_path": "quantum.md"},
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.004,
+                    provenance=SimpleNamespace(strategies=("keyword",)),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="quantum entanglement", top_n=5),
+        search=fake_search,
+    )
+
+    assert [result.doc_id for result in execution.results] == ["lexical"]
+
+
+@pytest.mark.asyncio
+async def test_artifact_symbol_query_promotes_matching_header_path(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id="generic",
+            title="Other",
+            body="Generic content",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": "generic", "file_path": "other.md"},
+        ),
+        Record(
+            source_kind="note",
+            source_id="symbol",
+            title="Search",
+            body="Application search implementation",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={
+                "doc_id": "symbol",
+                "file_path": "src/search.py",
+                "header_path": "ApplicationSearchUseCase",
+            },
+        ),
+    ]
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=records[0],
+                    score=0.9,
+                    provenance=SimpleNamespace(strategies=("vector",)),
+                ),
+                SimpleNamespace(
+                    record=records[1],
+                    score=0.2,
+                    provenance=SimpleNamespace(strategies=("keyword",)),
+                ),
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(
+            query="ApplicationSearchUseCase",
+            top_n=2,
+            max_chunks_per_doc=0,
+        ),
+        search=fake_search,
+    )
+
+    assert [result.doc_id for result in execution.results] == ["symbol", "generic"]
+
+
+@pytest.mark.asyncio
+async def test_graph_provenance_survives_result_mapping(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="linked",
+        title="Linked note",
+        body="Related content",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "linked", "file_path": "linked.md"},
+    )
+    provenance = SimpleNamespace(strategies=("graph",))
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(record=record, score=0.02, provenance=provenance)
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="relationship", top_n=1),
+        search=fake_search,
+    )
+
+    assert execution.results[0].provenance is provenance
+    assert execution.strategy_stats.graph_count == 1
