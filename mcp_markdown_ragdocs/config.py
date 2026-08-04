@@ -245,6 +245,18 @@ class EmbeddingConfig:
 
 
 @dataclass
+class LoggingConfig:
+    max_bytes: int = 50 * 1024 * 1024
+    backup_count: int = 5
+
+    def __post_init__(self) -> None:
+        if self.max_bytes < 1:
+            raise ValueError("logging.max_bytes must be positive")
+        if self.backup_count < 1:
+            raise ValueError("logging.backup_count must be positive")
+
+
+@dataclass
 class Config:
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
@@ -253,6 +265,7 @@ class Config:
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     store: StoreConfig = field(default_factory=StoreConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     projects: list[ProjectConfig] = field(default_factory=list)
     detected_project: str | None = None
     config_warnings: list[str] = field(default_factory=list)
@@ -783,6 +796,9 @@ def load_config():
     embedding = _load_dataclass_from_dict(
         EmbeddingConfig, config_data.get("embedding", {})
     )
+    logging_config = _load_dataclass_from_dict(
+        LoggingConfig, config_data.get("logging", {})
+    )
 
     projects_data = config_data.get("projects", [])
     projects = []
@@ -802,6 +818,7 @@ def load_config():
         chunking=chunking,
         store=store,
         embedding=embedding,
+        logging=logging_config,
         projects=projects,
         config_warnings=config_warnings,
     )

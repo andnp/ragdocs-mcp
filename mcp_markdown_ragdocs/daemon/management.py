@@ -282,23 +282,15 @@ def _spawn_daemon_process(
         else str(repo_root)
     )
 
-    log_path = _daemon_log_path(runtime_paths)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    stderr_handle = log_path.open("wb")
-    try:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=stderr_handle,
-            cwd=str(Path.cwd()),
-            env=env,
-            start_new_session=True,
-        )
-    finally:
-        stderr_handle.close()
-
-    return process
+    return subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=str(Path.cwd()),
+        env=env,
+        start_new_session=True,
+    )
 
 
 def _resolve_daemon_python() -> Path:

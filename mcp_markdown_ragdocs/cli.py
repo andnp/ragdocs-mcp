@@ -127,6 +127,7 @@ from mcp_markdown_ragdocs.daemon.status import (
 )
 from mcp_markdown_ragdocs.indexing.tasks import register_tasks
 from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
+from mcp_markdown_ragdocs.runtime_logging import configure_file_logging
 from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 from mcp_markdown_ragdocs.worker.process import (
     is_expected_daemon_parent,
@@ -191,7 +192,9 @@ async def _run_worker_forever_async(
         worker_loop.call_soon_threadsafe(_schedule)
         return result.result(timeout=5.0)
 
-    configure_runtime_threads()
+    config = load_config()
+    configure_file_logging(index_root / "worker.log", config.logging)
+    configure_runtime_threads(config)
     ctx = ApplicationContext.create(
         project_override=project,
         enable_watcher=True,
@@ -391,9 +394,11 @@ def mcp(project: str | None):
 
 
 async def _run_daemon_forever() -> None:
+    runtime_paths = RuntimePaths.resolve()
+    config = load_config()
+    configure_file_logging(runtime_paths.root / "daemon.log", config.logging)
     lock = await asyncio.to_thread(acquire_boot_lock, timeout_seconds=5.0)
     lock_released = False
-    runtime_paths = RuntimePaths.resolve()
     health_server_started = False
     coordinator = LifecycleCoordinator()
     loop = asyncio.get_running_loop()

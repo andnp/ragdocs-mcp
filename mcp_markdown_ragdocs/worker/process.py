@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from mcp_markdown_ragdocs.daemon.management import _resolve_daemon_python, _worker_log_path
+from mcp_markdown_ragdocs.daemon.management import _resolve_daemon_python
 from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
 from mcp_markdown_ragdocs.daemon.producer import (
     ProducerMetadata,
@@ -87,21 +87,15 @@ class HueyWorkerProcess:
                 str(parent_start_time),
             ])
 
-        log_path = _worker_log_path(self._runtime_paths)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        stderr_handle = log_path.open("ab")
-        try:
-            self._process = subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=stderr_handle,
-                cwd=str(Path.cwd()),
-                env=os.environ.copy(),
-                start_new_session=True,
-            )
-        finally:
-            stderr_handle.close()
+        self._process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=str(Path.cwd()),
+            env=os.environ.copy(),
+            start_new_session=True,
+        )
 
         producer_path = self._runtime_paths.producer_metadata_path
         if producer_path is not None:
