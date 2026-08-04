@@ -141,6 +141,17 @@ class _Manager:
             raise RuntimeError("checkpoint persistence failed")
 
 
+class _CanonicalManager(_Manager):
+    def __init__(self, index_path: Path) -> None:
+        super().__init__(index_path, [])
+        self.kernel = object()
+        self.indexed: list[str] = []
+
+    def index_document(self, file_path: str) -> bool:
+        self.indexed.append(file_path)
+        return True
+
+
 def _seed_checkpoint(
     index_path: Path,
     document: Path,
@@ -166,6 +177,59 @@ def _seed_checkpoint(
             semantic_completed=semantic_completed or {},
             availability=availability,
         ),
+    )
+
+
+def test_canonical_bootstrap_marks_checkpoint_complete(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.md"
+    second = tmp_path / "second.md"
+    first.write_text("# First")
+    second.write_text("# Second")
+    index_path = tmp_path / "index"
+    index_path.mkdir()
+    save_bootstrap_checkpoint(
+        index_path,
+        BootstrapCheckpoint(
+            schema_version=CURRENT_BOOTSTRAP_CHECKPOINT_SCHEMA_VERSION,
+            generation="generation",
+            complete=False,
+            targets={
+                first.name: BootstrapFileStamp(
+                    first.name,
+                    first.stat().st_mtime_ns,
+                    first.stat().st_size,
+                ),
+                second.name: BootstrapFileStamp(
+                    second.name,
+                    second.stat().st_mtime_ns,
+                    second.stat().st_size,
+                ),
+            },
+            completed={},
+        ),
+    )
+
+    manager = _CanonicalManager(index_path)
+    receipt = run_progressive_bootstrap(
+        manager,
+        [str(first), str(second)],
+        documents_roots=[tmp_path],
+    )
+
+    checkpoint = load_bootstrap_checkpoint(index_path)
+    assert receipt.successful == 2
+    assert manager.indexed == [str(first), str(second)]
+    assert manager.persist_calls == 1
+    assert checkpoint is not None
+    assert checkpoint.complete is True
+    assert set(checkpoint.completed) == {"first.md", "second.md"}
+    assert get_bootstrap_availability(index_path) == SearchAvailability(
+        lexical="available",
+        graph="available",
+        semantic_coarse="complete",
+        semantic_fine="complete",
     )
 
 
