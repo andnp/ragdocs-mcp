@@ -116,3 +116,48 @@ async def test_orchestrator_query_multiple_exclusions(orchestrator, manager, con
     for result in results:
         assert "api" not in result.chunk_id
         assert "guide" not in result.chunk_id
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_document_limit_uses_real_chunks(orchestrator, manager, config):
+    file_path = str(Path(config.indexing.documents_path) / "docs" / "auth.md")
+    assert manager.index_records(
+        [
+            make_record(
+                "docs/auth#overview",
+                "Authentication overview for API clients",
+                metadata={
+                    "doc_id": "docs/auth",
+                    "chunk_id": "overview",
+                    "file_path": file_path,
+                },
+            ),
+            make_record(
+                "docs/auth#tokens",
+                "Authentication token rotation details",
+                metadata={
+                    "doc_id": "docs/auth",
+                    "chunk_id": "tokens",
+                    "file_path": file_path,
+                },
+            ),
+        ]
+    )
+
+    limited, _, _ = await orchestrator.query(
+        "authentication",
+        top_k=10,
+        top_n=5,
+        max_chunks_per_doc=1,
+    )
+    expanded, _, _ = await orchestrator.query(
+        "authentication",
+        top_k=10,
+        top_n=5,
+        max_chunks_per_doc=0,
+    )
+
+    assert len(limited) == 1
+    assert len(expanded) == 2
+    assert {result.doc_id for result in expanded} == {"docs/auth"}
+    assert all(result.provenance is not None for result in expanded)
