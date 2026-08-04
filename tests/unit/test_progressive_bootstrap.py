@@ -189,6 +189,16 @@ def test_canonical_bootstrap_marks_checkpoint_complete(
     second.write_text("# Second")
     index_path = tmp_path / "index"
     index_path.mkdir()
+    first_stamp = BootstrapFileStamp(
+        first.name,
+        first.stat().st_mtime_ns,
+        first.stat().st_size,
+    )
+    second_stamp = BootstrapFileStamp(
+        second.name,
+        second.stat().st_mtime_ns,
+        second.stat().st_size,
+    )
     save_bootstrap_checkpoint(
         index_path,
         BootstrapCheckpoint(
@@ -196,18 +206,10 @@ def test_canonical_bootstrap_marks_checkpoint_complete(
             generation="generation",
             complete=False,
             targets={
-                first.name: BootstrapFileStamp(
-                    first.name,
-                    first.stat().st_mtime_ns,
-                    first.stat().st_size,
-                ),
-                second.name: BootstrapFileStamp(
-                    second.name,
-                    second.stat().st_mtime_ns,
-                    second.stat().st_size,
-                ),
+                first.name: first_stamp,
+                second.name: second_stamp,
             },
-            completed={},
+            completed={first.name: first_stamp},
         ),
     )
 
@@ -219,8 +221,8 @@ def test_canonical_bootstrap_marks_checkpoint_complete(
     )
 
     checkpoint = load_bootstrap_checkpoint(index_path)
-    assert receipt.successful == 2
-    assert manager.indexed == [str(first), str(second)]
+    assert receipt.successful == 1
+    assert manager.indexed == [str(second)]
     assert manager.persist_calls == 1
     assert checkpoint is not None
     assert checkpoint.complete is True
