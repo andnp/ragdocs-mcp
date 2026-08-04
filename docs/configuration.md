@@ -430,6 +430,28 @@ Controls the HTTP server behavior.
   port = 8080
   ```
 
+### [logging]
+
+Controls daemon and worker log retention. Logs rotate when they reach the configured size.
+
+#### `max_bytes`
+
+- **Type:** integer
+- **Default:** `52428800` (50 MiB)
+- **Description:** Maximum size of the active log file before it is rotated.
+
+#### `backup_count`
+
+- **Type:** integer
+- **Default:** `5`
+- **Description:** Number of rotated log files retained beside the active log.
+- **Example:**
+  ```toml
+  [logging]
+  max_bytes = 52428800
+  backup_count = 5
+  ```
+
 ### [indexing]
 
 Controls document discovery and index management.

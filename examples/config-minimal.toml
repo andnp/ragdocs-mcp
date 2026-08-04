@@ -17,3 +17,8 @@ documents_path = "./docs"
 # - Search weights: balanced (1.0 semantic, 1.0 keyword)
 # - Recency bias: moderate (0.5)
 # - Recursive indexing: enabled
+
+[logging]
+# Rotate daemon and worker logs at 50 MiB and retain five backups
+# max_bytes = 52428800
+# backup_count = 5
