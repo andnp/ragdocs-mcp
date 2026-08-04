@@ -1,11 +1,15 @@
 """Integration coverage for the canonical record-backed index stack."""
 
 import asyncio
+from dataclasses import fields, replace
 from pathlib import Path
+
+import pytest
+from searchkernel.api import GraphEdge, RecordSearchPolicy
 
 from mcp_markdown_ragdocs.config import Config, IndexingConfig
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-from tests.integration._canonical import make_record_index_manager
+from tests.integration._canonical import make_record, make_record_index_manager
 
 
 def _manager(tmp_path: Path):
@@ -14,6 +18,114 @@ def _manager(tmp_path: Path):
     return make_record_index_manager(
         Config(indexing=IndexingConfig(documents_path=str(docs), index_path=str(tmp_path / "index")))
     )
+
+
+def _resolver_supported() -> bool:
+    return any(
+        field.name == "graph_target_resolver"
+        for field in fields(RecordSearchPolicy)
+    )
+
+
+@pytest.mark.asyncio
+async def test_natural_language_graph_query_resolves_target_scope_and_provenance(
+    tmp_path: Path,
+) -> None:
+    if not _resolver_supported():
+        pytest.skip("requires Searchkernel graph_target_resolver support")
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    manager = make_record_index_manager(
+        Config(indexing=IndexingConfig(documents_path=str(docs), index_path=str(tmp_path / "index"))),
+        documents_roots=[docs],
+    )
+    target_a = replace(
+        make_record(
+            "target-a",
+            "Hybrid Search Strategy",
+            workspace_id="project-a",
+            metadata={"file_path": str(docs / "target-a.md")},
+        ),
+        title="Hybrid Search Strategy",
+    )
+    target_b = replace(
+        make_record(
+            "target-b",
+            "Hybrid Search Strategy",
+            workspace_id="project-b",
+            metadata={"file_path": str(docs / "target-b.md")},
+        ),
+        title="Hybrid Search Strategy",
+    )
+    neighbor_a = make_record(
+        "neighbor-a",
+        "Authentication notes",
+        workspace_id="project-a",
+        metadata={"file_path": str(docs / "neighbor-a.md")},
+    )
+    neighbor_b = make_record(
+        "neighbor-b",
+        "Authentication notes",
+        workspace_id="project-b",
+        metadata={"file_path": str(docs / "neighbor-b.md")},
+    )
+    assert manager.index_records([target_a, target_b, neighbor_a, neighbor_b])
+    manager.graph.upsert_edges(
+        [
+            GraphEdge(target_a.identity, neighbor_a.identity, "links_to", 1.0),
+            GraphEdge(target_b.identity, neighbor_b.identity, "links_to", 1.0),
+        ]
+    )
+    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+        "What documents are neighbors of Hybrid Search Strategy?",
+        top_k=20,
+        top_n=5,
+        project_filter=["project-a"],
+    )
+    assert [result.file_path for result in results] == [
+        str(docs / "neighbor-a.md"),
+        str(docs / "target-a.md"),
+    ]
+    assert [result.metadata["source_id"] for result in results] == [
+        "neighbor-a",
+        "target-a",
+    ]
+    assert [result.project_id for result in results] == ["project-a", "project-a"]
+    assert strategy.graph_count == 1
+    assert results[0].provenance is not None
+    assert "graph" in results[0].provenance.strategies
+
+
+@pytest.mark.asyncio
+async def test_natural_language_graph_query_has_empty_neighbor_lane(tmp_path: Path) -> None:
+    if not _resolver_supported():
+        pytest.skip("requires Searchkernel graph_target_resolver support")
+
+    manager = _manager(tmp_path)
+    docs = Path(manager._config.indexing.documents_path)
+    isolated = replace(
+        make_record(
+            "isolated",
+            "Isolated Target",
+            workspace_id="project-a",
+            metadata={"file_path": str(docs / "isolated.md")},
+        ),
+        title="Isolated Target",
+    )
+    assert manager.index_record(isolated)
+
+    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+        "What documents are neighbors of Isolated Target?",
+        top_k=20,
+        top_n=5,
+        project_filter=["project-a"],
+    )
+
+    assert [result.file_path for result in results] == [str(docs / "isolated.md")]
+    assert strategy.graph_count == 0
+    assert results[0].provenance is not None
+    assert "graph" not in results[0].provenance.strategies
 
 
 def test_index_document_updates_record_stores(tmp_path):

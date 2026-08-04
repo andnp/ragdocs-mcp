@@ -11,6 +11,7 @@ from searchkernel.domain import Record, RecordStatus
 from searchkernel.embeddings import TEST_FAKE_EMBEDDINGS_ENV_VAR
 
 from mcp_markdown_ragdocs.config import Config
+from mcp_markdown_ragdocs.app.search import build_record_search_policy
 from mcp_markdown_ragdocs.indexing.record_manager import (
     RecordIndexManager,
     build_embedding_provider,
@@ -27,13 +28,19 @@ def make_record_index_manager(
     os.environ.setdefault(TEST_FAKE_EMBEDDINGS_ENV_VAR, "1")
     model_name = config.embedding.model_name
     embedding_provider = build_embedding_provider(config, model_name)
+    kernel_holder: dict[str, object] = {}
+    search_policy = build_record_search_policy(
+        lambda: kernel_holder["kernel"].keyword_store  # type: ignore[union-attr]
+    )
     kernel = build_local_record_kernel(
         Path(config.indexing.index_path) / "index.db",
         embedding_provider=embedding_provider,
         embedding_model_name=embedding_provider.model_name,
         embedding_dim=embedding_provider.dim,
         vector_engine="exact",
+        search_policy=search_policy,
     )
+    kernel_holder["kernel"] = kernel
     return RecordIndexManager(
         config,
         kernel,

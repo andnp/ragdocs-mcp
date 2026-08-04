@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from searchkernel.api import (
     CompressionStats,
     Record,
     RecordSearchConfig,
     RecordSearchOutcome,
+    RecordSearchPolicy,
     SearchResultProvenance,
     SearchStrategyStats,
 )
@@ -142,6 +143,43 @@ _DEFAULT_HYBRID_KEYWORD_SIGNAL = 0.01
 _QUERY_STOP_WORDS = frozenset(
     {"a", "an", "and", "are", "be", "for", "how", "in", "is", "must", "of", "the", "to"}
 )
+_GRAPH_TARGET_PREFIXES = (
+    re.compile(
+        r"^(?:which|what)\s+(?:pages|documents|notes)\s+"
+        r"(?:link to|are neighbors of)\s+",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^show me\s+(?:pages|documents|notes)\s+that\s+(?:link to|embed)\s+",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _graph_target_query(query: str) -> str:
+    normalized = " ".join(query.strip().split())
+    for prefix in _GRAPH_TARGET_PREFIXES:
+        target = prefix.sub("", normalized, count=1).strip(" .?!")
+        if target != normalized:
+            return target
+    return normalized
+
+
+def build_record_search_policy(keyword_store: Any) -> RecordSearchPolicy | None:
+    """Wire target resolution when the installed kernel exposes the policy hook."""
+    if not any(field.name == "graph_target_resolver" for field in fields(RecordSearchPolicy)):
+        return None
+
+    async def resolve_graph_target(query: str, context: Any):
+        target_query = _graph_target_query(query)
+        filters = dict(getattr(context, "filters", {}))
+        limit = max(20, int(getattr(context, "limit", 20)))
+        store: Any = keyword_store() if callable(keyword_store) else keyword_store
+        return store.search(target_query, limit, filters)
+
+    return cast(Any, RecordSearchPolicy)(
+        graph_target_resolver=resolve_graph_target
+    )
 
 
 def _record_project_id(record: Record) -> str | None:
@@ -206,6 +244,8 @@ def _default_result_is_credible(query: str, result: Any) -> bool:
         return True
     provenance = result.provenance
     strategies = set(getattr(provenance, "strategies", ()) if provenance else ())
+    if "graph" in strategies:
+        return result.score >= _DEFAULT_ABSTENTION_SCORE
     if {"keyword", "vector"} <= strategies:
         details = getattr(provenance, "strategy_details", {})
         keyword = details.get("keyword") if hasattr(details, "get") else None

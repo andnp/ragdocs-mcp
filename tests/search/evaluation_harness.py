@@ -13,6 +13,7 @@ from searchkernel.domain import Vector
 from searchkernel.embeddings import DeterministicFakeEmbeddingModel
 
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
+from mcp_markdown_ragdocs.app.search import build_record_search_policy
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -231,13 +232,19 @@ def build_search_evaluation_harness(
     )
 
     provider = embedding_provider or _DeterministicEmbeddingProvider()
+    kernel_holder: dict[str, object] = {}
+    search_policy = build_record_search_policy(
+        lambda: kernel_holder["kernel"].keyword_store  # type: ignore[union-attr]
+    )
     local_kernel = build_local_record_kernel(
         index_path / "index.db",
         embedding_provider=provider,
         embedding_model_name=provider.model_name,
         embedding_dim=provider.dim,
         vector_engine="exact",
+        search_policy=search_policy,
     )
+    kernel_holder["kernel"] = local_kernel
     manager = RecordIndexManager(config, local_kernel, provider)
 
     corpus_files = sorted(corpus_root.rglob("*.md"))

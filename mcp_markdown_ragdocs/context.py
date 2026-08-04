@@ -51,6 +51,7 @@ from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 from mcp_markdown_ragdocs.app.search import (
     ApplicationSearchUseCase,
+    build_record_search_policy,
     build_reranker,
     to_record_search_config,
 )
@@ -191,6 +192,10 @@ class ApplicationContext:
                 f"got {config.store.backend!r}"
             )
         embedding_provider = build_embedding_provider(config, embedding_model_name)
+        kernel_holder: dict[str, Any] = {}
+        search_policy = build_record_search_policy(
+            lambda: kernel_holder["kernel"].keyword_store
+        )
         local_kernel = build_local_record_kernel(
             index_path / "index.db",
             embedding_provider=embedding_provider,
@@ -198,8 +203,10 @@ class ApplicationContext:
             embedding_dim=embedding_provider.dim,
             vector_engine="exact",
             reranker=build_reranker(config.search),
+            search_policy=search_policy,
             search_config=to_record_search_config(config.search),
         )
+        kernel_holder["kernel"] = local_kernel
         if not lazy_embeddings:
             logger.info("Embedding provider is daemon-backed; no in-process warmup needed")
 
