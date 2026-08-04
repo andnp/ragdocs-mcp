@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 import pytest
+from mcp.types import TextContent
 
 from mcp_markdown_ragdocs.daemon.metadata import DaemonMetadata
 from mcp_markdown_ragdocs.mcp.server import MCPServer
@@ -65,6 +66,7 @@ async def test_mcp_server_prefers_daemon_tool_calls(monkeypatch):
 
     assert contents is not None
     assert len(contents) == 1
+    assert isinstance(contents[0], TextContent)
     assert contents[0].text == "remote response"
 
 

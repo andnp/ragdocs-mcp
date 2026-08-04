@@ -11,7 +11,7 @@ import pytest
 from click.testing import CliRunner
 from mcp.client import ClientSession
 from mcp.shared.memory import create_client_server_memory_streams
-from mcp.types import Tool
+from mcp.types import TextContent, Tool
 
 pytest.importorskip("zmq")
 
@@ -246,6 +246,7 @@ async def test_daemon_backed_mcp_query_documents_smoke(
 
             assert contents is not None
             assert len(contents) == 1
+            assert isinstance(contents[0], TextContent)
             payload = json.loads(contents[0].text)
             assert "schema_version" not in payload
             assert payload["status"] == "ok"
