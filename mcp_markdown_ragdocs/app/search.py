@@ -164,6 +164,10 @@ _GRAPH_TARGET_PREFIXES = (
         re.IGNORECASE,
     ),
     re.compile(
+        r"^(?:which|what)\s+(?:pages|documents|notes)\s+are linked from\s+",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"^show me\s+(?:pages|documents|notes)\s+that\s+(?:link to|embed)\s+",
         re.IGNORECASE,
     ),
@@ -190,6 +194,13 @@ _GRAPH_NEIGHBOR_PREFIX = re.compile(
 
 def _graph_target_query(query: str) -> str:
     normalized = " ".join(query.strip().split()).strip(" .?!")
+    normalized = re.sub(
+        r"\s+and\s+what\s+do\s+their\s+neighbors?\s+explain$",
+        "",
+        normalized,
+        count=1,
+        flags=re.IGNORECASE,
+    ).strip(" .?!")
     for suffix in _GRAPH_TARGET_SUFFIXES:
         match = suffix.match(normalized)
         if match is not None:

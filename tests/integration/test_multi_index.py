@@ -99,6 +99,62 @@ async def test_natural_language_graph_query_resolves_target_scope_and_provenance
 
 
 @pytest.mark.asyncio
+async def test_compound_graph_query_resolves_target_with_project_scope(
+    tmp_path: Path,
+) -> None:
+    if not _resolver_supported():
+        pytest.skip("requires Searchkernel graph_target_resolver support")
+
+    manager = _manager(tmp_path)
+    docs = Path(manager._config.indexing.documents_path)
+    target = make_record(
+        "hybrid-search",
+        "Hybrid Search Strategy",
+        workspace_id="project-a",
+        metadata={"file_path": str(docs / "hybrid.md")},
+    )
+    neighbor = make_record(
+        "neighbor",
+        "Neighbor explanation",
+        workspace_id="project-a",
+        metadata={"file_path": str(docs / "neighbor.md")},
+    )
+    other_neighbor = make_record(
+        "other-neighbor",
+        "Other project explanation",
+        workspace_id="project-b",
+        metadata={"file_path": str(docs / "other.md")},
+    )
+    assert manager.index_records([target, neighbor, other_neighbor])
+    manager.graph.upsert_edges(
+        [
+            GraphEdge(target.identity, neighbor.identity, "links_to", 1.0),
+            GraphEdge(target.identity, other_neighbor.identity, "links_to", 1.0),
+        ]
+    )
+
+    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+        "Which documents are linked from the hybrid search strategy and what do "
+        "their neighbors explain?",
+        top_k=20,
+        top_n=5,
+        project_filter=["project-a"],
+    )
+
+    assert {result.metadata["source_id"] for result in results} == {
+        "neighbor",
+        "hybrid-search",
+    }
+    assert all(result.project_id == "project-a" for result in results)
+    assert strategy.graph_count == 1
+    neighbor_result = next(
+        result for result in results if result.metadata["source_id"] == "neighbor"
+    )
+    assert neighbor_result.provenance is not None
+    assert "graph" in neighbor_result.provenance.strategies
+
+
+@pytest.mark.asyncio
 async def test_neighbor_query_reads_incoming_chunk_parent_neighbors(
     tmp_path: Path,
 ) -> None:
