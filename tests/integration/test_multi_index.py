@@ -85,15 +85,15 @@ async def test_natural_language_graph_query_resolves_target_scope_and_provenance
         project_filter=["project-a"],
     )
     assert [result.file_path for result in results] == [
-        str(docs / "target-a.md"),
         str(docs / "neighbor-a.md"),
+        str(docs / "target-a.md"),
     ]
     assert [result.metadata["source_id"] for result in results] == [
-        "target-a",
         "neighbor-a",
+        "target-a",
     ]
     assert [result.project_id for result in results] == ["project-a", "project-a"]
-    assert strategy.graph_count == 2
+    assert strategy.graph_count == 1
     assert results[0].provenance is not None
     assert "graph" in results[0].provenance.strategies
 
