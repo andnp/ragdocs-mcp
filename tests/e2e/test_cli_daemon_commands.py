@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 
 import pytest
 from click.testing import CliRunner
 
 from mcp_markdown_ragdocs.cli import cli
 from mcp_markdown_ragdocs.daemon import RuntimePaths
+from mcp_markdown_ragdocs.daemon.admin_payloads import _build_per_root_index_rows
 from mcp_markdown_ragdocs.daemon.management import DaemonInspection
 from mcp_markdown_ragdocs.daemon.metadata import DaemonMetadata
 from mcp_markdown_ragdocs.daemon.runtime import DaemonRuntime
@@ -793,6 +794,34 @@ def test_index_stats_reports_per_root_breakdown(tmp_path):
     assert payload["per_root_counts_are_estimates"] is True
     assert payload["unattributed_indexed_documents"] == 0
     assert payload["unattributed_indexed_chunks"] == 0
+
+
+def test_index_stats_keeps_global_records_unattributed(tmp_path):
+    root = tmp_path / "docs"
+    root.mkdir()
+
+    class _FakeIndexManager:
+        def describe_documents(self):
+            return [
+                {"file_path": None, "chunk_count": 4},
+                {"file_path": str(tmp_path / "outside.md"), "chunk_count": 3},
+            ]
+
+    class _FakeContext:
+        def __init__(self):
+            self.documents_roots = [root]
+            self.index_manager = _FakeIndexManager()
+
+    rows, unattributed_documents, unattributed_chunks = _build_per_root_index_rows(
+        cast(Any, _FakeContext()),
+        discovered_files=[],
+        common_root=root,
+        include_indexed_estimates=True,
+    )
+
+    assert rows[0]["indexed_documents_estimate"] == 0
+    assert unattributed_documents == 2
+    assert unattributed_chunks == 7
 
 
 def test_index_stats_uses_loaded_snapshot_when_refresh_lock_times_out(
