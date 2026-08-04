@@ -339,9 +339,9 @@ class ApplicationSearchUseCase:
         if request.source_filter != ("git_commit",):
             filtered_results.sort(
                 key=lambda result: (
+                    result.score,
                     _document_source_rank(request, result),
                     _metadata_query_rank(request.query, result),
-                    result.score,
                 ),
                 reverse=True,
             )

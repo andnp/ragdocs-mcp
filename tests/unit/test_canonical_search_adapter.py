@@ -497,7 +497,7 @@ async def test_one_per_document_uses_file_path_when_chunk_doc_id_is_missing(adap
 
 
 @pytest.mark.asyncio
-async def test_filename_query_promotes_matching_metadata_before_score_order(adapter):
+async def test_filename_query_preserves_score_order(adapter):
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     records = [
         Record(
@@ -543,10 +543,7 @@ async def test_filename_query_promotes_matching_metadata_before_score_order(adap
         search=fake_search,
     )
 
-    assert [result.file_path for result in execution.results] == [
-        "target.md",
-        "other.md",
-    ]
+    assert [result.file_path for result in execution.results] == ["other.md", "target.md"]
 
 
 @pytest.mark.asyncio
@@ -965,7 +962,7 @@ async def test_default_abstention_keeps_semantic_paraphrase_with_keyword_signal(
 
 
 @pytest.mark.asyncio
-async def test_artifact_symbol_query_promotes_matching_header_path(adapter):
+async def test_artifact_symbol_query_preserves_score_order(adapter):
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     records = [
         Record(
@@ -1019,7 +1016,7 @@ async def test_artifact_symbol_query_promotes_matching_header_path(adapter):
         search=fake_search,
     )
 
-    assert [result.doc_id for result in execution.results] == ["symbol", "generic"]
+    assert [result.doc_id for result in execution.results] == ["generic", "symbol"]
 
 
 @pytest.mark.asyncio
