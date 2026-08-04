@@ -1248,6 +1248,8 @@ class TestTaskExecution:
         assert progress["discovered_count"] == 1
         assert progress["processed_chunk_count"] == 2
         assert progress["discovered_chunk_count"] == 2
+        assert progress["observed_head"] == "head-1"
+        assert progress["newest_commit"] == "head-1"
 
     def test_refresh_git_task_skips_completed_head(
         self,
@@ -1278,6 +1280,10 @@ class TestTaskExecution:
 
         assert huey_instance.execute(task) is True
         assert fake_manager.persist_calls == 0
+        progress = get_progress(state_root, git_dir)
+        assert progress is not None
+        assert progress["state"] == "skipped"
+        assert progress["newest_commit"] == "head-1"
 
     def test_refresh_git_task_rebuilds_when_cursor_is_missing(
         self,

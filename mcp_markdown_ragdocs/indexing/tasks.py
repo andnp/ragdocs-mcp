@@ -11,7 +11,7 @@ import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from uuid import uuid4
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
@@ -37,8 +37,8 @@ from searchkernel.api import (
     has_incomplete_bootstrap_checkpoint,
     mark_bootstrap_file_completed,
     mark_bootstrap_files_completed,
-    TaskBatchSubmissionResult,
     TaskSubmissionResult,
+    TaskBatchSubmissionResult,
 )
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
@@ -423,6 +423,13 @@ def _git_commit_id_from_result(result: object) -> str | None:
         if isinstance(commit_id, str):
             return commit_id
     return None
+
+
+def _newest_commit_from_ref_signature(signature: str | None) -> str | None:
+    if not signature:
+        return None
+    head = signature.splitlines()[0].strip()
+    return head or None
 
 
 def _save_git_refresh_progress(
@@ -813,9 +820,18 @@ def _refresh_git_repository(git_dir: str) -> bool:
     indexed_chunks = 0
     discovered_chunks = 0
     latest_cursor: int | None = None
+    refresh_head: str | None = None
+    newest_commit: str | None = None
     initial_embedding_metrics: dict[str, int] = {}
     try:
         refresh_head = get_git_ref_signature(git_dir_path)
+        newest_commit = _newest_commit_from_ref_signature(refresh_head)
+        _save_git_refresh_progress(
+            git_dir_path,
+            state="running",
+            observed_head=refresh_head,
+            newest_commit=newest_commit,
+        )
         cursor = (
             get_cursor(_bootstrap_index_path, git_dir_path)
             if _bootstrap_index_path is not None
@@ -856,6 +872,8 @@ def _refresh_git_repository(git_dir: str) -> bool:
                 state="skipped",
                 started_at=started_at,
                 cursor=cursor,
+                observed_head=refresh_head,
+                newest_commit=newest_commit,
                 processed_count=0,
                 discovered_count=0,
                 completed_at=datetime.now(UTC).isoformat(),
@@ -915,6 +933,8 @@ def _refresh_git_repository(git_dir: str) -> bool:
                         state="failed",
                         started_at=started_at,
                         cursor=latest_cursor,
+                        observed_head=refresh_head,
+                        newest_commit=newest_commit,
                         processed_count=indexed,
                         discovered_count=discovered,
                         processed_chunk_count=indexed_chunks,
@@ -934,6 +954,8 @@ def _refresh_git_repository(git_dir: str) -> bool:
                     state="running",
                     started_at=started_at,
                     cursor=latest_cursor,
+                    observed_head=refresh_head,
+                    newest_commit=newest_commit,
                     processed_count=indexed,
                     discovered_count=discovered,
                     processed_chunk_count=indexed_chunks,
@@ -956,6 +978,8 @@ def _refresh_git_repository(git_dir: str) -> bool:
             state="completed",
             started_at=started_at,
             cursor=latest_cursor,
+            observed_head=refresh_head,
+            newest_commit=newest_commit,
             processed_count=indexed,
             discovered_count=discovered,
             processed_chunk_count=indexed_chunks,
@@ -981,6 +1005,8 @@ def _refresh_git_repository(git_dir: str) -> bool:
             state="failed",
             started_at=started_at,
             cursor=latest_cursor,
+            observed_head=refresh_head,
+            newest_commit=newest_commit,
             processed_count=indexed,
             discovered_count=discovered,
             processed_chunk_count=indexed_chunks,

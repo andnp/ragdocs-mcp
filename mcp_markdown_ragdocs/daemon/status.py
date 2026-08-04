@@ -53,6 +53,10 @@ def build_daemon_status_payload(
         if inspection.ready or (inspection.running and metadata_ready)
         else "starting" if inspection.running else "stale"
     )
+    if overview is not None:
+        index_state = overview.get("index_state")
+        if isinstance(index_state, dict) and index_state.get("status") != "ready":
+            state = "starting" if inspection.running else "stale"
     started_at = time.strftime(
         "%Y-%m-%d %H:%M:%S", time.localtime(inspection.metadata.started_at)
     )
@@ -91,6 +95,7 @@ def build_daemon_status_payload(
                     "configured_root_count",
                     "documents_roots",
                     "project_context_mode",
+                    "index_state",
                     "git_refresh_progress",
                     "watcher_active",
                     "producer_pid",
