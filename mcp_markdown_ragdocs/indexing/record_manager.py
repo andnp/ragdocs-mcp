@@ -221,8 +221,14 @@ class RecordIndexManager:
         persist: bool = False,
     ) -> None:
         del force
+        indexed = False
         for file_path in file_paths:
-            self.index_document(file_path)
+            indexed = self.index_document(
+                file_path,
+                update_graph=False,
+            ) or indexed
+        if indexed:
+            self._rebuild_graph()
         if persist:
             self.persist()
 
@@ -319,7 +325,12 @@ class RecordIndexManager:
         records = self._chunk_records(document)
         return PreparedRecordDocument(file_path, document, records)
 
-    async def _index_prepared(self, prepared: PreparedRecordDocument) -> None:
+    async def _index_prepared(
+        self,
+        prepared: PreparedRecordDocument,
+        *,
+        update_graph: bool = True,
+    ) -> None:
         old_keys = self._source_records.get(prepared.document.id, [])
         receipt = await self.ingestor.index_records(prepared.records)
         if receipt.failed:
@@ -330,14 +341,26 @@ class RecordIndexManager:
         if stale_keys:
             self.kernel.backend.delete(stale_keys)
         self._source_records[prepared.document.id] = new_keys
-        self._upsert_graph(prepared)
+        if update_graph:
+            self._rebuild_graph()
         self._state_version += 1
 
-    def index_document(self, file_path: str, force: bool = False) -> bool:
+    def index_document(
+        self,
+        file_path: str,
+        force: bool = False,
+        *,
+        update_graph: bool = True,
+    ) -> bool:
         del force
         try:
             prepared = self.prepare_document(file_path)
-            _run_async(self._index_prepared(prepared))
+            _run_async(
+                self._index_prepared(
+                    prepared,
+                    update_graph=update_graph,
+                )
+            )
             self._save_source_map()
             return True
         except Exception as error:  # noqa: BLE001 - indexing boundary records failures
@@ -426,16 +449,12 @@ class RecordIndexManager:
         self._save_source_map()
         return len(updates)
 
-    def _upsert_graph(self, prepared: PreparedRecordDocument) -> None:
-        if not prepared.records:
-            return
-        edges = self._graph_edges_for_document(
-            prepared.document,
-            tuple(record.identity for record in prepared.records),
-        )
+    def rebuild_graph(self) -> None:
+        self._rebuild_graph()
+
+    def _rebuild_graph(self) -> None:
+        edges: list[GraphEdge] = []
         for doc_id, keys in self._source_records.items():
-            if doc_id == prepared.document.id:
-                continue
             records = tuple(
                 self.kernel.backend.hydrate_record(key)
                 for key in keys

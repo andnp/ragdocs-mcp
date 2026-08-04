@@ -444,9 +444,20 @@ def _run_canonical_bootstrap(
 ) -> CoordinatorReceipt:
     async def run() -> CoordinatorReceipt:
         outcomes: list[RecordIngestionResult] = []
+        defer_graph = hasattr(manager, "rebuild_graph")
         for file_path in file_paths:
             try:
-                success = await asyncio.to_thread(manager.index_document, file_path)
+                if defer_graph:
+                    success = await asyncio.to_thread(
+                        manager.index_document,
+                        file_path,
+                        update_graph=False,
+                    )
+                else:
+                    success = await asyncio.to_thread(
+                        manager.index_document,
+                        file_path,
+                    )
             except Exception as error:  # noqa: BLE001 - worker boundary
                 success = False
                 error_text = str(error)
@@ -461,6 +472,10 @@ def _run_canonical_bootstrap(
                     error=error_text,
                 )
             )
+        if defer_graph and any(
+            outcome.status == "committed" for outcome in outcomes
+        ):
+            await asyncio.to_thread(manager.rebuild_graph)
         ingestion = IngestionReceipt(
             source_kind="note",
             workspace_id=None,
