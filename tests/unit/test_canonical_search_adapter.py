@@ -672,7 +672,7 @@ async def test_default_abstention_drops_medium_vector_only_match(adapter):
             results=[
                 SimpleNamespace(
                     record=record,
-                    score=0.015,
+                    score=0.028,
                     provenance=SimpleNamespace(strategies=("vector",)),
                 )
             ],
