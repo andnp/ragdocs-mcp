@@ -454,3 +454,95 @@ async def test_explicit_zero_score_override_keeps_low_score_record(adapter):
     )
 
     assert [result.doc_id for result in execution.results] == ["override"]
+
+
+@pytest.mark.asyncio
+async def test_one_per_document_uses_file_path_when_chunk_doc_id_is_missing(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id=f"chunk-{index}",
+            title=f"Heading {index}",
+            body=f"Body {index}",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"file_path": "guide.md", "header_path": f"Heading {index}"},
+        )
+        for index in range(2)
+    ]
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.9 - index * 0.1,
+                    provenance=SimpleNamespace(strategies=("keyword",)),
+                )
+                for index, record in enumerate(records)
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="guide.md", top_n=5),
+        search=fake_search,
+    )
+
+    assert len(execution.results) == 1
+    assert execution.results[0].file_path == "guide.md"
+
+
+@pytest.mark.asyncio
+async def test_filename_query_promotes_matching_metadata_before_score_order(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id="generic",
+            title="Other",
+            body="Generic content",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": "generic", "file_path": "other.md"},
+        ),
+        Record(
+            source_kind="note",
+            source_id="target",
+            title="Target",
+            body="Symbol details",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": "target", "file_path": "target.md"},
+        ),
+    ]
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=records[0],
+                    score=0.9,
+                    provenance=SimpleNamespace(strategies=("vector",)),
+                ),
+                SimpleNamespace(
+                    record=records[1],
+                    score=0.2,
+                    provenance=SimpleNamespace(strategies=("keyword",)),
+                ),
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="target.md", top_n=2, max_chunks_per_doc=0),
+        search=fake_search,
+    )
+
+    assert [result.file_path for result in execution.results] == [
+        "target.md",
+        "other.md",
+    ]

@@ -174,6 +174,35 @@ def _default_match_for_query(query: str, result: Any) -> bool:
     )
 
 
+def _document_key(record: Record) -> str:
+    metadata = record.metadata
+    document_id = metadata.get("doc_id")
+    if isinstance(document_id, str) and document_id:
+        return document_id
+    file_path = metadata.get("file_path")
+    if isinstance(file_path, str) and file_path:
+        return f"file:{file_path}"
+    return record.source_id
+
+
+def _metadata_query_rank(query: str, result: Any) -> int:
+    record = result.record
+    metadata = record.metadata
+    query_text = query.lower().strip()
+    if not query_text:
+        return 0
+    fields = (
+        str(record.title or ""),
+        str(metadata.get("header_path") or ""),
+        str(metadata.get("file_path") or ""),
+    )
+    if any(query_text == field.lower() or query_text in field.lower() for field in fields):
+        return 2
+    tokens = set(re.findall(r"[a-z0-9_./-]+", query_text))
+    field_tokens = set(re.findall(r"[a-z0-9_./-]+", " ".join(fields).lower()))
+    return 1 if tokens and tokens <= field_tokens else 0
+
+
 class ApplicationSearchUseCase:
     """Apply application query policy, execute search, and map results."""
 
@@ -258,13 +287,19 @@ class ApplicationSearchUseCase:
                 if result.score >= _DEFAULT_ABSTENTION_SCORE
                 or _default_match_for_query(request.query, result)
             ]
+        if any(_metadata_query_rank(request.query, result) for result in filtered_results):
+            filtered_results.sort(
+                key=lambda result: (
+                    _metadata_query_rank(request.query, result),
+                    result.score,
+                ),
+                reverse=True,
+            )
         if request.max_chunks_per_doc > 0:
             counts: dict[str, int] = {}
             limited_results = []
             for result in filtered_results:
-                doc_id = str(
-                    result.record.metadata.get("doc_id", result.record.source_id)
-                )
+                doc_id = _document_key(result.record)
                 if counts.get(doc_id, 0) >= request.max_chunks_per_doc:
                     continue
                 counts[doc_id] = counts.get(doc_id, 0) + 1
@@ -322,12 +357,16 @@ class ApplicationSearchUseCase:
         metadata.setdefault("workspace_id", record.workspace_id)
         metadata.setdefault("source_kind", record.source_kind)
         metadata.setdefault("source_id", record.source_id)
+        file_path = str(metadata.get("file_path") or "")
+        if not file_path and record.uri:
+            file_path = record.uri.removeprefix("file://")
+        header_path = str(metadata.get("header_path") or record.title or "")
         return ChunkResult(
             chunk_id=str(metadata.get("chunk_id", record.source_id)),
             doc_id=str(metadata.get("doc_id", record.source_id)),
             score=score,
-            header_path=str(metadata.get("header_path", "")),
-            file_path=str(metadata.get("file_path", "")),
+            header_path=header_path,
+            file_path=file_path,
             project_id=metadata.get("project_id"),
             content=record.body,
             parent_chunk_id=metadata.get("parent_chunk_id"),
