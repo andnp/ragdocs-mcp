@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
+from searchkernel.api import Record
+
 from mcp_markdown_ragdocs.app.search import SearchQuery
 from mcp_markdown_ragdocs.coordination.queue import get_huey
 from mcp_markdown_ragdocs.daemon.mcp_requests import (
@@ -15,8 +17,10 @@ from mcp_markdown_ragdocs.daemon.mcp_requests import (
     handle_mcp_tool_call,
 )
 from mcp_markdown_ragdocs.daemon.queue_status import purge_queue_state
-from mcp_markdown_ragdocs.daemon.record_rpc import RecordSerializationError, deserialize_record
-from searchkernel.api import Record
+from mcp_markdown_ragdocs.daemon.record_rpc import (
+    RecordSerializationError,
+    deserialize_record,
+)
 from mcp_markdown_ragdocs.indexing.rebuild_service import (
     REBUILD_ACTIVE_STATUSES,
     read_rebuild_status,
@@ -358,7 +362,16 @@ async def _handle_admin_request(
         )
     if path in {"/api/admin/index", "/api/admin/index-stats"}:
         await ctx.ensure_fresh_indices()
-        return dependencies.build_index_stats_payload(ctx)
+        index_payload = dependencies.build_index_stats_payload(ctx)
+        queue_payload = dependencies.build_queue_status_payload(
+            queue_path=dependencies.queue_db_path,
+            worker_running=dependencies.get_worker_running(),
+            backpressure_limit=ctx.config.indexing.task_backpressure_limit,
+        )
+        for key in ("pending_count", "running_count", "failed_count"):
+            if key in queue_payload:
+                index_payload[key] = queue_payload[key]
+        return index_payload
     if path in {"/api/admin/tasks", "/api/admin/queue-status"}:
         return dependencies.build_queue_status_payload(
             queue_path=dependencies.queue_db_path,
@@ -396,7 +409,7 @@ async def _handle_admin_request(
     if path == "/api/admin/reindex/status":
         return reindex_status_payload(
             dependencies.runtime_root,
-            Path(getattr(ctx, "index_path")),
+            ctx.index_path,
         )
     if path == "/api/admin/reindex/submit":
         operation = str(payload.get("operation", "start")).lower()
@@ -425,7 +438,7 @@ async def _handle_admin_request(
                 "already_running": True,
                 "reindex": reindex_status_payload(
                     dependencies.runtime_root,
-                    Path(getattr(ctx, "index_path")),
+                    ctx.index_path,
                 ),
             }
 

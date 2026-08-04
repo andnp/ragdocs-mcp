@@ -88,7 +88,7 @@ def test_build_daemon_status_payload_merges_overview_for_running_daemon() -> Non
     assert payload["configured_root_count"] == 3
 
 
-def test_build_daemon_status_payload_does_not_report_partial_index_as_running() -> None:
+def test_build_daemon_status_payload_reports_queryable_partial_index_as_running() -> None:
     metadata = DaemonMetadata(
         pid=123,
         status="ready",
@@ -99,13 +99,25 @@ def test_build_daemon_status_payload_does_not_report_partial_index_as_running() 
     payload = build_daemon_status_payload(
         _inspection(running=True, ready=True, metadata=metadata),
         runtime_paths=_runtime_paths(),
-        overview={"index_state": {"status": "partial", "indexed_count": 2, "total_count": 5}},
+        overview={
+            "index_state": {
+                "status": "partial",
+                "indexed_count": 2,
+                "total_count": 5,
+            },
+            "pending_count": 2,
+            "running_count": 1,
+            "failed_count": 0,
+        },
     )
 
-    assert payload["status"] == "starting"
+    assert payload["status"] == "running"
     index_state = payload["index_state"]
     assert isinstance(index_state, dict)
     assert index_state["status"] == "partial"
+    assert payload["pending_count"] == 2
+    assert payload["running_count"] == 1
+    assert payload["failed_count"] == 0
 
 
 def test_format_daemon_startup_result_marks_pending_socket_readiness() -> None:

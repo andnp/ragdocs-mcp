@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -172,6 +172,31 @@ async def test_admin_overview_route_refreshes_indices_before_building_payload() 
         "worker_running": True,
         "worker_pid": 123,
         "runtime_root": "/runtime",
+    }
+
+
+@pytest.mark.asyncio
+async def test_admin_index_route_includes_queue_counts() -> None:
+    ctx = _FakeContext(ready=True)
+    coordinator = _FakeCoordinator()
+    dependencies = replace(
+        _build_dependencies(ctx, coordinator),
+        build_queue_status_payload=lambda **_: {
+            "pending_count": 2,
+            "running_count": 1,
+            "failed_count": 3,
+        },
+    )
+    handler = build_daemon_request_handler(dependencies)
+
+    payload = await handler("/api/admin/index", {})
+
+    assert payload == {
+        "status": "ok",
+        "indexed_documents": 1,
+        "pending_count": 2,
+        "running_count": 1,
+        "failed_count": 3,
     }
 
 

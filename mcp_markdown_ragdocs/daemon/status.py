@@ -55,7 +55,7 @@ def build_daemon_status_payload(
     )
     if overview is not None:
         index_state = overview.get("index_state")
-        if isinstance(index_state, dict) and index_state.get("status") != "ready":
+        if isinstance(index_state, dict) and index_state.get("status") == "failed":
             state = "starting" if inspection.running else "stale"
     started_at = time.strftime(
         "%Y-%m-%d %H:%M:%S", time.localtime(inspection.metadata.started_at)

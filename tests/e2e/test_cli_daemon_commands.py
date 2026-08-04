@@ -1014,6 +1014,64 @@ def test_index_stats_human_output_renders_per_root_table(monkeypatch):
     assert "Remaining estimate: 3" in result.output
 
 
+def test_index_stats_human_output_reports_idle_queue(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.cli._request_daemon_json",
+        lambda *args, **kwargs: {
+            "documents_common_root": "/docs",
+            "documents_roots": ["/docs"],
+            "index_path": "/index",
+            "manifest_exists": True,
+            "indexed_documents": 2,
+            "indexed_chunks": 4,
+            "discovered_files": 2,
+            "remaining_estimate": 0,
+            "git_repositories": 0,
+            "git_commits": 0,
+            "pending_count": 0,
+            "running_count": 0,
+            "failed_count": 0,
+            "index_state": {"status": "ready"},
+        },
+    )
+
+    result = runner.invoke(cli, ["index", "stats"])
+
+    assert result.exit_code == 0
+    assert "Pending tasks: 0" in result.output
+    assert "Running tasks: 0" in result.output
+    assert "Failed tasks: 0" in result.output
+
+
+def test_index_stats_human_output_reports_failed_queue_tasks(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.cli._request_daemon_json",
+        lambda *args, **kwargs: {
+            "documents_common_root": "/docs",
+            "documents_roots": ["/docs"],
+            "index_path": "/index",
+            "manifest_exists": True,
+            "indexed_documents": 2,
+            "indexed_chunks": 4,
+            "discovered_files": 2,
+            "remaining_estimate": 0,
+            "git_repositories": 0,
+            "git_commits": 0,
+            "pending_count": 0,
+            "running_count": 0,
+            "failed_count": 1,
+            "index_state": {"status": "ready"},
+        },
+    )
+
+    result = runner.invoke(cli, ["index", "stats"])
+
+    assert result.exit_code == 0
+    assert "Failed tasks: 1" in result.output
+
+
 def test_queue_status_prefers_daemon_transport(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
@@ -1412,7 +1470,9 @@ def test_build_initializing_search_payload_for_query_includes_machine_readable_f
     class _FakeCoordinator:
         state = LifecycleState.INITIALIZING
 
-    from mcp_markdown_ragdocs.daemon.request_router import _build_initializing_search_payload
+    from mcp_markdown_ragdocs.daemon.request_router import (
+        _build_initializing_search_payload,
+    )
 
     payload = _build_initializing_search_payload(
         _FakeContext(),
@@ -1462,7 +1522,9 @@ def test_build_initializing_search_payload_for_git_history_includes_commit_count
     class _FakeCoordinator:
         state = LifecycleState.INITIALIZING
 
-    from mcp_markdown_ragdocs.daemon.request_router import _build_initializing_search_payload
+    from mcp_markdown_ragdocs.daemon.request_router import (
+        _build_initializing_search_payload,
+    )
 
     payload = _build_initializing_search_payload(
         _FakeContext(),

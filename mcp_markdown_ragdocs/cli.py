@@ -84,8 +84,8 @@ from mcp_markdown_ragdocs.cli_utils.queue_output import (
     _coerce_dict,
     _coerce_int,
     _coerce_list_of_dicts,
-    _emit_queue_task_section,
     _emit_git_refresh_progress,
+    _emit_queue_task_section,
     _filter_queue_status_payload,
 )
 from mcp_markdown_ragdocs.cli_utils.validators import (
@@ -680,6 +680,10 @@ def index_stats(project: str | None, output_json: bool):
         click.echo(f"Remaining estimate: {payload['remaining_estimate']}")
         click.echo(f"Git repositories: {payload['git_repositories']}")
         click.echo(f"Indexed git commits: {payload['git_commits']}")
+        if "pending_count" in payload:
+            click.echo(f"Pending tasks: {payload['pending_count']}")
+            click.echo(f"Running tasks: {payload['running_count']}")
+            click.echo(f"Failed tasks: {payload['failed_count']}")
         index_state = payload.get("index_state")
         if isinstance(index_state, dict):
             click.echo(f"Index state: {index_state.get('status', 'unknown')}")
@@ -1151,9 +1155,8 @@ def query(
     try:
         console = Console()
         validate_range(top_n, MIN_TOP_N, MAX_TOP_N, "--top-n")
-        if min_score is not None:
-            if not 0.0 <= min_score <= 1.0:
-                raise ValueError("--min-score must be between 0.0 and 1.0")
+        if min_score is not None and not 0.0 <= min_score <= 1.0:
+            raise ValueError("--min-score must be between 0.0 and 1.0")
 
         request_payload: dict[str, object] = {
             "query": query_text,
