@@ -55,9 +55,8 @@ def make_record_index_manager(
     install_bidirectional_graph_store(
         kernel,
         lambda: tuple(
-            RecordIdentity.from_storage_key(key)
-            for keys in manager._source_records.values()
-            for key in keys
+            RecordIdentity.from_storage_key(str(row["storage_key"]))
+            for row in kernel.backend._record_rows()
         ),
     )
     kernel_holder["manager"] = manager

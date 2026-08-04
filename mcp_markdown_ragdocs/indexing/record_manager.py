@@ -49,18 +49,61 @@ class _BidirectionalGraphStore:
     def __init__(self, graph_store: Any, identities: Any) -> None:
         self._graph_store = graph_store
         self._identities = identities
-        self._incoming = contextvars.ContextVar("graph_incoming", default=False)
+        self._direction = contextvars.ContextVar(
+            "graph_direction",
+            default="outgoing",
+        )
 
-    def set_direction(self, incoming: bool) -> None:
-        self._incoming.set(incoming)
+    def set_direction(self, direction: str | bool) -> None:
+        normalized = (
+            "incoming"
+            if direction is True
+            else "outgoing"
+            if direction is False
+            else direction
+        )
+        self._direction.set(normalized)
 
     def neighbors_many(self, identities, *, depth: int, max_neighbors: int | None = None):
-        if self._incoming.get():
+        direction = self._direction.get()
+        if direction == "incoming":
             return self.incoming_neighbors_many(
                 identities,
                 depth=depth,
                 max_neighbors=max_neighbors,
             )
+        if direction == "both":
+            outgoing = self._outgoing_neighbors_many(
+                identities,
+                depth=depth,
+                max_neighbors=max_neighbors,
+            )
+            incoming = self.incoming_neighbors_many(
+                identities,
+                depth=depth,
+                max_neighbors=max_neighbors,
+            )
+            return {
+                identity.storage_key: _merge_graph_neighbors(
+                    outgoing.get(identity.storage_key, ()),
+                    incoming.get(identity.storage_key, ()),
+                    max_neighbors,
+                )
+                for identity in identities
+            }
+        return self._outgoing_neighbors_many(
+            identities,
+            depth=depth,
+            max_neighbors=max_neighbors,
+        )
+
+    def _outgoing_neighbors_many(
+        self,
+        identities,
+        *,
+        depth: int,
+        max_neighbors: int | None = None,
+    ):
         return self._graph_store.neighbors_many(
             identities,
             depth=depth,
@@ -108,6 +151,18 @@ class _BidirectionalGraphStore:
             if max_neighbors is not None:
                 incoming[key] = neighbors[:max_neighbors]
         return incoming
+
+
+def _merge_graph_neighbors(first, second, max_neighbors: int | None):
+    merged = {
+        neighbor.identity.storage_key: neighbor
+        for neighbor in (*first, *second)
+    }
+    neighbors = sorted(
+        merged.values(),
+        key=lambda item: (-item.weight, item.identity.storage_key),
+    )
+    return neighbors if max_neighbors is None else neighbors[:max_neighbors]
 
 
 def install_bidirectional_graph_store(

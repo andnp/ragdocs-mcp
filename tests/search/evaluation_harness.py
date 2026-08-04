@@ -258,9 +258,8 @@ def build_search_evaluation_harness(
     install_bidirectional_graph_store(
         local_kernel,
         lambda: tuple(
-            RecordIdentity.from_storage_key(key)
-            for keys in manager._source_records.values()
-            for key in keys
+            RecordIdentity.from_storage_key(str(row["storage_key"]))
+            for row in local_kernel.backend._record_rows()
         ),
     )
 

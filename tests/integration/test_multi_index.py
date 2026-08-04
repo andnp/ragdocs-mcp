@@ -84,17 +84,73 @@ async def test_natural_language_graph_query_resolves_target_scope_and_provenance
         project_filter=["project-a"],
     )
     assert [result.file_path for result in results] == [
-        str(docs / "neighbor-a.md"),
         str(docs / "target-a.md"),
+        str(docs / "neighbor-a.md"),
     ]
     assert [result.metadata["source_id"] for result in results] == [
-        "neighbor-a",
         "target-a",
+        "neighbor-a",
     ]
     assert [result.project_id for result in results] == ["project-a", "project-a"]
-    assert strategy.graph_count == 1
+    assert strategy.graph_count == 2
     assert results[0].provenance is not None
     assert "graph" in results[0].provenance.strategies
+
+
+@pytest.mark.asyncio
+async def test_neighbor_query_reads_incoming_chunk_parent_neighbors(
+    tmp_path: Path,
+) -> None:
+    if not _resolver_supported():
+        pytest.skip("requires Searchkernel graph_target_resolver support")
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    manager = make_record_index_manager(
+        Config(indexing=IndexingConfig(documents_path=str(docs), index_path=str(tmp_path / "index"))),
+        documents_roots=[docs],
+    )
+    target_parent = make_record(
+        "target_parent_0",
+        "Target context",
+        workspace_id="project-a",
+        metadata={"doc_id": "target", "file_path": str(docs / "target.md")},
+    )
+    target_chunk = make_record(
+        "target_chunk_26",
+        "Hybrid Search Strategy",
+        workspace_id="project-a",
+        metadata={
+            "doc_id": "target",
+            "parent_chunk_id": "target_parent_0",
+            "file_path": str(docs / "target.md"),
+        },
+    )
+    source = make_record(
+        "source_parent_0",
+        "Authentication notes",
+        workspace_id="project-a",
+        metadata={"doc_id": "source", "file_path": str(docs / "source.md")},
+    )
+    assert manager.index_records([target_parent, target_chunk, source])
+    manager.graph.upsert_edges(
+        [GraphEdge(source.identity, target_parent.identity, "links_to", 1.0)]
+    )
+
+    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+        "What documents are neighbors of Hybrid Search Strategy?",
+        top_k=20,
+        top_n=5,
+        project_filter=["project-a"],
+    )
+
+    source_result = next(result for result in results if result.doc_id == "source")
+    assert source_result.file_path == str(docs / "source.md")
+    assert source_result.metadata["source_id"] == "source_parent_0"
+    assert source_result.provenance is not None
+    assert "graph" in source_result.provenance.strategies
+    assert strategy.graph_count is not None
+    assert strategy.graph_count >= 1
 
 
 @pytest.mark.asyncio

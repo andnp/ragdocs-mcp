@@ -182,6 +182,10 @@ _GRAPH_INBOUND_PREFIXES = (
     ),
     re.compile(r"^what\s+links to\s+", re.IGNORECASE),
 )
+_GRAPH_NEIGHBOR_PREFIX = re.compile(
+    r"^(?:which|what)\s+(?:pages|documents|notes)\s+are neighbors of\s+",
+    re.IGNORECASE,
+)
 
 
 def _graph_target_query(query: str) -> str:
@@ -202,6 +206,15 @@ def _graph_query_is_inbound(query: str) -> bool:
     return any(pattern.match(normalized) is not None for pattern in _GRAPH_INBOUND_PREFIXES)
 
 
+def _graph_query_direction(query: str) -> str:
+    normalized = " ".join(query.strip().split()).strip(" .?!")
+    if _graph_query_is_inbound(normalized):
+        return "incoming"
+    if _GRAPH_NEIGHBOR_PREFIX.match(normalized) is not None:
+        return "both"
+    return "outgoing"
+
+
 def build_record_search_policy(
     keyword_store: Any,
     record_hydrator: Any = None,
@@ -213,7 +226,7 @@ def build_record_search_policy(
 
     async def resolve_graph_target(query: str, context: Any):
         if callable(graph_direction_setter):
-            graph_direction_setter(_graph_query_is_inbound(query))
+            graph_direction_setter(_graph_query_direction(query))
         target_query = _graph_target_query(query)
         filters = dict(getattr(context, "filters", {}))
         limit = max(20, int(getattr(context, "limit", 20)))
