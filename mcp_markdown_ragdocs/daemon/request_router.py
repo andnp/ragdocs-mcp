@@ -368,6 +368,22 @@ async def _handle_admin_request(
             worker_running=dependencies.get_worker_running(),
             backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         )
+        index_state = index_payload.get("index_state")
+        remaining_estimate = index_payload.get("remaining_estimate")
+        if (
+            isinstance(index_state, dict)
+            and index_state.get("status") in {"indexing", "partial"}
+            and isinstance(remaining_estimate, int)
+        ):
+            queued_work = sum(
+                value
+                for key in ("pending_count", "running_count")
+                if isinstance(value := queue_payload.get(key), int)
+            )
+            index_payload["remaining_estimate"] = max(
+                remaining_estimate,
+                queued_work,
+            )
         for key in ("pending_count", "running_count", "failed_count"):
             if key in queue_payload:
                 index_payload[key] = queue_payload[key]

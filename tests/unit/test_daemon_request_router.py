@@ -201,6 +201,31 @@ async def test_admin_index_route_includes_queue_counts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admin_index_route_reports_queued_partial_progress() -> None:
+    ctx = _FakeContext(ready=True)
+    coordinator = _FakeCoordinator()
+    dependencies = replace(
+        _build_dependencies(ctx, coordinator),
+        build_index_stats_payload=lambda _: {
+            "status": "ok",
+            "remaining_estimate": 0,
+            "index_state": {"status": "partial"},
+        },
+        build_queue_status_payload=lambda **_: {
+            "pending_count": 14,
+            "running_count": 1,
+            "failed_count": 0,
+        },
+    )
+    handler = build_daemon_request_handler(dependencies)
+
+    payload = await handler("/api/admin/index", {})
+
+    assert payload["remaining_estimate"] == 15
+    assert payload["index_state"] == {"status": "partial"}
+
+
+@pytest.mark.asyncio
 async def test_rebuild_status_route_returns_extended_telemetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
