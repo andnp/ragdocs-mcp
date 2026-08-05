@@ -6,6 +6,7 @@ Commit 3.3: Verifies indexing operations work as Huey tasks.
 
 from __future__ import annotations
 
+import logging
 import time
 from threading import Barrier, Thread
 from datetime import UTC, datetime
@@ -229,6 +230,7 @@ class TestTaskRegistration:
         self,
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
@@ -244,6 +246,9 @@ class TestTaskRegistration:
         assert huey_instance.execute(second) is False
         assert fake_manager.indexed == []
         assert fake_manager.indexed_records == []
+        assert "Writer lease busy; deferring index_document" in caplog.text
+        assert "argument='/docs/blocked.md'" in caplog.text
+        assert store.release_writer("rebuild-active") is True
 
     def test_register_tasks_creates_task_functions(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -780,7 +785,10 @@ class TestTaskRegistration:
 
 class TestTaskExecution:
     def test_index_batch_terminalizes_partial_item_outcomes(
-        self, huey_instance: SqliteHuey, tmp_path: Path
+        self,
+        huey_instance: SqliteHuey,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         class PartialManager(FakeIndexManager):
             def index_documents(
@@ -816,6 +824,8 @@ class TestTaskExecution:
         assert bad_intent is not None
         assert good_intent.state == "succeeded"
         assert bad_intent.state == "failed"
+        assert "Intent task failed: operation=index_documents_batch" in caplog.text
+        assert "error=batch item failed" in caplog.text
 
     def test_progressive_batch_task_uses_bootstrap_coordinator(
         self,
@@ -960,6 +970,33 @@ class TestTaskExecution:
         assert len(fake_manager.indexed) == 1
         assert fake_manager.indexed[0] == ("/docs/test.md", True)
         assert fake_manager.persist_calls == 1
+
+    def test_index_task_logs_manager_false_result_and_failure_detail(
+        self,
+        huey_instance: SqliteHuey,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+
+        class FailedManager(FakeIndexManager):
+            def index_document(self, file_path: str, force: bool = False) -> bool:
+                self.indexed.append((file_path, force))
+                return False
+
+            def get_failed_files(self) -> list[dict[str, str]]:
+                return [{"path": "/docs/failed.md", "error": "parse failed"}]
+
+        manager = FailedManager()
+        register_tasks(huey_instance, manager)
+        enqueue_index("/docs/failed.md", force=True)
+        task = huey_instance.dequeue()
+        assert task is not None
+
+        assert huey_instance.execute(task) is True
+        assert "path=/docs/failed.md" in caplog.text
+        assert "force=True" in caplog.text
+        assert "result=False" in caplog.text
+        assert "parse failed" in caplog.text
 
     def test_index_task_marks_bootstrap_checkpoint_after_persist(
         self,
