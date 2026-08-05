@@ -132,10 +132,15 @@ def start_daemon(
             runtime_paths,
             keep_pid=current.metadata.pid,
         )
-        if _metadata_has_exceeded_grace_period(current.metadata):
+        if (
+            _metadata_has_exceeded_grace_period(current.metadata)
+            and current.metadata.status not in _READY_STATUSES
+        ):
             _terminate_extra_runtime_daemon_processes(runtime_paths)
             _cleanup_stale_runtime_state(runtime_paths)
         elif current.responsive or _metadata_is_starting(current.metadata):
+            return current.metadata
+        elif current.metadata.status in _READY_STATUSES:
             return current.metadata
         else:
             return _wait_for_ready_daemon(deadline=deadline, paths=runtime_paths)

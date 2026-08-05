@@ -600,6 +600,40 @@ def test_start_daemon_cleans_up_old_nonresponsive_metadata_before_spawn(
     assert observed["spawned_pid"] == 717
 
 
+def test_start_daemon_preserves_ready_daemon_after_probe_timeout(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    metadata = DaemonMetadata(pid=616, started_at=1.0, status="ready")
+    observed: list[tuple[RuntimePaths, int | None]] = []
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.management.inspect_daemon",
+        lambda paths=None: DaemonInspection(
+            metadata=metadata,
+            running=True,
+            stale=False,
+            responsive=False,
+            ready=False,
+        ),
+    )
+    monkeypatch.setattr("mcp_markdown_ragdocs.daemon.management.time.time", lambda: 40.0)
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.management._terminate_extra_runtime_daemon_processes",
+        lambda runtime_paths, *, keep_pid=None: observed.append((runtime_paths, keep_pid)) or [],
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.management._spawn_daemon_process",
+        lambda runtime_paths: pytest.fail("ready daemon must not be replaced"),
+    )
+
+    result = start_daemon(timeout_seconds=0.5, paths=paths)
+
+    assert result == metadata
+    assert observed == [(paths, metadata.pid)]
+
+
 def test_stop_daemon_prefers_internal_shutdown_for_responsive_daemon(
     monkeypatch,
     tmp_path: Path,
