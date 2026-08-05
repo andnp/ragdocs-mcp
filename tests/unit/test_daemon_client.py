@@ -164,3 +164,41 @@ def test_request_daemon_json_returns_retryable_error_payload_when_allowed(
     )
 
     assert response == {"status": "error", "error": "daemon_request_timed_out"}
+
+
+def test_repeated_auto_started_queries_preserve_daemon_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = _metadata()
+    starts: list[int] = []
+    requests: list[str] = []
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.client.RuntimePaths.resolve",
+        lambda: SimpleNamespace(),
+    )
+
+    def _start_daemon(**_kwargs):
+        starts.append(metadata.pid)
+        return metadata
+
+    def _request_daemon_socket(_socket_path, path, _payload, **_kwargs):
+        requests.append(path)
+        return {"status": "ok", "results": []}
+
+    monkeypatch.setattr("mcp_markdown_ragdocs.daemon.client.start_daemon", _start_daemon)
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.client.request_daemon_socket",
+        _request_daemon_socket,
+    )
+
+    for _ in range(2):
+        assert request_daemon_json(
+            "/api/search/query",
+            {"query": "router"},
+            project_override=None,
+            auto_start=True,
+        ) == {"status": "ok", "results": []}
+
+    assert starts == [metadata.pid, metadata.pid]
+    assert requests == ["/api/search/query", "/api/search/query"]
