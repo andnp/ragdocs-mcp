@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from huey import SqliteHuey
@@ -221,3 +222,72 @@ def test_force_reopen_allows_stale_claim(tmp_path: Path) -> None:
     assert submitted.state == PENDING
     assert submitted.claim_token is None
     assert submitted.payload == {"file_path": "new"}
+
+
+def test_index_document_automatic_retries_stop_at_three_and_force_reopens(
+    tmp_path: Path,
+) -> None:
+    store = WorkIntentStore(tmp_path / "queue.db")
+    intent = store.submit("index_document", "doc.md", {"file_path": "doc.md"})
+
+    for failure_number in range(1, 4):
+        claim = store.claim(intent.intent_id)
+        assert claim is not None
+        assert store.fail(intent.intent_id, claim[1], f"failure {failure_number}")
+        submitted = store.submit(
+            "index_document",
+            "doc.md",
+            {"file_path": "doc.md"},
+        )
+        assert submitted.state == (PENDING if failure_number < 3 else FAILED)
+
+    terminal = store.get(intent.intent_id)
+    assert terminal is not None
+    assert terminal.failure_count == 3
+    assert store.claim(intent.intent_id) is None
+
+    forced = store.submit(
+        "index_document",
+        "doc.md",
+        {"file_path": "doc.md"},
+        force_reopen=True,
+    )
+    assert forced.state == PENDING
+    forced_claim = store.claim(intent.intent_id)
+    assert forced_claim is not None
+    assert store.succeed(intent.intent_id, forced_claim[1])
+    recovered = store.get(intent.intent_id)
+    assert recovered is not None
+    assert recovered.failure_count == 0
+
+
+def test_work_intent_failure_count_is_added_to_legacy_database(tmp_path: Path) -> None:
+    database = tmp_path / "queue.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE work_intents (
+                intent_id TEXT PRIMARY KEY,
+                operation TEXT NOT NULL,
+                canonical_key TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                state TEXT NOT NULL,
+                claim_token TEXT,
+                claim_observed_at REAL,
+                observed_at REAL NOT NULL,
+                attempt INTEGER NOT NULL,
+                error TEXT,
+                UNIQUE(operation, canonical_key)
+            )
+            """
+        )
+        connection.execute(
+            """INSERT INTO work_intents VALUES
+            ('legacy', 'index_document', 'doc.md', '{}', 'failed', NULL,
+             NULL, 1, 1, 'old failure')"""
+        )
+
+    intent = WorkIntentStore(database).find("index_document", "doc.md")
+
+    assert intent is not None
+    assert intent.failure_count == 0
