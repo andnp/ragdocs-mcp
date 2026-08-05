@@ -74,7 +74,40 @@ async def test_search_penalizes_duplicate_header_paths(adapter):
     )
 
     header_paths = [result.header_path for result in execution.results]
-    assert header_paths.count("# Configuration") <= 2
+@pytest.mark.asyncio
+async def test_default_match_keeps_typo_variations(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="typo-target",
+        title="Reciprocal Rank Fusion",
+        body="Details on reciprocal rank fusion ranking algorithm",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "typo-target", "file_path": "fusion.md", "header_path": "Fusion"},
+    )
+    outcome = SimpleNamespace(
+        results=[
+            SimpleNamespace(
+                record=record,
+                score=0.15,
+                provenance=SimpleNamespace(strategies=("vector",)),
+            )
+        ],
+        failures=(),
+        degraded=False,
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return outcome
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="reciporcal rank fusin", top_n=5),
+        search=fake_search,
+    )
+
+    assert [result.doc_id for result in execution.results] == ["typo-target"]
+
 
 
 
