@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import sqlite3
 import time
@@ -19,6 +20,9 @@ CLAIMED = "claimed"
 RUNNING = "running"
 SUCCEEDED = "succeeded"
 FAILED = "failed"
+MAX_AUTOMATIC_FAILURES = 3
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,7 @@ class WorkIntent:
     claim_observed_at: float | None
     observed_at: float
     attempt: int
+    failure_count: int
     error: str | None
 
 
@@ -92,7 +97,14 @@ class WorkIntentStore:
                     "SELECT * FROM work_intents WHERE intent_id = ?",
                     (intent_id,),
                 ).fetchone()
-            elif row["state"] in {FAILED, SUCCEEDED} or (
+            elif (
+                row["state"] == FAILED
+                and (
+                    operation != "index_document"
+                    or int(row["failure_count"]) < MAX_AUTOMATIC_FAILURES
+                    or force_reopen
+                )
+            ) or row["state"] == SUCCEEDED or (
                 force_reopen
                 and row["state"] in {CLAIMED, RUNNING}
                 and row["claim_observed_at"] is not None
@@ -195,13 +207,32 @@ class WorkIntentStore:
                 """
                 UPDATE work_intents
                 SET state = ?, claim_token = NULL, claim_observed_at = NULL,
-                    observed_at = ?, error = ?
+                    observed_at = ?, failure_count = failure_count + 1, error = ?
                 WHERE intent_id = ? AND claim_token = ?
                   AND state IN (?, ?)
                 """,
                 (FAILED, timestamp, error, intent_id, claim_token, CLAIMED, RUNNING),
             )
-            return cursor.rowcount == 1
+            failed = cursor.rowcount == 1
+            if failed:
+                row = connection.execute(
+                    """
+                    SELECT operation, failure_count
+                    FROM work_intents
+                    WHERE intent_id = ?
+                    """,
+                    (intent_id,),
+                ).fetchone()
+                if (
+                    row is not None
+                    and row["operation"] == "index_document"
+                    and int(row["failure_count"]) >= MAX_AUTOMATIC_FAILURES
+                ):
+                    logger.error(
+                        "Automatic indexing retry ceiling reached for work intent %s",
+                        intent_id,
+                    )
+            return failed
 
     def release(self, intent_id: str, claim_token: str, *, now: float | None = None) -> bool:
         timestamp = time.time() if now is None else now
@@ -329,7 +360,7 @@ class WorkIntentStore:
                 f"""
                 UPDATE work_intents
                 SET state = ?, claim_token = NULL, claim_observed_at = NULL,
-                    observed_at = ?, error = NULL
+                    observed_at = ?, failure_count = 0, error = NULL
                 WHERE intent_id = ? AND claim_token = ?
                   AND state IN ({placeholders})
                 """,
@@ -351,11 +382,20 @@ class WorkIntentStore:
                     claim_observed_at REAL,
                     observed_at REAL NOT NULL,
                     attempt INTEGER NOT NULL,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
                     error TEXT,
                     UNIQUE(operation, canonical_key)
                 )
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(work_intents)")
+            }
+            if "failure_count" not in columns:
+                connection.execute(
+                    "ALTER TABLE work_intents ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0"
+                )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_work_intents_state_observed
@@ -387,5 +427,6 @@ def _row_to_intent(row: sqlite3.Row) -> WorkIntent:
         ),
         observed_at=float(row["observed_at"]),
         attempt=int(row["attempt"]),
+        failure_count=int(row["failure_count"]),
         error=None if row["error"] is None else str(row["error"]),
     )
