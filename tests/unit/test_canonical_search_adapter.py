@@ -4,8 +4,29 @@ from types import SimpleNamespace
 import pytest
 from searchkernel.domain import Record
 
-from mcp_markdown_ragdocs.app.search import SearchQuery
+from mcp_markdown_ragdocs.app.search import SearchQuery, _normalize_graph_query
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
+
+
+@pytest.mark.asyncio
+async def test_search_expands_hyphenated_terms_in_query(adapter, monkeypatch):
+    captured = {}
+
+    async def fake_search(query, *, limit, filters):
+        captured["query"] = query
+        return SimpleNamespace(results=(), failures=(), degraded=False)
+
+    monkeypatch.setattr(adapter._search_kernel._pipeline, "async_search", fake_search)
+
+    await adapter.search_use_case.execute(
+        SearchQuery(query="multi-process architecture", top_n=2),
+        search=adapter.search,
+    )
+
+    assert captured["query"] == "multi-process multiprocess architecture"
+
+
+
 
 
 @pytest.fixture
