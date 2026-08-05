@@ -284,6 +284,13 @@ def _intent_task(operation: str):
                         store.succeed(str(item[0]), str(item[1]))
                     else:
                         store.fail(str(item[0]), str(item[1]), error)
+                        logger.warning(
+                            "Intent task failed: operation=%s result_status=%s outcome=%s error=%s",
+                            operation,
+                            result.get("status") if isinstance(result, dict) else result,
+                            item_succeeded,
+                            error,
+                        )
             return result
 
         return _wrapped
@@ -297,6 +304,23 @@ def _batch_result(outcomes: list[bool], *, error: str) -> dict[str, object]:
         "error": None if all(outcomes) else error,
         "outcomes": outcomes,
     }
+
+
+def _failed_file_details(manager: Any, file_path: str) -> list[dict[str, str]]:
+    get_failed_files = getattr(manager, "get_failed_files", None)
+    if not callable(get_failed_files):
+        return []
+    try:
+        failed_files = get_failed_files()
+        if not isinstance(failed_files, list):
+            return []
+        return [
+            {"path": str(item.get("path")), "error": str(item.get("error"))}
+            for item in failed_files
+            if isinstance(item, dict) and item.get("path") == file_path
+        ][-3:]
+    except Exception:  # noqa: BLE001 - diagnostics must not alter task behavior
+        return []
 
 
 def _writer_is_active() -> bool:
@@ -509,10 +533,18 @@ def _index_document(file_path: str, force: bool = False) -> bool:
         logger.error("IndexManager not available for task execution")
         return False
     manager = _index_manager
+    logger.info("Index task started: path=%s force=%s", file_path, force)
 
     def _operation() -> bool:
         try:
-            manager.index_document(file_path, force=force)
+            manager_result = manager.index_document(file_path, force=force)
+            logger.info(
+                "Index task manager result: path=%s force=%s result=%s failed_files=%s",
+                file_path,
+                force,
+                manager_result,
+                _failed_file_details(manager, file_path) if not manager_result else [],
+            )
             manager.persist()
             if _bootstrap_index_path is not None and _bootstrap_documents_roots:
                 mark_bootstrap_file_completed(
@@ -617,7 +649,14 @@ def _index_documents_batch(
             )
             for file_path in unique_file_paths:
                 try:
-                    manager.index_document(file_path, force=force)
+                    manager_result = manager.index_document(file_path, force=force)
+                    logger.info(
+                        "Batch index item manager result: path=%s force=%s result=%s failed_files=%s",
+                        file_path,
+                        force,
+                        manager_result,
+                        _failed_file_details(manager, file_path) if not manager_result else [],
+                    )
                     completed_paths.append(file_path)
                 except Exception:
                     failures.append(file_path)
