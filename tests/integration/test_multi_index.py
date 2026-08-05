@@ -128,8 +128,8 @@ async def test_compound_graph_query_resolves_target_with_project_scope(
     assert manager.index_records([target, neighbor, other_neighbor])
     manager.graph.upsert_edges(
         [
-            GraphEdge(target.identity, neighbor.identity, "links_to", 1.0),
-            GraphEdge(target.identity, other_neighbor.identity, "links_to", 1.0),
+            GraphEdge(neighbor.identity, target.identity, "links_to", 1.0),
+            GraphEdge(other_neighbor.identity, target.identity, "links_to", 1.0),
         ]
     )
 
