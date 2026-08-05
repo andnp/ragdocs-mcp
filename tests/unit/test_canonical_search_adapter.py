@@ -652,6 +652,51 @@ async def test_default_documents_exclude_self_referential_pathless_git_results(
 
 
 @pytest.mark.asyncio
+async def test_artifact_queries_keep_matching_pathless_git_records(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="git_commit",
+        source_id="git:artifact",
+        title="Update document tools",
+        body=(
+            "diff --git a/mcp_markdown_ragdocs/mcp/tools/document_tools.py "
+            "b/mcp_markdown_ragdocs/mcp/tools/document_tools.py\n"
+            "+ handle_query_documents"
+        ),
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={
+            "doc_id": "git:artifact",
+            "commit_id": "git:artifact",
+            "project_id": "mcp-markdown-ragdocs",
+        },
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.01,
+                    provenance=SimpleNamespace(strategies=("keyword",)),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(
+            query="document_tools.py handle_query_documents",
+            top_n=5,
+        ),
+        search=fake_search,
+    )
+
+    assert [result.doc_id for result in execution.results] == ["git:artifact"]
+
+
+@pytest.mark.asyncio
 async def test_default_abstention_drops_medium_vector_only_match(adapter):
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     record = Record(

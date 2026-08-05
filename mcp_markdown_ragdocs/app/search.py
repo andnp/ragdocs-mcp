@@ -185,6 +185,10 @@ _GRAPH_INBOUND_PREFIXES = (
         r"^(?:which|what)\s+(?:pages|documents|notes)\s+link to\s+",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"^(?:which|what)\s+(?:pages|documents|notes)\s+are linked from\s+",
+        re.IGNORECASE,
+    ),
     re.compile(r"^what\s+links to\s+", re.IGNORECASE),
 )
 _GRAPH_NEIGHBOR_PREFIX = re.compile(
@@ -308,6 +312,26 @@ def _is_pathless_git_record(result: Any) -> bool:
     )
 
 
+def _artifact_query_matches_git_record(query: str, record: Record) -> bool:
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9_./\\-]+", query.lower())
+        if any(separator in token for separator in ("_", ".", "/", "\\", "-"))
+    ]
+    if not tokens:
+        return False
+    changed_files = record.metadata.get("files_changed")
+    changed_file_values = changed_files if isinstance(changed_files, list) else ()
+    searchable = " ".join(
+        [
+            record.title,
+            record.body,
+            *(str(path) for path in changed_file_values),
+        ]
+    ).lower()
+    return any(token in searchable for token in tokens)
+
+
 def _default_match_for_query(query: str, result: Any) -> bool:
     """Keep low-score records with an application-visible lexical signal."""
     record = result.record
@@ -341,6 +365,8 @@ def _default_match_for_query(query: str, result: Any) -> bool:
 
 
 def _default_result_is_credible(query: str, result: Any) -> bool:
+    if _artifact_query_matches_git_record(query, result.record):
+        return True
     if _default_match_for_query(query, result):
         return True
     provenance = result.provenance
@@ -468,6 +494,7 @@ class ApplicationSearchUseCase:
             and (
                 request.source_filter == ("git_commit",)
                 or not _is_pathless_git_record(result)
+                or _artifact_query_matches_git_record(request.query, result.record)
             )
         ]
         if (
