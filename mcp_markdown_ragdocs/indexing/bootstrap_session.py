@@ -378,6 +378,8 @@ class BootstrapSession:
             os.path.commonpath([str(root.resolve()) for root in self.documents_roots])
         )
         normalized: dict[str, str] = {}
+        identities_by_path: dict[str, set[str]] = {}
+        target_identities: dict[str, set[str]] = {}
         for common_path in target_stamps:
             absolute_path = common_root / common_path
             identities = {common_path, str(absolute_path)}
@@ -386,6 +388,33 @@ class BootstrapSession:
                     identities.add(str(absolute_path.relative_to(root.resolve())))
                 except ValueError:
                     continue
-            if any(path in identities for path in manifest.indexed_files.values()):
+            target_identities[common_path] = identities
+            for identity in identities:
+                identities_by_path.setdefault(identity, set()).add(common_path)
+
+        for common_path, identities in target_identities.items():
+            absolute_path = common_root / common_path
+            doc_id_pairs = {
+                (str(Path(common_path).with_suffix("")), common_path),
+                (str(Path(common_path).with_suffix("")), str(absolute_path)),
+            }
+            for root in self.documents_roots:
+                try:
+                    root_path = absolute_path.relative_to(root.resolve())
+                except ValueError:
+                    continue
+                doc_id_pairs.add(
+                    (str(Path(common_path).with_suffix("")), str(root_path))
+                )
+                if identities_by_path.get(str(root_path)) == {common_path}:
+                    doc_id_pairs.add((str(root_path.with_suffix("")), str(root_path)))
+            if any(
+                manifest.indexed_files.get(doc_id) == indexed_path
+                for doc_id, indexed_path in doc_id_pairs
+            ) or any(
+                identities_by_path.get(indexed_path) == {common_path}
+                for indexed_path in manifest.indexed_files.values()
+                if indexed_path in identities
+            ):
                 normalized[str(Path(common_path).with_suffix(""))] = common_path
         return replace(manifest, indexed_files=normalized)

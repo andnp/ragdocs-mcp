@@ -13,6 +13,7 @@ from searchkernel.indexing.manifest import (
     IndexManifest,
     save_manifest,
 )
+from searchkernel.indexing.bootstrap_snapshot import compute_bootstrap_completed_paths
 
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
 from mcp_markdown_ragdocs.indexing.tasks import TaskBatchSubmissionResult
@@ -101,6 +102,38 @@ async def test_run_reuses_completion_for_multiple_document_roots(
 
     assert enqueued == []
     assert ready_calls == ["called"]
+
+
+def test_multi_root_same_relative_name_only_matches_indexed_root(tmp_path: Path) -> None:
+    root_one = tmp_path / "docs-one"
+    root_two = tmp_path / "docs-two"
+    root_one.mkdir()
+    root_two.mkdir()
+    doc_one = root_one / "same.md"
+    doc_two = root_two / "same.md"
+    doc_one.write_text("# One")
+    doc_two.write_text("# Two")
+
+    manifest = _manifest()
+    manifest.indexed_files = {"docs-one/same": "same.md"}
+    targets = {
+        "docs-one/same.md": _stamp(doc_one, "docs-one/same.md"),
+        "docs-two/same.md": _stamp(doc_two, "docs-two/same.md"),
+    }
+    checkpoint = BootstrapCheckpoint(
+        schema_version="1.0.0",
+        generation=compute_bootstrap_generation(manifest, targets),
+        complete=True,
+        targets=targets,
+        completed=dict(targets),
+    )
+    session = BootstrapSession.__new__(BootstrapSession)
+    session.documents_roots = [root_one, root_two]
+
+    normalized = session._manifest_for_bootstrap(manifest, targets)
+    completed = compute_bootstrap_completed_paths(checkpoint, normalized, targets)
+
+    assert completed == {"docs-one/same.md"}
 
 
 @pytest.mark.asyncio
