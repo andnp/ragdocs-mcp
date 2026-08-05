@@ -126,6 +126,7 @@ def start_daemon(
             runtime_paths,
             keep_pid=current.metadata.pid,
         )
+        _log_daemon_probe_decision(current, decision="reused")
         return current.metadata
     if current.running and current.metadata is not None:
         _terminate_extra_runtime_daemon_processes(
@@ -136,13 +137,17 @@ def start_daemon(
             _metadata_has_exceeded_grace_period(current.metadata)
             and current.metadata.status not in _READY_STATUSES
         ):
+            _log_daemon_probe_decision(current, decision="replaced")
             _terminate_extra_runtime_daemon_processes(runtime_paths)
             _cleanup_stale_runtime_state(runtime_paths)
         elif current.responsive or _metadata_is_starting(current.metadata):
+            _log_daemon_probe_decision(current, decision="reused")
             return current.metadata
         elif current.metadata.status in _READY_STATUSES:
+            _log_daemon_probe_decision(current, decision="reused")
             return current.metadata
         else:
+            _log_daemon_probe_decision(current, decision="waiting")
             return _wait_for_ready_daemon(deadline=deadline, paths=runtime_paths)
     if current.stale:
         _terminate_extra_runtime_daemon_processes(runtime_paths)
@@ -531,6 +536,26 @@ def _metadata_has_exceeded_grace_period(
 
 def _metadata_is_starting(metadata: DaemonMetadata) -> bool:
     return metadata.status in _STARTUP_STATUSES
+
+
+def _log_daemon_probe_decision(
+    inspection: DaemonInspection,
+    *,
+    decision: str,
+) -> None:
+    metadata = inspection.metadata
+    if metadata is None:
+        return
+    logger.info(
+        "Daemon lifecycle probe: pid=%s lifecycle=%s probe_responsive=%s "
+        "probe_ready=%s age_seconds=%.1f decision=%s",
+        metadata.pid,
+        metadata.status,
+        inspection.responsive,
+        inspection.ready,
+        max(0.0, time.time() - metadata.started_at),
+        decision,
+    )
 
 
 def _daemon_log_path(paths: RuntimePaths) -> Path:
