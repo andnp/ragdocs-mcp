@@ -209,7 +209,7 @@ def _graph_target_query(query: str) -> str:
     for prefix in _GRAPH_TARGET_PREFIXES:
         target = prefix.sub("", normalized, count=1).strip(" .?!")
         if target != normalized:
-            return target
+            return re.sub(r"^(?:the|a|an)\s+", "", target, count=1, flags=re.IGNORECASE)
     return normalized
 
 

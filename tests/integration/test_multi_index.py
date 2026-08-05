@@ -109,7 +109,7 @@ async def test_compound_graph_query_resolves_target_with_project_scope(
     docs = Path(manager._config.indexing.documents_path)
     target = make_record(
         "hybrid-search",
-        "Hybrid Search Strategy",
+        "This explains Hybrid Search Strategy.",
         workspace_id="project-a",
         metadata={"file_path": str(docs / "hybrid.md")},
     )
