@@ -30,6 +30,23 @@ description: 'Use a subagent to probe the live Ragdocs corpus, discover search-q
    `gpt-5.6-luna` model. The subagent must work read-only and run queries
    sequentially, never concurrently while the daemon is starting or rebuilding.
 
+## Lifecycle Validity Gates
+Before the first query, capture JSON snapshots from `daemon status --json`,
+`queue status --json`, and `index stats --json`. Record the daemon `pid`, `status`, and `lifecycle`,
+plus index `index_state.status`, `remaining_estimate`, `pending_count`,
+`running_count`, and `failed_count`.
+
+Require the pre-query snapshot to show one ready daemon PID, a ready index,
+`remaining_estimate: 0`, and no pending or running tasks. After the query
+portfolio, capture the same three snapshots again. The run is invalid if the
+PID changes, readiness regresses, or any new pending/running/failed work
+appears without an explicitly documented corpus change. A transient query
+failure does not waive this gate: capture the post-query state and report any
+replacement, rebuild, or queue churn before interpreting search results.
+
+Use `--json` for all six snapshots so PID, readiness, and queue/task values can
+be compared mechanically. Preserve the snapshots with the audit report.
+
 ## Subagent Brief
 Give the subagent the repository path and this complete instruction:
 
