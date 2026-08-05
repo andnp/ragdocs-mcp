@@ -26,6 +26,58 @@ async def test_search_expands_hyphenated_terms_in_query(adapter, monkeypatch):
     assert captured["query"] == "multi-process multiprocess architecture"
 
 
+@pytest.mark.asyncio
+async def test_search_penalizes_duplicate_header_paths(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id=f"doc-{index}",
+            title=f"Doc {index}",
+            body=f"Configuration details {index}",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": f"doc-{index}", "file_path": f"spec_{index}.md", "header_path": "# Configuration"},
+        )
+        for index in range(3)
+    ]
+    records.append(
+        Record(
+            source_kind="note",
+            source_id="doc-diverse",
+            title="Doc Diverse",
+            body="Unique configuration architecture details",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": "doc-diverse", "file_path": "arch.md", "header_path": "# Architecture Overview"},
+        )
+    )
+
+    outcome = SimpleNamespace(
+        results=[
+            SimpleNamespace(record=records[0], score=1.0, provenance=SimpleNamespace(strategies=("keyword",))),
+            SimpleNamespace(record=records[1], score=0.99, provenance=SimpleNamespace(strategies=("keyword",))),
+            SimpleNamespace(record=records[2], score=0.98, provenance=SimpleNamespace(strategies=("keyword",))),
+            SimpleNamespace(record=records[3], score=0.95, provenance=SimpleNamespace(strategies=("keyword",))),
+        ],
+        failures=(),
+        degraded=False,
+    )
+
+
+    async def fake_search(*_args, **_kwargs):
+        return outcome
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="configuration", top_n=3, max_chunks_per_doc=0),
+        search=fake_search,
+    )
+
+    header_paths = [result.header_path for result in execution.results]
+    assert header_paths.count("# Configuration") <= 2
+
+
+
 
 
 
