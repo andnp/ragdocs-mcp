@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
@@ -130,7 +131,7 @@ class BootstrapSession:
         saved_manifest = await asyncio.to_thread(load_manifest, self.index_path)
         completed_paths = compute_bootstrap_completed_paths(
             checkpoint,
-            saved_manifest,
+            self._manifest_for_bootstrap(saved_manifest, target_stamps),
             target_stamps,
         )
         remaining_files = [
@@ -318,7 +319,7 @@ class BootstrapSession:
                         )
                     completed_paths = compute_bootstrap_completed_paths(
                         checkpoint,
-                        saved_manifest,
+                        self._manifest_for_bootstrap(saved_manifest, target_stamps),
                         target_stamps,
                     )
                     self._publish_loaded_progress(
@@ -361,3 +362,30 @@ class BootstrapSession:
         if not current_stamps:
             return None
         return next(iter(current_stamps.keys()))
+
+    def _manifest_for_bootstrap(
+        self,
+        manifest: IndexManifest | None,
+        target_stamps: dict[str, BootstrapFileStamp],
+    ) -> IndexManifest | None:
+        if (
+            manifest is None
+            or not manifest.indexed_files
+            or len(self.documents_roots) <= 1
+        ):
+            return manifest
+        common_root = Path(
+            os.path.commonpath([str(root.resolve()) for root in self.documents_roots])
+        )
+        normalized: dict[str, str] = {}
+        for common_path in target_stamps:
+            absolute_path = common_root / common_path
+            identities = {common_path, str(absolute_path)}
+            for root in self.documents_roots:
+                try:
+                    identities.add(str(absolute_path.relative_to(root.resolve())))
+                except ValueError:
+                    continue
+            if any(path in identities for path in manifest.indexed_files.values()):
+                normalized[str(Path(common_path).with_suffix(""))] = common_path
+        return replace(manifest, indexed_files=normalized)
