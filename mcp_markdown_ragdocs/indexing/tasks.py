@@ -307,6 +307,8 @@ def _writer_is_active() -> bool:
 def _run_as_writer(
     operation: Callable[[], Any],
     *,
+    operation_name: str = "index write",
+    operation_args: tuple[Any, ...] = (),
     owner_token: str | None = None,
     busy_result: Any,
     on_busy: Callable[[], None] | None = None,
@@ -317,7 +319,19 @@ def _run_as_writer(
 
     token = owner_token or uuid4().hex
     if not store.acquire_writer(token):
-        logger.info("Deferring index write while rebuild owns the writer")
+        details = ""
+        if operation_args and isinstance(operation_args[0], str):
+            details = f" argument={operation_args[0]!r}"
+        elif operation_args and isinstance(operation_args[0], list):
+            batch = operation_args[0]
+            details = f" batch_size={len(batch)}"
+            if all(isinstance(item, str) for item in batch):
+                details += f" batch_preview={batch[:3]!r}"
+        logger.warning(
+            "Writer lease busy; deferring %s%s",
+            operation_name,
+            details,
+        )
         if on_busy is not None:
             on_busy()
         return busy_result
@@ -348,6 +362,7 @@ def _run_as_writer(
 
 def _writer_owned_task(
     *,
+    operation: str | None = None,
     busy_result: Any,
     on_busy: Callable[..., None] | None = None,
 ):
@@ -357,6 +372,8 @@ def _writer_owned_task(
             busy_callback = on_busy
             return _run_as_writer(
                 lambda: function(*args, **kwargs),
+                operation_name=operation or function.__name__,
+                operation_args=args,
                 busy_result=busy_result,
                 on_busy=(
                     None
@@ -509,7 +526,12 @@ def _index_document(file_path: str, force: bool = False) -> bool:
             logger.exception("Task failed: index %s", file_path)
             return False
 
-    return _run_as_writer(_operation, busy_result=False)
+    return _run_as_writer(
+        _operation,
+        operation_name="index_document",
+        operation_args=(file_path,),
+        busy_result=False,
+    )
 
 def _index_documents_batch(
     file_paths: list[str],
@@ -570,7 +592,12 @@ def _index_documents_batch(
                 else _batch_result(outcomes, error="progressive batch item failed")
             )
 
-        return _run_as_writer(_progressive_operation, busy_result=False)
+        return _run_as_writer(
+            _progressive_operation,
+            operation_name="index_documents_batch",
+            operation_args=(unique_file_paths,),
+            busy_result=False,
+        )
 
     def _operation() -> bool | dict[str, object]:
         completed_paths: list[str] = []
@@ -635,7 +662,12 @@ def _index_documents_batch(
             error="batch item failed",
         )
 
-    return _run_as_writer(_operation, busy_result=False)
+    return _run_as_writer(
+        _operation,
+        operation_name="index_documents_batch",
+        operation_args=(unique_file_paths,),
+        busy_result=False,
+    )
 
 @_writer_owned_task(
     busy_result={
