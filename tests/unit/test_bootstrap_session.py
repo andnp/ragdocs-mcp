@@ -27,13 +27,80 @@ def _manifest() -> IndexManifest:
     )
 
 
-def _stamp(path: Path) -> BootstrapFileStamp:
+def _stamp(path: Path, relative_path: str | None = None) -> BootstrapFileStamp:
     stat_result = path.stat()
     return BootstrapFileStamp(
-        path.name,
+        relative_path or path.name,
         mtime_ns=stat_result.st_mtime_ns,
         size=stat_result.st_size,
     )
+
+
+@pytest.mark.asyncio
+async def test_run_reuses_completion_for_multiple_document_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checkpoint paths may be common-root-relative while manifests are root-relative."""
+    root_one = tmp_path / "docs-one"
+    root_two = tmp_path / "docs-two"
+    root_one.mkdir()
+    root_two.mkdir()
+    doc_one = root_one / "one.md"
+    doc_two = root_two / "two.md"
+    doc_one.write_text("# One")
+    doc_two.write_text("# Two")
+
+    manifest = _manifest()
+    manifest.indexed_files = {"one": "one.md", "two": "two.md"}
+    save_manifest(tmp_path, manifest)
+    target_stamps = {
+        "docs-one/one.md": _stamp(doc_one, "docs-one/one.md"),
+        "docs-two/two.md": _stamp(doc_two, "docs-two/two.md"),
+    }
+    save_bootstrap_checkpoint(
+        tmp_path,
+        BootstrapCheckpoint(
+            schema_version="1.0.0",
+            generation=compute_bootstrap_generation(manifest, target_stamps),
+            complete=True,
+            targets=target_stamps,
+            completed=dict(target_stamps),
+        ),
+    )
+
+    enqueued: list[list[str]] = []
+    ready_calls: list[str] = []
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
+        lambda file_paths, **kwargs: enqueued.append(file_paths)
+        or pytest.fail("completed multi-root files should not be enqueued"),
+    )
+    session = BootstrapSession(
+        index_path=tmp_path,
+        documents_roots=[root_one, root_two],
+        git_refresh_enabled=False,
+        discover_files=lambda: [str(doc_one), str(doc_two)],
+        discover_git_repositories=list,
+        get_bootstrap_manifest=lambda: manifest,
+        load_persisted_indices=lambda: asyncio.sleep(0),
+        persist_indices=lambda: asyncio.sleep(0),
+        compute_index_state_version=lambda: asyncio.sleep(0, result=1.0),
+        get_loaded_index_state_version=lambda: 0.0,
+        get_loaded_document_count=lambda: 2,
+        is_queryable=lambda: True,
+        publish_public_state=lambda snapshot: None,
+        mark_ready=lambda: ready_calls.append("called"),
+        schedule_embedding_warmup=lambda: True,
+        schedule_vocabulary_catch_up=lambda: True,
+        report_failure=lambda error, indexed_count, total_count: pytest.fail(
+            f"unexpected failure: {error}"
+        ),
+    )
+    await session.run()
+
+    assert enqueued == []
+    assert ready_calls == ["called"]
 
 
 @pytest.mark.asyncio
