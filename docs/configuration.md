@@ -399,7 +399,7 @@ path = "/home/user/Documents/notes"
 **Project Detection:**
 - If CWD matches or is a subdirectory of a registered project path, that project is active
 - For nested projects, the deepest match wins
-- Runtime-affecting entrypoints may auto-register an untracked working directory using the canonical root order: nearest local config root, else git root, else CWD
+- Project membership changes only when you edit the configuration or pass an explicit `--project` override
 - Explicit `--project` overrides and inspection commands remain non-mutating
 
 ## Configuration Sections

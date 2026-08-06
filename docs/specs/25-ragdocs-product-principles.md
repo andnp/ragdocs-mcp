@@ -61,15 +61,13 @@ Search operates across the full indexed corpus.
 - active project context may apply a bounded score uplift
 - project context must not silently remove results unless an explicit filter requests it
 
-## 8. Runtime-Affecting Entry Points Define Corpus Membership
+## 8. Project Membership Is Explicit
 
-Starting a runtime-affecting command from an unregistered working directory is treated as intent to include that corpus in the shared runtime.
+Shared corpus membership comes from configured `[[projects]]` entries. Starting a runtime-affecting command never changes shared project configuration.
 
-- canonical root selection is: nearest ancestor with `.mcp-markdown-ragdocs/config.toml`, else nearest git root, else the current working directory
-- auto-registration may update shared project configuration so future daemon-backed work sees the same corpus membership
+- project detection selects among configured project roots
 - explicit `--project` overrides remain non-mutating and affect only the current command or request
 - inspection commands remain non-mutating
-- if auto-registration changes configuration while the daemon is already running, the daemon restarts so the live corpus matches the updated project set
 
 ## 9. Admin Visibility Is Mandatory
 

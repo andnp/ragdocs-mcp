@@ -8,7 +8,6 @@ Multi-project support allows you to:
 - **Keep one global index** while preserving per-result `project_id` metadata
 - **Centralize configuration** in a global config file
 - **Automatically detect** which project you're working in based on current directory
-- **Auto-register** an untracked working directory when a runtime-affecting command starts from it
 - **Optionally uplift or explicitly filter** results by project when you ask for it
 
 ## Quick Start
@@ -60,20 +59,11 @@ mcp-markdown-ragdocs rebuild-index
 
 Project membership is preserved as metadata (`project_id`) inside the shared index, which enables ranking uplift and explicit filtering without silently partitioning storage.
 
-### 4. Understand Auto-Registration
+### 4. Manage Project Membership
 
-When you start a runtime-affecting command from an unregistered working directory, Ragdocs auto-registers one canonical project root in the shared config.
+Project membership is configuration-only. Add or remove `[[projects]]` entries in the global config when you want to change the shared corpus; starting a command never edits that file.
 
-- Root selection order is: nearest ancestor with `.mcp-markdown-ragdocs/config.toml`, else nearest git root, else the current working directory.
-- This keeps the live daemon corpus aligned with the directories you actually run from.
-- If the daemon is already running and auto-registration changes the config, the daemon restarts so the live corpus adopts the new project membership.
-
-Two cases stay non-mutating:
-
-- explicit `--project` overrides only affect that command or request
-- inspection commands such as `check-config`, `daemon status`, `index stats`, and `queue status` do not register projects
-
-If you want to narrow indexing or querying intentionally without changing shared corpus membership, use an explicit `--project` override.
+Explicit `--project` overrides remain transient and affect only the current command or request. Use them to narrow indexing or querying without changing shared corpus membership.
 
 ## Configuration Reference
 
@@ -168,7 +158,7 @@ index_path = "/mnt/fast-ssd/my-project-index"
 If no global config exists yet, Ragdocs still reads local config first.
 
 - Inspection commands remain read-only and will simply report the current state.
-- A runtime-affecting command started from an unregistered working directory may create or extend `~/.config/mcp-markdown-ragdocs/config.toml` by auto-registering the derived canonical root.
+- Runtime commands do not create or modify the global config; add `[[projects]]` entries manually when shared project membership is needed.
 - Explicit `--project` overrides remain transient and do not create new `[[projects]]` entries.
 
 ## Troubleshooting
