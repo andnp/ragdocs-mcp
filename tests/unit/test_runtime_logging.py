@@ -43,3 +43,29 @@ def test_file_logging_retains_configured_backups(tmp_path: Path) -> None:
         for handler in original_handlers:
             root_logger.addHandler(handler)
         root_logger.setLevel(original_level)
+
+
+def test_file_logging_coalesces_repeated_outside_root_warnings(tmp_path: Path) -> None:
+    root_logger = logging.getLogger()
+    original_handlers = root_logger.handlers[:]
+    original_level = root_logger.level
+    log_path = tmp_path / "worker.log"
+
+    try:
+        configure_file_logging(log_path, LoggingConfig())
+        warning_logger = logging.getLogger("searchkernel.search.path_utils")
+        for _ in range(3):
+            warning_logger.warning(
+                "File /tmp/file.md is outside configured document roots [/docs]"
+            )
+        for handler in root_logger.handlers:
+            handler.flush()
+
+        assert log_path.read_text(encoding="utf-8").count("outside configured") == 1
+    finally:
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+            handler.close()
+        for handler in original_handlers:
+            root_logger.addHandler(handler)
+        root_logger.setLevel(original_level)
