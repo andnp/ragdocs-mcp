@@ -12,7 +12,6 @@ from mcp_markdown_ragdocs.indexing.rebuild_service import (
     REBUILD_TERMINAL_STATUSES,
 )
 
-type EnsureRuntimeAutoRegistration = Callable[[str | None], None]
 type EmitMessage = Callable[[str], None]
 type Sleep = Callable[[float], None]
 
@@ -136,13 +135,10 @@ def run_rebuild_command(
     *,
     project: str | None,
     all_projects: bool,
-    ensure_runtime_auto_registration: EnsureRuntimeAutoRegistration,
     emit: EmitMessage,
     sleep: Sleep = time.sleep,
     poll_interval_seconds: float = DEFAULT_REBUILD_POLL_INTERVAL_SECONDS,
 ) -> None:
-    ensure_runtime_auto_registration(project)
-
     effective_project = resolve_rebuild_project_scope(
         project=project,
         all_projects=all_projects,

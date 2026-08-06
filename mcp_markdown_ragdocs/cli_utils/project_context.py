@@ -4,11 +4,7 @@ import logging
 from pathlib import Path
 
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
-from mcp_markdown_ragdocs.config import ensure_runtime_project_registered
 from mcp_markdown_ragdocs.context import ApplicationContext
-from mcp_markdown_ragdocs.daemon.management import inspect_daemon, restart_daemon
-
-logger = logging.getLogger(__name__)
 
 
 def _create_query_context(project: str | None) -> ApplicationContext:
@@ -55,24 +51,3 @@ def _apply_project_detection(config, project_override: str | None = None):
     config.indexing.documents_path = documents_path
     config.detected_project = detected_project
     return config
-
-
-def _ensure_runtime_auto_registration(project_override: str | None) -> None:
-    registration = ensure_runtime_project_registered(
-        cwd=Path.cwd(),
-        project_override=project_override,
-    )
-    if registration.changed:
-        logger.info(
-            "Auto-registered project '%s' at %s",
-            registration.project_name,
-            registration.project_path,
-        )
-
-        inspection = inspect_daemon()
-        if inspection.running:
-            logger.info("Restarting running daemon to load auto-registered corpus")
-            restart_daemon(
-                cwd=Path.cwd(),
-                project_override=project_override,
-            )

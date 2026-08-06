@@ -9,7 +9,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from mcp_markdown_ragdocs.config import ensure_runtime_project_registered
 from mcp_markdown_ragdocs.daemon.health import (
     probe_daemon_socket,
     remove_daemon_socket,
@@ -103,23 +102,7 @@ def start_daemon(
     runtime_paths.ensure_directories()
     deadline = time.monotonic() + timeout_seconds
 
-    registration = ensure_runtime_project_registered(
-        cwd=cwd,
-        project_override=project_override,
-    )
-
     current = inspect_daemon(runtime_paths)
-    if registration.changed and current.running:
-        logger.info(
-            "Restarting running daemon to load auto-registered project '%s' at %s",
-            registration.project_name,
-            registration.project_path,
-        )
-        stop_daemon(
-            timeout_seconds=min(timeout_seconds, 5.0),
-            paths=runtime_paths,
-        )
-        current = inspect_daemon(runtime_paths)
 
     if current.running and current.ready and current.metadata is not None:
         _terminate_extra_runtime_daemon_processes(
