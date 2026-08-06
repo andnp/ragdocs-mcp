@@ -25,5 +25,12 @@ def test_unchanged_record_content_uses_embedding_cache(
     first_call_count = len(calls)
     assert first_call_count > 0
 
+    monkeypatch.setattr(
+        record_manager,
+        "prepare_document",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError("unchanged documents should not be reparsed")
+        ),
+    )
     assert record_manager.index_document(doc_path) is True
     assert len(calls) == first_call_count

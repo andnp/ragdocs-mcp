@@ -44,6 +44,8 @@ from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
 
 logger = logging.getLogger(__name__)
 _GRAPH_IDENTITY_BATCH_SIZE = 100
+_FILE_MTIME_METADATA_KEY = "_file_mtime_ns"
+_FILE_SIZE_METADATA_KEY = "_file_size"
 
 
 class _BidirectionalGraphStore:
@@ -391,12 +393,17 @@ class RecordIndexManager:
         force: bool = False,
         persist: bool = False,
     ) -> None:
-        del force
+        candidate_paths = (
+            list(file_paths)
+            if force
+            else [path for path in file_paths if not self._document_is_current(path)]
+        )
         indexed = False
-        for file_path in file_paths:
+        for file_path in candidate_paths:
             indexed = self.index_document(
                 file_path,
                 update_graph=False,
+                force=force,
             ) or indexed
         if indexed:
             self._rebuild_graph()
@@ -414,6 +421,23 @@ class RecordIndexManager:
         if len(self._documents_roots) == 1:
             return compute_doc_id(path, self._documents_roots[0])
         return compute_doc_id_multi_root(path, self._documents_roots)
+
+    def _document_is_current(self, file_path: str) -> bool:
+        try:
+            file_stat = Path(file_path).resolve().stat()
+        except OSError:
+            return False
+
+        keys = self._source_records.get(self._doc_id_for_path(file_path), [])
+        if not keys:
+            return False
+        record = self.kernel.backend.hydrate_record(keys[0])
+        if record is None:
+            return False
+        return (
+            record.metadata.get(_FILE_MTIME_METADATA_KEY) == file_stat.st_mtime_ns
+            and record.metadata.get(_FILE_SIZE_METADATA_KEY) == file_stat.st_size
+        )
 
     def _load_source_map(self) -> dict[str, list[str]]:
         try:
@@ -501,6 +525,16 @@ class RecordIndexManager:
         document = parser.parse(file_path)
         document.id = self._doc_id_for_path(file_path)
         document.project_id = resolve_project_id_for_path(Path(file_path), self._config)
+        try:
+            file_stat = Path(file_path).resolve().stat()
+        except OSError:
+            file_stat = None
+        if file_stat is not None:
+            document.metadata = {
+                **document.metadata,
+                _FILE_MTIME_METADATA_KEY: file_stat.st_mtime_ns,
+                _FILE_SIZE_METADATA_KEY: file_stat.st_size,
+            }
         records = self._chunk_records(document)
         return PreparedRecordDocument(file_path, document, records)
 
@@ -531,8 +565,10 @@ class RecordIndexManager:
         *,
         update_graph: bool = True,
     ) -> bool:
-        del force
         try:
+            if not force and self._document_is_current(file_path):
+                logger.debug("Skipping unchanged document: %s", file_path)
+                return True
             prepared = self.prepare_document(file_path)
             _run_async(
                 self._index_prepared(
