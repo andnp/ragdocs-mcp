@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import logging
 import time
-from threading import Barrier, Thread
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier, Thread
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from huey import SqliteHuey
+from searchkernel.api import IndexManifest, load_manifest, save_manifest
 from searchkernel.domain import Record
 from searchkernel.indexing.bootstrap_checkpoint import (
     BootstrapCheckpoint,
@@ -46,9 +47,9 @@ from mcp_markdown_ragdocs.indexing.tasks import (
     register_tasks,
     submit_index_batch,
     submit_index_request_batch,
+    submit_rebuild_request,
     submit_record_batch,
     submit_refresh_git_request,
-    submit_rebuild_request,
     submit_remove_request_batch,
 )
 
@@ -618,6 +619,34 @@ class TestTaskRegistration:
 
         assert pending == 2
 
+    def test_submit_index_batch_bounds_worker_task_size(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        file_paths = [f"/some/file-{index}.md" for index in range(65)]
+
+        submission = submit_index_batch(file_paths)
+
+        assert submission.enqueued_count == 65
+        batches = []
+        while (task := huey_instance.dequeue()) is not None:
+            batches.append(task.args[0])
+        assert [len(batch) for batch in batches] == [32, 32, 1]
+
+    def test_submit_remove_batch_bounds_worker_task_size(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        register_tasks(huey_instance, fake_manager)
+        doc_ids = [f"docs/file-{index}" for index in range(65)]
+
+        submission = submit_remove_request_batch(doc_ids)
+
+        assert submission.enqueued_count == 65
+        batches = []
+        while (task := huey_instance.dequeue()) is not None:
+            batches.append(task.args[0])
+        assert [len(batch) for batch in batches] == [32, 32, 1]
+
     def test_submit_index_request_batch_deduplicates_against_pending_single_and_batch_tasks(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
@@ -1088,6 +1117,74 @@ class TestTaskExecution:
         assert checkpoint.complete is True
         assert set(checkpoint.completed) == {"guide.md", "api.md"}
         assert fake_manager.persist_calls == 1
+
+    def test_index_batch_task_persists_manifest_membership(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        docs_root = tmp_path / "docs"
+        docs_root.mkdir()
+        file_path = docs_root / "guide.md"
+        file_path.write_text("# Guide")
+        save_manifest(
+            tmp_path,
+            IndexManifest(
+                spec_version="1.0.0",
+                embedding_model="test-model",
+                chunking_config={},
+                indexed_files={},
+            ),
+        )
+
+        register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=tmp_path,
+            bootstrap_documents_roots=[docs_root],
+        )
+        assert enqueue_index_batch([str(file_path)]) == 1
+        task = huey_instance.dequeue()
+        assert task is not None
+        huey_instance.execute(task)
+
+        manifest = load_manifest(tmp_path)
+        assert manifest is not None
+        assert manifest.indexed_files == {"guide": "guide.md"}
+
+    def test_remove_batch_task_persists_manifest_removal(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        docs_root = tmp_path / "docs"
+        docs_root.mkdir()
+        save_manifest(
+            tmp_path,
+            IndexManifest(
+                spec_version="1.0.0",
+                embedding_model="test-model",
+                chunking_config={},
+                indexed_files={"guide": "guide.md"},
+            ),
+        )
+
+        register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=tmp_path,
+            bootstrap_documents_roots=[docs_root],
+        )
+        assert submit_remove_request_batch(["guide"]).enqueued_count == 1
+        task = huey_instance.dequeue()
+        assert task is not None
+        huey_instance.execute(task)
+
+        manifest = load_manifest(tmp_path)
+        assert manifest is not None
+        assert manifest.indexed_files == {}
 
     def test_remove_task_calls_manager(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager

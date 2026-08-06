@@ -14,14 +14,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from uuid import uuid4
 
-from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
-from mcp_markdown_ragdocs.coordination.work_intents import (
-    CLAIMED,
-    PENDING,
-    RUNNING,
-    WorkIntent,
-    WorkIntentStore,
+from searchkernel.api import (
+    TaskBatchSubmissionResult,
+    TaskSubmissionResult,
+    build_indexed_files_map,
+    has_incomplete_bootstrap_checkpoint,
+    load_manifest,
+    mark_bootstrap_file_completed,
+    mark_bootstrap_files_completed,
+    save_manifest,
 )
+
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.task_submission import (
     coalesce_pending_first_args,
     get_pending_task_first_args,
@@ -32,38 +36,37 @@ from mcp_markdown_ragdocs.coordination.task_submission import (
 from mcp_markdown_ragdocs.coordination.task_submission import (
     get_pending_task_count as get_shared_pending_task_count,
 )
-from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
-from searchkernel.api import (
-    has_incomplete_bootstrap_checkpoint,
-    mark_bootstrap_file_completed,
-    mark_bootstrap_files_completed,
-    TaskSubmissionResult,
-    TaskBatchSubmissionResult,
+from mcp_markdown_ragdocs.coordination.work_intents import (
+    CLAIMED,
+    PENDING,
+    RUNNING,
+    WorkIntent,
+    WorkIntentStore,
 )
+from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
     get_head,
-    save_progress,
     save_cursor,
     save_head,
-)
-from mcp_markdown_ragdocs.indexing.rebuild_service import (
-    run_rebuild,
-    write_rebuild_status,
-)
-from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
-from mcp_markdown_ragdocs.indexing.reindex import (
-    run_reindex_operation,
-    write_reindex_status,
+    save_progress,
 )
 from mcp_markdown_ragdocs.indexing.progressive import (
     ProgressiveIndexManager,
     run_progressive_bootstrap,
 )
+from mcp_markdown_ragdocs.indexing.rebuild_service import (
+    run_rebuild,
+    write_rebuild_status,
+)
+from mcp_markdown_ragdocs.indexing.reindex import (
+    run_reindex_operation,
+    write_reindex_status,
+)
+from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
-
     from searchkernel.api import Record
 
 logger = logging.getLogger(__name__)
@@ -72,6 +75,7 @@ RECORD_BATCH_TASK_PRIORITY = 100
 GIT_REFRESH_TASK_PRIORITY = -10
 REINDEX_TASK_PRIORITY = 200
 GIT_REFRESH_BATCH_SIZE = 25
+DOCUMENT_TASK_BATCH_SIZE = 32
 WRITER_LEASE_TIMEOUT_SECONDS = 30.0
 WRITER_HEARTBEAT_INTERVAL_SECONDS = 5.0
 
@@ -310,6 +314,8 @@ def _failed_file_details(manager: Any, file_path: str) -> list[dict[str, str]]:
     get_failed_files = getattr(manager, "get_failed_files", None)
     if not callable(get_failed_files):
         return []
+
+
     try:
         failed_files = get_failed_files()
         if not isinstance(failed_files, list):
@@ -321,6 +327,33 @@ def _failed_file_details(manager: Any, file_path: str) -> list[dict[str, str]]:
         ][-3:]
     except Exception:  # noqa: BLE001 - diagnostics must not alter task behavior
         return []
+
+
+def _persist_document_manifest(
+    *,
+    indexed_paths: list[str] | None = None,
+    removed_doc_ids: list[str] | None = None,
+) -> None:
+    if _bootstrap_index_path is None or not _bootstrap_documents_roots:
+        return
+
+    manifest = load_manifest(_bootstrap_index_path)
+    if manifest is None:
+        return
+
+    indexed_files = dict(manifest.indexed_files or {})
+    indexed_files.update(
+        build_indexed_files_map(
+            indexed_paths or [],
+            _bootstrap_documents_roots[0],
+            _bootstrap_documents_roots,
+        )
+    )
+    for doc_id in removed_doc_ids or []:
+        indexed_files.pop(doc_id, None)
+
+    manifest.indexed_files = indexed_files
+    save_manifest(_bootstrap_index_path, manifest)
 
 
 def _writer_is_active() -> bool:
@@ -546,6 +579,8 @@ def _index_document(file_path: str, force: bool = False) -> bool:
                 _failed_file_details(manager, file_path) if not manager_result else [],
             )
             manager.persist()
+            if manager_result:
+                _persist_document_manifest(indexed_paths=[file_path])
             if _bootstrap_index_path is not None and _bootstrap_documents_roots:
                 mark_bootstrap_file_completed(
                     _bootstrap_index_path,
@@ -611,6 +646,8 @@ def _index_documents_batch(
                 "Task completed: progressively indexed %d document(s)",
                 receipt.successful,
             )
+            if receipt.failed == 0:
+                _persist_document_manifest(indexed_paths=unique_file_paths)
             records = getattr(getattr(receipt, "ingestion", None), "records", ())
             outcomes = [
                 getattr(record, "status", None) == "committed"
@@ -642,6 +679,7 @@ def _index_documents_batch(
                 persist=True,
             )
             completed_paths = unique_file_paths
+            _persist_document_manifest(indexed_paths=completed_paths)
         except Exception:
             logger.warning(
                 "Batch index task failed; retrying files individually before one final persist",
@@ -668,6 +706,7 @@ def _index_documents_batch(
             if completed_paths:
                 try:
                     manager.persist()
+                    _persist_document_manifest(indexed_paths=completed_paths)
                 except Exception:
                     logger.exception(
                         "Batch fallback persist failed for %d indexed document(s)",
@@ -790,6 +829,7 @@ def _remove_document(doc_id: str) -> bool:
     try:
         _index_manager.remove_document(doc_id)
         _index_manager.persist()
+        _persist_document_manifest(removed_doc_ids=[doc_id])
         logger.info("Task completed: removed %s", doc_id)
         return True
     except Exception:
@@ -812,6 +852,7 @@ def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
     try:
         _index_manager.remove_documents(unique_doc_ids, persist=True)
         removed_doc_ids = unique_doc_ids
+        _persist_document_manifest(removed_doc_ids=removed_doc_ids)
     except Exception:
         logger.warning(
             "Batch remove task failed; retrying documents individually before one final persist",
@@ -831,6 +872,7 @@ def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
         if removed_doc_ids:
             try:
                 _index_manager.persist()
+                _persist_document_manifest(removed_doc_ids=removed_doc_ids)
             except Exception:
                 logger.exception(
                     "Batch fallback persist failed for %d removed document(s)",
@@ -1534,26 +1576,35 @@ def submit_index_batch(
         force_reopen=force,
     )
     already_pending_count += skipped_count
-    claims = [claim for _, claim in keyed_claims]
+    claim_by_key = {key: claim for key, claim in keyed_claims}
+    claims = list(claim_by_key.values())
     claim_paths = [
         file_path
         for file_path in remaining_paths
-        if _canonical_document_identity(file_path)
-        in {canonical_key for canonical_key, _ in keyed_claims}
+        if _canonical_document_identity(file_path) in claim_by_key
     ]
     if claims:
-        kwargs: dict[str, object] = {
-            "force": force,
-            "intent_claims": claims,
-        }
-        if progressive:
-            kwargs["progressive"] = True
+        submitted_claims: list[tuple[str, str]] = []
         try:
-            index_documents_batch_task(claim_paths, **kwargs)
+            for start in range(0, len(claim_paths), DOCUMENT_TASK_BATCH_SIZE):
+                batch_paths = claim_paths[start : start + DOCUMENT_TASK_BATCH_SIZE]
+                batch_claims = [
+                    claim_by_key[_canonical_document_identity(file_path)]
+                    for file_path in batch_paths
+                ]
+                kwargs: dict[str, object] = {
+                    "force": force,
+                    "intent_claims": batch_claims,
+                }
+                if progressive:
+                    kwargs["progressive"] = True
+                index_documents_batch_task(batch_paths, **kwargs)
+                submitted_claims.extend(batch_claims)
         except Exception:
             if _intent_store() is not None:
                 for intent_id, claim_token in claims:
-                    _release_intent(intent_id, claim_token)
+                    if (intent_id, claim_token) not in submitted_claims:
+                        _release_intent(intent_id, claim_token)
             raise
         enqueued_count = len(claims)
 
@@ -1767,12 +1818,22 @@ def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult
             enqueued_count=0,
             already_pending_count=already_pending_count,
         )
+    claim_by_key = {key: claim for key, claim in keyed_claims}
+    submitted_claims: list[tuple[str, str]] = []
     try:
-        remove_documents_batch_task(task_doc_ids, intent_claims=claims)
+        for start in range(0, len(task_doc_ids), DOCUMENT_TASK_BATCH_SIZE):
+            batch_doc_ids = task_doc_ids[start : start + DOCUMENT_TASK_BATCH_SIZE]
+            batch_claims = [
+                claim_by_key[_canonical_document_identity(doc_id)]
+                for doc_id in batch_doc_ids
+            ]
+            remove_documents_batch_task(batch_doc_ids, intent_claims=batch_claims)
+            submitted_claims.extend(batch_claims)
     except Exception:
         if _intent_store() is not None:
             for intent_id, claim_token in claims:
-                _release_intent(intent_id, claim_token)
+                if (intent_id, claim_token) not in submitted_claims:
+                    _release_intent(intent_id, claim_token)
         raise
     return TaskBatchSubmissionResult(
         queue_available=True,
