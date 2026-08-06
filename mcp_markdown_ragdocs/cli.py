@@ -77,7 +77,6 @@ from mcp_markdown_ragdocs.cli_utils.formatters import (
 )
 from mcp_markdown_ragdocs.cli_utils.project_context import (
     _apply_project_detection,
-    _ensure_runtime_auto_registration,
 )
 from mcp_markdown_ragdocs.cli_utils.queue_output import (
     _QUEUE_DETAIL_STATES,
@@ -93,7 +92,7 @@ from mcp_markdown_ragdocs.cli_utils.validators import (
     validate_range,
     validate_timestamp_range,
 )
-from mcp_markdown_ragdocs.config import ensure_runtime_project_registered, load_config
+from mcp_markdown_ragdocs.config import load_config
 from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.coordination.queue import get_huey
 from mcp_markdown_ragdocs.daemon import RuntimePaths
@@ -463,10 +462,6 @@ def queue_group():
 def daemon_run(project: str | None):
     """Run the daemon in the foreground."""
     try:
-        ensure_runtime_project_registered(
-            cwd=Path.cwd(),
-            project_override=project,
-        )
         _ignore_daemon_startup_project_option(project)
         asyncio.run(_run_daemon_forever())
     except KeyboardInterrupt:
@@ -990,7 +985,6 @@ def queue_purge(
 )
 def run(host: str, port: int, project: str | None):
     try:
-        _ensure_runtime_auto_registration(project)
         config = load_config()
         config = _apply_project_detection(config, project)
 
@@ -1021,7 +1015,6 @@ def rebuild_index_cmd(project: str | None, all_projects: bool):
         run_rebuild_command(
             project=project,
             all_projects=all_projects,
-            ensure_runtime_auto_registration=_ensure_runtime_auto_registration,
             emit=click.echo,
         )
 

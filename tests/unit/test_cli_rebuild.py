@@ -21,7 +21,6 @@ def test_rebuild_index_cmd_delegates_to_shared_runner(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     assert captured["project"] == "project-a"
     assert captured["all_projects"] is True
-    assert captured["ensure_runtime_auto_registration"] is cli_module._ensure_runtime_auto_registration
     assert captured["emit"] is cli_module.click.echo
 
 

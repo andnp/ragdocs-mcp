@@ -148,54 +148,7 @@ keyword_weight = 0.5
     assert "projects" not in data
 
 
-def test_e2e_rebuild_index_cwd_auto_registers_global_project(temp_home):
-    """
-    Integration test: rebuild-index auto-registers an unmatched working directory.
-    """
-    config_dir = temp_home / ".config" / "mcp-markdown-ragdocs"
-    config_dir.mkdir(parents=True)
-    config_path = config_dir / "config.toml"
-
-    project_dir = temp_home / "auto-registered-project"
-    project_dir.mkdir()
-
-    docs_dir = project_dir / "docs"
-    docs_dir.mkdir()
-    (docs_dir / "test.md").write_text("# Test Document\n\nTest content.")
-
-    config_file = project_dir / ".mcp-markdown-ragdocs" / "config.toml"
-    config_file.parent.mkdir()
-    config_file.write_text(
-        f"""
-[indexing]
-documents_path = "{docs_dir}"
-"""
-    )
-
-    original_cwd = os.getcwd()
-    try:
-        os.chdir(project_dir)
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["rebuild-index"])
-
-        assert result.exit_code == 0
-        assert "Successfully rebuilt index" in result.output
-        with open(config_path, "rb") as f:
-            data = tomllib.load(f)
-
-        assert data["projects"] == [
-            {
-                "name": "auto-registered-project",
-                "path": str(project_dir.resolve()),
-            }
-        ]
-
-    finally:
-        os.chdir(original_cwd)
-
-
-def test_e2e_mcp_cwd_does_not_auto_register(temp_home):
+def test_e2e_mcp_cwd_unmatched_project_is_not_registered(temp_home):
     """
     Integration test: unmatched CWD detection remains transient for MCP flows too.
     """

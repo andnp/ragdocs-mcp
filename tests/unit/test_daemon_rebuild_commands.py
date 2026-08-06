@@ -79,7 +79,6 @@ def test_run_rebuild_command_polls_until_success(monkeypatch: pytest.MonkeyPatch
     rebuild_module.run_rebuild_command(
         project="project-a",
         all_projects=False,
-        ensure_runtime_auto_registration=lambda project: emitted.append(f"register:{project}"),
         emit=emitted.append,
         sleep=sleeps.append,
         poll_interval_seconds=0.25,
@@ -89,7 +88,6 @@ def test_run_rebuild_command_polls_until_success(monkeypatch: pytest.MonkeyPatch
     assert status_projects == ["project-a", "project-a"]
     assert sleeps == [0.25]
     assert emitted == [
-        "register:project-a",
         "ℹ️  Rebuild already in progress; attaching to daemon-owned status",
         "queued",
         "working",
@@ -129,7 +127,6 @@ def test_run_rebuild_command_retries_transient_submission(
     rebuild_module.run_rebuild_command(
         project=None,
         all_projects=False,
-        ensure_runtime_auto_registration=lambda project: None,
         emit=emitted.append,
         sleep=sleeps.append,
         poll_interval_seconds=0.25,
@@ -155,6 +152,5 @@ def test_run_rebuild_command_raises_failed_terminal_status(monkeypatch: pytest.M
         rebuild_module.run_rebuild_command(
             project=None,
             all_projects=False,
-            ensure_runtime_auto_registration=lambda project: None,
             emit=lambda message: None,
         )

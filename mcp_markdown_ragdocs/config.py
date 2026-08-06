@@ -3,13 +3,10 @@ import importlib.util
 import math
 import os
 import re
-import tempfile
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, cast
-
-import tomlkit
 
 from searchkernel.api import (
     TEST_FAKE_EMBEDDING_MODEL_NAME,
@@ -269,14 +266,6 @@ class Config:
     projects: list[ProjectConfig] = field(default_factory=list)
     detected_project: str | None = None
     config_warnings: list[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class AutoRegistrationResult:
-    changed: bool
-    project_name: str | None = None
-    project_path: str | None = None
-    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -547,29 +536,6 @@ def _load_global_projects() -> list[ProjectConfig]:
     return _load_projects_from_data(projects_data)
 
 
-def _path_is_relative_to(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-    except ValueError:
-        return False
-    return True
-
-
-def _find_nearest_project_config_root(cwd: Path) -> Path | None:
-    current = cwd.resolve()
-
-    while True:
-        config_path = current / ".mcp-markdown-ragdocs" / "config.toml"
-        if config_path.exists():
-            return current
-
-        parent = current.parent
-        if parent == current:
-            return None
-
-        current = parent
-
-
 def _find_nearest_git_root_candidate(cwd: Path) -> Path | None:
     current = cwd.resolve()
 
@@ -583,18 +549,6 @@ def _find_nearest_git_root_candidate(cwd: Path) -> Path | None:
             return None
 
         current = parent
-
-
-def _find_nearest_git_root(cwd: Path) -> Path | None:
-    repo_root = _find_nearest_git_root_candidate(cwd)
-    if repo_root is None:
-        return None
-
-    canonical_root = _select_canonical_worktree(repo_root)
-    if canonical_root is not None:
-        return canonical_root
-
-    return repo_root
 
 
 def _detect_project_from_related_git_repo(
@@ -633,118 +587,6 @@ def _detect_project_from_related_git_repo(
         fallback_project.name,
     )
     return fallback_project.name
-
-
-def derive_auto_registration_root(cwd: Path | None = None) -> Path:
-    resolved_cwd = (cwd or Path.cwd()).expanduser().resolve()
-
-    config_root = _find_nearest_project_config_root(resolved_cwd)
-    if config_root is not None:
-        return config_root
-
-    git_root = _find_nearest_git_root(resolved_cwd)
-    if git_root is not None:
-        return git_root
-
-    return resolved_cwd
-
-
-def _is_unsafe_auto_registration_root(root: Path) -> bool:
-    resolved_root = root.resolve()
-    home_path = Path.home().resolve()
-
-    forbidden_roots = {
-        Path("/").resolve(),
-        home_path,
-        Path(tempfile.gettempdir()).resolve(),
-        Path("/etc").resolve(),
-        Path("/run").resolve(),
-        Path("/var/run").resolve(),
-        Path("/var/tmp").resolve(),
-        Path(os.environ.get("XDG_CONFIG_HOME", home_path / ".config")).resolve(),
-        Path(
-            os.environ.get("XDG_STATE_HOME", home_path / ".local" / "state")
-        ).resolve(),
-        _global_config_path().parent.resolve(),
-    }
-
-    xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg_runtime_dir:
-        forbidden_roots.add(Path(xdg_runtime_dir).resolve())
-
-    return resolved_root in forbidden_roots
-
-
-def ensure_runtime_project_registered(
-    cwd: Path | None = None,
-    project_override: str | None = None,
-) -> AutoRegistrationResult:
-    if project_override:
-        return AutoRegistrationResult(
-            changed=False,
-            reason="explicit_project_override",
-        )
-
-    resolved_cwd = (cwd or Path.cwd()).expanduser().resolve()
-    registered_projects = _load_global_projects()
-
-    detected_registered_project = detect_project(
-        cwd=resolved_cwd,
-        projects=registered_projects,
-    )
-    if detected_registered_project is not None:
-        return AutoRegistrationResult(
-            changed=False,
-            project_name=detected_registered_project,
-            reason="already_registered",
-        )
-
-    candidate_root = derive_auto_registration_root(resolved_cwd).resolve()
-    if _is_unsafe_auto_registration_root(candidate_root):
-        return AutoRegistrationResult(
-            changed=False,
-            project_path=str(candidate_root),
-            reason="unsafe_root",
-        )
-
-    for project in registered_projects:
-        project_path = Path(project.path).resolve()
-        if project_path == candidate_root:
-            return AutoRegistrationResult(
-                changed=False,
-                project_name=project.name,
-                project_path=str(candidate_root),
-                reason="already_registered",
-            )
-
-        if _path_is_relative_to(candidate_root, project_path):
-            return AutoRegistrationResult(
-                changed=False,
-                project_name=project.name,
-                project_path=str(project_path),
-                reason="inside_registered_project",
-            )
-
-        if project_path != candidate_root and _path_is_relative_to(
-            project_path, candidate_root
-        ):
-            return AutoRegistrationResult(
-                changed=False,
-                project_path=str(candidate_root),
-                reason="contains_registered_project",
-            )
-
-    project_name = _generate_unique_project_name(
-        candidate_root.name,
-        [project.name for project in registered_projects],
-    )
-    persist_project_to_config(project_name, str(candidate_root))
-    return AutoRegistrationResult(
-        changed=True,
-        project_name=project_name,
-        project_path=str(candidate_root),
-        reason="registered",
-    )
 
 
 def load_config():
@@ -918,55 +760,6 @@ def _generate_unique_project_name(base_name: str, existing_names: list[str]):
         counter += 1
 
     return f"{name}-{counter}"
-
-
-def persist_project_to_config(project_name: str, project_path: str):
-    global_config_path = _global_config_path()
-
-    global_config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    doc: Any
-    if global_config_path.exists():
-        with open(global_config_path, "r") as f:
-            doc = tomlkit.load(f)
-    else:
-        doc = tomlkit.document()
-
-    if "projects" not in doc:
-        doc["projects"] = tomlkit.aot()
-
-    projects_array: Any = doc["projects"]
-    if not isinstance(projects_array, list):
-        from tomlkit.items import AoT
-
-        projects_array = AoT([])
-        doc["projects"] = projects_array
-
-    # Cast to avoid type checker issues with tomlkit types
-    projects_list = cast(list[Any], projects_array)
-
-    for proj_item in projects_list:
-        proj = cast(dict[str, Any], proj_item)
-        if proj.get("name") == project_name:
-            logger.debug(f"Project '{project_name}' already exists in config")
-            return
-        if proj.get("path") == project_path:
-            logger.debug(f"Project path '{project_path}' already registered")
-            return
-
-    new_project: Any = tomlkit.table()
-    new_project["name"] = project_name
-    new_project["path"] = project_path
-    projects_list.append(new_project)
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", dir=global_config_path.parent, delete=False, suffix=".tmp"
-    ) as tmp_file:
-        tmp_path = Path(tmp_file.name)
-        tomlkit.dump(doc, tmp_file)
-
-    tmp_path.replace(global_config_path)
-    logger.info(f"Persisted project '{project_name}' to config: {project_path}")
 
 
 def detect_project(
