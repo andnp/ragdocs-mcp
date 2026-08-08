@@ -191,7 +191,11 @@ _DEFAULT_STRONG_KEYWORD_SIGNAL = 0.5
 _DEFAULT_HYBRID_MAX_KEYWORD_RANK = 5
 _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP = 2
 _QUERY_STOP_WORDS = frozenset(
-    {"a", "an", "and", "are", "be", "for", "how", "in", "is", "must", "of", "the", "to"}
+    {
+        "a", "an", "and", "are", "be", "do", "does", "for", "how", "in", "is",
+        "link", "links", "must", "neighbor", "neighbors", "notes", "of", "pages",
+        "the", "to", "what", "which", "depend", "depends", "documents",
+    }
 )
 _GRAPH_TARGET_PREFIXES = (
     re.compile(
@@ -438,6 +442,19 @@ def _default_match_for_query(query: str, result: Any) -> bool:
     return len(overlap) >= _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP
 
 
+def _is_relationship_query(query: str) -> bool:
+    if parse_relationship_intent is not None:
+        return parse_relationship_intent(query) is not None
+    return bool(
+        re.search(
+            r"\b(?:link|links|linked|depend|depends|dependency|neighbor|"
+            r"neighbors|embed|embeds|transclude|transcludes|inbound|outbound)\b",
+            query,
+            re.IGNORECASE,
+        )
+    )
+
+
 
 def _default_result_is_credible(query: str, result: Any) -> bool:
     if _artifact_query_matches_git_record(query, result.record):
@@ -446,7 +463,7 @@ def _default_result_is_credible(query: str, result: Any) -> bool:
         return True
     provenance = result.provenance
     strategies = set(getattr(provenance, "strategies", ()) if provenance else ())
-    if "graph" in strategies:
+    if "graph" in strategies and _is_relationship_query(query):
         return True
     if {"keyword", "vector"} <= strategies:
         details = getattr(provenance, "strategy_details", {})

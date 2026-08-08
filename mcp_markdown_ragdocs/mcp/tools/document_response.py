@@ -110,6 +110,7 @@ def build_query_documents_status_envelope(
 
 _MAX_DIAGNOSTIC_FAILURES = 8
 _MAX_DIAGNOSTIC_VALUE_LENGTH = 256
+_MAX_DIAGNOSTIC_LIST_ITEMS = 32
 
 
 def _bounded_value(value: Any, *, depth: int = 0) -> object:
@@ -127,7 +128,7 @@ def _bounded_value(value: Any, *, depth: int = 0) -> object:
     if isinstance(value, (list, tuple)):
         return [
             _bounded_value(item, depth=depth + 1)
-            for item in list(value)[:_MAX_DIAGNOSTIC_FAILURES]
+            for item in list(value)[:_MAX_DIAGNOSTIC_LIST_ITEMS]
         ]
     return str(value)[:_MAX_DIAGNOSTIC_VALUE_LENGTH]
 
@@ -160,7 +161,9 @@ def build_query_documents_diagnostics(
     failures = execution.get("failures", payload.get("failures", []))
     if not failures and payload.get("status") == "error":
         failures = [payload.get("details") or payload.get("error") or "search failed"]
-    if not isinstance(failures, list):
+    if isinstance(failures, (tuple, set)):
+        failures = list(failures)
+    elif not isinstance(failures, list):
         failures = [str(failures)] if failures else []
     failures = [
         str(item)[:_MAX_DIAGNOSTIC_VALUE_LENGTH]

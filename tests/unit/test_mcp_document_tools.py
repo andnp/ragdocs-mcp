@@ -203,7 +203,7 @@ async def test_query_documents_includes_bounded_diagnostics_on_request() -> None
                 strategy_stats=SearchStrategyStats(4, 3, 2, 1),
                 query_execution_stats={
                     "degraded": True,
-                    "failures": ["keyword unavailable", "x" * 500],
+                    "failures": ("keyword unavailable", "x" * 500),
                     "stage_timings_ms": {"fusion": 2.5},
                 },
             )

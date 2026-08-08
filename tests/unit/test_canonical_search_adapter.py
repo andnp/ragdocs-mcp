@@ -1463,3 +1463,39 @@ async def test_default_abstention_keeps_valid_low_score_relationship_result(adap
     assert [result.doc_id for result in execution.results] == [
         "relationship-low-score"
     ]
+
+
+@pytest.mark.asyncio
+async def test_default_abstention_rejects_low_score_graph_result_for_ordinary_query(
+    adapter,
+):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="ordinary-low-score",
+        title="Unrelated title",
+        body="Unrelated body",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "ordinary-low-score", "file_path": "link.md"},
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.001,
+                    provenance=SimpleNamespace(strategies=("graph",)),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="authentication", top_n=1),
+        search=fake_search,
+    )
+
+    assert execution.results == []
