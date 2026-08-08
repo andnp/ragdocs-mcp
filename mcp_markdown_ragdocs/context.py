@@ -201,6 +201,7 @@ class ApplicationContext:
             lambda incoming: kernel_holder["kernel"].pipeline._graph_store.set_direction(
                 incoming
             ),
+            project_uplift_multiplier=config.search.project_uplift_multiplier,
         )
         local_kernel = build_local_record_kernel(
             index_path / "index.db",

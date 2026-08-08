@@ -20,6 +20,10 @@ from searchkernel.api import (
     SearchResultProvenance,
     SearchStrategyStats,
 )
+try:
+    from searchkernel.api import parse_relationship_intent
+except ImportError:
+    parse_relationship_intent = None
 
 from mcp_markdown_ragdocs.config import SearchConfig
 from mcp_markdown_ragdocs.git.results import aggregate_commit_results
@@ -77,13 +81,19 @@ class PipelineSearchBoundary:
 
 
 def _normalize_graph_query(query: str) -> str:
-    return re.sub(
+    query = re.sub(
         r"^what\s+links to\s+",
         "Which pages link to ",
         query,
         count=1,
         flags=re.IGNORECASE,
     )
+    return re.sub(r"\b([a-zA-Z0-9]+)-([a-zA-Z0-9]+)\b", r"\1-\2 \1\2", query)
+
+
+
+
+
 
 
 def to_record_search_config(config: SearchConfig) -> RecordSearchConfig:
@@ -149,6 +159,31 @@ class SearchExecution:
     query_execution_stats: dict[str, object] = field(default_factory=dict)
 
 
+def _record_outcome_diagnostics(outcome: RecordSearchOutcome) -> dict[str, object]:
+    failures = getattr(outcome, "failures", ())
+    failure_messages = [
+        getattr(failure, "message", str(failure)) for failure in failures
+    ]
+    diagnostics: dict[str, object] = {
+        "degraded": bool(
+            getattr(outcome, "degraded", False)
+            or failure_messages
+            or getattr(outcome, "missing_record_ids", ())
+        ),
+        "failures": failure_messages,
+        "missing_record_ids": list(getattr(outcome, "missing_record_ids", ())),
+        "diagnostics": list(getattr(outcome, "diagnostics", ())),
+        "cache_diagnostics": list(getattr(outcome, "cache_diagnostics", ())),
+        "candidate_count": int(getattr(outcome, "candidate_count", 0)),
+        "candidate_counts": dict(getattr(outcome, "candidate_counts", {})),
+        "stage_timings_ms": dict(getattr(outcome, "stage_timings_ms", {})),
+    }
+    trace = getattr(outcome, "trace", None)
+    if trace is not None and callable(getattr(trace, "to_dict", None)):
+        diagnostics["trace"] = trace.to_dict()
+    return diagnostics
+
+
 _DEFAULT_ABSTENTION_SCORE = 0.01
 _DEFAULT_VECTOR_ABSTENTION_SCORE = 0.03
 _DEFAULT_HYBRID_KEYWORD_SIGNAL = 0.01
@@ -199,6 +234,10 @@ _GRAPH_NEIGHBOR_PREFIX = re.compile(
 
 def _graph_target_query(query: str) -> str:
     normalized = " ".join(query.strip().split()).strip(" .?!")
+    if parse_relationship_intent is not None:
+        intent = parse_relationship_intent(normalized)
+        if intent is not None:
+            return intent.target
     normalized = re.sub(
         r"\s+and\s+what\s+do\s+their\s+neighbors?\s+explain$",
         "",
@@ -224,6 +263,10 @@ def _graph_query_is_inbound(query: str) -> bool:
 
 def _graph_query_direction(query: str) -> str:
     normalized = " ".join(query.strip().split()).strip(" .?!")
+    if parse_relationship_intent is not None:
+        intent = parse_relationship_intent(normalized)
+        if intent is not None:
+            return intent.direction
     if _graph_query_is_inbound(normalized):
         return "incoming"
     if _GRAPH_NEIGHBOR_PREFIX.match(normalized) is not None:
@@ -235,9 +278,11 @@ def build_record_search_policy(
     keyword_store: Any,
     record_hydrator: Any = None,
     graph_direction_setter: Any = None,
+    project_uplift_multiplier: float = 1.2,
 ) -> RecordSearchPolicy | None:
-    """Wire target resolution when the installed kernel exposes the policy hook."""
-    if not any(field.name == "graph_target_resolver" for field in fields(RecordSearchPolicy)):
+    """Wire application-owned query policy into the canonical pipeline."""
+    policy_fields = {field.name for field in fields(RecordSearchPolicy)}
+    if not {"graph_target_resolver", "query_score_adjuster"} & policy_fields:
         return None
 
     async def resolve_graph_target(query: str, context: Any):
@@ -278,9 +323,27 @@ def build_record_search_policy(
             )
         return normalized_hits
 
-    return cast(Any, RecordSearchPolicy)(
-        graph_target_resolver=resolve_graph_target
-    )
+    def adjust_project_score(candidate: Any, context: Any) -> float:
+        preferred_project = getattr(context, "filters", {}).get(
+            "ranking_workspace_id"
+        )
+        if not isinstance(preferred_project, str) or (
+            candidate.workspace_id != preferred_project
+        ):
+            return candidate.score
+        multiplier = getattr(context, "filters", {}).get(
+            "project_uplift_multiplier", project_uplift_multiplier
+        )
+        if not isinstance(multiplier, (int, float)):
+            multiplier = project_uplift_multiplier
+        return min(candidate.score * max(1.0, float(multiplier)), 1.0)
+
+    policy_kwargs: dict[str, Any] = {}
+    if "graph_target_resolver" in policy_fields:
+        policy_kwargs["graph_target_resolver"] = resolve_graph_target
+    if "query_score_adjuster" in policy_fields:
+        policy_kwargs["query_score_adjuster"] = adjust_project_score
+    return cast(Any, RecordSearchPolicy)(**policy_kwargs)
 
 
 def _record_project_id(record: Record) -> str | None:
@@ -358,10 +421,20 @@ def _default_match_for_query(query: str, result: Any) -> bool:
     body_tokens = set(re.findall(r"[a-z0-9_./-]+", record.body.lower()))
     overlap = meaningful_tokens & body_tokens
     if "keyword" not in strategies:
-        return False
+        def _fuzzy_token_match(q_token: str, target_tokens: set[str]) -> bool:
+            if len(q_token) < 4:
+                return False
+            prefix = q_token[:4]
+            return any(t.startswith(prefix) for t in target_tokens if len(t) >= 4)
+
+        fuzzy_matches = {
+            q for q in meaningful_tokens if _fuzzy_token_match(q, body_tokens)
+        }
+        return len(overlap | fuzzy_matches) >= _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP
     if set(strategies) == {"keyword"}:
         return bool(overlap)
     return len(overlap) >= _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP
+
 
 
 def _default_result_is_credible(query: str, result: Any) -> bool:
@@ -372,7 +445,7 @@ def _default_result_is_credible(query: str, result: Any) -> bool:
     provenance = result.provenance
     strategies = set(getattr(provenance, "strategies", ()) if provenance else ())
     if "graph" in strategies:
-        return result.score >= _DEFAULT_ABSTENTION_SCORE
+        return True
     if {"keyword", "vector"} <= strategies:
         details = getattr(provenance, "strategy_details", {})
         keyword = details.get("keyword") if hasattr(details, "get") else None
@@ -428,11 +501,13 @@ class ApplicationSearchUseCase:
         *,
         documents_roots: Sequence[Path],
         default_min_score: float | None = None,
+        project_uplift_multiplier: float = 1.2,
     ) -> None:
         self._search_kernel = search_kernel
         self._pipeline = search_kernel
         self._documents_roots = tuple(documents_roots)
         self._default_min_score = default_min_score
+        self._project_uplift_multiplier = project_uplift_multiplier
 
     async def execute(
         self,
@@ -460,6 +535,9 @@ class ApplicationSearchUseCase:
         if request.similarity_threshold is not None:
             filters["similarity_threshold"] = request.similarity_threshold
         filters["max_chunks_per_doc"] = request.max_chunks_per_doc
+        if request.project_context is not None:
+            filters["ranking_workspace_id"] = request.project_context
+            filters["project_uplift_multiplier"] = self._project_uplift_multiplier
         if request.retrieval_mode is not None:
             filters["retrieval_mode"] = request.retrieval_mode
 
@@ -527,10 +605,35 @@ class ApplicationSearchUseCase:
                 limited_results.append(result)
             filtered_results = limited_results
 
+        if request.source_filter != ("git_commit",):
+            header_counts: dict[str, int] = {}
+            diverse_results = []
+            for result in filtered_results:
+                meta = dict(result.record.metadata)
+                hpath = str(meta.get("header_path") or result.record.title or "")
+                count = header_counts.get(hpath, 0)
+                header_counts[hpath] = count + 1
+                decay = 0.1 ** count
+                adjusted_rank_score = result.score * decay
+                diverse_results.append((adjusted_rank_score, result))
+            diverse_results.sort(
+                key=lambda item: (
+                    item[0],
+                    _document_source_rank(request, item[1]),
+                    _metadata_query_rank(request.query, item[1]),
+                ),
+                reverse=True,
+            )
+            filtered_results = [item[1] for item in diverse_results]
+
+
+
         results = [
             self._to_chunk_result(result.record, result.score, result.provenance)
             for result in filtered_results
         ]
+
+
         if request.source_filter == ("git_commit",):
             results = aggregate_commit_results(results)
         results = results[: request.top_n]
@@ -561,8 +664,7 @@ class ApplicationSearchUseCase:
                 tag_expansion_count=strategy_counts["tag_expansion"],
             ),
             query_execution_stats={
-                "degraded": outcome.degraded,
-                "failures": [failure.message for failure in outcome.failures],
+                **_record_outcome_diagnostics(outcome),
             },
         )
 

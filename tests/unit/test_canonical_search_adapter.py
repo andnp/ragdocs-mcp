@@ -2,9 +2,10 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
-from searchkernel.domain import Record
+from searchkernel.api import SearchResultProvenance
+from searchkernel.domain import Record, RecordIdentity
 
-from mcp_markdown_ragdocs.app.search import SearchQuery
+from mcp_markdown_ragdocs.app.search import SearchQuery, build_record_search_policy
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 
@@ -24,6 +25,39 @@ async def test_search_expands_hyphenated_terms_in_query(adapter, monkeypatch):
     )
 
     assert captured["query"] == "multi-process multiprocess architecture"
+
+
+@pytest.mark.asyncio
+async def test_search_preserves_canonical_outcome_diagnostics(adapter, monkeypatch):
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=(),
+            failures=(),
+            degraded=False,
+            missing_record_ids=("missing-record",),
+            cache_diagnostics=("cache miss",),
+            diagnostics=("graph skipped",),
+            candidate_count=4,
+            candidate_counts={"keyword": 3, "vector": 2},
+            stage_timings_ms={"fusion": 1.5},
+            trace=None,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="diagnostics", top_n=2),
+        search=fake_search,
+    )
+
+    assert execution.query_execution_stats == {
+        "degraded": True,
+        "failures": [],
+        "missing_record_ids": ["missing-record"],
+        "diagnostics": ["graph skipped"],
+        "cache_diagnostics": ["cache miss"],
+        "candidate_count": 4,
+        "candidate_counts": {"keyword": 3, "vector": 2},
+        "stage_timings_ms": {"fusion": 1.5},
+    }
 
 
 @pytest.mark.asyncio
@@ -240,6 +274,27 @@ async def test_query_forwards_multiple_project_scopes(adapter, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_query_forwards_project_context_as_ranking_scope(adapter, monkeypatch):
+    captured = {}
+
+    async def fake_search(query, *, limit, filters):
+        captured.update(query=query, limit=limit, filters=filters)
+        return SimpleNamespace(results=(), failures=(), degraded=False)
+
+    monkeypatch.setattr(adapter, "search", fake_search)
+
+    await adapter.query(
+        "authentication",
+        top_k=3,
+        top_n=2,
+        project_context="project-b",
+    )
+
+    assert captured["filters"]["ranking_workspace_id"] == "project-b"
+    assert captured["filters"]["project_uplift_multiplier"] == pytest.approx(1.2)
+
+
+@pytest.mark.asyncio
 async def test_application_use_case_overfetches_without_explicit_top_k(
     adapter,
     monkeypatch,
@@ -403,6 +458,49 @@ async def test_query_applies_project_filter_without_legacy_orchestrator(adapter)
     )
 
     assert [result.chunk_id for result in results] == ["chunk-b"]
+
+
+def test_project_policy_uplifts_only_matching_workspace():
+    from searchkernel.search.record_pipeline import (
+        RecordSearchCandidate,
+        RecordSearchQueryContext,
+    )
+
+    policy = build_record_search_policy(object(), project_uplift_multiplier=1.5)
+    assert policy is not None
+    adjust = policy.query_score_adjuster
+    assert adjust is not None
+    context = RecordSearchQueryContext(
+        "authentication",
+        {"ranking_workspace_id": "project-b"},
+        20,
+    )
+    matching = RecordSearchCandidate(
+        RecordIdentity("project-b", "note", "doc-b"),
+        0.8,
+        SearchResultProvenance(),
+    )
+    unrelated = RecordSearchCandidate(
+        RecordIdentity("project-a", "note", "doc-a"),
+        0.8,
+        SearchResultProvenance(),
+    )
+
+    assert adjust(matching, context) == 1.0
+    assert adjust(unrelated, context) == 0.8
+
+
+@pytest.mark.asyncio
+async def test_preferred_project_does_not_filter_other_workspaces(adapter):
+    results, _, _ = await adapter.query(
+        "authentication",
+        top_k=10,
+        top_n=3,
+        project_context="project-b",
+        max_chunks_per_doc=0,
+    )
+
+    assert {result.project_id for result in results} >= {"project-a", "project-b"}
 
 
 @pytest.mark.asyncio
@@ -1329,3 +1427,39 @@ async def test_graph_provenance_survives_result_mapping(adapter):
 
     assert execution.results[0].provenance is provenance
     assert execution.strategy_stats.graph_count == 1
+
+
+@pytest.mark.asyncio
+async def test_default_abstention_keeps_valid_low_score_relationship_result(adapter):
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    record = Record(
+        source_kind="note",
+        source_id="relationship-low-score",
+        title="Unrelated title",
+        body="Unrelated body",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={"doc_id": "relationship-low-score", "file_path": "link.md"},
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    record=record,
+                    score=0.001,
+                    provenance=SimpleNamespace(strategies=("graph",)),
+                )
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="which pages link to target", top_n=1),
+        search=fake_search,
+    )
+
+    assert [result.doc_id for result in execution.results] == [
+        "relationship-low-score"
+    ]

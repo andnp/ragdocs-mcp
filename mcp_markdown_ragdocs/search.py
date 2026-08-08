@@ -59,6 +59,11 @@ class CanonicalSearchAdapter:
                 "abstention_threshold",
                 None,
             ),
+            project_uplift_multiplier=getattr(
+                search_config,
+                "project_uplift_multiplier",
+                1.2,
+            ),
         )
         self.last_query_execution_stats: dict[str, object] = {}
 
