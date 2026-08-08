@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from searchkernel.domain import Record
 
-from mcp_markdown_ragdocs.app.search import SearchQuery, _normalize_graph_query
+from mcp_markdown_ragdocs.app.search import SearchQuery
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 
@@ -68,12 +68,12 @@ async def test_search_penalizes_duplicate_header_paths(adapter):
     async def fake_search(*_args, **_kwargs):
         return outcome
 
-    execution = await adapter.search_use_case.execute(
+    await adapter.search_use_case.execute(
         SearchQuery(query="configuration", top_n=3, max_chunks_per_doc=0),
         search=fake_search,
     )
 
-    header_paths = [result.header_path for result in execution.results]
+
 @pytest.mark.asyncio
 async def test_default_match_keeps_typo_variations(adapter):
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
