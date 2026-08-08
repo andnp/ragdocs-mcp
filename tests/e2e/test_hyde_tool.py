@@ -32,6 +32,7 @@ from mcp_markdown_ragdocs.indexing.record_manager import (
 )
 from mcp_markdown_ragdocs.mcp import MCPServer
 from mcp_markdown_ragdocs.mcp.handlers import HandlerContext, get_handler
+from mcp_markdown_ragdocs.mcp.tools.document_tools import handle_search_with_hypothesis
 
 # ============================================================================
 # Test Fixtures
@@ -185,7 +186,7 @@ class TestHyDEToolHandler:
         """
         handler = get_handler("search_with_hypothesis")
         assert handler is not None
-        assert callable(handler)
+        assert handler is handle_search_with_hypothesis
 
     @pytest.mark.asyncio
     async def test_handler_returns_text_content(self, tmp_path, test_docs_dir):
@@ -472,4 +473,6 @@ class TestHyDEIntegrationWithSearchInfrastructure:
         )
 
         text = result[0].text
-        assert "(" in text and ")" in text
+        payload = json.loads(text)
+        assert payload["status"] == "ok"
+        assert all("score" in item for item in payload["results"])
