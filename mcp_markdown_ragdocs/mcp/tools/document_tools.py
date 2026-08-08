@@ -33,6 +33,7 @@ from mcp_markdown_ragdocs.mcp.validation import (
     validate_optional_string,
     validate_query,
     validate_string_list,
+    validate_timestamp,
 )
 from mcp_markdown_ragdocs.models import ChunkResult
 from searchkernel.api import normalize_path
@@ -397,8 +398,16 @@ async def handle_search_git_history(
             arguments, "top_n", default=5, min_val=MIN_TOP_N, max_val=MAX_TOP_N
         )
         files_glob = validate_optional_string(arguments, "files_glob")
-        after_timestamp = arguments.get("after_timestamp")
-        before_timestamp = arguments.get("before_timestamp")
+        after_timestamp = validate_timestamp(arguments, "after_timestamp")
+        before_timestamp = validate_timestamp(arguments, "before_timestamp")
+        if (
+            after_timestamp is not None
+            and before_timestamp is not None
+            and after_timestamp >= before_timestamp
+        ):
+            raise ValidationError(
+                "after_timestamp must be less than before_timestamp"
+            )
         project_filter = validate_string_list(arguments, "project_filter", default=[])
         project_context = validate_optional_string(arguments, "project_context")
         include_diff = validate_boolean(arguments, "include_diff", default=False)

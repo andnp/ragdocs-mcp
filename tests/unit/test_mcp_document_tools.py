@@ -508,6 +508,36 @@ async def test_search_git_history_returns_initializing_text_on_true_cold_start()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (
+            {"after_timestamp": "not-an-integer"},
+            "after_timestamp must be an integer, got str",
+        ),
+        (
+            {"after_timestamp": 100, "before_timestamp": 100},
+            "after_timestamp must be less than before_timestamp",
+        ),
+    ],
+)
+async def test_search_git_history_validates_timestamp_filters(arguments, message) -> None:
+    hctx = HandlerContext(
+        lambda: _ColdStartContext(IndexState(status="indexing")),
+        _FakeCoordinator(),
+    )
+
+    contents = await handle_search_git_history(
+        hctx,
+        {"query": "daemon", **arguments},
+    )
+
+    payload = json.loads(contents[0].text)
+    assert payload["status"] == "error"
+    assert payload["message"] == message
+
+
+@pytest.mark.asyncio
 async def test_search_git_history_compacts_results_and_opts_into_diff() -> None:
     class _FakeOrchestrator:
         async def query(self, *args, **kwargs):
