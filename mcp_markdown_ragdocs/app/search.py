@@ -196,7 +196,7 @@ _QUERY_STOP_WORDS = frozenset(
 _GRAPH_TARGET_PREFIXES = (
     re.compile(
         r"^(?:which|what)\s+(?:pages|documents|notes)\s+"
-        r"(?:link to|are neighbors of)\s+",
+        r"(?:link to(?: or depend on)?|depend on|are neighbors of)\s+",
         re.IGNORECASE,
     ),
     re.compile(
@@ -211,7 +211,8 @@ _GRAPH_TARGET_PREFIXES = (
 )
 _GRAPH_TARGET_SUFFIXES = (
     re.compile(
-        r"^what\s+(?:pages|documents|notes)\s+does\s+(.+?)\s+link to$",
+        r"^what\s+(?:pages|documents|notes)\s+does\s+(.+?)\s+"
+        r"(?:link to|depend on|point to|embed|transclude)$",
         re.IGNORECASE,
     ),
 )
@@ -221,7 +222,8 @@ _GRAPH_INBOUND_PREFIXES = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"^(?:which|what)\s+(?:pages|documents|notes)\s+are linked from\s+",
+        r"^(?:which|what)\s+(?:pages|documents|notes)\s+"
+        r"(?:are linked from|depend on|link to(?: or depend on)?)\s+",
         re.IGNORECASE,
     ),
     re.compile(r"^what\s+links to\s+", re.IGNORECASE),
