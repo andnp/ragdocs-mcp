@@ -20,6 +20,7 @@ from mcp_markdown_ragdocs.mcp.tools.document_request import (
     normalize_query_documents_request,
 )
 from mcp_markdown_ragdocs.mcp.tools.document_response import (
+    build_query_documents_diagnostics,
     build_query_documents_response_envelope,
     build_query_documents_status_envelope,
     build_query_documents_validation_error,
@@ -106,6 +107,11 @@ def get_document_tools() -> list[Tool]:
                         "enum": ["allow_multiple", "one_per_document"],
                         "description": "Result uniqueness mode: 'one_per_document' (default) returns at most one chunk per document; 'allow_multiple' returns multiple chunks per document",
                         "default": "one_per_document",
+                    },
+                    "include_diagnostics": {
+                        "type": "boolean",
+                        "description": "Include bounded search diagnostics (default: false)",
+                        "default": False,
                     },
                 },
                 "required": ["query"],
@@ -218,6 +224,7 @@ async def _query_documents_impl(
         response = build_query_documents_status_envelope(
             status=status,
             payload=cold_start_payload,
+            include_diagnostics=request.include_diagnostics,
         ).render_text()
         return [
             TextContent(
@@ -266,11 +273,14 @@ async def _query_documents_impl(
             )
         )
         results = execution.results
+        compression_stats = execution.compression_stats
+        strategy_stats = execution.strategy_stats
+        query_execution_stats = execution.query_execution_stats
     else:
         top_k = max(20, request.top_n * 4)
         if request.project_filter:
             top_k = max(top_k, request.top_n * 10)
-        results, _, _ = await ctx.orchestrator.query(
+        results, compression_stats, strategy_stats = await ctx.orchestrator.query(
             request.query,
             top_k=top_k,
             top_n=request.top_n,
@@ -282,6 +292,7 @@ async def _query_documents_impl(
             similarity_threshold=request.similarity_threshold,
             max_chunks_per_doc=request.max_chunks_per_doc,
         )
+        query_execution_stats = getattr(ctx.orchestrator, "last_query_execution_stats", {})
     results = [
         result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
         for result in results
@@ -289,6 +300,16 @@ async def _query_documents_impl(
 
     response = build_query_documents_response_envelope(
         results=results,
+        diagnostics=(
+            build_query_documents_diagnostics(
+                {},
+                compression_stats=compression_stats,
+                strategy_stats=strategy_stats,
+                query_execution_stats=query_execution_stats,
+            )
+            if request.include_diagnostics
+            else None
+        ),
     ).render_text()
 
     return [TextContent(type="text", text=response)]

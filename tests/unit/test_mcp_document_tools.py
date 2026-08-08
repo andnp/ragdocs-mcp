@@ -194,6 +194,67 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
 
 
 @pytest.mark.asyncio
+async def test_query_documents_includes_bounded_diagnostics_on_request() -> None:
+    class _FakeSearchUseCase:
+        async def execute(self, query):
+            return SimpleNamespace(
+                results=[],
+                compression_stats=CompressionStats(12, 9, 8, 7, 6, 3, 1),
+                strategy_stats=SearchStrategyStats(4, 3, 2, 1),
+                query_execution_stats={
+                    "degraded": True,
+                    "failures": ["keyword unavailable", "x" * 500],
+                    "stage_timings_ms": {"fusion": 2.5},
+                },
+            )
+
+    ready_ctx = _ColdStartContext(IndexState(status="ready"), ready=True)
+    ready_ctx.orchestrator = SimpleNamespace(documents_path=Path("/docs"))
+    ready_ctx.search_use_case = _FakeSearchUseCase()
+    hctx = HandlerContext(lambda: ready_ctx, _FakeCoordinator())
+
+    contents = await handle_query_documents(
+        hctx, {"query": "diagnostics", "include_diagnostics": True}
+    )
+
+    payload = _parse_query_documents_response(contents[0].text)
+    assert payload["results"] == []
+    assert payload["diagnostics"] == {
+        "candidate_counts": {
+            "original_count": 12,
+            "after_threshold": 9,
+            "after_content_dedup": 8,
+            "after_ngram_dedup": 7,
+            "after_dedup": 6,
+            "after_doc_limit": 3,
+        },
+        "pipeline_diagnostics": {
+            "degraded": True,
+            "failures": ["keyword unavailable", "x" * 256],
+            "stage_timings_ms": {"fusion": 2.5},
+        },
+        "degraded": True,
+        "failures": ["keyword unavailable", "x" * 256],
+        "final_strategy_counts": {
+            "vector_count": 4,
+            "keyword_count": 3,
+            "graph_count": 2,
+            "tag_expansion_count": 1,
+        },
+    }
+
+
+def test_normalize_query_documents_request_validates_diagnostics_flag() -> None:
+    assert normalize_query_documents_request(
+        {"query": "diagnostics", "include_diagnostics": True}
+    ).include_diagnostics
+    with pytest.raises(ValueError, match="include_diagnostics must be a boolean"):
+        normalize_query_documents_request(
+            {"query": "diagnostics", "include_diagnostics": "true"}
+        )
+
+
+@pytest.mark.asyncio
 async def test_query_documents_rejects_legacy_scope_aliases() -> None:
     hctx = HandlerContext(
         lambda: _ColdStartContext(IndexState(status="indexing")),

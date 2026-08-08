@@ -8,6 +8,7 @@ from typing import Literal
 from mcp_markdown_ragdocs.mcp.handlers import MAX_TOP_N, MIN_TOP_N
 from mcp_markdown_ragdocs.mcp.validation import (
     ValidationError,
+    validate_boolean,
     validate_enum,
     validate_float_range,
     validate_integer_range,
@@ -33,6 +34,7 @@ class NormalizedQueryDocumentsRequest:
     scope_mode: ScopeMode
     scope_projects: tuple[str, ...] = ()
     preferred_project: str | None = None
+    include_diagnostics: bool = False
 
     @property
     def project_filter(self) -> list[str]:
@@ -58,6 +60,7 @@ def normalize_query_documents_request(
 
     allowed_keys = {
         "excluded_files",
+        "include_diagnostics",
         "min_score",
         "preferred_project",
         "query",
@@ -91,6 +94,9 @@ def normalize_query_documents_request(
     )
     excluded_files_raw = tuple(
         validate_string_list(arguments, "excluded_files", default=[])
+    )
+    include_diagnostics = validate_boolean(
+        arguments, "include_diagnostics", default=False
     )
 
     uniqueness_value = arguments.get("uniqueness_mode", "one_per_document")
@@ -145,4 +151,5 @@ def normalize_query_documents_request(
         scope_mode=scope_mode,
         scope_projects=scope_projects,
         preferred_project=preferred_project,
+        include_diagnostics=include_diagnostics,
     )
