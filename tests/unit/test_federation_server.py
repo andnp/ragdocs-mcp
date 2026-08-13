@@ -1,9 +1,11 @@
 import asyncio
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from fastapi.testclient import TestClient
 from searchkernel.domain import Record, SearchResultProvenance
 from searchkernel.ports.federation import (
@@ -159,9 +161,11 @@ class _NativeDriveFilteringOrchestrator(_RankedOrchestrator):
     async def search(self, query, *, limit, filters):
         outcome = await super().search(query, limit=limit, filters=filters)
         constraints = filters.get("source_scoped_filters")
-        if not isinstance(constraints, list) or not constraints:
+        if not isinstance(constraints, Mapping):
             return outcome
-        constraint = constraints[0]
+        constraint = constraints.get("gdrive")
+        if not isinstance(constraint, Mapping):
+            return outcome
         allowed_workspaces = set(constraint.get("workspace_ids", []))
         required_metadata = constraint.get("metadata_non_empty", [])
         return SimpleNamespace(
@@ -622,13 +626,44 @@ def test_drive_search_constructs_source_scoped_membership_filter():
     )
 
     assert response.status_code == 200
-    assert orchestrator.calls[0]["filters"]["source_scoped_filters"] == [
-        {
-            "source_kind": "gdrive",
+    assert orchestrator.calls[0]["filters"]["source_scoped_filters"] == {
+        "gdrive": {
             "workspace_ids": ["workspace-a"],
             "metadata_non_empty": ["scope_memberships"],
         }
-    ]
+    }
+
+
+def test_drive_filter_payload_matches_searchkernel_compiler_contract():
+    """Compile the exact native payload when the new kernel API is installed."""
+    payload = {
+        "source_scoped_filters": {
+            "gdrive": {
+                "workspace_ids": ["workspace-a", "workspace-b"],
+                "metadata_non_empty": ["scope_memberships"],
+            }
+        }
+    }
+    try:
+        from searchkernel.domain.vector_filters import compile_source_scoped_filters
+    except ImportError:
+        try:
+            from searchkernel.domain.vector_filters import compile_vector_filters
+        except ImportError:
+            pytest.skip("installed searchkernel lacks source-scoped filter APIs")
+        compiled = compile_vector_filters(payload)
+        source_filters = getattr(compiled, "source_scoped_filters", None)
+        if source_filters is None:
+            pytest.skip("installed searchkernel lacks source-scoped filter support")
+    else:
+        source_filters = compile_source_scoped_filters(payload)
+
+    assert len(source_filters) == 1
+    assert source_filters[0].source_kind == "gdrive"
+    assert source_filters[0].workspace_ids == frozenset(
+        {"workspace-a", "workspace-b"}
+    )
+    assert source_filters[0].metadata_non_empty == ("scope_memberships",)
 
 
 def test_drive_search_handles_multiple_workspaces_in_one_retrieval():
@@ -859,9 +894,12 @@ def test_authenticated_joint_search_filters_by_source_kind_at_the_boundary():
         "note",
         "gdrive",
     ]
-    assert orchestrator.calls[0]["filters"]["source_scoped_filters"][0][
-        "source_kind"
-    ] == "gdrive"
+    assert orchestrator.calls[0]["filters"]["source_scoped_filters"] == {
+        "gdrive": {
+            "workspace_ids": ["workspace"],
+            "metadata_non_empty": ["scope_memberships"],
+        }
+    }
 
 
 def test_drive_only_search_cannot_leak_markdown_or_git_records():

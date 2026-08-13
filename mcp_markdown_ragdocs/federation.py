@@ -335,13 +335,12 @@ async def execute_federation_search(
     if drive_requested:
         native_filters["source_scoped_filters"] = cast(
             JsonValue,
-            [
-                {
-                    "source_kind": DRIVE_SOURCE_KIND,
+            {
+                DRIVE_SOURCE_KIND: {
                     "workspace_ids": sorted(authorized_drive_workspaces),
                     "metadata_non_empty": ["scope_memberships"],
                 }
-            ],
+            },
         )
     if drive_requested and len(authorized_drive_workspaces) == 1:
         native_filters["workspace_id"] = next(iter(authorized_drive_workspaces))
