@@ -50,22 +50,29 @@ def _request(**kwargs: object) -> dict[str, JsonValue]:
     ).to_dict()
 
 
-def _result(*, project_id: str = "project-a", score: float = 0.9):
+def _result(
+    *,
+    project_id: str = "project-a",
+    score: float = 0.9,
+    source_id: str = "chunk-a",
+    source_kind: str = "note",
+    uri: str = "file:///docs/auth.md#authentication",
+):
     record = Record(
-        source_kind="note",
-        source_id="chunk-a",
+        source_kind=source_kind,
+        source_id=source_id,
         title="Authentication",
         body="Use the documented authentication flow.",
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 2, tzinfo=UTC),
         metadata={
-            "chunk_id": "chunk-a",
+            "chunk_id": source_id,
             "doc_id": "doc-a",
             "file_path": "/docs/auth.md",
             "header_path": "Authentication",
             "project_id": project_id,
         },
-        uri="file:///docs/auth.md#authentication",
+        uri=uri,
         workspace_id=project_id,
     )
     return SimpleNamespace(
@@ -127,6 +134,23 @@ class _RankedOrchestrator:
             results=tuple(sorted(self.results, key=lambda result: -result.score)),
             failures=(),
             degraded=False,
+        )
+
+
+class _SourceFilteringOrchestrator(_RankedOrchestrator):
+    async def search(self, query, *, limit, filters):
+        outcome = await super().search(query, limit=limit, filters=filters)
+        source_kinds = filters.get("source_kinds")
+        if not isinstance(source_kinds, list):
+            return outcome
+        return SimpleNamespace(
+            results=tuple(
+                result
+                for result in outcome.results
+                if result.record.source_kind in source_kinds
+            ),
+            failures=outcome.failures,
+            degraded=outcome.degraded,
         )
 
 
@@ -601,6 +625,69 @@ def test_authenticated_joint_search_filters_by_source_kind_at_the_boundary():
         "note",
         "gdrive",
     ]
+
+
+def test_drive_only_search_cannot_leak_markdown_or_git_records():
+    """
+    Apply the Drive source filter before results cross the v1 boundary.
+    """
+    orchestrator = _SourceFilteringOrchestrator(
+        (
+            _drive_result(source_id="drive-result", score=0.9),
+            _result(source_id="markdown-result", score=0.8),
+            _result(source_id="git-result", source_kind="git_commit", score=0.7),
+        )
+    )
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("workspace",),
+    )
+
+    response = client.post(
+        "/v1/search",
+        json=_request(top_k=3, filters={"source_kinds": ["gdrive"]}),
+    )
+
+    assert response.status_code == 200
+    assert [hit["source_kind"] for hit in response.json()["hits"]] == ["gdrive"]
+    assert orchestrator.calls[0]["filters"]["source_kinds"] == ["gdrive"]
+
+
+def test_shared_source_ids_remain_distinct_across_drive_markdown_and_git():
+    """
+    Keep logical source kinds distinct when physical IDs overlap.
+    """
+    orchestrator = _SourceFilteringOrchestrator(
+        (
+            _drive_result(source_id="shared-id", score=0.9),
+            _result(source_id="shared-id", score=0.8),
+            _result(source_id="shared-id", source_kind="git_commit", score=0.7),
+        )
+    )
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("workspace",),
+    )
+
+    response = client.post(
+        "/v1/search",
+        json=_request(
+            top_k=3,
+            filters={"source_kinds": ["note", "git_commit", "gdrive"]},
+        ),
+    )
+
+    assert response.status_code == 200
+    assert {
+        (hit["source_kind"], hit["source_id"])
+        for hit in response.json()["hits"]
+    } == {
+        ("gdrive", "shared-id"),
+        ("note", "shared-id"),
+        ("git_commit", "shared-id"),
+    }
 
 
 def test_federation_search_honors_deadline():
