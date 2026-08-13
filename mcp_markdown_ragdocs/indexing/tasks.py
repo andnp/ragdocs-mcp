@@ -64,6 +64,10 @@ from mcp_markdown_ragdocs.indexing.reindex import (
     write_reindex_status,
 )
 from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
+from mcp_markdown_ragdocs.gdrive.tasks import (
+    build_gdrive_task_runtime,
+    register_gdrive_tasks,
+)
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
@@ -129,6 +133,13 @@ remove_documents_batch_task: Any = None
 refresh_git_repository_task: Any = None
 rebuild_index_task: Any = None
 reindex_model_task: Any = None
+gdrive_inventory_task: Any = None
+gdrive_changes_task: Any = None
+gdrive_retry_task: Any = None
+gdrive_backfill_task: Any = None
+gdrive_lease_task: Any = None
+gdrive_watch_task: Any = None
+gdrive_health_task: Any = None
 
 
 def _writer_lease_store() -> TaskLeaseStore | None:
@@ -1310,6 +1321,9 @@ def register_tasks(
     global remove_document_task
     global remove_documents_batch_task, refresh_git_repository_task
     global rebuild_index_task, reindex_model_task
+    global gdrive_inventory_task, gdrive_changes_task, gdrive_retry_task
+    global gdrive_backfill_task, gdrive_lease_task, gdrive_watch_task
+    global gdrive_health_task
     _huey = huey
     _index_manager = index_manager
     _task_backpressure_limit = max(1, task_backpressure_limit)
@@ -1343,6 +1357,10 @@ def register_tasks(
             "reindex_model": _intent_task("reindex_model")(_reindex_model),
         },
     )
+    gdrive_tasks = register_gdrive_tasks(
+        huey,
+        build_gdrive_task_runtime(index_manager, huey),
+    )
     index_document_task = registered_tasks["index_document"]
     index_documents_batch_task = registered_tasks["index_documents_batch"]
     index_records_batch_task = registered_tasks["index_records_batch"]
@@ -1351,6 +1369,13 @@ def register_tasks(
     refresh_git_repository_task = registered_tasks["refresh_git_repository"]
     rebuild_index_task = registered_tasks["rebuild_index"]
     reindex_model_task = registered_tasks["reindex_model"]
+    gdrive_inventory_task = gdrive_tasks.get("gdrive_inventory")
+    gdrive_changes_task = gdrive_tasks.get("gdrive_changes")
+    gdrive_retry_task = gdrive_tasks.get("gdrive_retry")
+    gdrive_backfill_task = gdrive_tasks.get("gdrive_backfill")
+    gdrive_lease_task = gdrive_tasks.get("gdrive_lease")
+    gdrive_watch_task = gdrive_tasks.get("gdrive_watch")
+    gdrive_health_task = gdrive_tasks.get("gdrive_health")
     logger.info("Indexing tasks registered with Huey")
 
 
