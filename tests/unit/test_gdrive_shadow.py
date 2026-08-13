@@ -49,6 +49,53 @@ def test_comparison_reports_missing_source_and_disallowed_drift() -> None:
     assert comparison.mismatches == 2
 
 
+def test_comparison_rejects_identity_status_and_acl_drift() -> None:
+    """
+    Source identity, lifecycle status, and ACL changes are never normalized.
+    """
+    comparison = compare_shadow_results(
+        "drive query",
+        [
+            ShadowObservation(
+                "drive-a",
+                1,
+                "chunk-a",
+                1,
+                "gdrive",
+                "workspace-a",
+                "active",
+                "acl-a",
+            )
+        ],
+        [
+            ShadowObservation(
+                "drive-a",
+                2,
+                "chunk-b",
+                2,
+                "gdrive",
+                "workspace-b",
+                "deleted",
+                "acl-b",
+            )
+        ],
+    )
+
+    assert comparison.entries["drive-a"] == {
+        "differences": [
+            "acl",
+            "chunk",
+            "identity",
+            "index_epoch",
+            "ranking",
+            "status",
+        ],
+        "allowed": ["chunk", "index_epoch", "ranking"],
+        "unexpected": ["acl", "identity", "status"],
+    }
+    assert comparison.mismatches == 1
+
+
 def test_barrier_persists_comparison_after_index_and_persist(tmp_path: Path) -> None:
     """
     The artifact cannot precede the durable index write barrier.

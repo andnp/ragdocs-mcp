@@ -21,6 +21,10 @@ class ShadowObservation:
     rank: int | None = None
     chunk_id: str | None = None
     index_epoch: int | str | None = None
+    source_kind: str | None = None
+    workspace_id: str | None = None
+    status: str | None = None
+    acl_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         if not self.source_id:
@@ -112,10 +116,22 @@ def compare_shadow_results(
                 differences.add("chunk")
             if left.index_epoch != right.index_epoch:
                 differences.add("index_epoch")
+            if (left.source_kind, left.workspace_id) != (
+                right.source_kind,
+                right.workspace_id,
+            ):
+                differences.add("identity")
+            if left.status != right.status:
+                differences.add("status")
+            if left.acl_fingerprint != right.acl_fingerprint:
+                differences.add("acl")
             allowed = {
                 "ranking": policy.allow_ranking,
                 "chunk": policy.allow_chunk,
                 "index_epoch": policy.allow_index_epoch,
+                "identity": False,
+                "status": False,
+                "acl": False,
             }
             unexpected.update(name for name in differences if not allowed[name])
         entries[source_id] = {
