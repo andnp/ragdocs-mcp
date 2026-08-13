@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from hmac import compare_digest
 from pathlib import Path
 from time import monotonic
 from typing import Any, cast
 
 from searchkernel.api import (
     FEDERATION_CONTRACT_VERSION,
+    CallerAuthorizationContext,
     MAX_SNIPPET_LENGTH,
     MAX_TOP_K,
     FederationSourceCapabilities,
@@ -37,6 +39,7 @@ GDRIVE_CAPABILITIES = FederationSourceCapabilities(
     supports_cancellation=True,
 )
 SEARCH_READ_SCOPE = "search:read"
+TRUSTED_CALLER_ID = "devkit"
 
 
 def build_federation_capabilities(
@@ -76,6 +79,30 @@ class FederationRequestError(ValueError):
     def __init__(self, message: str, *, status_code: int) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def authenticate_bearer(
+    authorization: str | None, *, configured_token: str | None
+) -> CallerAuthorizationContext:
+    if not authorization:
+        raise FederationRequestError(
+            "bearer authentication is required", status_code=401
+        )
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise FederationRequestError(
+            "bearer authentication is required", status_code=401
+        )
+    if not configured_token:
+        raise FederationRequestError(
+            "federation authentication is not configured", status_code=503
+        )
+    if not compare_digest(parts[1], configured_token):
+        raise FederationRequestError("invalid bearer credentials", status_code=401)
+    return CallerAuthorizationContext(
+        caller_id=TRUSTED_CALLER_ID,
+        scopes=(SEARCH_READ_SCOPE,),
+    )
 
 
 def _string_list(filters: Mapping[str, object], *names: str) -> list[str]:
@@ -282,5 +309,7 @@ __all__ = [
     "FederationRequestError",
     "RAGDOCS_CAPABILITIES",
     "RAGDOCS_SOURCE",
+    "TRUSTED_CALLER_ID",
+    "authenticate_bearer",
     "execute_federation_search",
 ]

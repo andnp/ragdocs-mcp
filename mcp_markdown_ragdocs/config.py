@@ -264,6 +264,11 @@ class GoogleDriveConfig:
 
 
 @dataclass
+class FederationConfig:
+    deployment_token: str = ""
+
+
+@dataclass
 class StoreConfig:
     backend: str = "local"  # canonical local record stores
     pg_dsn: str = ""  # retained for configuration-file compatibility
@@ -301,6 +306,7 @@ class Config:
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
     gdrive: GoogleDriveConfig = field(default_factory=GoogleDriveConfig)
+    federation: FederationConfig = field(default_factory=FederationConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
@@ -671,6 +677,11 @@ def load_config():
         path_fields={"credentials_path"},
     )
     gdrive.credentials_path = _expand_path(gdrive.credentials_path)
+    federation = _load_dataclass_from_dict(
+        FederationConfig, config_data.get("federation", {})
+    )
+    if not federation.deployment_token:
+        federation.deployment_token = os.environ.get("RAGDOCS_FEDERATION_TOKEN", "")
 
     chunking_data = config_data.get(
         "chunking", config_data.get("chunking_documents", {})
@@ -706,6 +717,7 @@ def load_config():
         indexing=indexing,
         git_indexing=git_indexing,
         gdrive=gdrive,
+        federation=federation,
         search=search,
         llm=llm,
         chunking=chunking,

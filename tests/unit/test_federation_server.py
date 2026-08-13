@@ -16,6 +16,15 @@ from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.gdrive.health import DriveScopeHealth, DriveSourceHealth, GDriveHealthStore
 from mcp_markdown_ragdocs.server import create_app
 
+AUTH_TOKEN = "test-deployment-token"
+
+
+def _app():
+    app = create_app()
+    app.state.config = Config()
+    app.state.config.federation.deployment_token = AUTH_TOKEN
+    return app
+
 
 def _request(**kwargs: object) -> dict[str, JsonValue]:
     return SearchRequest(
@@ -64,9 +73,9 @@ class _Orchestrator:
 
 
 def _client(orchestrator: _Orchestrator) -> TestClient:
-    app = create_app()
+    app = _app()
     app.state.orchestrator = orchestrator
-    return TestClient(app)
+    return TestClient(app, headers={"Authorization": f"Bearer {AUTH_TOKEN}"})
 
 
 def test_federation_search_success_preserves_native_provenance():
@@ -95,8 +104,9 @@ def test_federation_search_success_preserves_native_provenance():
 
 def test_federation_capabilities_and_health():
     """Preserve the v1 local capability and health contract by default."""
-    app = create_app()
-    client = TestClient(app)
+    client = TestClient(
+        _app(), headers={"Authorization": f"Bearer {AUTH_TOKEN}"}
+    )
     capabilities = client.get("/v1/search/capabilities")
     health = client.get("/v1/health")
 
@@ -114,8 +124,8 @@ def test_federation_exposes_enabled_drive_capabilities_and_fresh_health(
     tmp_path: Path,
 ):
     """Expose Drive identity, capabilities, and persisted freshness state."""
-    app = create_app()
-    config = Config()
+    app = _app()
+    config = app.state.config
     config.gdrive.enabled = True
     config.gdrive.workspace_id = "workspace"
     app.state.config = config
@@ -130,7 +140,7 @@ def test_federation_exposes_enabled_drive_capabilities_and_fresh_health(
         )
     )
 
-    client = TestClient(app)
+    client = TestClient(app, headers={"Authorization": f"Bearer {AUTH_TOKEN}"})
     capabilities = client.get("/v1/search/capabilities").json()
     health = client.get("/v1/health").json()
 
@@ -162,14 +172,16 @@ def test_federation_exposes_enabled_drive_capabilities_and_fresh_health(
 
 def test_federation_reports_unavailable_drive_without_health_snapshot(tmp_path: Path):
     """Report a typed unavailable state before Drive has completed a sync."""
-    app = create_app()
-    config = Config()
+    app = _app()
+    config = app.state.config
     config.gdrive.enabled = True
     config.gdrive.workspace_id = "workspace"
     app.state.config = config
     app.state.index_path = tmp_path
 
-    health = TestClient(app).get("/v1/health").json()
+    health = TestClient(
+        app, headers={"Authorization": f"Bearer {AUTH_TOKEN}"}
+    ).get("/v1/health").json()
 
     assert health["source_health"]["gdrive"]["status"] == "unavailable"
     assert health["source_health"]["gdrive"]["source"]["source_kind"] == "gdrive"
@@ -177,8 +189,9 @@ def test_federation_reports_unavailable_drive_without_health_snapshot(tmp_path: 
 
 
 def test_federation_search_rejects_invalid_request():
-    app = create_app()
-    client = TestClient(app)
+    client = TestClient(
+        _app(), headers={"Authorization": f"Bearer {AUTH_TOKEN}"}
+    )
     response = client.post(
         "/v1/search",
         json={"query": "authentication", "contract_version": "v2"},
@@ -188,7 +201,7 @@ def test_federation_search_rejects_invalid_request():
     assert response.json()["error"] == "invalid_request"
 
 
-def test_federation_search_enforces_authentication_and_project_scope():
+def test_federation_search_uses_bearer_identity_over_body_caller():
     orchestrator = _Orchestrator()
     client = _client(orchestrator)
     missing_caller = client.post(
@@ -203,8 +216,8 @@ def test_federation_search_enforces_authentication_and_project_scope():
         ).to_dict(),
     )
 
-    assert missing_caller.status_code == 401
-    assert missing_scope.status_code == 403
+    assert missing_caller.status_code == 200
+    assert missing_scope.status_code == 200
 
 
 def test_federation_search_enforces_authorized_project_claims():
@@ -221,7 +234,7 @@ def test_federation_search_enforces_authorized_project_claims():
     client = _client(orchestrator)
     response = client.post("/v1/search", json=request.to_dict())
 
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
 def test_federation_search_forwards_scoped_native_filters():

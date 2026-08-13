@@ -26,6 +26,7 @@ from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.federation import (
     RAGDOCS_SOURCE,
     FederationRequestError,
+    authenticate_bearer,
     build_federation_capabilities,
     execute_federation_search,
     load_gdrive_source_health,
@@ -197,7 +198,12 @@ def create_app():
         return HealthResponse(status="ok")
 
     @app.get("/v1/search/capabilities")
-    async def federation_capabilities():
+    async def federation_capabilities(request: Request):
+        auth_error = _federation_auth_error(
+            app, request.headers.get("Authorization")
+        )
+        if auth_error is not None:
+            return auth_error
         config = getattr(app.state, "config", None)
         gdrive = getattr(config, "gdrive", None)
         return JSONResponse(
@@ -209,7 +215,12 @@ def create_app():
         )
 
     @app.get("/v1/health")
-    async def federation_health():
+    async def federation_health(request: Request):
+        auth_error = _federation_auth_error(
+            app, request.headers.get("Authorization")
+        )
+        if auth_error is not None:
+            return auth_error
         payload: dict[str, object] = {
             "status": "ok",
             "contract_version": FEDERATION_CONTRACT_VERSION,
@@ -229,6 +240,13 @@ def create_app():
 
     @app.post("/v1/search")
     async def federation_search(request: Request):
+        try:
+            authenticated_caller = authenticate_bearer(
+                request.headers.get("Authorization"),
+                configured_token=_federation_token(app),
+            )
+        except FederationRequestError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=exc.status_code)
         request_id = request.headers.get("X-Request-ID", "").strip()
         trace_id = request.headers.get("X-Trace-ID", "").strip()
         if len(request_id) > MAX_CORRELATION_ID_LENGTH or len(trace_id) > MAX_CORRELATION_ID_LENGTH:
@@ -274,6 +292,7 @@ def create_app():
             )
         search_request = replace(
             search_request,
+            caller=authenticated_caller,
             request_id=effective_request_id,
             trace_id=effective_trace_id,
         )
@@ -348,3 +367,21 @@ def create_app():
         )
 
     return app
+
+
+def _federation_token(app: FastAPI) -> str | None:
+    config = getattr(app.state, "config", None)
+    federation = getattr(config, "federation", None)
+    token = getattr(federation, "deployment_token", None)
+    return token if isinstance(token, str) else None
+
+
+def _federation_auth_error(app: FastAPI, authorization: str | None):
+    try:
+        authenticate_bearer(
+            authorization,
+            configured_token=_federation_token(app),
+        )
+    except FederationRequestError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=exc.status_code)
+    return None
