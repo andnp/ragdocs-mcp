@@ -49,11 +49,12 @@ def test_comparison_reports_missing_source_and_disallowed_drift() -> None:
     assert comparison.mismatches == 2
 
 
-def test_barrier_persists_artifact_after_index_and_persist(tmp_path: Path) -> None:
+def test_barrier_persists_comparison_after_index_and_persist(tmp_path: Path) -> None:
     """
     The artifact cannot precede the durable index write barrier.
     """
     events: list[str] = []
+    durable = False
 
     class Writer:
         def index_records(self, records: list[Record]) -> bool:
@@ -61,10 +62,13 @@ def test_barrier_persists_artifact_after_index_and_persist(tmp_path: Path) -> No
             return True
 
         def persist(self) -> None:
+            nonlocal durable
             events.append("persist")
+            durable = True
 
     class Store(ShadowArtifactStore):
         def save(self, comparison) -> None:
+            assert durable
             events.append("artifact")
             super().save(comparison)
 
@@ -75,3 +79,29 @@ def test_barrier_persists_artifact_after_index_and_persist(tmp_path: Path) -> No
 
     assert events == ["index", "persist", "artifact"]
     assert (tmp_path / "gdrive-shadow-comparison.json").exists()
+
+
+def test_barrier_does_not_publish_comparison_when_index_write_fails(
+    tmp_path: Path,
+) -> None:
+    """
+    A failed index write leaves no comparison artifact to audit.
+    """
+    class Writer:
+        def index_records(self, records: list[Record]) -> bool:
+            return False
+
+        def persist(self) -> None:
+            raise AssertionError("persist must follow a successful index write")
+
+    comparison = compare_shadow_results("q", [], [])
+    try:
+        persist_index_then_shadow_artifact(
+            cast(object, Writer()), (), comparison, ShadowArtifactStore(tmp_path)
+        )
+    except RuntimeError as error:
+        assert str(error) == "Google Drive shadow index write failed"
+    else:
+        raise AssertionError("failed index writes must not publish artifacts")
+
+    assert not (tmp_path / "gdrive-shadow-comparison.json").exists()
