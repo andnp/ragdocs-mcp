@@ -521,6 +521,88 @@ def test_drive_acl_filters_before_top_k():
     assert orchestrator.calls[0]["limit"] == 10
 
 
+def test_authenticated_drive_only_search_preserves_identity_and_provenance():
+    """
+    Return an authenticated Drive hit with source identity and citations.
+    """
+    orchestrator = _Orchestrator(_drive_result(source_id="drive-only"))
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("workspace",),
+    )
+
+    response = client.post(
+        "/v1/search",
+        json=_request(
+            request_id="drive-request",
+            filters={"source_kinds": ["gdrive"]},
+        ),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    hit = payload["hits"][0]
+    assert hit["source_kind"] == "gdrive"
+    assert hit["source_id"] == "drive-only"
+    assert hit["workspace_id"] == "workspace"
+    assert hit["uri"] == "gdrive://drive-only"
+    assert hit["provenance"] == {
+        "source": {
+            "source_kind": "ragdocs",
+            "source_id": "local",
+            "workspace_id": None,
+        },
+        "request_id": "drive-request",
+        "retrieval_method": "ragdocs-native",
+        "details": {
+            "native_provenance": {
+                "strategies": ["keyword"],
+            }
+        },
+    }
+    assert orchestrator.calls[0]["filters"]["source_kinds"] == ["gdrive"]
+
+
+def test_authenticated_joint_search_filters_by_source_kind_at_the_boundary():
+    """
+    Preserve both local and Drive identities in an authenticated joint search.
+    """
+    orchestrator = _RankedOrchestrator(
+        (
+            _drive_result(source_id="drive-joint", score=0.9),
+            _result(project_id="project-a", score=0.8),
+        )
+    )
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("workspace",),
+    )
+
+    response = client.post(
+        "/v1/search",
+        json=_request(
+            top_k=2,
+            filters={"source_kinds": ["note", "gdrive"]},
+        ),
+    )
+
+    assert response.status_code == 200
+    assert [hit["source_kind"] for hit in response.json()["hits"]] == [
+        "gdrive",
+        "note",
+    ]
+    assert [hit["source_id"] for hit in response.json()["hits"]] == [
+        "drive-joint",
+        "chunk-a",
+    ]
+    assert orchestrator.calls[0]["filters"]["source_kinds"] == [
+        "note",
+        "gdrive",
+    ]
+
+
 def test_federation_search_honors_deadline():
     class SlowOrchestrator(_Orchestrator):
         async def search(self, query, *, limit, filters):
