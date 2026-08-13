@@ -1,33 +1,81 @@
 """Tests for Google Drive lifecycle task registration."""
 
 from pathlib import Path
-from types import SimpleNamespace
+from collections.abc import Sequence
 
 from huey import SqliteHuey
+from searchkernel.api import ContentSource, Record
 
+from mcp_markdown_ragdocs.adapters.sources.gdrive import (
+    DriveContentClient,
+    GoogleDriveContentSource,
+)
+from mcp_markdown_ragdocs.config import Config, GoogleDriveConfig
 from mcp_markdown_ragdocs.gdrive.tasks import (
     GDriveTaskRuntime,
     build_gdrive_task_runtime,
     register_gdrive_tasks,
 )
+from mcp_markdown_ragdocs.gdrive.models import (
+    DriveChangePage,
+    DriveFile,
+    DriveFilePage,
+    DriveScope,
+    DriveStartPageToken,
+    DriveWatchChannel,
+)
 
 
-def _runtime(tmp_path: Path) -> tuple[GDriveTaskRuntime, SqliteHuey]:
-    queue = SqliteHuey(
-        name="gdrive-tasks",
-        filename=str(tmp_path / "queue.db"),
-        immediate=False,
-    )
-    source = SimpleNamespace(
-        source_kind="gdrive",
-        scopes=(),
-        workspace_id="workspace",
-        retry_work_store=None,
-        scope_identity=lambda scope: str(scope),
-    )
-    manager = SimpleNamespace(
-        _config=SimpleNamespace(
-            gdrive=SimpleNamespace(
+class _TaskClient(DriveContentClient):
+    async def list_files_page(
+        self,
+        scope: DriveScope,
+        *,
+        page_token: str | None = None,
+        page_size: int = 1000,
+    ) -> DriveFilePage:
+        raise AssertionError((scope, page_token, page_size))
+
+    async def get_start_page_token(self, scope: DriveScope) -> DriveStartPageToken:
+        raise AssertionError(scope)
+
+    async def list_changes_page(
+        self,
+        scope: DriveScope,
+        page_token: str,
+        *,
+        page_size: int = 1000,
+    ) -> DriveChangePage:
+        raise AssertionError((scope, page_token, page_size))
+
+    async def export_file(self, file_id: str, export_mime_type: str) -> bytes:
+        raise AssertionError((file_id, export_mime_type))
+
+    async def download_file(self, file_id: str) -> bytes:
+        raise AssertionError(file_id)
+
+    async def get_file_metadata(self, file_id: str) -> DriveFile:
+        raise AssertionError(file_id)
+
+    async def watch_changes(
+        self,
+        scope: DriveScope,
+        page_token: str,
+        *,
+        channel_id: str,
+        address: str,
+        token: str | None = None,
+    ) -> DriveWatchChannel:
+        raise AssertionError((scope, page_token, channel_id, address, token))
+
+    async def stop_channel(self, channel_id: str, resource_id: str | None = None) -> None:
+        raise AssertionError((channel_id, resource_id))
+
+
+class _TaskManager:
+    def __init__(self, index_path: Path, source: GoogleDriveContentSource) -> None:
+        self._config = Config(
+            gdrive=GoogleDriveConfig(
                 index_generation="gdrive-v1",
                 page_size=10,
                 max_items=20,
@@ -37,10 +85,41 @@ def _runtime(tmp_path: Path) -> tuple[GDriveTaskRuntime, SqliteHuey]:
                 push_enabled=False,
                 watch_renewal_seconds=60,
             )
-        ),
-        index_path=tmp_path / "index",
-        get_content_source=lambda _kind: source,
+        )
+        self._index_path = index_path
+        self._source = source
+
+    @property
+    def index_path(self) -> Path:
+        return self._index_path
+
+    def get_content_source(self, source_kind: str) -> ContentSource | None:
+        return self._source if source_kind == "gdrive" else None
+
+    def index_record(self, record: Record) -> bool:
+        del record
+        return True
+
+    def index_records(self, records: Sequence[Record]) -> bool:
+        del records
+        return True
+
+    def persist(self) -> None:
+        return
+
+    def count_records(self, source_kind: str | None = None) -> int:
+        del source_kind
+        return 0
+
+
+def _runtime(tmp_path: Path) -> tuple[GDriveTaskRuntime, SqliteHuey]:
+    queue = SqliteHuey(
+        name="gdrive-tasks",
+        filename=str(tmp_path / "queue.db"),
+        immediate=False,
     )
+    source = GoogleDriveContentSource(_TaskClient(), workspace_id="workspace")
+    manager = _TaskManager(tmp_path / "index", source)
     runtime = build_gdrive_task_runtime(manager, queue)
     assert runtime is not None
     return runtime, queue
@@ -59,9 +138,9 @@ def test_build_runtime_wires_existing_drive_components(tmp_path: Path) -> None:
     assert runtime.health.path == tmp_path / "index" / "gdrive-health.json"
 
 
-def test_registers_the_seven_drive_lifecycle_tasks(tmp_path: Path) -> None:
+def test_registers_the_drive_lifecycle_tasks(tmp_path: Path) -> None:
     """
-    Register inventory, change, retry, recovery, lease, watch, and health tasks.
+    Register startup, inventory, change, retry, recovery, lease, watch, and health tasks.
     Use the existing Huey task registration boundary for worker discovery.
     """
     runtime, huey = _runtime(tmp_path)
@@ -69,6 +148,7 @@ def test_registers_the_seven_drive_lifecycle_tasks(tmp_path: Path) -> None:
     registered = register_gdrive_tasks(huey, runtime)
 
     assert set(registered) == {
+        "gdrive_startup",
         "gdrive_inventory",
         "gdrive_changes",
         "gdrive_retry",
@@ -78,3 +158,16 @@ def test_registers_the_seven_drive_lifecycle_tasks(tmp_path: Path) -> None:
         "gdrive_health",
     }
     assert all(task is not None for task in registered.values())
+    assert huey.pending_count() + huey.scheduled_count() == 1
+
+
+def test_disabled_drive_registration_is_a_no_op(tmp_path: Path) -> None:
+    """Leave the queue untouched when the Drive source is disabled."""
+    huey = SqliteHuey(
+        name="gdrive-disabled",
+        filename=str(tmp_path / "queue.db"),
+        immediate=False,
+    )
+
+    assert register_gdrive_tasks(huey, None) == {}
+    assert huey.pending_count() == 0

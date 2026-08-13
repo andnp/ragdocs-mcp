@@ -65,6 +65,7 @@ from mcp_markdown_ragdocs.indexing.reindex import (
 )
 from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
 from mcp_markdown_ragdocs.gdrive.tasks import (
+    GDriveTaskManager,
     build_gdrive_task_runtime,
     register_gdrive_tasks,
 )
@@ -134,6 +135,7 @@ refresh_git_repository_task: Any = None
 rebuild_index_task: Any = None
 reindex_model_task: Any = None
 gdrive_inventory_task: Any = None
+gdrive_startup_task: Any = None
 gdrive_changes_task: Any = None
 gdrive_retry_task: Any = None
 gdrive_backfill_task: Any = None
@@ -1321,7 +1323,7 @@ def register_tasks(
     global remove_document_task
     global remove_documents_batch_task, refresh_git_repository_task
     global rebuild_index_task, reindex_model_task
-    global gdrive_inventory_task, gdrive_changes_task, gdrive_retry_task
+    global gdrive_inventory_task, gdrive_startup_task, gdrive_changes_task, gdrive_retry_task
     global gdrive_backfill_task, gdrive_lease_task, gdrive_watch_task
     global gdrive_health_task
     _huey = huey
@@ -1357,10 +1359,12 @@ def register_tasks(
             "reindex_model": _intent_task("reindex_model")(_reindex_model),
         },
     )
-    gdrive_tasks = register_gdrive_tasks(
-        huey,
-        build_gdrive_task_runtime(index_manager, huey),
+    gdrive_runtime = (
+        build_gdrive_task_runtime(index_manager, huey)
+        if isinstance(index_manager, GDriveTaskManager)
+        else None
     )
+    gdrive_tasks = register_gdrive_tasks(huey, gdrive_runtime)
     index_document_task = registered_tasks["index_document"]
     index_documents_batch_task = registered_tasks["index_documents_batch"]
     index_records_batch_task = registered_tasks["index_records_batch"]
@@ -1369,6 +1373,7 @@ def register_tasks(
     refresh_git_repository_task = registered_tasks["refresh_git_repository"]
     rebuild_index_task = registered_tasks["rebuild_index"]
     reindex_model_task = registered_tasks["reindex_model"]
+    gdrive_startup_task = gdrive_tasks.get("gdrive_startup")
     gdrive_inventory_task = gdrive_tasks.get("gdrive_inventory")
     gdrive_changes_task = gdrive_tasks.get("gdrive_changes")
     gdrive_retry_task = gdrive_tasks.get("gdrive_retry")
