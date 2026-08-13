@@ -76,6 +76,24 @@ class DriveChange:
 
 
 @dataclass(frozen=True, slots=True)
+class DriveFilePage:
+    files: tuple[DriveFile, ...]
+    next_page_token: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DriveChangePage:
+    changes: tuple[DriveChange, ...]
+    next_page_token: str | None = None
+    new_start_page_token: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DriveStartPageToken:
+    token: str
+
+
+@dataclass(frozen=True, slots=True)
 class DriveScope:
     workspace_id: str
     shared_drive_id: str | None = None
@@ -104,8 +122,11 @@ class DriveWatchChannel:
 
 __all__ = [
     "DriveChange",
+    "DriveChangePage",
     "DriveFile",
+    "DriveFilePage",
     "DriveScope",
+    "DriveStartPageToken",
     "DriveWatchChannel",
     "DriveWorkspace",
 ]
