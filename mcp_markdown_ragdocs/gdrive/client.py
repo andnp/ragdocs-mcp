@@ -3,10 +3,11 @@
 import asyncio
 import io
 from collections.abc import Callable, Mapping
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
 
 from mcp_markdown_ragdocs.gdrive.models import (
     DriveChange,
@@ -39,6 +40,13 @@ CHANGE_FIELDS = (
 
 class DriveRequest(Protocol):
     def execute(self) -> Any: ...
+
+
+@runtime_checkable
+class DriveMediaRequest(DriveRequest, Protocol):
+    uri: str
+    headers: Mapping[str, str]
+    http: object
 
 
 class DriveFilesResource(Protocol):
@@ -208,19 +216,17 @@ class GoogleDriveClient:
         return DriveFile.from_api(result)
 
     async def download_file(self, file_id: str) -> bytes:
-        result = await self._execute(
+        return await self._download_media(
             lambda: self._get_service().files().get_media(fileId=file_id)
         )
-        return self._media_bytes(result)
 
     async def export_file(self, file_id: str, export_mime_type: str) -> bytes:
-        result = await self._execute(
+        return await self._download_media(
             lambda: self._get_service().files().export(
                 fileId=file_id,
                 mimeType=export_mime_type,
             )
         )
-        return self._media_bytes(result)
 
     async def watch_changes(
         self,
@@ -260,6 +266,29 @@ class GoogleDriveClient:
         if self._request_gate is not None:
             return await asyncio.to_thread(self._request_gate.run, execute_request)
         return await asyncio.to_thread(execute_request)
+
+    async def _download_media(self, request_factory: Callable[[], DriveRequest]) -> bytes:
+        def download_request() -> bytes:
+            request = request_factory()
+            if not isinstance(request, DriveMediaRequest):
+                return self._media_bytes(request.execute())
+            buffer = io.BytesIO()
+            downloader = MediaIoBaseDownload(
+                buffer,
+                request,
+                chunksize=self._max_download_bytes + 1,
+            )
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+                if buffer.tell() > self._max_download_bytes:
+                    raise ValueError("Google Drive media response exceeded configured byte limit")
+            buffer.seek(0)
+            return self._media_bytes(buffer)
+
+        if self._request_gate is not None:
+            return await asyncio.to_thread(self._request_gate.run, download_request)
+        return await asyncio.to_thread(download_request)
 
 
 __all__ = ["GoogleDriveClient"]

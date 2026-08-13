@@ -1,6 +1,7 @@
 """Tests for the bounded Google Drive transport client."""
 
 import asyncio
+import io
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -28,6 +29,48 @@ class _Request:
 
     def execute(self) -> object:
         return self.result
+
+
+class _MediaHttp:
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+    def request(
+        self,
+        _uri: str,
+        _method: str,
+        headers: dict[str, str],
+    ) -> tuple["_MediaResponse", bytes]:
+        start, end = (int(value) for value in headers["range"][6:].split("-"))
+        payload = self.content[start : end + 1]
+        response = _MediaResponse(
+            {
+                "content-range": f"bytes {start}-{start + len(payload) - 1}/{len(self.content)}",
+                "content-length": str(len(payload)),
+            }
+        )
+        return response, payload
+
+
+class _MediaResponse(dict[str, str]):
+    @property
+    def status(self) -> int:
+        return 206
+
+
+class _MediaRequest(_Request):
+    def __init__(self, content: bytes) -> None:
+        super().__init__(b"")
+        self.uri = "https://drive.example/media"
+        self.headers: dict[str, str] = {}
+        self.http = _MediaHttp(content)
+
+    def execute(self) -> bytes:
+        raise AssertionError("bounded media requests must use the streaming transport")
+
+
+class _MediaResult:
+    content = b"body"
 
 
 class _Files:
@@ -117,11 +160,47 @@ async def test_client_rejects_media_over_configured_bound() -> None:
     Refuse oversized provider media before returning it to extraction code.
     """
     service = _Service()
-    service.file_resource.get_media = lambda **_kwargs: _Request(b"12345")
+    service.file_resource.get_media = lambda **_kwargs: _MediaRequest(b"12345")
     client = GoogleDriveClient(cast(Any, _Session()), service=service, max_download_bytes=4)
 
     with pytest.raises(ValueError, match="byte limit"):
         await client.download_file("file-1")
+
+
+@pytest.mark.asyncio
+async def test_client_accepts_media_at_configured_bound() -> None:
+    """
+    Return media whose size exactly matches the configured limit.
+    """
+    service = _Service()
+    service.file_resource.get_media = lambda **_kwargs: _MediaRequest(b"1234")
+    client = GoogleDriveClient(cast(Any, _Session()), service=service, max_download_bytes=4)
+
+    assert await client.download_file("file-1") == b"1234"
+
+
+@pytest.mark.asyncio
+async def test_client_supports_legacy_media_response_shapes() -> None:
+    """
+    Preserve fake-service compatibility for supported media result shapes.
+    """
+    results: list[object] = [
+        b"body",
+        bytearray(b"body"),
+        memoryview(b"body"),
+        io.BytesIO(b"body"),
+        {"body": b"body"},
+        {"content": b"body"},
+        {"data": b"body"},
+        _MediaResult(),
+    ]
+
+    for result in results:
+        service = _Service()
+        service.file_resource.get_media = lambda **_kwargs: _Request(result)
+        client = GoogleDriveClient(cast(Any, _Session()), service=service)
+
+        assert await client.download_file("file-1") == b"body"
 
 
 @pytest.mark.asyncio
