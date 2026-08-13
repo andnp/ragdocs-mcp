@@ -75,6 +75,7 @@ def build_gdrive_source(
     from mcp_markdown_ragdocs.gdrive.extraction import ExtractionLimits
     from mcp_markdown_ragdocs.gdrive.gate import DriveRequestGate
     from mcp_markdown_ragdocs.gdrive.session import AuthorizedUserSession
+    from mcp_markdown_ragdocs.gdrive.state import GDriveStateRepository
 
     drive_config = config.gdrive
     session = AuthorizedUserSession(
@@ -88,6 +89,7 @@ def build_gdrive_source(
         max_download_bytes=drive_config.max_download_bytes,
         request_gate=DriveRequestGate(index_path / "gdrive-request-gate.db"),
     )
+    state_repository = GDriveStateRepository(index_path / "gdrive-state.db")
     return GoogleDriveContentSource(
         client,
         workspace_id=drive_config.workspace_id,
@@ -100,6 +102,7 @@ def build_gdrive_source(
             max_seconds=drive_config.max_seconds,
         ),
         page_size=drive_config.page_size,
+        state_repository=state_repository,
     )
 
 
