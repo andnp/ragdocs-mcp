@@ -21,6 +21,19 @@ class ProviderErrorInfo:
     def retryable(self) -> bool:
         return self.classification is ProviderErrorClassification.RETRYABLE
 
+    @property
+    def tombstone(self) -> bool:
+        """Whether this response confirms that a record is no longer readable."""
+        permission_loss = {
+            "accessDenied",
+            "forbidden",
+            "insufficientFilePermissions",
+            "permissionDenied",
+        }
+        return self.status_code in {404, 410} or (
+            self.status_code == 403 and self.reason in permission_loss
+        )
+
 
 def _provider_value(error: BaseException, name: str) -> Any:
     value = getattr(error, name, None)

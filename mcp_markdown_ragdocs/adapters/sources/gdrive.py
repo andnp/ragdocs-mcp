@@ -115,6 +115,9 @@ class GoogleDriveContentSource:
             try:
                 target = await self.client.get_file_metadata(file.shortcut_target_id)
             except Exception as error:
+                tombstone = self.tombstone_for_error(file, error, scope=scope)
+                if tombstone is not None:
+                    return tombstone
                 return self._status_record(file, scope, "shortcut-unresolved", str(error))
             if not target.id or target.id == file.id or target.shortcut_target_id:
                 return self._status_record(file, scope, "shortcut-unresolved")
@@ -136,6 +139,9 @@ class GoogleDriveContentSource:
             result = self.extractor(payload, file.mime_type, profile=profile, limits=self.extraction_limits)
         except Exception as error:
             info = classify_provider_error(error)
+            tombstone = self.tombstone_for_error(file, error, scope=scope)
+            if tombstone is not None:
+                return tombstone
             if self.retry_work_store is not None and info.retryable:
                 self.retry_work_store.schedule_failure(
                     scope_identity=self.scope_identity(scope) if scope else "unscoped",
@@ -166,6 +172,36 @@ class GoogleDriveContentSource:
             workspace_id=self.workspace_id,
             extraction_status="tombstone",
             extraction_reason="removed" if change.removed else "trashed",
+            scope_memberships=(self.scope_identity(scope),) if scope else (),
+            clock=self.clock,
+            status=RecordStatus.ARCHIVED,
+            deleted=True,
+        )
+
+    def tombstone_for_error(
+        self,
+        file: DriveFile,
+        error: BaseException,
+        *,
+        scope: DriveScope | None = None,
+    ) -> Record | None:
+        """Map only confirmed provider-side record loss to an archived record."""
+        info = classify_provider_error(error)
+        if not info.tombstone:
+            return None
+        if info.reason:
+            reason = info.reason
+        elif info.status_code == 404:
+            reason = "not-found"
+        elif info.status_code == 410:
+            reason = "gone"
+        else:
+            reason = "permission-lost"
+        return map_drive_file(
+            file,
+            workspace_id=self.workspace_id,
+            extraction_status="tombstone",
+            extraction_reason=reason,
             scope_memberships=(self.scope_identity(scope),) if scope else (),
             clock=self.clock,
             status=RecordStatus.ARCHIVED,
