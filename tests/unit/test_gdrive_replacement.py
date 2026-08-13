@@ -1,0 +1,215 @@
+"""Tests for idempotent Google Drive record replacement."""
+
+import asyncio
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+from searchkernel.api import Record, RecordStatus, build_local_record_kernel
+
+from mcp_markdown_ragdocs.gdrive.replacement import (
+    GDriveReplacementJournal,
+    canonical_gdrive_source_key,
+)
+from mcp_markdown_ragdocs.gdrive.state import (
+    GDriveScopeIdentity,
+    GDriveStateRepository,
+)
+from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
+
+
+def _record(
+    source_id: str,
+    body: str,
+    *,
+    deleted: bool = False,
+    scopes: tuple[str, ...] = ("shared-with-me",),
+) -> Record:
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    return Record(
+        source_kind="gdrive",
+        source_id=source_id,
+        workspace_id="workspace",
+        title="Drive note",
+        body=body if not deleted else "",
+        indexed_text=body if not deleted else "",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={
+            "gdrive_source_id": "file-1",
+            "scope_memberships": list(scopes),
+            "deleted": deleted,
+            "extraction_status": "tombstone" if deleted else "indexed",
+        },
+        status=RecordStatus.ARCHIVED if deleted else RecordStatus.ACTIVE,
+    )
+
+
+def test_drive_replacement_deletes_stale_chunks_and_deduplicates_source_map(
+    record_manager,
+) -> None:
+    """
+    Replace a Drive source with fewer chunks without retaining stale records.
+    """
+    first = (_record("file-1:chunk-a", "old A"), _record("file-1:chunk-b", "old B"))
+    replacement = (_record("file-1:chunk-a", "new A"),)
+
+    assert record_manager.index_records(first) is True
+    assert record_manager.index_records(replacement) is True
+
+    assert record_manager.kernel.backend.hydrate_record(first[1].storage_key) is None
+    assert record_manager.kernel.backend.hydrate_record(replacement[0].storage_key) is not None
+    source_key = canonical_gdrive_source_key(replacement[0])
+    source_map = json.loads(
+        (Path(record_manager.index_path) / "record-sources.json").read_text()
+    )
+    assert source_map[source_key] == [replacement[0].storage_key]
+
+
+def test_drive_replay_is_idempotent_for_records_and_memberships(record_manager) -> None:
+    """
+    Replay the same Drive batch without duplicating index or source-map entries.
+    """
+    record = _record("file-1:chunk-a", "stable body")
+
+    assert record_manager.index_records((record, record)) is True
+    assert record_manager.index_records((record, record)) is True
+
+    source_key = canonical_gdrive_source_key(record)
+    source_map = json.loads(
+        (Path(record_manager.index_path) / "record-sources.json").read_text()
+    )
+    assert source_map[source_key] == [record.storage_key]
+    assert record_manager.count_records("gdrive") == 1
+
+
+def test_drive_tombstone_removes_the_source_from_search(record_manager) -> None:
+    """
+    Treat a confirmed Drive tombstone as deletion rather than searchable content.
+    """
+    active = _record("file-1:chunk-a", "searchable body")
+    tombstone = _record("file-1", "ignored", deleted=True)
+
+    assert record_manager.index_record(active) is True
+    assert record_manager.index_record(tombstone) is True
+
+    assert record_manager.kernel.backend.hydrate_record(active.storage_key) is None
+    assert record_manager.count_records("gdrive") == 0
+
+
+def test_drive_tombstone_keeps_a_source_visible_in_remaining_scope(record_manager) -> None:
+    """
+    Remove one Drive scope membership without deleting a still-visible source.
+    """
+    active = _record("file-1:chunk-a", "shared body", scopes=("drive-a", "drive-b"))
+    tombstone = _record("file-1", "ignored", deleted=True, scopes=("drive-a",))
+
+    assert record_manager.index_record(active) is True
+    assert record_manager.index_record(tombstone) is True
+
+    hydrated = record_manager.kernel.backend.hydrate_record(active.storage_key)
+    assert hydrated is not None
+    assert hydrated.metadata["scope_memberships"] == ["drive-b"]
+
+
+def test_indexed_drive_replacement_recovers_after_manager_restart(
+    record_manager,
+    deterministic_embedding_provider,
+) -> None:
+    """
+    Finish stale cleanup from an indexed journal after a simulated crash.
+    """
+    old = _record("file-1:chunk-a", "old body")
+    new = _record("file-1:chunk-b", "new body")
+    assert record_manager.index_record(old) is True
+
+    asyncio.run(record_manager.ingestor.index_records((new,)))
+    journal = GDriveReplacementJournal(
+        Path(record_manager.index_path) / "gdrive-replacements.json"
+    )
+    entry = journal.prepare(
+        canonical_gdrive_source_key(new),
+        (old.storage_key,),
+        (new.storage_key,),
+    )
+    journal.mark_indexed(entry)
+
+    restarted_kernel = build_local_record_kernel(
+        Path(record_manager.index_path).parent / "records.db",
+        embedding_provider=deterministic_embedding_provider,
+        embedding_model_name=deterministic_embedding_provider.model_name,
+        embedding_dim=deterministic_embedding_provider.dim,
+        vector_engine="exact",
+    )
+    restarted = RecordIndexManager(
+        record_manager._config,
+        restarted_kernel,
+        deterministic_embedding_provider,
+    )
+
+    assert restarted.kernel.backend.hydrate_record(old.storage_key) is None
+    assert restarted.kernel.backend.hydrate_record(new.storage_key) is not None
+    assert GDriveReplacementJournal(
+        Path(record_manager.index_path) / "gdrive-replacements.json"
+    ).load() == ()
+
+
+def test_prepared_drive_replacement_discards_partial_index_write_after_restart(
+    record_manager,
+    deterministic_embedding_provider,
+) -> None:
+    """
+    Remove an uncommitted replacement write while retaining the prior source.
+    """
+    old = _record("file-1:chunk-a", "old body")
+    new = _record("file-1:chunk-b", "partial body")
+    assert record_manager.index_record(old) is True
+
+    asyncio.run(record_manager.ingestor.index_records((new,)))
+    journal = GDriveReplacementJournal(
+        Path(record_manager.index_path) / "gdrive-replacements.json"
+    )
+    journal.prepare(
+        canonical_gdrive_source_key(new),
+        (old.storage_key,),
+        (new.storage_key,),
+    )
+
+    restarted_kernel = build_local_record_kernel(
+        Path(record_manager.index_path).parent / "records.db",
+        embedding_provider=deterministic_embedding_provider,
+        embedding_model_name=deterministic_embedding_provider.model_name,
+        embedding_dim=deterministic_embedding_provider.dim,
+        vector_engine="exact",
+    )
+    restarted = RecordIndexManager(
+        record_manager._config,
+        restarted_kernel,
+        deterministic_embedding_provider,
+    )
+
+    assert restarted.kernel.backend.hydrate_record(old.storage_key) is not None
+    assert restarted.kernel.backend.hydrate_record(new.storage_key) is None
+    assert journal.load() == ()
+
+
+def test_replacement_journal_persists_drive_state_status(tmp_path: Path) -> None:
+    """
+    Mirror replacement phases in the committed Drive state repository.
+    """
+    identity = GDriveScopeIdentity("gdrive", "workspace", "shared-with-me")
+    repository = GDriveStateRepository(tmp_path / "gdrive-state.db")
+    journal = GDriveReplacementJournal(tmp_path / "replacements.json", repository)
+
+    entry = journal.prepare("source", ("old",), ("new",), (identity,))
+    status = repository.load_sync_status(identity)
+    assert status is not None
+    assert status.status == "replacement-pending"
+    journal.mark_indexed(entry, (identity,))
+    status = repository.load_sync_status(identity)
+    assert status is not None
+    assert status.status == "replacement-indexed"
+    journal.complete("source", (identity,))
+    status = repository.load_sync_status(identity)
+    assert status is not None
+    assert status.status == "healthy"
