@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Coroutine, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable, Protocol, runtime_checkable
 from uuid import uuid4
+
+from huey import Huey
+from searchkernel.api import ContentSource, Record
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
@@ -21,20 +25,45 @@ from mcp_markdown_ragdocs.gdrive.health import (
     GDriveHealthStore,
 )
 from mcp_markdown_ragdocs.gdrive.leases import DriveScopeLeaseStore
+from mcp_markdown_ragdocs.gdrive.models import DriveScope
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
 from mcp_markdown_ragdocs.gdrive.retry import DriveRetryWorkStore
 from mcp_markdown_ragdocs.gdrive.checkpoints import GDriveSyncCheckpointStore
 from mcp_markdown_ragdocs.gdrive.sync import GoogleDriveSync
 from mcp_markdown_ragdocs.gdrive.watch import GDriveWatchStateStore, GoogleDriveWatch
+from mcp_markdown_ragdocs.adapters.sources.gdrive import GoogleDriveContentSource
+from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
+
+
+@runtime_checkable
+class _FileHueyStorage(Protocol):
+    filename: str
+
+
+class GDriveTaskManager(Protocol):
+    _config: Config
+
+    @property
+    def index_path(self) -> Path: ...
+
+    def get_content_source(self, source_kind: str) -> ContentSource | None: ...
+
+    def index_record(self, record: Record) -> bool: ...
+
+    def index_records(self, records: Sequence[Record]) -> bool: ...
+
+    def persist(self) -> None: ...
+
+    def count_records(self, source_kind: str | None = None) -> int: ...
 
 
 @dataclass
 class GDriveTaskRuntime:
     """Drive operations and their source-specific durable state."""
 
-    manager: Any
-    source: Any
+    manager: GDriveTaskManager
+    source: GoogleDriveContentSource
     sync: GoogleDriveSync
     retry: DriveRetryWorkStore
     backfill: GoogleDriveBackfill
@@ -42,24 +71,29 @@ class GDriveTaskRuntime:
     watch: GoogleDriveWatch
     health: GDriveHealthStore
 
-    def scope(self, scope_identity: str):
+    def scope(self, scope_identity: str) -> DriveScope:
         for scope in self.source.scopes:
             if self.source.scope_identity(scope) == scope_identity:
                 return scope
         raise KeyError(f"unknown Drive scope: {scope_identity!r}")
 
 
-def build_gdrive_task_runtime(manager: Any, huey: Any) -> GDriveTaskRuntime | None:
+def build_gdrive_task_runtime(
+    manager: GDriveTaskManager,
+    huey: Huey,
+) -> GDriveTaskRuntime | None:
     """Compose Drive lifecycle services when the logical source is enabled."""
-    get_source = getattr(manager, "get_content_source", None)
-    source = get_source(SOURCE_KIND) if callable(get_source) else None
-    if source is None:
+    source = manager.get_content_source(SOURCE_KIND)
+    if not isinstance(source, GoogleDriveContentSource):
         return None
 
     config = manager._config
     drive_config = config.gdrive
     index_path = Path(manager.index_path)
-    queue_path = Path(huey.storage.filename)
+    storage = huey.storage
+    if not isinstance(storage, _FileHueyStorage):
+        return None
+    queue_path = Path(storage.filename)
     retry = DriveRetryWorkStore(WorkIntentStore(queue_path))
     source.retry_work_store = retry
     sync = GoogleDriveSync(
@@ -104,7 +138,7 @@ def build_gdrive_task_runtime(manager: Any, huey: Any) -> GDriveTaskRuntime | No
     )
 
 
-def _run(coroutine):
+def _run[T](coroutine: Coroutine[object, object, T]) -> T:
     return asyncio.run(coroutine)
 
 
@@ -126,7 +160,10 @@ def _leased(
     return {"status": "ok", "scope": scope_identity, "result": result}
 
 
-def register_gdrive_tasks(huey: Any, runtime: GDriveTaskRuntime | None) -> dict[str, Any]:
+def register_gdrive_tasks(
+    huey: Huey,
+    runtime: GDriveTaskRuntime | None,
+) -> dict[str, object]:
     """Register the seven Drive lifecycle tasks on the existing Huey queue."""
     if runtime is None:
         return {}
