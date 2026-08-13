@@ -8,16 +8,24 @@ from typing import Protocol
 
 from searchkernel.domain import ChangeSignal, Cursor, Record, RecordStatus
 
-from mcp_markdown_ragdocs.gdrive.client import GoogleDriveClient
 from mcp_markdown_ragdocs.gdrive.errors import classify_provider_error
 from mcp_markdown_ragdocs.gdrive.extraction import (
     DEFAULT_EXTRACTION_LIMITS,
     ExtractionLimits,
+    ExtractionProfile,
     ExtractionResult,
     ExtractionStatus,
     extract_content,
 )
-from mcp_markdown_ragdocs.gdrive.models import DriveChange, DriveFile, DriveScope
+from mcp_markdown_ragdocs.gdrive.models import (
+    DriveChange,
+    DriveChangePage,
+    DriveFile,
+    DriveFilePage,
+    DriveScope,
+    DriveStartPageToken,
+    DriveWatchChannel,
+)
 from mcp_markdown_ragdocs.gdrive.membership import DriveScopeMembershipStore
 from mcp_markdown_ragdocs.gdrive.records import (
     SOURCE_KIND,
@@ -36,9 +44,51 @@ class DriveExtractor(Protocol):
         payload: bytes,
         mime_type: str,
         *,
-        profile: object | None = None,
+        profile: ExtractionProfile | None = None,
         limits: ExtractionLimits = DEFAULT_EXTRACTION_LIMITS,
     ) -> ExtractionResult: ...
+
+
+class DriveContentClient(Protocol):
+    async def list_files_page(
+        self,
+        scope: DriveScope,
+        *,
+        page_token: str | None = None,
+        page_size: int = 1000,
+    ) -> DriveFilePage: ...
+
+    async def get_start_page_token(self, scope: DriveScope) -> DriveStartPageToken: ...
+
+    async def list_changes_page(
+        self,
+        scope: DriveScope,
+        page_token: str,
+        *,
+        page_size: int = 1000,
+    ) -> DriveChangePage: ...
+
+    async def export_file(self, file_id: str, export_mime_type: str) -> bytes: ...
+
+    async def download_file(self, file_id: str) -> bytes: ...
+
+    async def get_file_metadata(self, file_id: str) -> DriveFile: ...
+
+    async def watch_changes(
+        self,
+        scope: DriveScope,
+        page_token: str,
+        *,
+        channel_id: str,
+        address: str,
+        token: str | None = None,
+    ) -> DriveWatchChannel: ...
+
+    async def stop_channel(
+        self,
+        channel_id: str,
+        resource_id: str | None = None,
+    ) -> None: ...
 
 
 class GoogleDriveContentSource:
@@ -48,7 +98,7 @@ class GoogleDriveContentSource:
 
     def __init__(
         self,
-        client: GoogleDriveClient,
+        client: DriveContentClient,
         *,
         workspace_id: str,
         shared_drive_ids: Iterable[str] = (),
@@ -251,4 +301,4 @@ class GoogleDriveContentSource:
         record.metadata["scope_memberships"] = list(memberships)
 
 
-__all__ = ["GoogleDriveContentSource"]
+__all__ = ["DriveContentClient", "GoogleDriveContentSource"]
