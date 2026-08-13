@@ -59,7 +59,7 @@ cursor.
 Health is derived from persisted per-scope sync outcomes rather than from the
 fact that a health task ran. Aggregate precedence is deterministic:
 
-`unavailable` > `acl-incomplete` > `stale` > `empty` > `healthy`.
+`unavailable` > `acl-incomplete` > `empty` > `stale` > `healthy`.
 
 The result includes scope-level errors and freshness, so operators can
 distinguish an empty corpus from a source that has not synchronized.
