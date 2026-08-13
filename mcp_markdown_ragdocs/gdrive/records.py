@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from searchkernel.domain import Record
+from searchkernel.domain import Record, RecordStatus
 
 from mcp_markdown_ragdocs.gdrive.extraction import (
     EXTRACTION_PROFILES,
@@ -100,6 +100,8 @@ def map_drive_file(
     extraction_reason: str | None = None,
     scope_memberships: tuple[str, ...] = (),
     clock: Callable[[], datetime] | None = None,
+    status: RecordStatus = RecordStatus.ACTIVE,
+    deleted: bool = False,
 ) -> Record:
     """Map one Drive file to a stable, provider-neutral Record."""
     profile = extraction_profile(file)
@@ -120,6 +122,8 @@ def map_drive_file(
     }
     if body:
         metadata["local_text_hash"] = hashlib.sha256(body.encode()).hexdigest()
+    if deleted:
+        metadata["deleted"] = True
     return Record(
         source_kind=SOURCE_KIND,
         source_id=file.id,
@@ -131,6 +135,7 @@ def map_drive_file(
         updated_at=timestamp,
         metadata=metadata,
         uri=file.web_view_link,
+        status=status,
     )
 
 
