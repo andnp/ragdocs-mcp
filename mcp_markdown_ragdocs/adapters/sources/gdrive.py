@@ -18,6 +18,7 @@ from mcp_markdown_ragdocs.gdrive.extraction import (
     extract_content,
 )
 from mcp_markdown_ragdocs.gdrive.models import DriveChange, DriveFile, DriveScope
+from mcp_markdown_ragdocs.gdrive.membership import DriveScopeMembershipStore
 from mcp_markdown_ragdocs.gdrive.records import (
     SOURCE_KIND,
     extraction_profile,
@@ -56,6 +57,7 @@ class GoogleDriveContentSource:
         clock: Callable[[], datetime] | None = None,
         page_size: int = 1000,
         retry_work_store: DriveRetryWorkStore | None = None,
+        membership_store: DriveScopeMembershipStore | None = None,
     ) -> None:
         if not workspace_id:
             raise ValueError("workspace_id is required")
@@ -72,6 +74,7 @@ class GoogleDriveContentSource:
         self.extractor = extractor
         self.clock = clock or (lambda: datetime.now(UTC))
         self.retry_work_store = retry_work_store
+        self.membership_store = membership_store or DriveScopeMembershipStore()
 
     @staticmethod
     def scope_identity(scope: DriveScope) -> str:
@@ -97,6 +100,7 @@ class GoogleDriveContentSource:
         for scope in self.scopes:
             async for file in self.iter_scope_files(scope):
                 record = await self.materialize_record(file, scope=scope)
+                self._add_scope_membership(record, scope)
                 existing = records.get(record.source_id)
                 if existing is not None:
                     self._add_scope_membership(existing, scope)
@@ -227,9 +231,12 @@ class GoogleDriveContentSource:
     def _add_scope_membership(self, record: Record, scope: DriveScope | None) -> None:
         if scope is None:
             return
-        memberships = set(record.metadata.get("scope_memberships", ()))
-        memberships.add(self.scope_identity(scope))
-        record.metadata["scope_memberships"] = sorted(memberships)
+        memberships = self.membership_store.add(
+            self.workspace_id,
+            record.source_id,
+            self.scope_identity(scope),
+        )
+        record.metadata["scope_memberships"] = list(memberships)
 
 
 __all__ = ["GoogleDriveContentSource"]
