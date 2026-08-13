@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
-
 import pytest
 
 from mcp_markdown_ragdocs.context import IndexState
@@ -30,8 +28,9 @@ class _FakeCoordinator:
 
 
 class _ColdStartContext:
-    orchestrator: Any
-    config: Any
+    orchestrator: object
+    config: object
+    search_use_case: object | None = None
     git_indexing_enabled = False
 
     def __init__(
@@ -56,7 +55,7 @@ class _ColdStartContext:
         return self._index_state
 
 
-def _parse_query_documents_response(response_text: str) -> dict[str, Any]:
+def _parse_query_documents_response(response_text: str) -> dict[str, object]:
     return json.loads(response_text)
 
 
@@ -94,7 +93,9 @@ async def test_query_documents_preserves_validation_errors_during_cold_start() -
     payload = _parse_query_documents_response(contents[0].text)
     assert payload["status"] == "error"
     assert payload["error"] == "validation_error"
-    assert "cannot be empty" in payload["message"]
+    message = payload["message"]
+    assert isinstance(message, str)
+    assert "cannot be empty" in message
 
 
 @pytest.mark.asyncio
@@ -352,7 +353,11 @@ async def test_query_documents_returns_canonical_scope_and_meta() -> None:
     assert len(contents) == 1
     payload = _parse_query_documents_response(contents[0].text)
     assert "meta" not in payload
-    assert payload["results"][0]["doc_id"] == "auth-guide"
+    results = payload["results"]
+    assert isinstance(results, list)
+    first_result = results[0]
+    assert isinstance(first_result, dict)
+    assert first_result["doc_id"] == "auth-guide"
 
 
 def test_normalize_query_documents_request_rejects_scope_projects_outside_explicit_mode() -> None:

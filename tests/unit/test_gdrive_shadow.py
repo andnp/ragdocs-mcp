@@ -1,8 +1,7 @@
 """Tests for deterministic Google Drive shadow comparison artifacts."""
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import cast
-
 from searchkernel.api import Record
 
 from mcp_markdown_ragdocs.gdrive.shadow import (
@@ -104,7 +103,7 @@ def test_barrier_persists_comparison_after_index_and_persist(tmp_path: Path) -> 
     durable = False
 
     class Writer:
-        def index_records(self, records: list[Record]) -> bool:
+        def index_records(self, records: Sequence[Record]) -> bool:
             events.append("index")
             return True
 
@@ -121,7 +120,7 @@ def test_barrier_persists_comparison_after_index_and_persist(tmp_path: Path) -> 
 
     comparison = compare_shadow_results("q", [], [])
     persist_index_then_shadow_artifact(
-        cast(object, Writer()), (), comparison, Store(tmp_path)
+        Writer(), (), comparison, Store(tmp_path)
     )
 
     assert events == ["index", "persist", "artifact"]
@@ -135,7 +134,7 @@ def test_barrier_does_not_publish_comparison_when_index_write_fails(
     A failed index write leaves no comparison artifact to audit.
     """
     class Writer:
-        def index_records(self, records: list[Record]) -> bool:
+        def index_records(self, records: Sequence[Record]) -> bool:
             return False
 
         def persist(self) -> None:
@@ -144,7 +143,7 @@ def test_barrier_does_not_publish_comparison_when_index_write_fails(
     comparison = compare_shadow_results("q", [], [])
     try:
         persist_index_then_shadow_artifact(
-            cast(object, Writer()), (), comparison, ShadowArtifactStore(tmp_path)
+            Writer(), (), comparison, ShadowArtifactStore(tmp_path)
         )
     except RuntimeError as error:
         assert str(error) == "Google Drive shadow index write failed"
