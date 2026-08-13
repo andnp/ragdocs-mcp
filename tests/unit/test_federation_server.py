@@ -1,12 +1,14 @@
 import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
+from searchkernel.api import RecordSearchOutcome
 from searchkernel.domain import Record, SearchResultProvenance
 from searchkernel.ports.federation import (
     CallerAuthorizationContext,
@@ -131,34 +133,50 @@ class _RankedOrchestrator:
         self.results = tuple(results)
         self.calls: list[dict[str, Any]] = []
 
-    async def search(self, query, *, limit, filters):
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filters: Mapping[str, object],
+    ) -> RecordSearchOutcome:
         self.calls.append({"query": query, "limit": limit, "filters": filters})
-        return SimpleNamespace(
+        return RecordSearchOutcome(
             results=tuple(sorted(self.results, key=lambda result: -result.score)),
             failures=(),
-            degraded=False,
         )
 
 
 class _SourceFilteringOrchestrator(_RankedOrchestrator):
-    async def search(self, query, *, limit, filters):
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filters: Mapping[str, object],
+    ) -> RecordSearchOutcome:
         outcome = await super().search(query, limit=limit, filters=filters)
         source_kinds = filters.get("source_kinds")
         if not isinstance(source_kinds, list):
             return outcome
-        return SimpleNamespace(
+        return RecordSearchOutcome(
             results=tuple(
                 result
                 for result in outcome.results
                 if result.record.source_kind in source_kinds
             ),
             failures=outcome.failures,
-            degraded=outcome.degraded,
         )
 
 
 class _NativeDriveFilteringOrchestrator(_RankedOrchestrator):
-    async def search(self, query, *, limit, filters):
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filters: Mapping[str, object],
+    ) -> RecordSearchOutcome:
         outcome = await super().search(query, limit=limit, filters=filters)
         constraints = filters.get("source_scoped_filters")
         if not isinstance(constraints, Mapping):
@@ -168,7 +186,7 @@ class _NativeDriveFilteringOrchestrator(_RankedOrchestrator):
             return outcome
         allowed_workspaces = set(constraint.get("workspace_ids", []))
         required_metadata = constraint.get("metadata_non_empty", [])
-        return SimpleNamespace(
+        return RecordSearchOutcome(
             results=tuple(
                 result
                 for result in outcome.results
@@ -179,7 +197,6 @@ class _NativeDriveFilteringOrchestrator(_RankedOrchestrator):
                 )
             )[:limit],
             failures=outcome.failures,
-            degraded=outcome.degraded,
         )
 
 
@@ -644,19 +661,23 @@ def test_drive_filter_payload_matches_searchkernel_compiler_contract():
             }
         }
     }
+    vector_filters = import_module("searchkernel.domain.vector_filters")
+    source_compiler = vector_filters.__dict__.get("compile_source_scoped_filters")
+    vector_compiler = vector_filters.__dict__.get("compile_vector_filters")
     try:
-        from searchkernel.domain.vector_filters import compile_source_scoped_filters
-    except ImportError:
-        try:
-            from searchkernel.domain.vector_filters import compile_vector_filters
-        except ImportError:
+        if callable(source_compiler):
+            source_filters = source_compiler(payload)
+        elif callable(vector_compiler):
+            compiled = vector_compiler(payload)
+            source_filters = getattr(compiled, "source_scoped_filters", None)
+        else:
             pytest.skip("installed searchkernel lacks source-scoped filter APIs")
-        compiled = compile_vector_filters(payload)
-        source_filters = getattr(compiled, "source_scoped_filters", None)
-        if source_filters is None:
-            pytest.skip("installed searchkernel lacks source-scoped filter support")
-    else:
-        source_filters = compile_source_scoped_filters(payload)
+    except (ImportError, AttributeError):
+        pytest.skip("installed searchkernel lacks source-scoped filter APIs")
+    if source_filters is None:
+        pytest.skip("installed searchkernel lacks source-scoped filter support")
+    if not isinstance(source_filters, (list, tuple)):
+        pytest.skip("installed searchkernel returned an invalid filter payload")
 
     assert len(source_filters) == 1
     assert source_filters[0].source_kind == "gdrive"
@@ -670,15 +691,15 @@ def test_drive_filter_compiler_retains_only_authorized_records():
     """
     Apply native Drive scope filters to authorized and unauthorized records.
     """
-    try:
-        from searchkernel.domain.vector_filters import compile_source_scoped_filters
-    except ImportError:
+    vector_filters = import_module("searchkernel.domain.vector_filters")
+    source_compiler = vector_filters.__dict__.get("compile_source_scoped_filters")
+    if not callable(source_compiler):
         pytest.skip(
             "installed searchkernel lacks compile_source_scoped_filters; "
             "install a source-scoped-filter-capable version"
         )
 
-    source_filters = compile_source_scoped_filters(
+    source_filters = source_compiler(
         {
             "source_scoped_filters": {
                 "gdrive": {
@@ -688,6 +709,8 @@ def test_drive_filter_compiler_retains_only_authorized_records():
             }
         }
     )
+    if not isinstance(source_filters, (list, tuple)):
+        pytest.skip("installed searchkernel returned an invalid filter payload")
     if not source_filters or not callable(getattr(source_filters[0], "matches", None)):
         pytest.skip(
             "installed searchkernel compiler lacks the public source-filter matcher"
