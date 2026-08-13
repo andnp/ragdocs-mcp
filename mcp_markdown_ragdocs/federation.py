@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from hmac import compare_digest
 from pathlib import Path
 from time import monotonic
-from typing import Any, cast
+from typing import Protocol, runtime_checkable
 
 from searchkernel.api import (
     FEDERATION_CONTRACT_VERSION,
@@ -12,6 +12,8 @@ from searchkernel.api import (
     MAX_SNIPPET_LENGTH,
     MAX_TOP_K,
     FederationSourceCapabilities,
+    Record,
+    RecordSearchOutcome,
     SearchHit,
     SearchHitProvenance,
     SearchRequest,
@@ -22,6 +24,17 @@ from searchkernel.api import (
 from mcp_markdown_ragdocs.gdrive.health import DriveSourceHealth, GDriveHealthStore
 
 type JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+
+
+@runtime_checkable
+class FederationSearchOrchestrator(Protocol):
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filters: Mapping[str, object],
+    ) -> RecordSearchOutcome: ...
 
 RAGDOCS_SOURCE = SourceIdentity(source_kind="ragdocs", source_id="local")
 RAGDOCS_CAPABILITIES = FederationSourceCapabilities(
@@ -46,20 +59,22 @@ DRIVE_WORKSPACE_CLAIM = "drive_workspace_ids"
 
 def build_federation_capabilities(
     *, gdrive_workspace_id: str | None = None
-) -> dict[str, object]:
+) -> dict[str, JsonValue]:
     """Return the generic v1 capabilities with configured logical sources."""
-    payload = RAGDOCS_CAPABILITIES.to_dict()
-    sources: list[dict[str, object]] = []
+    payload = _json_object(RAGDOCS_CAPABILITIES.to_dict())
+    sources: list[JsonValue] = []
     if gdrive_workspace_id is not None:
         sources.append(
-            {
-                "source": SourceIdentity(
+            _json_object(
+                {
+                    "source": SourceIdentity(
                     source_kind="gdrive",
                     source_id="drive",
                     workspace_id=gdrive_workspace_id,
-                ).to_dict(),
-                "capabilities": GDRIVE_CAPABILITIES.to_dict(),
-            }
+                    ).to_dict(),
+                    "capabilities": GDRIVE_CAPABILITIES.to_dict(),
+                }
+            )
         )
     payload["sources"] = sources
     return payload
@@ -106,9 +121,7 @@ def authenticate_bearer(
         raise FederationRequestError("invalid bearer credentials", status_code=401)
     claims: dict[str, JsonValue] = {}
     if drive_workspace_ids:
-        claims[DRIVE_WORKSPACE_CLAIM] = cast(
-            list[JsonValue], list(drive_workspace_ids)
-        )
+        claims[DRIVE_WORKSPACE_CLAIM] = _json_value(list(drive_workspace_ids))
     return CallerAuthorizationContext(
         caller_id=TRUSTED_CALLER_ID,
         scopes=(SEARCH_READ_SCOPE,),
@@ -216,20 +229,20 @@ def _authorized_drive_workspaces(
     return frozenset(workspace_ids)
 
 
-def _record_has_drive_scope_membership(record: Any) -> bool:
-    metadata = getattr(record, "metadata", {})
+def _record_has_drive_scope_membership(record: Record) -> bool:
+    metadata = record.metadata
     memberships = metadata.get("scope_memberships") if isinstance(metadata, Mapping) else None
     return isinstance(memberships, Sequence) and not isinstance(memberships, (str, bytes)) and bool(memberships)
 
 
 def _record_is_authorized_for_drive(
-    record: Any,
+    record: Record,
     *,
     authorized_workspaces: frozenset[str],
 ) -> bool:
-    if getattr(record, "source_kind", None) != DRIVE_SOURCE_KIND:
+    if record.source_kind != DRIVE_SOURCE_KIND:
         return True
-    workspace_id = getattr(record, "workspace_id", None)
+    workspace_id = record.workspace_id
     return (
         isinstance(workspace_id, str)
         and workspace_id in authorized_workspaces
@@ -237,44 +250,39 @@ def _record_is_authorized_for_drive(
     )
 
 
-def _record_project_id(record: Any) -> str | None:
-    workspace_id = getattr(record, "workspace_id", None)
+def _record_project_id(record: Record) -> str | None:
+    workspace_id = record.workspace_id
     if workspace_id is not None:
         return workspace_id
-    metadata = getattr(record, "metadata", {})
+    metadata = record.metadata
     project_id = metadata.get("project_id") if isinstance(metadata, Mapping) else None
     return project_id if isinstance(project_id, str) else None
 
 
-def _citation_uri(record: Any) -> str | None:
-    uri = getattr(record, "uri", None)
+def _citation_uri(record: Record) -> str | None:
+    uri = record.uri
     if isinstance(uri, str) and uri:
         return uri
-    metadata = getattr(record, "metadata", {})
+    metadata = record.metadata
     file_path = metadata.get("file_path") if isinstance(metadata, Mapping) else None
     if isinstance(file_path, str) and file_path:
         return f"file://{file_path}"
     return None
 
 
-def _safe_metadata(record: Any) -> dict[str, JsonValue]:
-    metadata = getattr(record, "metadata", {})
-    if not isinstance(metadata, Mapping):
-        return {}
+def _safe_metadata(record: Record) -> dict[str, JsonValue]:
+    metadata = record.metadata
     allowed = ("chunk_id", "doc_id", "file_path", "header_path", "project_id")
-    return cast(
-        dict[str, JsonValue],
-        {
-            key: metadata[key]
-            for key in allowed
-            if key in metadata
-            and isinstance(metadata[key], (str, int, float, bool, type(None)))
-        },
-    )
+    result: dict[str, JsonValue] = {}
+    for key in allowed:
+        value = metadata.get(key)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            result[key] = value
+    return result
 
 
 async def execute_federation_search(
-    orchestrator: Any,
+    orchestrator: FederationSearchOrchestrator,
     request: SearchRequest,
     *,
     request_id: str,
@@ -328,13 +336,12 @@ async def execute_federation_search(
             native_filters.pop("project_ids", None)
             native_filters.pop("project_filter", None)
         else:
-            native_filters["project_ids"] = cast(list[JsonValue], project_filter)
+            native_filters["project_ids"] = _json_value(project_filter)
             native_filters.pop("project_filter", None)
     if source_kinds:
-        native_filters["source_kinds"] = cast(list[JsonValue], source_kinds)
+        native_filters["source_kinds"] = _json_value(source_kinds)
     if drive_requested:
-        native_filters["source_scoped_filters"] = cast(
-            JsonValue,
+        native_filters["source_scoped_filters"] = _json_value(
             {
                 DRIVE_SOURCE_KIND: {
                     "workspace_ids": sorted(authorized_drive_workspaces),
@@ -359,12 +366,12 @@ async def execute_federation_search(
 
     hits: list[SearchHit] = []
     warnings: list[str] = []
-    for failure in getattr(outcome, "failures", ()):
-        message = str(getattr(failure, "message", failure))
+    for failure in outcome.failures:
+        message = failure.message
         if message and message not in warnings:
             warnings.append(message[:512])
 
-    for result in getattr(outcome, "results", ()):
+    for result in outcome.results:
         record = result.record
         project_id = _record_project_id(record)
         if project_filter and project_id not in project_filter:
@@ -375,12 +382,10 @@ async def execute_federation_search(
         ):
             continue
         rank = len(hits) + 1
-        native_provenance = getattr(result, "provenance", None)
         details: dict[str, JsonValue] = {}
-        if native_provenance is not None and hasattr(native_provenance, "to_dict"):
-            details["native_provenance"] = cast(JsonValue, native_provenance.to_dict())
+        details["native_provenance"] = _json_value(result.provenance.to_dict())
         hit = SearchHit(
-            workspace_id=getattr(record, "workspace_id", None),
+            workspace_id=record.workspace_id,
             source_kind=record.source_kind,
             source_id=record.source_id,
             title=record.title,
@@ -412,7 +417,7 @@ async def execute_federation_search(
         source=RAGDOCS_SOURCE,
         hits=tuple(hits),
         elapsed_ms=elapsed_ms,
-        partial=bool(getattr(outcome, "degraded", False)),
+        partial=outcome.degraded,
         warnings=tuple(warnings),
         capabilities=RAGDOCS_CAPABILITIES,
     )
@@ -423,9 +428,31 @@ __all__ = [
     "FederationRequestError",
     "DRIVE_SOURCE_KIND",
     "DRIVE_WORKSPACE_CLAIM",
+    "FederationSearchOrchestrator",
     "RAGDOCS_CAPABILITIES",
     "RAGDOCS_SOURCE",
     "TRUSTED_CALLER_ID",
     "authenticate_bearer",
     "execute_federation_search",
 ]
+
+
+def _json_value(value: object) -> JsonValue:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Mapping):
+        return {
+            key: _json_value(item)
+            for key, item in value.items()
+            if isinstance(key, str)
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [_json_value(item) for item in value]
+    raise TypeError(f"value is not JSON-compatible: {type(value).__name__}")
+
+
+def _json_object(value: Mapping[str, object]) -> dict[str, JsonValue]:
+    return {
+        key: _json_value(item)
+        for key, item in value.items()
+    }
