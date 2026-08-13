@@ -2,19 +2,21 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
-from typing import Literal
+from typing import Literal, Protocol, runtime_checkable
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
 from searchkernel.api import (
     FEDERATION_CONTRACT_VERSION,
     SearchRequest,
+    ChunkResult as DomainChunkResult,
+    CompressionStats,
+    SearchStrategyStats,
     classify_query_type,
     load_manifest,
     truncate_content,
@@ -22,11 +24,14 @@ from searchkernel.api import (
 from starlette.responses import JSONResponse
 
 from mcp_markdown_ragdocs.app.search import SearchQuery
+from mcp_markdown_ragdocs.app.search import ApplicationSearchUseCase
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
+from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.federation import (
     RAGDOCS_SOURCE,
     FederationRequestError,
+    FederationSearchOrchestrator,
     authenticate_bearer,
     build_federation_capabilities,
     execute_federation_search,
@@ -39,6 +44,30 @@ logger = logging.getLogger(__name__)
 MAX_FEDERATION_REQUEST_BYTES = 256 * 1024
 DEFAULT_FEDERATION_TIMEOUT_SECONDS = 30.0
 MAX_CORRELATION_ID_LENGTH = 256
+
+
+@runtime_checkable
+class _DocumentOrchestrator(Protocol):
+    async def query(
+        self,
+        query: str,
+        *,
+        top_k: int,
+        top_n: int,
+        pipeline_config: object | None = None,
+        project_filter: list[str] | None = None,
+        source_filter: list[str] | None = None,
+        project_context: str | None = None,
+        excluded_files: set[str] | None = None,
+        min_score: float | None = None,
+        similarity_threshold: float | None = None,
+        max_chunks_per_doc: int = 1,
+    ) -> tuple[list[ChunkResult | DomainChunkResult], CompressionStats, SearchStrategyStats]: ...
+
+
+@runtime_checkable
+class _SearchUseCaseProvider(Protocol):
+    search_use_case: ApplicationSearchUseCase | None
 
 
 class QueryRequest(BaseModel):
@@ -114,7 +143,7 @@ def create_app():
     app = FastAPI(lifespan=lifespan)
 
     async def _execute_query(
-        orchestrator,
+        orchestrator: _DocumentOrchestrator,
         query: str,
         top_n: int,
         max_chunks_per_doc: int = 0,
@@ -125,7 +154,11 @@ def create_app():
         min_score: float | None = None,
         similarity_threshold: float | None = None,
     ):
-        search_use_case = getattr(orchestrator, "search_use_case", None)
+        search_use_case = (
+            orchestrator.search_use_case
+            if isinstance(orchestrator, _SearchUseCaseProvider)
+            else None
+        )
         if search_use_case is not None:
             execution = await search_use_case.execute(
                 SearchQuery(
@@ -162,7 +195,7 @@ def create_app():
         query_type = classify_query_type(query)
 
         formatted_results = []
-        for i, result in enumerate(results):
+        for result in results:
             result = (
                 result
                 if isinstance(result, ChunkResult)
@@ -178,7 +211,7 @@ def create_app():
     @app.post("/query_documents")
     async def query_documents(request: QueryRequest):
         results_dict = await _execute_query(
-            app.state.orchestrator,
+            _document_orchestrator(app),
             request.query,
             request.top_n,
             max_chunks_per_doc=(
@@ -205,12 +238,12 @@ def create_app():
         )
         if auth_error is not None:
             return auth_error
-        config = getattr(app.state, "config", None)
-        gdrive = getattr(config, "gdrive", None)
+        config = _config(app)
+        gdrive = config.gdrive if config is not None else None
         return JSONResponse(
             build_federation_capabilities(
                 gdrive_workspace_id=(
-                    gdrive.workspace_id if getattr(gdrive, "enabled", False) else None
+                    gdrive.workspace_id if gdrive is not None and gdrive.enabled else None
                 )
             )
         )
@@ -227,10 +260,10 @@ def create_app():
             "contract_version": FEDERATION_CONTRACT_VERSION,
             "source": RAGDOCS_SOURCE.to_dict(),
         }
-        config = getattr(app.state, "config", None)
-        gdrive = getattr(config, "gdrive", None)
-        index_path = getattr(app.state, "index_path", None)
-        if getattr(gdrive, "enabled", False) and index_path is not None:
+        config = _config(app)
+        gdrive = config.gdrive if config is not None else None
+        index_path = app.state._state.get("index_path")
+        if gdrive is not None and gdrive.enabled and isinstance(index_path, Path):
             payload["source_health"] = {
                 "gdrive": load_gdrive_source_health(
                     Path(index_path),
@@ -312,7 +345,7 @@ def create_app():
                 headers={"X-Request-ID": effective_request_id},
             )
 
-        orchestrator = getattr(request.app.state, "orchestrator", None)
+        orchestrator = _federation_orchestrator(request.app)
         if orchestrator is None:
             return JSONResponse(
                 {"error": "search_unavailable", "request_id": effective_request_id},
@@ -373,31 +406,26 @@ def create_app():
 
 
 def _federation_token(app: FastAPI) -> str | None:
-    config = getattr(app.state, "config", None)
-    federation = getattr(config, "federation", None)
-    token = getattr(federation, "deployment_token", None)
-    return token if isinstance(token, str) else None
+    config = _config(app)
+    return config.federation.deployment_token if config is not None else None
 
 
-def _federation_drive_workspace_ids(app: FastAPI) -> tuple[object, ...]:
-    config = getattr(app.state, "config", None)
-    federation = getattr(config, "federation", None)
-    values = getattr(federation, "drive_workspace_ids", ())
-    if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
-        return tuple(values)
-    return ()
+def _federation_drive_workspace_ids(app: FastAPI) -> tuple[str, ...]:
+    config = _config(app)
+    return config.federation.drive_workspace_ids if config is not None else ()
 
 
 def _owned_drive_workspace_ids(app: FastAPI) -> tuple[str, ...]:
-    config = getattr(app.state, "config", None)
-    gdrive = getattr(config, "gdrive", None)
-    workspace_id = getattr(gdrive, "workspace_id", None)
-    if getattr(gdrive, "enabled", False) and isinstance(workspace_id, str):
-        return (workspace_id,)
+    config = _config(app)
+    if config is not None and config.gdrive.enabled:
+        return (config.gdrive.workspace_id,)
     return ()
 
 
-def _federation_auth_error(app: FastAPI, authorization: str | None):
+def _federation_auth_error(
+    app: FastAPI,
+    authorization: str | None,
+) -> JSONResponse | None:
     try:
         authenticate_bearer(
             authorization,
@@ -405,4 +433,23 @@ def _federation_auth_error(app: FastAPI, authorization: str | None):
         )
     except FederationRequestError as exc:
         return JSONResponse({"error": str(exc)}, status_code=exc.status_code)
+    return None
+
+
+def _config(app: FastAPI) -> Config | None:
+    value = app.state._state.get("config")
+    return value if isinstance(value, Config) else None
+
+
+def _document_orchestrator(app: FastAPI) -> _DocumentOrchestrator:
+    value = app.state._state.get("orchestrator")
+    if not isinstance(value, _DocumentOrchestrator):
+        raise RuntimeError("document search is unavailable")
+    return value
+
+
+def _federation_orchestrator(app: FastAPI) -> FederationSearchOrchestrator | None:
+    value = app.state._state.get("orchestrator")
+    if isinstance(value, FederationSearchOrchestrator):
+        return value
     return None
