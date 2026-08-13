@@ -279,6 +279,118 @@ async def test_change_replay_advances_feed_cursor_after_each_ordered_page(
 
 
 @pytest.mark.asyncio
+async def test_restart_recovers_inventory_from_persisted_page_checkpoint(
+    tmp_path: Path,
+) -> None:
+    """
+    Resume inventory in a fresh sync instance after a bounded interruption.
+    """
+    client = _Client()
+    source = GoogleDriveContentSource(
+        cast(Any, client),
+        workspace_id="workspace",
+        extractor=cast(Any, _extractor),
+    )
+    store = GDriveSyncCheckpointStore(tmp_path)
+    first_writer = _Writer([])
+    first_sync = GoogleDriveSync(
+        source,
+        store,
+        cast(Any, first_writer),
+        scope_generation="generation",
+        max_pages=1,
+        max_seconds=60,
+    )
+
+    interrupted = await first_sync.sync_inventory(source.scopes[0])
+
+    restarted_source = GoogleDriveContentSource(
+        cast(Any, client),
+        workspace_id="workspace",
+        extractor=cast(Any, _extractor),
+    )
+    resumed_writer = _Writer([])
+    resumed = await GoogleDriveSync(
+        restarted_source,
+        store,
+        cast(Any, resumed_writer),
+        scope_generation="generation",
+        max_pages=2,
+        max_seconds=60,
+    ).sync_inventory(restarted_source.scopes[0])
+
+    assert interrupted.complete is False
+    assert resumed.complete is True
+    assert client.start_calls == 1
+    assert client.page_tokens == [None, "page-2"]
+    assert [record.source_id for batch in resumed_writer.batches for record in batch] == [
+        "second"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_restart_recovers_changes_from_persisted_feed_cursor(
+    tmp_path: Path,
+) -> None:
+    """
+    Resume change replay in a fresh sync instance after one page commits.
+    """
+    client = _Client()
+    source = GoogleDriveContentSource(
+        cast(Any, client),
+        workspace_id="workspace",
+        extractor=cast(Any, _extractor),
+    )
+    store = GDriveSyncCheckpointStore(tmp_path)
+    inventory_writer = _Writer([])
+    inventory_sync = GoogleDriveSync(
+        source,
+        store,
+        cast(Any, inventory_writer),
+        scope_generation="generation",
+        max_pages=2,
+        max_seconds=60,
+    )
+    await inventory_sync.sync_inventory(source.scopes[0])
+
+    first_change_writer = _Writer([])
+    first_change = await GoogleDriveSync(
+        source,
+        store,
+        cast(Any, first_change_writer),
+        scope_generation="generation",
+        max_pages=1,
+        max_seconds=60,
+    ).sync_changes(source.scopes[0])
+
+    restarted_source = GoogleDriveContentSource(
+        cast(Any, client),
+        workspace_id="workspace",
+        extractor=cast(Any, _extractor),
+    )
+    resumed_writer = _Writer([])
+    resumed = await GoogleDriveSync(
+        restarted_source,
+        store,
+        cast(Any, resumed_writer),
+        scope_generation="generation",
+        max_pages=2,
+        max_seconds=60,
+    ).sync_changes(restarted_source.scopes[0])
+
+    checkpoint = store.load(checkpoint_namespace("generation-shared-with-me"))
+    assert first_change.complete is False
+    assert resumed.complete is True
+    assert client.change_tokens == ["start-token", "change-2"]
+    assert checkpoint is not None
+    assert checkpoint.changes_token == "new-start-token"
+    assert [record.source_id for batch in resumed_writer.batches for record in batch] == [
+        "trashed"
+    ]
+    assert resumed_writer.batches[0][0].status is RecordStatus.ARCHIVED
+
+
+@pytest.mark.asyncio
 async def test_invalid_change_token_starts_bounded_full_resync(tmp_path: Path) -> None:
     """
     Replace an expired feed cursor with a fresh inventory start token.
