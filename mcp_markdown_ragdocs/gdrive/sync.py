@@ -14,7 +14,7 @@ from mcp_markdown_ragdocs.gdrive.checkpoints import (
     GDriveSyncCheckpointStore,
     checkpoint_namespace,
 )
-from mcp_markdown_ragdocs.gdrive.models import DriveScope
+from mcp_markdown_ragdocs.gdrive.models import DriveChange, DriveScope
 
 
 class DriveRecordWriter(Protocol):
@@ -128,6 +128,74 @@ class GoogleDriveSync:
             items_indexed,
             False,
         )
+
+    async def sync_changes(self, scope: DriveScope) -> GDriveSyncProgress:
+        """Replay bounded change pages after inventory has completed."""
+        namespace = self._namespace(scope)
+        checkpoint = self.checkpoint_store.load(namespace)
+        if checkpoint is None or checkpoint.inventory_start_token is None:
+            raise ValueError("Google Drive changes require an inventory checkpoint")
+        if checkpoint.inventory_batch == 0 or checkpoint.inventory_page_token is not None:
+            raise ValueError("Google Drive changes require completed inventory")
+
+        cursor = checkpoint.changes_token or checkpoint.inventory_start_token
+        pages_indexed = 0
+        items_indexed = 0
+        started_at = self._clock()
+        while pages_indexed < self.max_pages and items_indexed < self.max_items:
+            if self._clock() - started_at >= self.max_seconds:
+                break
+            page = await self.source.client.list_changes_page(
+                scope,
+                cursor,
+                page_size=min(self.page_size, self.max_items - items_indexed),
+            )
+            records = await self._materialize_changes(page.changes, scope)
+            if records and self.record_writer.index_records(records) is False:
+                raise RuntimeError("Google Drive change record indexing failed")
+            self.record_writer.persist()
+            pages_indexed += 1
+            items_indexed += len(records)
+            next_cursor = page.next_page_token or page.new_start_page_token
+            if not next_cursor:
+                raise ValueError("Google Drive change page did not provide a cursor")
+            checkpoint = self.checkpoint_store.persist_changes_after_index(
+                namespace,
+                next_cursor,
+            )
+            cursor = next_cursor
+            if page.next_page_token is None:
+                return GDriveSyncProgress(
+                    namespace,
+                    checkpoint.inventory_start_token or cursor,
+                    pages_indexed,
+                    items_indexed,
+                    True,
+                )
+
+        return GDriveSyncProgress(
+            namespace,
+            checkpoint.inventory_start_token or cursor,
+            pages_indexed,
+            items_indexed,
+            False,
+        )
+
+    async def _materialize_changes(
+        self,
+        changes: Sequence[DriveChange],
+        scope: DriveScope,
+    ) -> list[Record]:
+        records: list[Record] = []
+        for change in changes:
+            tombstone = self.source.tombstone_for_change(change, scope=scope)
+            if tombstone is not None:
+                records.append(tombstone)
+            elif change.file is not None:
+                records.append(
+                    await self.source.materialize_record(change.file, scope=scope)
+                )
+        return records
 
     def _namespace(self, scope: DriveScope) -> str:
         return checkpoint_namespace(
