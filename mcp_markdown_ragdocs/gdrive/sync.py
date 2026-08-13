@@ -73,6 +73,7 @@ class GoogleDriveSync:
         self.max_pages = max_pages
         self.max_seconds = max_seconds
         self._clock = clock
+        self._inventory_source_ids: dict[str, set[str]] = {}
 
     async def sync_inventory(self, scope: DriveScope) -> GDriveSyncProgress:
         """Index bounded inventory pages and advance after each durable write."""
@@ -81,12 +82,16 @@ class GoogleDriveSync:
         if checkpoint is None or checkpoint.inventory_start_token is None:
             start_token = (await self.source.client.get_start_page_token(scope)).token
             checkpoint = self.checkpoint_store.begin_inventory(namespace, start_token)
+            self._inventory_source_ids[namespace] = set()
         else:
             start_token = checkpoint.inventory_start_token
+
+        observed_source_ids = self._inventory_source_ids.setdefault(namespace, set())
 
         if checkpoint.inventory_batch and checkpoint.inventory_page_token is None:
             return GDriveSyncProgress(namespace, start_token, 0, 0, True)
 
+        resumed_inventory = checkpoint.inventory_page_token is not None
         page_token = checkpoint.inventory_page_token
         pages_indexed = 0
         items_indexed = 0
@@ -103,9 +108,28 @@ class GoogleDriveSync:
                 await self.source.materialize_record(file, scope=scope)
                 for file in page.files
             ]
+            observed_source_ids.update(
+                record.source_id
+                for record in records
+                if self._record_belongs_to_scope(
+                    record, self.source.scope_identity(scope)
+                    )
+            )
+            complete_inventory = page.next_page_token is None
+            if complete_inventory:
+                if resumed_inventory and self.source.membership_store.is_durable:
+                    observed_source_ids = set(
+                        await self.source.collect_scope_source_ids(scope)
+                    )
+                    self._inventory_source_ids[namespace] = observed_source_ids
+                records.extend(
+                    self.source.scope_loss_tombstones(scope, observed_source_ids)
+                )
             if records and self.record_writer.index_records(records) is False:
                 raise RuntimeError("Google Drive inventory record indexing failed")
             self.record_writer.persist()
+            if complete_inventory:
+                self.source.reconcile_scope(scope, observed_source_ids)
             pages_indexed += 1
             items_indexed += len(records)
             checkpoint = self.checkpoint_store.persist_inventory_batch_after_index(
@@ -115,6 +139,7 @@ class GoogleDriveSync:
             )
             page_token = page.next_page_token
             if page_token is None:
+                self._inventory_source_ids.pop(namespace, None)
                 return GDriveSyncProgress(
                     namespace,
                     start_token,
@@ -130,6 +155,11 @@ class GoogleDriveSync:
             items_indexed,
             False,
         )
+
+    @staticmethod
+    def _record_belongs_to_scope(record: Record, scope_identity: str) -> bool:
+        memberships = record.metadata.get("scope_memberships")
+        return isinstance(memberships, (list, tuple)) and scope_identity in memberships
 
     async def sync_changes(self, scope: DriveScope) -> GDriveSyncProgress:
         """Replay bounded change pages after inventory has completed."""

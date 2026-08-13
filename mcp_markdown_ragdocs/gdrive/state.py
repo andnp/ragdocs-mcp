@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import math
@@ -127,6 +127,22 @@ class GDriveMembership:
     def __post_init__(self) -> None:
         _validate_record_version(self.schema_version)
         _validate_required_text(self.source_id, "source_id")
+
+
+@dataclass(frozen=True, slots=True)
+class GDriveScopeMembershipSnapshot:
+    """The durable source IDs visible in one Drive scope."""
+
+    identity: GDriveScopeIdentity
+    source_ids: tuple[str, ...] = ()
+    schema_version: int = STATE_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        _validate_record_version(self.schema_version)
+        if len(self.source_ids) != len(set(self.source_ids)):
+            raise ValueError("scope membership source IDs must be unique")
+        for source_id in self.source_ids:
+            _validate_required_text(source_id, "source_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,6 +348,77 @@ class GDriveStateRepository:
                 (*membership.identity.as_parameters(), membership.source_id, membership.schema_version),
             )
             return self._membership_scopes(connection, identity, source_id)
+
+    def load_scope_memberships(
+        self,
+        identity: GDriveScopeIdentity,
+    ) -> GDriveScopeMembershipSnapshot:
+        """Enumerate the durable source IDs currently visible in one scope."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT source_id, schema_version
+                FROM memberships
+                WHERE source_kind = ? AND workspace_id = ? AND scope_identity = ?
+                ORDER BY source_id
+                """,
+                identity.as_parameters(),
+            ).fetchall()
+        source_ids: list[str] = []
+        for row in rows:
+            try:
+                source_id = _required_text(row[0], "source_id")
+                _validate_record_version(_integer(row[1], "schema_version"))
+            except ValueError:
+                continue
+            source_ids.append(source_id)
+        return GDriveScopeMembershipSnapshot(identity, tuple(source_ids))
+
+    def replace_scope_memberships(
+        self,
+        identity: GDriveScopeIdentity,
+        source_ids: Iterable[str],
+    ) -> tuple[str, ...]:
+        """Atomically replace one scope snapshot and return removed source IDs."""
+
+        if isinstance(source_ids, str):
+            raise TypeError("source_ids must be an iterable of source IDs")
+        normalized = tuple(sorted({_required_text(source_id, "source_id") for source_id in source_ids}))
+        GDriveScopeMembershipSnapshot(identity, normalized)
+        with self._transaction() as connection:
+            current = {
+                source_id
+                for source_id, schema_version in connection.execute(
+                    """
+                    SELECT source_id, schema_version
+                    FROM memberships
+                    WHERE source_kind = ? AND workspace_id = ? AND scope_identity = ?
+                    """,
+                    identity.as_parameters(),
+                ).fetchall()
+                if _safe_text(source_id) is not None
+                and schema_version == STATE_SCHEMA_VERSION
+            }
+            connection.execute(
+                """
+                DELETE FROM memberships
+                WHERE source_kind = ? AND workspace_id = ? AND scope_identity = ?
+                """,
+                identity.as_parameters(),
+            )
+            connection.executemany(
+                """
+                INSERT INTO memberships (
+                    source_kind, workspace_id, scope_identity, source_id, schema_version
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    (*identity.as_parameters(), source_id, STATE_SCHEMA_VERSION)
+                    for source_id in normalized
+                ],
+            )
+        return tuple(sorted(current.difference(normalized)))
 
     def remove_membership(
         self,
@@ -854,6 +941,7 @@ __all__ = [
     "GDriveBackfillCursor",
     "GDriveCheckpoint",
     "GDriveMembership",
+    "GDriveScopeMembershipSnapshot",
     "GDriveScopeIdentity",
     "GDriveStateError",
     "GDriveStateRepository",

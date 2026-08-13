@@ -21,6 +21,7 @@ from mcp_markdown_ragdocs.gdrive.extraction import (
 )
 from mcp_markdown_ragdocs.gdrive.models import DriveFile, DriveFilePage
 from mcp_markdown_ragdocs.gdrive.records import map_drive_file
+from mcp_markdown_ragdocs.gdrive.state import GDriveScopeIdentity, GDriveStateRepository
 
 
 def _file(file_id: str) -> DriveFile:
@@ -157,3 +158,37 @@ async def test_backfill_resumes_from_checkpointed_page_bound(tmp_path: Path) -> 
     assert first.items_scanned == 2
     assert second.items_scanned == 2
     assert writer.persist_count == 2
+
+
+@pytest.mark.asyncio
+async def test_complete_backfill_replaces_stale_scope_memberships(tmp_path: Path) -> None:
+    """
+    Reconcile a scope snapshot after every listed page has been processed.
+    """
+    client = _Client()
+    repository = GDriveStateRepository(tmp_path / "gdrive-state.db")
+    identity = GDriveScopeIdentity("gdrive", "workspace", "shared-with-me")
+    repository.add_membership(identity, "stale")
+    source = GoogleDriveContentSource(
+        cast(Any, client),
+        workspace_id="workspace",
+        extractor=cast(Any, _extractor),
+        state_repository=repository,
+    )
+    writer = _Writer()
+
+    progress = await GoogleDriveBackfill(
+        source,
+        GDriveBackfillCheckpointStore(tmp_path),
+        writer,
+        scope_generation="generation",
+        max_seconds=60,
+    ).run(source.scopes[0], {})
+
+    assert progress.complete is True
+    assert repository.load_scope_memberships(identity).source_ids == (
+        "fresh",
+        "missing",
+        "retry",
+        "version",
+    )

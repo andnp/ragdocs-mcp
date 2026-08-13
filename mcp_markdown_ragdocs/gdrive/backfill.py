@@ -175,6 +175,7 @@ class GoogleDriveBackfill:
         self.max_pages = max_pages
         self.max_seconds = max_seconds
         self._clock = clock
+        self._scope_source_ids: dict[str, set[str]] = {}
 
     async def run(
         self,
@@ -191,6 +192,10 @@ class GoogleDriveBackfill:
         checkpoint = self.checkpoint_store.load(namespace, generation)
         if checkpoint is None:
             checkpoint = self.checkpoint_store.begin(namespace, generation)
+            self._scope_source_ids[namespace] = set()
+
+        observed_source_ids = self._scope_source_ids.setdefault(namespace, set())
+        scope_identity = self.source.scope_identity(scope)
 
         pages_scanned = 0
         items_scanned = 0
@@ -207,17 +212,43 @@ class GoogleDriveBackfill:
             )
             remaining = self.max_items - items_scanned
             files = page.files[:remaining]
-            records = []
+            records: list[Record] = []
             for file in files:
                 items_scanned += 1
                 existing = records_by_id.get(file.id)
                 if self._needs_reprocessing(file, existing):
-                    records.append(await self.source.materialize_record(file, scope=scope))
+                    record = await self.source.materialize_record(file, scope=scope)
+                    records.append(record)
+                    source_id = record.source_id
+                else:
+                    source_id = existing.source_id if existing is not None else file.id
+                    self.source.membership_store.add(
+                        self.source.workspace_id,
+                        file.id,
+                        scope_identity,
+                    )
+                if scope_identity in self.source.membership_store.memberships_for(
+                    self.source.workspace_id, source_id
+                ):
+                    observed_source_ids.add(source_id)
+            complete_backfill = page.next_page_token is None
+            reprocessed_count = len(records)
+            if complete_backfill:
+                if checkpoint.page_token is not None and self.source.membership_store.is_durable:
+                    observed_source_ids = set(
+                        await self.source.collect_scope_source_ids(scope)
+                    )
+                    self._scope_source_ids[namespace] = observed_source_ids
+                records.extend(
+                    self.source.scope_loss_tombstones(scope, observed_source_ids)
+                )
             if records:
                 if self.record_writer.index_records(records) is False:
                     raise RuntimeError("Google Drive backfill record indexing failed")
                 self.record_writer.persist()
-                items_reprocessed += len(records)
+                items_reprocessed += reprocessed_count
+            if complete_backfill:
+                self.source.reconcile_scope(scope, observed_source_ids)
             pages_scanned += 1
             page_token = page.next_page_token
             checkpoint = self.checkpoint_store.persist_after_index(
@@ -227,6 +258,7 @@ class GoogleDriveBackfill:
                 batch=checkpoint.batch + 1,
             )
             if page_token is None:
+                self._scope_source_ids.pop(namespace, None)
                 return GDriveBackfillProgress(
                     namespace,
                     generation,

@@ -26,6 +26,7 @@ from mcp_markdown_ragdocs.gdrive.models import (
     DriveFilePage,
     DriveStartPageToken,
 )
+from mcp_markdown_ragdocs.gdrive.state import GDriveScopeIdentity, GDriveStateRepository
 from mcp_markdown_ragdocs.gdrive.sync import GoogleDriveSync
 
 
@@ -426,3 +427,73 @@ async def test_invalid_change_token_starts_bounded_full_resync(tmp_path: Path) -
     assert checkpoint is not None
     assert checkpoint.inventory_start_token == "reset-start-token"
     assert checkpoint.changes_token is None
+
+
+@pytest.mark.asyncio
+async def test_complete_inventory_replaces_stale_scope_memberships(
+    tmp_path: Path,
+) -> None:
+    """
+    Remove stale scope visibility only after the final inventory page commits.
+    """
+    client = _Client()
+    repository = GDriveStateRepository(tmp_path / "gdrive-state.db")
+    identity = GDriveScopeIdentity("gdrive", "workspace", "shared-with-me")
+    repository.add_membership(identity, "stale")
+    source = GoogleDriveContentSource(
+        cast(Any, client),
+        workspace_id="workspace",
+        extractor=cast(Any, _extractor),
+        state_repository=repository,
+    )
+    sync = GoogleDriveSync(
+        source,
+        GDriveSyncCheckpointStore(tmp_path),
+        cast(Any, _Writer([])),
+        scope_generation="generation",
+        max_pages=2,
+        max_seconds=60,
+    )
+
+    progress = await sync.sync_inventory(source.scopes[0])
+
+    assert progress.complete is True
+    assert repository.load_scope_memberships(identity).source_ids == (
+        "first",
+        "second",
+    )
+
+
+@pytest.mark.asyncio
+async def test_incomplete_inventory_preserves_stale_scope_memberships(
+    tmp_path: Path,
+) -> None:
+    """
+    Retain the prior scope snapshot while inventory remains bounded and incomplete.
+    """
+    client = _Client()
+    repository = GDriveStateRepository(tmp_path / "gdrive-state.db")
+    identity = GDriveScopeIdentity("gdrive", "workspace", "shared-with-me")
+    repository.add_membership(identity, "stale")
+    source = GoogleDriveContentSource(
+        cast(Any, client),
+        workspace_id="workspace",
+        extractor=cast(Any, _extractor),
+        state_repository=repository,
+    )
+    sync = GoogleDriveSync(
+        source,
+        GDriveSyncCheckpointStore(tmp_path),
+        cast(Any, _Writer([])),
+        scope_generation="generation",
+        max_pages=1,
+        max_seconds=60,
+    )
+
+    progress = await sync.sync_inventory(source.scopes[0])
+
+    assert progress.complete is False
+    assert repository.load_scope_memberships(identity).source_ids == (
+        "first",
+        "stale",
+    )

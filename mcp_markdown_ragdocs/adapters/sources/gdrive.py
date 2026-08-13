@@ -33,6 +33,7 @@ from mcp_markdown_ragdocs.gdrive.records import (
     map_drive_file,
 )
 from mcp_markdown_ragdocs.gdrive.retry import DriveRetryWorkStore
+from mcp_markdown_ragdocs.gdrive.state import GDriveStateRepository
 
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
@@ -108,6 +109,7 @@ class GoogleDriveContentSource:
         page_size: int = 1000,
         retry_work_store: DriveRetryWorkStore | None = None,
         membership_store: DriveScopeMembershipStore | None = None,
+        state_repository: GDriveStateRepository | None = None,
         extractor_version: str = "v1",
         chunker_version: str = "v1",
     ) -> None:
@@ -126,7 +128,7 @@ class GoogleDriveContentSource:
         self.extractor = extractor
         self.clock = clock or (lambda: datetime.now(UTC))
         self.retry_work_store = retry_work_store
-        self.membership_store = membership_store or DriveScopeMembershipStore()
+        self.membership_store = membership_store or DriveScopeMembershipStore(state_repository)
         self.extractor_version = extractor_version
         self.chunker_version = chunker_version
 
@@ -148,19 +150,76 @@ class GoogleDriveContentSource:
                 return
             page_token = page.next_page_token
 
+    async def collect_scope_source_ids(self, scope: DriveScope) -> tuple[str, ...]:
+        """Materialize a complete scope pass for restart-safe reconciliation."""
+
+        source_ids: set[str] = set()
+        async for file in self.iter_scope_files(scope):
+            record = await self.materialize_record(file, scope=scope)
+            if self._record_visible_in_scope(record, scope):
+                source_ids.add(record.source_id)
+        return tuple(sorted(source_ids))
+
+    def reconcile_scope(self, scope: DriveScope, source_ids: Iterable[str]) -> tuple[Record, ...]:
+        """Replace a completed scope snapshot and build final-loss tombstones."""
+
+        source_ids = tuple(source_ids)
+        tombstones = self.scope_loss_tombstones(scope, source_ids)
+        self.membership_store.reconcile_scope(
+            self.workspace_id,
+            self.scope_identity(scope),
+            source_ids,
+        )
+        return tombstones
+
+    def scope_loss_tombstones(
+        self,
+        scope: DriveScope,
+        source_ids: Iterable[str],
+    ) -> tuple[Record, ...]:
+        """Build tombstones for records losing their final scope membership."""
+
+        expected = set(source_ids)
+        scope_identity = self.scope_identity(scope)
+        removed = set(self.membership_store.source_ids_for_scope(
+            self.workspace_id,
+            scope_identity,
+        )).difference(expected)
+        tombstones: list[Record] = []
+        for source_id in removed:
+            remaining = set(self.membership_store.memberships_for(self.workspace_id, source_id))
+            remaining.discard(scope_identity)
+            if not remaining:
+                tombstone = self.tombstone_for_change(DriveChange(source_id, True))
+                if tombstone is not None:
+                    tombstones.append(tombstone)
+        return tuple(tombstones)
+
     async def iter_records(self, since: Cursor | None = None) -> AsyncIterator[Record]:
         del since
         records: dict[str, Record] = {}
         for scope in self.scopes:
-            async for file in self.iter_scope_files(scope):
-                record = await self.materialize_record(file, scope=scope)
-                self._add_scope_membership(record, scope)
-                existing = records.get(record.source_id)
-                if existing is not None:
-                    self._add_scope_membership(existing, scope)
-                    continue
-                records[record.source_id] = record
-                yield record
+            observed: set[str] = set()
+            try:
+                async for file in self.iter_scope_files(scope):
+                    record = await self.materialize_record(file, scope=scope)
+                    self._add_scope_membership(record, scope)
+                    if self._record_visible_in_scope(record, scope):
+                        observed.add(record.source_id)
+                    existing = records.get(record.source_id)
+                    if existing is not None:
+                        self._add_scope_membership(existing, scope)
+                        continue
+                    records[record.source_id] = record
+                    yield record
+            except Exception as error:
+                if not classify_provider_error(error).tombstone:
+                    raise
+                observed.clear()
+            for tombstone in self.reconcile_scope(scope, observed):
+                existing = records.get(tombstone.source_id)
+                if existing is None or existing.metadata.get("deleted") is not True:
+                    yield tombstone
 
     def change_signal(self) -> ChangeSignal:
         return {"poll_interval": 3600, "source_kind": self.source_kind}
@@ -183,6 +242,7 @@ class GoogleDriveContentSource:
             self._add_scope_membership(record, scope)
             return record
 
+        self._add_scope_membership_for_source(file.id, scope)
         profile = extraction_profile(file)
         if file.mime_type == FOLDER_MIME_TYPE:
             return self._status_record(file, scope, "folder")
@@ -217,7 +277,7 @@ class GoogleDriveContentSource:
             body=result.text,
             extraction_status=result.status.value,
             extraction_reason=result.reason,
-            scope_memberships=(self.scope_identity(scope),) if scope else (),
+            scope_memberships=self._memberships_for(file.id, scope),
             clock=self.clock,
             extractor_version=self.extractor_version,
             chunker_version=self.chunker_version,
@@ -227,12 +287,21 @@ class GoogleDriveContentSource:
         if not change.removed and not (change.file and change.file.trashed):
             return None
         file = change.file or DriveFile(change.file_id, "", "")
+        remaining = self._discard_scope_membership(change.file_id, scope) if scope else ()
+        if remaining:
+            return self._status_record(
+                file,
+                None,
+                "provider-definitive",
+                "removed" if change.removed else "trashed",
+                scope_memberships=remaining,
+            )
         return map_drive_file(
             file,
             workspace_id=self.workspace_id,
             extraction_status="tombstone",
             extraction_reason="removed" if change.removed else "trashed",
-            scope_memberships=(self.scope_identity(scope),) if scope else (),
+            scope_memberships=(),
             clock=self.clock,
             status=RecordStatus.ARCHIVED,
             deleted=True,
@@ -251,6 +320,15 @@ class GoogleDriveContentSource:
         info = classify_provider_error(error)
         if not info.tombstone:
             return None
+        remaining = self._discard_scope_membership(file.id, scope) if scope else ()
+        if remaining:
+            return self._status_record(
+                file,
+                None,
+                f"provider-{info.classification.value}",
+                info.reason,
+                scope_memberships=remaining,
+            )
         if info.reason:
             reason = info.reason
         elif info.status_code == 404:
@@ -264,7 +342,7 @@ class GoogleDriveContentSource:
             workspace_id=self.workspace_id,
             extraction_status="tombstone",
             extraction_reason=reason,
-            scope_memberships=(self.scope_identity(scope),) if scope else (),
+            scope_memberships=(),
             clock=self.clock,
             status=RecordStatus.ARCHIVED,
             deleted=True,
@@ -278,13 +356,14 @@ class GoogleDriveContentSource:
         scope: DriveScope | None,
         status: str,
         reason: str | None = None,
+        scope_memberships: tuple[str, ...] | None = None,
     ) -> Record:
         return map_drive_file(
             file,
             workspace_id=self.workspace_id,
             extraction_status=status,
             extraction_reason=reason,
-            scope_memberships=(self.scope_identity(scope),) if scope else (),
+            scope_memberships=scope_memberships or self._memberships_for(file.id, scope),
             clock=self.clock,
             extractor_version=self.extractor_version,
             chunker_version=self.chunker_version,
@@ -293,12 +372,43 @@ class GoogleDriveContentSource:
     def _add_scope_membership(self, record: Record, scope: DriveScope | None) -> None:
         if scope is None:
             return
-        memberships = self.membership_store.add(
+        memberships = self._add_scope_membership_for_source(record.source_id, scope)
+        record.metadata["scope_memberships"] = list(memberships)
+
+    def _add_scope_membership_for_source(
+        self,
+        source_id: str,
+        scope: DriveScope | None,
+    ) -> tuple[str, ...]:
+        if scope is None:
+            return self.membership_store.memberships_for(self.workspace_id, source_id)
+        return self.membership_store.add(
             self.workspace_id,
-            record.source_id,
+            source_id,
             self.scope_identity(scope),
         )
-        record.metadata["scope_memberships"] = list(memberships)
+
+    def _discard_scope_membership(
+        self,
+        source_id: str,
+        scope: DriveScope | None,
+    ) -> tuple[str, ...]:
+        if scope is None:
+            return self.membership_store.memberships_for(self.workspace_id, source_id)
+        return self.membership_store.discard(
+            self.workspace_id,
+            source_id,
+            self.scope_identity(scope),
+        )
+
+    def _memberships_for(self, source_id: str, scope: DriveScope | None) -> tuple[str, ...]:
+        memberships = self.membership_store.memberships_for(self.workspace_id, source_id)
+        if memberships or scope is None:
+            return memberships
+        return (self.scope_identity(scope),)
+
+    def _record_visible_in_scope(self, record: Record, scope: DriveScope) -> bool:
+        return self.scope_identity(scope) in record.metadata.get("scope_memberships", ())
 
 
 __all__ = ["DriveContentClient", "GoogleDriveContentSource"]
