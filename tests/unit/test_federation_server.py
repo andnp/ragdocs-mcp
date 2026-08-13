@@ -278,6 +278,59 @@ def test_federation_reports_unavailable_drive_without_health_snapshot(tmp_path: 
     assert health["source_health"]["gdrive"]["source"]["available"] is False
 
 
+def test_federation_health_reports_stale_drive(tmp_path: Path):
+    """
+    Surface stale Drive freshness through the authenticated v1 health endpoint.
+    """
+    app = _app(drive_workspace_id="workspace")
+    app.state.index_path = tmp_path
+    GDriveHealthStore(tmp_path).save(
+        DriveSourceHealth.evaluate(
+            "workspace",
+            (DriveScopeHealth("shared-with-me", indexed_records=2, last_success_at=80),),
+            observed_at=100,
+            stale_after_seconds=10,
+        )
+    )
+
+    response = TestClient(
+        app, headers={"Authorization": f"Bearer {AUTH_TOKEN}"}
+    ).get("/v1/health")
+
+    assert response.status_code == 200
+    assert response.json()["source_health"]["gdrive"]["status"] == "stale"
+
+
+def test_federation_health_reports_incomplete_drive_acl(tmp_path: Path):
+    """
+    Surface incomplete Drive ACL coverage before callers trust the corpus.
+    """
+    app = _app(drive_workspace_id="workspace")
+    app.state.index_path = tmp_path
+    GDriveHealthStore(tmp_path).save(
+        DriveSourceHealth.evaluate(
+            "workspace",
+            (
+                DriveScopeHealth(
+                    "shared-with-me",
+                    indexed_records=2,
+                    acl_complete=False,
+                    last_success_at=99,
+                ),
+            ),
+            observed_at=100,
+            stale_after_seconds=10,
+        )
+    )
+
+    response = TestClient(
+        app, headers={"Authorization": f"Bearer {AUTH_TOKEN}"}
+    ).get("/v1/health")
+
+    assert response.status_code == 200
+    assert response.json()["source_health"]["gdrive"]["status"] == "acl-incomplete"
+
+
 def test_federation_search_rejects_invalid_request():
     client = TestClient(
         _app(), headers={"Authorization": f"Bearer {AUTH_TOKEN}"}
@@ -337,6 +390,20 @@ def test_federation_endpoints_require_bearer_authentication():
     assert client.get("/v1/search/capabilities").status_code == 401
     assert client.get("/v1/health").status_code == 401
     assert client.post("/v1/search", json=_request()).status_code == 401
+
+
+def test_federation_search_rejects_invalid_deployment_token():
+    """
+    Reject an invalid caller token before any Drive search is attempted.
+    """
+    client = TestClient(
+        _app(), headers={"Authorization": "Bearer expired-token"}
+    )
+
+    response = client.post("/v1/search", json=_request())
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "invalid bearer credentials"
 
 
 def test_request_caller_spoof_does_not_change_authenticated_identity():

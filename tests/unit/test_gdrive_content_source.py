@@ -102,3 +102,19 @@ def test_source_creates_archived_record_for_removed_change() -> None:
     assert record.status is RecordStatus.ARCHIVED
     assert record.body == ""
     assert record.metadata["deleted"] is True
+
+
+def test_source_creates_archived_record_for_trashed_change() -> None:
+    """
+    Remove trashed Drive content from search without treating it as transient.
+    """
+    source = GoogleDriveContentSource(cast(Any, _Client(())), workspace_id="workspace")
+
+    record = source.tombstone_for_change(
+        DriveChange("trashed", False, DriveFile("trashed", "Notes", "text/plain", trashed=True))
+    )
+
+    assert record is not None
+    assert record.status is RecordStatus.ARCHIVED
+    assert record.metadata["extraction_reason"] == "trashed"
+    assert record.metadata["deleted"] is True

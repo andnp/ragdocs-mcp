@@ -83,7 +83,14 @@ async def test_definitive_loss_becomes_archived_tombstone(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "error",
-    [_ApiError(401), _ApiError(429), _ApiError(503), TimeoutError("temporary")],
+    [
+        _ApiError(401, "invalidCredentials"),
+        _ApiError(429),
+        _ApiError(500),
+        _ApiError(502),
+        _ApiError(503),
+        TimeoutError("temporary"),
+    ],
 )
 async def test_transient_failure_stays_recoverable_active_record(error: BaseException) -> None:
     """
