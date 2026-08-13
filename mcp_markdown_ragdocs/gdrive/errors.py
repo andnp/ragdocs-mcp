@@ -52,8 +52,8 @@ def classify_provider_error(error: BaseException) -> ProviderErrorInfo:
         "authError",
         "invalidCredentials",
     }
-    retryable_statuses = {401, 429, 500, 502, 503, 504}
-    retryable = status_code in retryable_statuses or (
+    retryable_statuses = {401, 408, 429, 500, 502, 503, 504}
+    retryable = isinstance(error, (ConnectionError, TimeoutError)) or status_code in retryable_statuses or (
         status_code == 403 and reason in retryable_reasons
     )
     message = " ".join(str(error).split())

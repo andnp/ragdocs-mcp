@@ -23,6 +23,7 @@ from mcp_markdown_ragdocs.gdrive.records import (
     extraction_profile,
     map_drive_file,
 )
+from mcp_markdown_ragdocs.gdrive.retry import DriveRetryWorkStore
 
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
@@ -54,6 +55,7 @@ class GoogleDriveContentSource:
         extractor: DriveExtractor = extract_content,
         clock: Callable[[], datetime] | None = None,
         page_size: int = 1000,
+        retry_work_store: DriveRetryWorkStore | None = None,
     ) -> None:
         if not workspace_id:
             raise ValueError("workspace_id is required")
@@ -69,6 +71,7 @@ class GoogleDriveContentSource:
         self.extraction_limits = extraction_limits
         self.extractor = extractor
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.retry_work_store = retry_work_store
 
     @staticmethod
     def scope_identity(scope: DriveScope) -> str:
@@ -133,6 +136,14 @@ class GoogleDriveContentSource:
             result = self.extractor(payload, file.mime_type, profile=profile, limits=self.extraction_limits)
         except Exception as error:
             info = classify_provider_error(error)
+            if self.retry_work_store is not None and info.retryable:
+                self.retry_work_store.schedule_failure(
+                    scope_identity=self.scope_identity(scope) if scope else "unscoped",
+                    source_id=file.id,
+                    operation="materialize",
+                    payload={"mime_type": file.mime_type},
+                    error=error,
+                )
             return self._status_record(file, scope, f"provider-{info.classification.value}", info.reason)
         if result.status is not ExtractionStatus.INDEXED or result.text is None:
             return self._status_record(file, scope, result.status.value, result.reason)
