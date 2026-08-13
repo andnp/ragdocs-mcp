@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 from hmac import compare_digest
 from pathlib import Path
 from time import monotonic
-from types import SimpleNamespace
 from typing import Any, cast
 
 from searchkernel.api import (
@@ -238,39 +237,6 @@ def _record_is_authorized_for_drive(
     )
 
 
-async def _search_drive_workspaces(
-    orchestrator: Any,
-    query: str,
-    *,
-    limit: int,
-    filters: dict[str, JsonValue],
-    workspace_ids: frozenset[str],
-) -> Any:
-    outcomes = []
-    for workspace_id in sorted(workspace_ids):
-        scoped_filters = dict(filters)
-        scoped_filters["workspace_id"] = workspace_id
-        outcomes.append(
-            await orchestrator.search(query, limit=limit, filters=scoped_filters)
-        )
-    results = sorted(
-        (result for outcome in outcomes for result in getattr(outcome, "results", ())),
-        key=lambda result: (
-            -float(result.score),
-            str(getattr(result.record, "source_id", "")),
-        ),
-    )
-    return SimpleNamespace(
-        results=tuple(results),
-        failures=tuple(
-            failure
-            for outcome in outcomes
-            for failure in getattr(outcome, "failures", ())
-        ),
-        degraded=any(getattr(outcome, "degraded", False) for outcome in outcomes),
-    )
-
-
 def _record_project_id(record: Any) -> str | None:
     workspace_id = getattr(record, "workspace_id", None)
     if workspace_id is not None:
@@ -366,31 +332,31 @@ async def execute_federation_search(
             native_filters.pop("project_filter", None)
     if source_kinds:
         native_filters["source_kinds"] = cast(list[JsonValue], source_kinds)
+    if drive_requested:
+        native_filters["source_scoped_metadata_overlaps"] = cast(
+            JsonValue,
+            [
+                {
+                    "source_kind": DRIVE_SOURCE_KIND,
+                    "metadata_key": "scope_memberships",
+                    "values": sorted(authorized_drive_workspaces),
+                }
+            ],
+        )
     if drive_requested and len(authorized_drive_workspaces) == 1:
         native_filters["workspace_id"] = next(iter(authorized_drive_workspaces))
     search_limit = min(
         MAX_TOP_K,
         max(
             request.top_k,
-            request.top_k * 10
-            if project_filter or drive_requested or authorized_drive_workspaces
-            else request.top_k,
+            request.top_k * 10 if project_filter else request.top_k,
         ),
     )
-    if drive_requested and len(authorized_drive_workspaces) > 1:
-        outcome = await _search_drive_workspaces(
-            orchestrator,
-            request.query,
-            limit=search_limit,
-            filters=native_filters,
-            workspace_ids=authorized_drive_workspaces,
-        )
-    else:
-        outcome = await orchestrator.search(
-            request.query,
-            limit=search_limit,
-            filters=native_filters,
-        )
+    outcome = await orchestrator.search(
+        request.query,
+        limit=search_limit,
+        filters=native_filters,
+    )
 
     hits: list[SearchHit] = []
     warnings: list[str] = []

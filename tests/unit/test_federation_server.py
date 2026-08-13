@@ -609,7 +609,7 @@ def test_drive_acl_filters_before_top_k():
 
     assert response.status_code == 200
     assert [hit["source_id"] for hit in response.json()["hits"]] == ["authorized"]
-    assert orchestrator.calls[0]["limit"] == 10
+    assert orchestrator.calls[0]["limit"] == 1
 
 
 def test_authenticated_drive_only_search_preserves_identity_and_provenance():
