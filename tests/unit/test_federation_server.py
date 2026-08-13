@@ -13,6 +13,11 @@ from searchkernel.ports.federation import (
 )
 
 from mcp_markdown_ragdocs.config import Config
+from mcp_markdown_ragdocs.federation import (
+    FederationRequestError,
+    TRUSTED_CALLER_ID,
+    authenticate_bearer,
+)
 from mcp_markdown_ragdocs.gdrive.health import DriveScopeHealth, DriveSourceHealth, GDriveHealthStore
 from mcp_markdown_ragdocs.server import create_app
 
@@ -199,6 +204,65 @@ def test_federation_search_rejects_invalid_request():
 
     assert response.status_code == 400
     assert response.json()["error"] == "invalid_request"
+
+
+def test_bearer_authentication_maps_token_to_trusted_caller():
+    """
+    Resolve the deployment credential to the fixed federation caller contract.
+    """
+    caller = authenticate_bearer(
+        f"Bearer {AUTH_TOKEN}", configured_token=AUTH_TOKEN
+    )
+
+    assert caller.caller_id == TRUSTED_CALLER_ID
+    assert caller.scopes == ("search:read",)
+    assert caller.claims == {}
+
+
+def test_bearer_authentication_rejects_missing_and_invalid_credentials():
+    """
+    Reject absent and incorrect credentials before parsing or searching.
+    """
+    for authorization in (None, "Bearer wrong-token"):
+        try:
+            authenticate_bearer(authorization, configured_token=AUTH_TOKEN)
+        except FederationRequestError as error:
+            assert error.status_code == 401
+        else:
+            raise AssertionError("invalid credentials were accepted")
+
+
+def test_federation_endpoints_require_bearer_authentication():
+    """
+    Protect capabilities and health alongside the federation search endpoint.
+    """
+    client = TestClient(_app())
+
+    assert client.get("/v1/search/capabilities").status_code == 401
+    assert client.get("/v1/health").status_code == 401
+    assert client.post("/v1/search", json=_request()).status_code == 401
+
+
+def test_request_caller_spoof_does_not_change_authenticated_identity():
+    """
+    Ignore an attacker-supplied caller and its legacy project claims.
+    """
+    orchestrator = _Orchestrator()
+    client = _client(orchestrator)
+    request = SearchRequest(
+        "authentication",
+        caller=CallerAuthorizationContext(
+            caller_id="attacker",
+            scopes=("search:read",),
+            claims={"project_ids": ["project-a"]},
+        ),
+        filters={"project_ids": ["project-b"]},
+    )
+
+    response = client.post("/v1/search", json=request.to_dict())
+
+    assert response.status_code == 200
+    assert response.json()["hits"] == []
 
 
 def test_federation_search_uses_bearer_identity_over_body_caller():
