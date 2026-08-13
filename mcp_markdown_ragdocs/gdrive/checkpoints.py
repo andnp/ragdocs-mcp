@@ -46,12 +46,11 @@ class GDriveSyncCheckpoint:
             raise ValueError("inventory_batch must be a non-negative integer")
         if self.inventory_batch < 0:
             raise ValueError("inventory_batch must be a non-negative integer")
-        for field_name in (
-            "inventory_start_token",
-            "inventory_page_token",
-            "changes_token",
+        for field_name, value in (
+            ("inventory_start_token", self.inventory_start_token),
+            ("inventory_page_token", self.inventory_page_token),
+            ("changes_token", self.changes_token),
         ):
-            value = getattr(self, field_name)
             if value is not None and (not isinstance(value, str) or not value):
                 raise ValueError(f"{field_name} must be a non-empty string or null")
 
@@ -72,12 +71,28 @@ class GDriveSyncCheckpoint:
 
         if not isinstance(payload, dict):
             raise ValueError("Google Drive checkpoint must be a JSON object")
+        schema_version = payload.get("schema_version")
+        inventory_start_token = payload.get("inventory_start_token")
+        inventory_page_token = payload.get("inventory_page_token")
+        inventory_batch = payload.get("inventory_batch")
+        changes_token = payload.get("changes_token")
+        if not isinstance(schema_version, int):
+            raise ValueError("schema_version must be an integer")
+        if not isinstance(inventory_batch, int) or isinstance(inventory_batch, bool):
+            raise ValueError("inventory_batch must be a non-negative integer")
+        for field_name, value in (
+            ("inventory_start_token", inventory_start_token),
+            ("inventory_page_token", inventory_page_token),
+            ("changes_token", changes_token),
+        ):
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"{field_name} must be a non-empty string or null")
         return cls(
-            schema_version=payload.get("schema_version"),
-            inventory_start_token=payload.get("inventory_start_token"),
-            inventory_page_token=payload.get("inventory_page_token"),
-            inventory_batch=payload.get("inventory_batch"),
-            changes_token=payload.get("changes_token"),
+            schema_version=schema_version,
+            inventory_start_token=inventory_start_token,
+            inventory_page_token=inventory_page_token,
+            inventory_batch=inventory_batch,
+            changes_token=changes_token,
         )
 
     def inventory_started(self, start_token: str) -> "GDriveSyncCheckpoint":

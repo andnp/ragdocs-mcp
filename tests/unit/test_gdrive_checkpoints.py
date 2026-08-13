@@ -79,5 +79,9 @@ def test_checkpoint_namespaces_are_isolated(tmp_path: Path) -> None:
     store.begin_inventory(first, "start-a")
     store.begin_inventory(second, "start-b")
 
-    assert store.load(first).inventory_start_token == "start-a"
-    assert store.load(second).inventory_start_token == "start-b"
+    first_checkpoint = store.load(first)
+    second_checkpoint = store.load(second)
+    assert first_checkpoint is not None
+    assert second_checkpoint is not None
+    assert first_checkpoint.inventory_start_token == "start-a"
+    assert second_checkpoint.inventory_start_token == "start-b"
