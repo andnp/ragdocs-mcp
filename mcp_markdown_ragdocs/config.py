@@ -16,6 +16,25 @@ from searchkernel.api import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_INDEX_PATH = ".index_data/"
+DEFAULT_GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+
+
+def _default_gdrive_credentials_path() -> str:
+    config_home = os.getenv("XDG_CONFIG_HOME")
+    if config_home:
+        return str(
+            Path(config_home)
+            / "mcp-markdown-ragdocs"
+            / "gdrive"
+            / "authorized-user.json"
+        )
+    return str(
+        Path.home()
+        / ".config"
+        / "mcp-markdown-ragdocs"
+        / "gdrive"
+        / "authorized-user.json"
+    )
 
 
 @dataclass
@@ -221,6 +240,30 @@ class GitIndexingConfig:
 
 
 @dataclass
+class GoogleDriveConfig:
+    enabled: bool = False
+    credentials_path: str = field(default_factory=_default_gdrive_credentials_path)
+    workspace_id: str = "default"
+    shared_drive_ids: tuple[str, ...] = ()
+    scopes: tuple[str, ...] = (DEFAULT_GDRIVE_SCOPE,)
+    index_generation: str = "gdrive-v1"
+    page_size: int = 1000
+    batch_size: int = 100
+    max_download_bytes: int = 25 * 1024 * 1024
+    max_text_bytes: int = 4 * 1024 * 1024
+    max_items: int = 100_000
+    max_pages: int = 500
+    max_seconds: float = 10.0
+    push_enabled: bool = False
+    push_address: str = ""
+    watch_renewal_seconds: int = 3600
+
+    def __post_init__(self) -> None:
+        self.shared_drive_ids = tuple(self.shared_drive_ids)
+        self.scopes = tuple(self.scopes)
+
+
+@dataclass
 class StoreConfig:
     backend: str = "local"  # canonical local record stores
     pg_dsn: str = ""  # retained for configuration-file compatibility
@@ -257,6 +300,7 @@ class LoggingConfig:
 class Config:
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
     git_indexing: GitIndexingConfig = field(default_factory=GitIndexingConfig)
+    gdrive: GoogleDriveConfig = field(default_factory=GoogleDriveConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
@@ -621,6 +665,12 @@ def load_config():
     git_indexing = _load_dataclass_from_dict(
         GitIndexingConfig, config_data.get("git_indexing", {})
     )
+    gdrive = _load_dataclass_from_dict(
+        GoogleDriveConfig,
+        config_data.get("gdrive", {}),
+        path_fields={"credentials_path"},
+    )
+    gdrive.credentials_path = _expand_path(gdrive.credentials_path)
 
     chunking_data = config_data.get(
         "chunking", config_data.get("chunking_documents", {})
@@ -655,6 +705,7 @@ def load_config():
     return Config(
         indexing=indexing,
         git_indexing=git_indexing,
+        gdrive=gdrive,
         search=search,
         llm=llm,
         chunking=chunking,

@@ -17,6 +17,7 @@ from searchkernel.embeddings import (
 
 from mcp_markdown_ragdocs.config import (
     Config,
+    GoogleDriveConfig,
     LLMConfig,
     load_config,
     resolve_embedding_model,
@@ -105,6 +106,52 @@ def test_use_defaults_when_no_config_exists(tmp_path):
         assert config.indexing.rebuild_checkpoint_interval == 25
     finally:
         os.chdir(original_cwd)
+
+
+def test_gdrive_credentials_default_uses_xdg_config_home(monkeypatch, tmp_path):
+    """
+    Build the Drive credential default below the configured XDG home.
+    Keep the default separate from Devkit's application paths.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+    config = GoogleDriveConfig()
+
+    assert config.credentials_path == str(
+        tmp_path / "config" / "mcp-markdown-ragdocs" / "gdrive" / "authorized-user.json"
+    )
+
+
+def test_gdrive_config_loads_typed_scope_settings(tmp_path):
+    """
+    Load Drive indexing settings from the gdrive TOML section.
+    Normalize configured scope arrays to the typed immutable values.
+    """
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        """
+[gdrive]
+enabled = true
+credentials_path = "credentials.json"
+shared_drive_ids = ["shared-drive"]
+scopes = ["scope-a", "scope-b"]
+max_items = 12
+"""
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+    finally:
+        os.chdir(original_cwd)
+
+    assert config.gdrive.enabled is True
+    assert config.gdrive.credentials_path == str(tmp_path / "credentials.json")
+    assert config.gdrive.shared_drive_ids == ("shared-drive",)
+    assert config.gdrive.scopes == ("scope-a", "scope-b")
+    assert config.gdrive.max_items == 12
 
 
 def test_indexing_performance_knobs_load_from_config(tmp_path):
