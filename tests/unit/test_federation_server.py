@@ -17,6 +17,7 @@ from mcp_markdown_ragdocs.federation import (
     FederationRequestError,
     TRUSTED_CALLER_ID,
     authenticate_bearer,
+    execute_federation_search,
 )
 from mcp_markdown_ragdocs.gdrive.health import DriveScopeHealth, DriveSourceHealth, GDriveHealthStore
 from mcp_markdown_ragdocs.server import create_app
@@ -149,6 +150,26 @@ class _SourceFilteringOrchestrator(_RankedOrchestrator):
                 for result in outcome.results
                 if result.record.source_kind in source_kinds
             ),
+            failures=outcome.failures,
+            degraded=outcome.degraded,
+        )
+
+
+class _NativeDriveFilteringOrchestrator(_RankedOrchestrator):
+    async def search(self, query, *, limit, filters):
+        outcome = await super().search(query, limit=limit, filters=filters)
+        overlap = filters.get("source_scoped_metadata_overlaps")
+        if not isinstance(overlap, list) or not overlap:
+            return outcome
+        allowed = overlap[0].get("values", [])
+        return SimpleNamespace(
+            results=tuple(
+                result
+                for result in outcome.results
+                if result.record.source_kind != "gdrive"
+                or set(result.record.metadata.get("scope_memberships", ()))
+                & set(allowed)
+            )[:limit],
             failures=outcome.failures,
             degraded=outcome.degraded,
         )
@@ -582,6 +603,98 @@ def test_drive_search_requires_scope_membership_on_each_record():
     assert response.json()["hits"] == []
 
 
+def test_drive_search_constructs_source_scoped_membership_filter():
+    """Pass authenticated workspace claims to native Drive retrieval filtering."""
+    orchestrator = _Orchestrator(_drive_result())
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace-a",
+        drive_workspace_ids=("workspace-a",),
+    )
+
+    response = client.post(
+        "/v1/search",
+        json=_request(filters={"source_kinds": ["gdrive"]}),
+    )
+
+    assert response.status_code == 200
+    assert orchestrator.calls[0]["filters"]["source_scoped_metadata_overlaps"] == [
+        {
+            "source_kind": "gdrive",
+            "metadata_key": "scope_memberships",
+            "values": ["workspace-a"],
+        }
+    ]
+
+
+def test_drive_search_handles_multiple_workspaces_in_one_retrieval():
+    """Retrieve authorized records from multiple claimed Drive workspaces together."""
+    orchestrator = _RankedOrchestrator(
+        (
+            _drive_result(workspace_id="workspace-a", source_id="drive-a"),
+            _drive_result(workspace_id="workspace-b", source_id="drive-b"),
+        )
+    )
+    request = SearchRequest(
+        "authentication",
+        caller=CallerAuthorizationContext(
+            caller_id="devkit",
+            scopes=("search:read",),
+            claims={"drive_workspace_ids": ["workspace-b", "workspace-a"]},
+        ),
+        filters={"source_kinds": ["gdrive"]},
+    )
+
+    response = asyncio.run(
+        execute_federation_search(
+            orchestrator,
+            request,
+            request_id="request-123",
+            owned_drive_workspace_ids=("workspace-a", "workspace-b"),
+        )
+    )
+
+    assert len(response.hits) == 2
+    assert len(orchestrator.calls) == 1
+    assert {hit.source_id for hit in response.hits} == {
+        "drive-a",
+        "drive-b",
+    }
+
+
+def test_drive_search_native_filter_defeats_unauthorized_prefix():
+    """Filter before retrieval limits so a long unauthorized prefix cannot hide access."""
+    unauthorized = tuple(
+        _drive_result(
+            workspace_id="other",
+            source_id=f"unauthorized-{index}",
+            score=1.0 - index / 1000,
+            scope_memberships=("other",),
+        )
+        for index in range(11)
+    )
+    authorized = _drive_result(
+        source_id="authorized",
+        score=0.1,
+        scope_memberships=("workspace",),
+    )
+    orchestrator = _NativeDriveFilteringOrchestrator((*unauthorized, authorized))
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("workspace",),
+    )
+
+    response = client.post(
+        "/v1/search",
+        json=_request(top_k=1, filters={"source_kinds": ["gdrive"]}),
+    )
+
+    assert response.status_code == 200
+    assert [hit["source_id"] for hit in response.json()["hits"]] == ["authorized"]
+    assert orchestrator.calls[0]["limit"] == 1
+
+
 def test_drive_acl_filters_before_top_k():
     """Do not let an unauthorized high-score Drive result consume top-k."""
     orchestrator = _RankedOrchestrator(
@@ -716,6 +829,9 @@ def test_authenticated_joint_search_filters_by_source_kind_at_the_boundary():
         "note",
         "gdrive",
     ]
+    assert orchestrator.calls[0]["filters"]["source_scoped_metadata_overlaps"][0][
+        "source_kind"
+    ] == "gdrive"
 
 
 def test_drive_only_search_cannot_leak_markdown_or_git_records():
