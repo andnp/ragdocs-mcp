@@ -1,10 +1,11 @@
 """Tests for the composition root that verify no global mutation during library usage."""
 
 import os
+from types import SimpleNamespace
 
 from mcp_markdown_ragdocs.app.composition import build_kernel
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
-from mcp_markdown_ragdocs.config import load_config
+from mcp_markdown_ragdocs.config import GoogleDriveConfig, load_config
 from mcp_markdown_ragdocs.context import ApplicationContext
 
 
@@ -107,3 +108,28 @@ class TestCompositionRootNoGlobalMutation:
         assert os.environ.get("OMP_NUM_THREADS") == expected_value
         assert os.environ.get("MKL_NUM_THREADS") == expected_value
         assert os.environ.get("TORCH_NUM_THREADS") == expected_value
+
+    def test_enabled_drive_source_uses_global_record_index(self, monkeypatch, tmp_path):
+        """
+        Register Drive on the existing manager so Drive and Markdown share storage.
+        The source stays independently addressable by its logical source kind.
+        """
+        monkeypatch.setenv("SEARCHKERNEL_INDEX_PATH", str(tmp_path / "index"))
+        config = load_config()
+        config.gdrive = GoogleDriveConfig(enabled=True, workspace_id="workspace")
+        source = SimpleNamespace(source_kind="gdrive")
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.context.build_gdrive_source",
+            lambda *_args, **_kwargs: source,
+        )
+
+        context = ApplicationContext.create(
+            config=config,
+            enable_watcher=False,
+            lazy_embeddings=True,
+            global_runtime=True,
+        )
+
+        assert context.index_manager.content_sources == (source,)
+        assert context.index_manager.get_content_source("gdrive") is source
+        assert context.index_manager.kernel.backend.db_manager is context.db_manager

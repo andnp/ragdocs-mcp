@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -22,6 +22,7 @@ from typing import Any, cast
 from urllib.parse import unquote, urlparse
 
 from searchkernel.api import (
+    ContentSource,
     GraphEdge,
     GraphNeighbor,
     LocalRecordKernel,
@@ -294,6 +295,7 @@ class RecordIndexManager:
         embedding_provider: Any,
         *,
         documents_roots: list[Path] | None = None,
+        content_sources: Iterable[ContentSource] = (),
     ) -> None:
         self._config = config
         self.kernel = kernel
@@ -308,6 +310,9 @@ class RecordIndexManager:
         self._ready = True
         self._source_map_path = Path(config.indexing.index_path) / "record-sources.json"
         self._source_records: dict[str, list[str]] = self._load_source_map()
+        self._content_sources: dict[str, ContentSource] = {}
+        for source in content_sources:
+            self.register_content_source(source)
         self._embedding_cache = SQLiteEmbeddingCache(
             Path(config.indexing.index_path) / "embedding-cache.db",
             encoder_namespace=embedding_provider.model_name,
@@ -349,6 +354,17 @@ class RecordIndexManager:
 
     def get_failed_files(self) -> list[dict[str, str]]:
         return list(self._failed_files)
+
+    @property
+    def content_sources(self) -> tuple[ContentSource, ...]:
+        return tuple(self._content_sources.values())
+
+    def get_content_source(self, source_kind: str) -> ContentSource | None:
+        return self._content_sources.get(source_kind)
+
+    def register_content_source(self, source: ContentSource) -> None:
+        self.kernel.kernel.register_content_source(source)
+        self._content_sources[source.source_kind] = source
 
     def count_records(self, source_kind: str | None = None) -> int:
         if source_kind is None:

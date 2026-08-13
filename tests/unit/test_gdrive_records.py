@@ -26,7 +26,7 @@ def test_drive_record_has_stable_identity_and_provider_metadata() -> None:
     file = _file()
     record = map_drive_file(file, workspace_id="workspace-1", body="content")
 
-    assert record.source_kind == "google_drive"
+    assert record.source_kind == "gdrive"
     assert record.source_id == "file-1"
     assert record.workspace_id == "workspace-1"
     assert record.uri == "https://drive/file-1"

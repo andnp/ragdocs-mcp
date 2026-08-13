@@ -76,7 +76,7 @@ def test_drive_health_distinguishes_source_states(
     )
 
     assert health.status is expected
-    assert health.source_kind == "google_drive"
+    assert health.source_kind == "gdrive"
     assert health.workspace_id == "workspace"
 
 

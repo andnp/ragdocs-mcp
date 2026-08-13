@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from searchkernel.api import (
+    ContentSource,
     IndexManifest,
     build_local_record_kernel,
     PublicIndexStateSnapshot,
@@ -60,6 +61,46 @@ from mcp_markdown_ragdocs.app.search import (
 from mcp_markdown_ragdocs.app.services import ApplicationServices, compose_services
 
 logger = logging.getLogger(__name__)
+
+
+def build_gdrive_source(
+    config: Config,
+    *,
+    source_root: Path,
+    index_path: Path,
+) -> ContentSource:
+    """Compose Drive against the existing global record/index runtime."""
+    from mcp_markdown_ragdocs.adapters.sources.gdrive import GoogleDriveContentSource
+    from mcp_markdown_ragdocs.gdrive.client import GoogleDriveClient
+    from mcp_markdown_ragdocs.gdrive.extraction import ExtractionLimits
+    from mcp_markdown_ragdocs.gdrive.gate import DriveRequestGate
+    from mcp_markdown_ragdocs.gdrive.session import AuthorizedUserSession
+
+    drive_config = config.gdrive
+    session = AuthorizedUserSession(
+        drive_config.credentials_path,
+        source_root,
+        scopes=drive_config.scopes,
+    )
+    client = GoogleDriveClient(
+        session,
+        max_page_size=drive_config.page_size,
+        max_download_bytes=drive_config.max_download_bytes,
+        request_gate=DriveRequestGate(index_path / "gdrive-request-gate.db"),
+    )
+    return GoogleDriveContentSource(
+        client,
+        workspace_id=drive_config.workspace_id,
+        shared_drive_ids=drive_config.shared_drive_ids,
+        extraction_limits=ExtractionLimits(
+            max_download_bytes=drive_config.max_download_bytes,
+            max_text_bytes=drive_config.max_text_bytes,
+            max_items=drive_config.max_items,
+            max_pages=drive_config.max_pages,
+            max_seconds=drive_config.max_seconds,
+        ),
+        page_size=drive_config.page_size,
+    )
 
 
 def _git_commit_id(source_id: str) -> str:
@@ -194,6 +235,15 @@ class ApplicationContext:
                 f"got {config.store.backend!r}"
             )
         embedding_provider = build_embedding_provider(config, embedding_model_name)
+        content_sources: list[ContentSource] = []
+        if config.gdrive.enabled:
+            content_sources.append(
+                build_gdrive_source(
+                    config,
+                    source_root=documents_root,
+                    index_path=index_path,
+                )
+            )
         kernel_holder: dict[str, Any] = {}
         search_policy = build_record_search_policy(
             lambda: kernel_holder["kernel"].keyword_store,
@@ -222,6 +272,7 @@ class ApplicationContext:
             local_kernel,
             embedding_provider,
             documents_roots=documents_roots,
+            content_sources=content_sources,
         )
         install_bidirectional_graph_store(
             local_kernel,

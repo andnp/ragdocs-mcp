@@ -16,7 +16,7 @@ from mcp_markdown_ragdocs.gdrive.extraction import (
 )
 from mcp_markdown_ragdocs.gdrive.models import DriveFile
 
-SOURCE_KIND = "google_drive"
+SOURCE_KIND = "gdrive"
 RECORD_SCHEMA_VERSION = "gdrive-record-v1"
 
 _MIME_PROFILE_NAMES = {
