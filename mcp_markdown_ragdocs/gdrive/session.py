@@ -21,6 +21,7 @@ class DriveCredentialSession(Protocol):
 
     def get_credentials(self) -> Credentials:
         """Return usable authorized-user credentials for a Drive request."""
+        ...
 
 
 class AuthorizedUserSession:
