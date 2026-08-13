@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 
+@pytest.mark.e2e
 def test_live_gdrive_federation_acceptance_boundary() -> None:
     """
     Exercise a deployed v1 Drive search when explicit live credentials exist.

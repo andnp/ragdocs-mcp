@@ -655,6 +655,30 @@ def test_authenticated_drive_only_search_preserves_identity_and_provenance():
     assert orchestrator.calls[0]["filters"]["source_kinds"] == ["gdrive"]
 
 
+def test_authenticated_drive_endpoint_accepts_authorized_request():
+    """
+    Accept a deterministic authenticated Drive request at the v1 boundary.
+    """
+    orchestrator = _Orchestrator(_drive_result(source_id="accepted-drive"))
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("workspace",),
+    )
+
+    response = client.post(
+        "/v1/search",
+        json=_request(
+            request_id="authenticated-acceptance",
+            filters={"source_kinds": ["gdrive"]},
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "authenticated-acceptance"
+    assert response.json()["hits"][0]["source_id"] == "accepted-drive"
+
+
 def test_authenticated_joint_search_filters_by_source_kind_at_the_boundary():
     """
     Preserve both local and Drive identities in an authenticated joint search.
