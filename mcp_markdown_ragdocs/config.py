@@ -266,6 +266,10 @@ class GoogleDriveConfig:
 @dataclass
 class FederationConfig:
     deployment_token: str = ""
+    drive_workspace_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        self.drive_workspace_ids = tuple(self.drive_workspace_ids)
 
 
 @dataclass

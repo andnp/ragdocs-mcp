@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -244,6 +245,7 @@ def create_app():
             authenticated_caller = authenticate_bearer(
                 request.headers.get("Authorization"),
                 configured_token=_federation_token(app),
+                drive_workspace_ids=_federation_drive_workspace_ids(app),
             )
         except FederationRequestError as exc:
             return JSONResponse({"error": str(exc)}, status_code=exc.status_code)
@@ -323,6 +325,7 @@ def create_app():
                     orchestrator,
                     search_request,
                     request_id=effective_request_id,
+                    owned_drive_workspace_ids=_owned_drive_workspace_ids(app),
                     elapsed_start=monotonic(),
                 )
         except FederationRequestError as exc:
@@ -374,6 +377,24 @@ def _federation_token(app: FastAPI) -> str | None:
     federation = getattr(config, "federation", None)
     token = getattr(federation, "deployment_token", None)
     return token if isinstance(token, str) else None
+
+
+def _federation_drive_workspace_ids(app: FastAPI) -> tuple[object, ...]:
+    config = getattr(app.state, "config", None)
+    federation = getattr(config, "federation", None)
+    values = getattr(federation, "drive_workspace_ids", ())
+    if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+        return tuple(values)
+    return ()
+
+
+def _owned_drive_workspace_ids(app: FastAPI) -> tuple[str, ...]:
+    config = getattr(app.state, "config", None)
+    gdrive = getattr(config, "gdrive", None)
+    workspace_id = getattr(gdrive, "workspace_id", None)
+    if getattr(gdrive, "enabled", False) and isinstance(workspace_id, str):
+        return (workspace_id,)
+    return ()
 
 
 def _federation_auth_error(app: FastAPI, authorization: str | None):

@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from hmac import compare_digest
 from pathlib import Path
 from time import monotonic
+from types import SimpleNamespace
 from typing import Any, cast
 
 from searchkernel.api import (
@@ -40,6 +41,8 @@ GDRIVE_CAPABILITIES = FederationSourceCapabilities(
 )
 SEARCH_READ_SCOPE = "search:read"
 TRUSTED_CALLER_ID = "devkit"
+DRIVE_SOURCE_KIND = "gdrive"
+DRIVE_WORKSPACE_CLAIM = "drive_workspace_ids"
 
 
 def build_federation_capabilities(
@@ -82,7 +85,10 @@ class FederationRequestError(ValueError):
 
 
 def authenticate_bearer(
-    authorization: str | None, *, configured_token: str | None
+    authorization: str | None,
+    *,
+    configured_token: str | None,
+    drive_workspace_ids: Sequence[object] = (),
 ) -> CallerAuthorizationContext:
     if not authorization:
         raise FederationRequestError(
@@ -99,9 +105,15 @@ def authenticate_bearer(
         )
     if not compare_digest(parts[1], configured_token):
         raise FederationRequestError("invalid bearer credentials", status_code=401)
+    claims: dict[str, JsonValue] = {}
+    if drive_workspace_ids:
+        claims[DRIVE_WORKSPACE_CLAIM] = cast(
+            list[JsonValue], list(drive_workspace_ids)
+        )
     return CallerAuthorizationContext(
         caller_id=TRUSTED_CALLER_ID,
         scopes=(SEARCH_READ_SCOPE,),
+        claims=claims,
     )
 
 
@@ -130,7 +142,9 @@ def _string_list(filters: Mapping[str, object], *names: str) -> list[str]:
     return []
 
 
-def _authorized_projects(request: SearchRequest) -> list[str] | None:
+def _authorized_projects(
+    request: SearchRequest, *, drive_requested: bool
+) -> list[str] | None:
     caller = request.caller
     if caller is None:
         raise FederationRequestError(
@@ -142,6 +156,8 @@ def _authorized_projects(request: SearchRequest) -> list[str] | None:
             f"caller is missing required scope: {SEARCH_READ_SCOPE}",
             status_code=403,
         )
+    if drive_requested:
+        return None
 
     claims = caller.claims
     for name in ("project_ids", "allowed_projects", "projects"):
@@ -159,6 +175,100 @@ def _authorized_projects(request: SearchRequest) -> list[str] | None:
                 )
             return [item for item in value if isinstance(item, str)]
     return None
+
+
+def _authorized_drive_workspaces(
+    request: SearchRequest,
+    *,
+    drive_requested: bool,
+    owned_drive_workspace_ids: Sequence[str],
+) -> frozenset[str]:
+    claims = request.caller.claims if request.caller is not None else {}
+    value = claims.get(DRIVE_WORKSPACE_CLAIM)
+    if value is None:
+        if drive_requested:
+            raise FederationRequestError(
+                f"caller claim {DRIVE_WORKSPACE_CLAIM} is required for Drive search",
+                status_code=403,
+            )
+        return frozenset()
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise FederationRequestError(
+            f"caller claim {DRIVE_WORKSPACE_CLAIM} must be an array of strings",
+            status_code=403,
+        )
+    workspace_ids = [item for item in value if isinstance(item, str)]
+    if len(workspace_ids) != len(value) or any(not item.strip() for item in workspace_ids):
+        raise FederationRequestError(
+            f"caller claim {DRIVE_WORKSPACE_CLAIM} must be an array of non-empty strings",
+            status_code=403,
+        )
+    if not workspace_ids or len(set(workspace_ids)) != len(workspace_ids):
+        raise FederationRequestError(
+            f"caller claim {DRIVE_WORKSPACE_CLAIM} must contain unique workspaces",
+            status_code=403,
+        )
+    owned = set(owned_drive_workspace_ids)
+    if not set(workspace_ids).issubset(owned):
+        raise FederationRequestError(
+            f"caller claim {DRIVE_WORKSPACE_CLAIM} exceeds ragdocs Drive scope",
+            status_code=403,
+        )
+    return frozenset(workspace_ids)
+
+
+def _record_has_drive_scope_membership(record: Any) -> bool:
+    metadata = getattr(record, "metadata", {})
+    memberships = metadata.get("scope_memberships") if isinstance(metadata, Mapping) else None
+    return isinstance(memberships, Sequence) and not isinstance(memberships, (str, bytes)) and bool(memberships)
+
+
+def _record_is_authorized_for_drive(
+    record: Any,
+    *,
+    authorized_workspaces: frozenset[str],
+) -> bool:
+    if getattr(record, "source_kind", None) != DRIVE_SOURCE_KIND:
+        return True
+    workspace_id = getattr(record, "workspace_id", None)
+    return (
+        isinstance(workspace_id, str)
+        and workspace_id in authorized_workspaces
+        and _record_has_drive_scope_membership(record)
+    )
+
+
+async def _search_drive_workspaces(
+    orchestrator: Any,
+    query: str,
+    *,
+    limit: int,
+    filters: dict[str, JsonValue],
+    workspace_ids: frozenset[str],
+) -> Any:
+    outcomes = []
+    for workspace_id in sorted(workspace_ids):
+        scoped_filters = dict(filters)
+        scoped_filters["workspace_id"] = workspace_id
+        outcomes.append(
+            await orchestrator.search(query, limit=limit, filters=scoped_filters)
+        )
+    results = sorted(
+        (result for outcome in outcomes for result in getattr(outcome, "results", ())),
+        key=lambda result: (
+            -float(result.score),
+            str(getattr(result.record, "source_id", "")),
+        ),
+    )
+    return SimpleNamespace(
+        results=tuple(results),
+        failures=tuple(
+            failure
+            for outcome in outcomes
+            for failure in getattr(outcome, "failures", ())
+        ),
+        degraded=any(getattr(outcome, "degraded", False) for outcome in outcomes),
+    )
 
 
 def _record_project_id(record: Any) -> str | None:
@@ -202,6 +312,7 @@ async def execute_federation_search(
     request: SearchRequest,
     *,
     request_id: str,
+    owned_drive_workspace_ids: Sequence[str],
     elapsed_start: float | None = None,
 ) -> SearchResponse:
     if request.contract_version != FEDERATION_CONTRACT_VERSION:
@@ -209,9 +320,18 @@ async def execute_federation_search(
             f"unsupported contract_version: {request.contract_version}",
             status_code=400,
         )
-    allowed_projects = _authorized_projects(request)
     filters = dict(request.filters)
+    source_kinds = _string_list(filters, "source_kinds", "source_filter")
+    drive_requested = DRIVE_SOURCE_KIND in source_kinds
+    allowed_projects = _authorized_projects(request, drive_requested=drive_requested)
+    authorized_drive_workspaces = _authorized_drive_workspaces(
+        request,
+        drive_requested=drive_requested,
+        owned_drive_workspace_ids=owned_drive_workspace_ids or (),
+    )
     project_filter = _string_list(filters, "project_ids", "project_filter")
+    if drive_requested:
+        project_filter = []
     if allowed_projects is not None:
         if project_filter and not set(project_filter).issubset(allowed_projects):
             raise FederationRequestError(
@@ -226,8 +346,16 @@ async def execute_federation_search(
             status_code=400,
         )
 
-    source_kinds = _string_list(filters, "source_kinds", "source_filter")
     native_filters: dict[str, JsonValue] = dict(filters)
+    if drive_requested:
+        for name in (
+            "workspace_id",
+            "project_ids",
+            "project_filter",
+            "ranking_workspace_id",
+            "project_context",
+        ):
+            native_filters.pop(name, None)
     if project_filter:
         if len(project_filter) == 1:
             native_filters["workspace_id"] = project_filter[0]
@@ -238,15 +366,31 @@ async def execute_federation_search(
             native_filters.pop("project_filter", None)
     if source_kinds:
         native_filters["source_kinds"] = cast(list[JsonValue], source_kinds)
+    if drive_requested and len(authorized_drive_workspaces) == 1:
+        native_filters["workspace_id"] = next(iter(authorized_drive_workspaces))
     search_limit = min(
         MAX_TOP_K,
-        max(request.top_k, request.top_k * 10 if project_filter else request.top_k),
+        max(
+            request.top_k,
+            request.top_k * 10
+            if project_filter or drive_requested or authorized_drive_workspaces
+            else request.top_k,
+        ),
     )
-    outcome = await orchestrator.search(
-        request.query,
-        limit=search_limit,
-        filters=native_filters,
-    )
+    if drive_requested and len(authorized_drive_workspaces) > 1:
+        outcome = await _search_drive_workspaces(
+            orchestrator,
+            request.query,
+            limit=search_limit,
+            filters=native_filters,
+            workspace_ids=authorized_drive_workspaces,
+        )
+    else:
+        outcome = await orchestrator.search(
+            request.query,
+            limit=search_limit,
+            filters=native_filters,
+        )
 
     hits: list[SearchHit] = []
     warnings: list[str] = []
@@ -259,6 +403,11 @@ async def execute_federation_search(
         record = result.record
         project_id = _record_project_id(record)
         if project_filter and project_id not in project_filter:
+            continue
+        if not _record_is_authorized_for_drive(
+            record,
+            authorized_workspaces=authorized_drive_workspaces,
+        ):
             continue
         rank = len(hits) + 1
         native_provenance = getattr(result, "provenance", None)
@@ -307,6 +456,8 @@ async def execute_federation_search(
 __all__ = [
     "FEDERATION_CONTRACT_VERSION",
     "FederationRequestError",
+    "DRIVE_SOURCE_KIND",
+    "DRIVE_WORKSPACE_CLAIM",
     "RAGDOCS_CAPABILITIES",
     "RAGDOCS_SOURCE",
     "TRUSTED_CALLER_ID",
