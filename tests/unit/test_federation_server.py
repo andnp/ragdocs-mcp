@@ -666,6 +666,43 @@ def test_drive_filter_payload_matches_searchkernel_compiler_contract():
     assert source_filters[0].metadata_non_empty == ("scope_memberships",)
 
 
+def test_drive_filter_compiler_retains_only_authorized_records():
+    """
+    Apply native Drive scope filters to authorized and unauthorized records.
+    """
+    try:
+        from searchkernel.domain.vector_filters import compile_source_scoped_filters
+    except ImportError:
+        pytest.skip(
+            "installed searchkernel lacks compile_source_scoped_filters; "
+            "install a source-scoped-filter-capable version"
+        )
+
+    source_filters = compile_source_scoped_filters(
+        {
+            "source_scoped_filters": {
+                "gdrive": {
+                    "workspace_ids": ["workspace-a"],
+                    "metadata_non_empty": ["scope_memberships"],
+                }
+            }
+        }
+    )
+    if not source_filters or not callable(getattr(source_filters[0], "matches", None)):
+        pytest.skip(
+            "installed searchkernel compiler lacks the public source-filter matcher"
+        )
+
+    matches = source_filters[0].matches
+    assert matches(_drive_result(source_id="authorized").record)
+    assert not matches(
+        _drive_result(source_id="empty", scope_memberships=()).record
+    )
+    assert not matches(
+        _drive_result(source_id="wrong", workspace_id="workspace-b").record
+    )
+
+
 def test_drive_search_handles_multiple_workspaces_in_one_retrieval():
     """Retrieve authorized records from multiple claimed Drive workspaces together."""
     orchestrator = _RankedOrchestrator(
