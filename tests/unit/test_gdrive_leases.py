@@ -62,3 +62,13 @@ def test_stale_owner_cannot_finish_recovered_scope(tmp_path: Path) -> None:
     assert store.complete(scope, "owner-a", now=21) is False
     assert store.complete(scope, "owner-b", now=21) is True
 
+
+def test_expired_owner_cannot_revive_a_scope_by_heartbeating(tmp_path: Path) -> None:
+    """Reject a heartbeat after the lease timeout even before takeover."""
+    scope = _scopes()[0]
+    store = _store(tmp_path)
+
+    assert store.claim(scope, "owner-a", now=10)
+
+    assert store.heartbeat(scope, "owner-a", now=20) is False
+    assert store.is_owner(scope, "owner-a", now=20) is False

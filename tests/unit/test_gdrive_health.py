@@ -122,3 +122,30 @@ def test_drive_health_retains_scope_specific_data(tmp_path: Path) -> None:
     assert source["watch_mode"] == "poll"
     assert source["last_error"] == "renewal failed"
     assert source["scopes"][1]["last_error"] == "permission denied"
+
+
+def test_persisted_sync_outcomes_keep_failure_from_becoming_fresh(tmp_path: Path) -> None:
+    """Retain the last successful sync timestamp after a later failure."""
+    store = GDriveHealthStore(tmp_path)
+
+    store.record_sync_success(
+        "workspace",
+        "shared-with-me",
+        indexed_records=4,
+        observed_at=10,
+    )
+    store.record_sync_failure(
+        "workspace",
+        "shared-with-me",
+        "provider unavailable",
+        observed_at=20,
+    )
+
+    payload = store.load("workspace")
+
+    assert payload is not None
+    assert payload["status"] == "unavailable"
+    source = payload["source"]
+    assert isinstance(source, dict)
+    assert source["last_error"] == "provider unavailable"
+    assert source["scopes"][0]["last_success_at"] == 10.0

@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 
-from mcp_markdown_ragdocs.coordination.task_leases import TaskLease, TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.task_leases import (
+    ACTIVE_LEASE,
+    DEFAULT_LEASE_TIMEOUT_SECONDS,
+    TaskLease,
+    TaskLeaseStore,
+)
 from mcp_markdown_ragdocs.gdrive.models import DriveScope
 
 DRIVE_SCOPE_LEASE_NAME = "gdrive_scope_sync"
@@ -26,6 +32,9 @@ class DriveScopeLeaseStore:
 
     def __init__(self, leases: TaskLeaseStore) -> None:
         self._leases = leases
+        self._timeout_seconds = float(
+            getattr(leases, "_timeout_seconds", DEFAULT_LEASE_TIMEOUT_SECONDS)
+        )
 
     def claim(
         self,
@@ -50,7 +59,26 @@ class DriveScopeLeaseStore:
         *,
         now: float | None = None,
     ) -> bool:
+        if not self.is_owner(scope, owner_token, now=now):
+            return False
         return self._leases.heartbeat(scope_task_id(scope), owner_token=owner_token, now=now)
+
+    def is_owner(
+        self,
+        scope: DriveScope,
+        owner_token: str,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        """Return whether the owner still holds a live lease for the scope."""
+        timestamp = time.time() if now is None else now
+        lease = self.get(scope)
+        return bool(
+            lease is not None
+            and lease.lease.state == ACTIVE_LEASE
+            and lease.lease.owner_token == owner_token
+            and lease.lease.heartbeat_at > timestamp - self._timeout_seconds
+        )
 
     def complete(
         self,
