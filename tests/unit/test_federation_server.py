@@ -24,10 +24,18 @@ from mcp_markdown_ragdocs.server import create_app
 AUTH_TOKEN = "test-deployment-token"
 
 
-def _app():
+def _app(
+    *,
+    drive_workspace_id: str | None = None,
+    drive_workspace_ids: tuple[object, ...] = (),
+):
     app = create_app()
     app.state.config = Config()
     app.state.config.federation.deployment_token = AUTH_TOKEN
+    app.state.config.federation.drive_workspace_ids = cast(Any, drive_workspace_ids)
+    if drive_workspace_id is not None:
+        app.state.config.gdrive.enabled = True
+        app.state.config.gdrive.workspace_id = drive_workspace_id
     return app
 
 
@@ -67,6 +75,37 @@ def _result(*, project_id: str = "project-a", score: float = 0.9):
     )
 
 
+def _drive_result(
+    *,
+    workspace_id: str = "workspace",
+    source_id: str = "drive-a",
+    score: float = 0.9,
+    scope_memberships: tuple[str, ...] = ("shared-drive",),
+):
+    record = Record(
+        source_kind="gdrive",
+        source_id=source_id,
+        title="Drive document",
+        body="A document from Google Drive.",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 2, tzinfo=UTC),
+        metadata={
+            "chunk_id": f"{source_id}-chunk",
+            "doc_id": source_id,
+            "file_path": f"/drive/{source_id}.md",
+            "header_path": "Drive document",
+            "scope_memberships": list(scope_memberships),
+        },
+        uri=f"gdrive://{source_id}",
+        workspace_id=workspace_id,
+    )
+    return SimpleNamespace(
+        record=record,
+        score=score,
+        provenance=SearchResultProvenance(strategies=("keyword",)),
+    )
+
+
 class _Orchestrator:
     def __init__(self, result=None):
         self.result = result or _result()
@@ -77,8 +116,30 @@ class _Orchestrator:
         return SimpleNamespace(results=(self.result,), failures=(), degraded=False)
 
 
-def _client(orchestrator: _Orchestrator) -> TestClient:
-    app = _app()
+class _RankedOrchestrator:
+    def __init__(self, results):
+        self.results = tuple(results)
+        self.calls: list[dict[str, Any]] = []
+
+    async def search(self, query, *, limit, filters):
+        self.calls.append({"query": query, "limit": limit, "filters": filters})
+        return SimpleNamespace(
+            results=tuple(sorted(self.results, key=lambda result: -result.score)),
+            failures=(),
+            degraded=False,
+        )
+
+
+def _client(
+    orchestrator: Any,
+    *,
+    drive_workspace_id: str | None = None,
+    drive_workspace_ids: tuple[object, ...] = (),
+) -> TestClient:
+    app = _app(
+        drive_workspace_id=drive_workspace_id,
+        drive_workspace_ids=drive_workspace_ids,
+    )
     app.state.orchestrator = orchestrator
     return TestClient(app, headers={"Authorization": f"Bearer {AUTH_TOKEN}"})
 
@@ -219,6 +280,17 @@ def test_bearer_authentication_maps_token_to_trusted_caller():
     assert caller.claims == {}
 
 
+def test_bearer_authentication_includes_drive_workspace_claims():
+    """Map configured Drive scope to the authenticated caller claim shape."""
+    caller = authenticate_bearer(
+        f"Bearer {AUTH_TOKEN}",
+        configured_token=AUTH_TOKEN,
+        drive_workspace_ids=("workspace",),
+    )
+
+    assert caller.claims == {"drive_workspace_ids": ["workspace"]}
+
+
 def test_bearer_authentication_rejects_missing_and_invalid_credentials():
     """
     Reject absent and incorrect credentials before parsing or searching.
@@ -326,6 +398,127 @@ def test_federation_search_uses_workspace_scope_for_one_project():
 
     assert response.status_code == 200
     assert orchestrator.calls[0]["filters"]["workspace_id"] == "project-a"
+
+
+def test_drive_search_rejects_missing_workspace_claims():
+    """Reject Drive searches when the authenticated caller has no claim."""
+    client = _client(
+        _Orchestrator(_drive_result()),
+        drive_workspace_id="workspace",
+    )
+    response = client.post(
+        "/v1/search",
+        json=_request(filters={"source_kinds": ["gdrive"]}),
+    )
+
+    assert response.status_code == 403
+
+
+def test_drive_search_rejects_invalid_workspace_claims():
+    """Reject non-string Drive workspace claim values before searching."""
+    client = _client(
+        _Orchestrator(_drive_result()),
+        drive_workspace_id="workspace",
+        drive_workspace_ids=(123,),
+    )
+    response = client.post(
+        "/v1/search",
+        json=_request(filters={"source_kinds": ["gdrive"]}),
+    )
+
+    assert response.status_code == 403
+
+
+def test_drive_search_rejects_workspace_claims_outside_owned_scope():
+    """Reject authenticated Drive claims outside ragdocs-owned scope."""
+    client = _client(
+        _Orchestrator(_drive_result(workspace_id="other")),
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("other",),
+    )
+    response = client.post(
+        "/v1/search",
+        json=_request(filters={"source_kinds": ["gdrive"]}),
+    )
+
+    assert response.status_code == 403
+
+
+def test_drive_search_ignores_request_workspace_context_for_authorization():
+    """Authorize Drive only from bearer claims and owned scope membership."""
+    orchestrator = _Orchestrator(_drive_result())
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("workspace",),
+    )
+    response = client.post(
+        "/v1/search",
+        json=_request(
+            filters={
+                "source_kinds": ["gdrive"],
+                "workspace_id": "other",
+                "project_ids": ["other"],
+                "ranking_workspace_id": "other",
+                "project_context": "other",
+            }
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["hits"][0]["workspace_id"] == "workspace"
+    native_filters = orchestrator.calls[0]["filters"]
+    assert native_filters["workspace_id"] == "workspace"
+    assert "project_ids" not in native_filters
+    assert "ranking_workspace_id" not in native_filters
+    assert "project_context" not in native_filters
+
+
+def test_drive_search_requires_scope_membership_on_each_record():
+    """Filter Drive records without ragdocs-owned scope membership."""
+    orchestrator = _Orchestrator(_drive_result(scope_memberships=()))
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("workspace",),
+    )
+    response = client.post(
+        "/v1/search",
+        json=_request(filters={"source_kinds": ["gdrive"]}),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["hits"] == []
+
+
+def test_drive_acl_filters_before_top_k():
+    """Do not let an unauthorized high-score Drive result consume top-k."""
+    orchestrator = _RankedOrchestrator(
+        (
+            _drive_result(
+                workspace_id="other",
+                source_id="unauthorized",
+                score=1.0,
+            ),
+            _drive_result(source_id="authorized", score=0.5),
+        )
+    )
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("workspace",),
+    )
+    response = client.post(
+        "/v1/search",
+        json=_request(
+            top_k=1,
+            filters={"source_kinds": ["gdrive"]},
+        ),
+    )
+
+    assert response.status_code == 200
+    assert [hit["source_id"] for hit in response.json()["hits"]] == ["authorized"]
+    assert orchestrator.calls[0]["limit"] == 10
 
 
 def test_federation_search_honors_deadline():
