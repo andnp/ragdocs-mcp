@@ -24,10 +24,11 @@ from mcp_markdown_ragdocs.app.search import SearchQuery
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.federation import (
-    RAGDOCS_CAPABILITIES,
     RAGDOCS_SOURCE,
     FederationRequestError,
+    build_federation_capabilities,
     execute_federation_search,
+    load_gdrive_source_health,
 )
 from mcp_markdown_ragdocs.models import ChunkResult
 
@@ -197,17 +198,34 @@ def create_app():
 
     @app.get("/v1/search/capabilities")
     async def federation_capabilities():
-        return JSONResponse(RAGDOCS_CAPABILITIES.to_dict())
+        config = getattr(app.state, "config", None)
+        gdrive = getattr(config, "gdrive", None)
+        return JSONResponse(
+            build_federation_capabilities(
+                gdrive_workspace_id=(
+                    gdrive.workspace_id if getattr(gdrive, "enabled", False) else None
+                )
+            )
+        )
 
     @app.get("/v1/health")
     async def federation_health():
-        return JSONResponse(
-            {
-                "status": "ok",
-                "contract_version": FEDERATION_CONTRACT_VERSION,
-                "source": RAGDOCS_SOURCE.to_dict(),
+        payload: dict[str, object] = {
+            "status": "ok",
+            "contract_version": FEDERATION_CONTRACT_VERSION,
+            "source": RAGDOCS_SOURCE.to_dict(),
+        }
+        config = getattr(app.state, "config", None)
+        gdrive = getattr(config, "gdrive", None)
+        index_path = getattr(app.state, "index_path", None)
+        if getattr(gdrive, "enabled", False) and index_path is not None:
+            payload["source_health"] = {
+                "gdrive": load_gdrive_source_health(
+                    Path(index_path),
+                    gdrive.workspace_id,
+                )
             }
-        )
+        return JSONResponse(payload)
 
     @app.post("/v1/search")
     async def federation_search(request: Request):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from time import monotonic
 from typing import Any, cast
 
@@ -16,6 +17,8 @@ from searchkernel.api import (
     SourceIdentity,
 )
 
+from mcp_markdown_ragdocs.gdrive.health import DriveSourceHealth, GDriveHealthStore
+
 type JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 RAGDOCS_SOURCE = SourceIdentity(source_kind="ragdocs", source_id="local")
@@ -26,7 +29,47 @@ RAGDOCS_CAPABILITIES = FederationSourceCapabilities(
     supports_partial_results=True,
     supports_cancellation=True,
 )
+GDRIVE_CAPABILITIES = FederationSourceCapabilities(
+    supports_filters=True,
+    supports_source_selection=False,
+    supports_rerank_text=False,
+    supports_partial_results=True,
+    supports_cancellation=True,
+)
 SEARCH_READ_SCOPE = "search:read"
+
+
+def build_federation_capabilities(
+    *, gdrive_workspace_id: str | None = None
+) -> dict[str, object]:
+    """Return the generic v1 capabilities with configured logical sources."""
+    payload = RAGDOCS_CAPABILITIES.to_dict()
+    sources: list[dict[str, object]] = []
+    if gdrive_workspace_id is not None:
+        sources.append(
+            {
+                "source": SourceIdentity(
+                    source_kind="gdrive",
+                    source_id="drive",
+                    workspace_id=gdrive_workspace_id,
+                ).to_dict(),
+                "capabilities": GDRIVE_CAPABILITIES.to_dict(),
+            }
+        )
+    payload["sources"] = sources
+    return payload
+
+
+def load_gdrive_source_health(index_path: Path, workspace_id: str) -> dict[str, object]:
+    """Return the latest Drive health snapshot or a typed unavailable state."""
+    stored = GDriveHealthStore(index_path).load(workspace_id)
+    if stored is not None:
+        return stored
+    return DriveSourceHealth.evaluate(
+        workspace_id,
+        (),
+        available=False,
+    ).to_payload()
 
 
 class FederationRequestError(ValueError):

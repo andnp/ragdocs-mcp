@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -11,6 +12,8 @@ from searchkernel.ports.federation import (
     SearchRequest,
 )
 
+from mcp_markdown_ragdocs.config import Config
+from mcp_markdown_ragdocs.gdrive.health import DriveScopeHealth, DriveSourceHealth, GDriveHealthStore
 from mcp_markdown_ragdocs.server import create_app
 
 
@@ -91,6 +94,7 @@ def test_federation_search_success_preserves_native_provenance():
 
 
 def test_federation_capabilities_and_health():
+    """Preserve the v1 local capability and health contract by default."""
     app = create_app()
     client = TestClient(app)
     capabilities = client.get("/v1/search/capabilities")
@@ -102,6 +106,74 @@ def test_federation_capabilities_and_health():
     assert health.json()["status"] == "ok"
     assert health.json()["contract_version"] == "v1"
     assert health.json()["source"]["source_kind"] == "ragdocs"
+    assert capabilities.json()["sources"] == []
+    assert "source_health" not in health.json()
+
+
+def test_federation_exposes_enabled_drive_capabilities_and_fresh_health(
+    tmp_path: Path,
+):
+    """Expose Drive identity, capabilities, and persisted freshness state."""
+    app = create_app()
+    config = Config()
+    config.gdrive.enabled = True
+    config.gdrive.workspace_id = "workspace"
+    app.state.config = config
+    app.state.index_path = tmp_path
+    GDriveHealthStore(tmp_path).save(
+        DriveSourceHealth.evaluate(
+            "workspace",
+            (DriveScopeHealth("shared-with-me", indexed_records=4, last_success_at=99),),
+            observed_at=100,
+            stale_after_seconds=10,
+            watch_mode="poll",
+        )
+    )
+
+    client = TestClient(app)
+    capabilities = client.get("/v1/search/capabilities").json()
+    health = client.get("/v1/health").json()
+
+    assert capabilities["contract_versions"] == ["v1"]
+    assert capabilities["sources"] == [
+        {
+            "source": {
+                "source_kind": "gdrive",
+                "source_id": "drive",
+                "workspace_id": "workspace",
+            },
+            "capabilities": {
+                "contract_versions": ["v1"],
+                "supports_filters": True,
+                "supports_source_selection": False,
+                "supports_rerank_text": False,
+                "supports_partial_results": True,
+                "supports_cancellation": True,
+                "max_top_k": 1000,
+                "max_rerank_text_length": 4096,
+            },
+        }
+    ]
+    assert health["status"] == "ok"
+    assert health["source_health"]["gdrive"]["status"] == "healthy"
+    assert health["source_health"]["gdrive"]["source"]["observed_at"] == 100
+    assert health["source_health"]["gdrive"]["source"]["stale_after_seconds"] == 10
+
+
+def test_federation_reports_unavailable_drive_without_health_snapshot(tmp_path: Path):
+    """Report a typed unavailable state before Drive has completed a sync."""
+    app = create_app()
+    config = Config()
+    config.gdrive.enabled = True
+    config.gdrive.workspace_id = "workspace"
+    app.state.config = config
+    app.state.index_path = tmp_path
+
+    health = TestClient(app).get("/v1/health").json()
+
+    assert health["source_health"]["gdrive"]["status"] == "unavailable"
+    assert health["source_health"]["gdrive"]["source"]["source_kind"] == "gdrive"
+    assert health["source_health"]["gdrive"]["source"]["available"] is False
 
 
 def test_federation_search_rejects_invalid_request():
