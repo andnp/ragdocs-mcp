@@ -46,6 +46,18 @@ can compose an in-process context for deployments that do not use the daemon.
 Both paths use the same application search use case rather than maintaining
 separate ranking or filtering implementations.
 
+### Google Drive ownership
+
+The current Google Drive owner is `mcp-markdown-ragdocs`. Ragdocs owns Drive
+credentials, synchronization, durable recovery state, records, embeddings,
+health, and search results. Devkit consumes the authenticated ragdocs search
+source for Drive while retaining its non-indexing Google Workspace workflows.
+During migration, the old Devkit index is isolated from user-visible results
+and retained for the documented rollback window. See the
+[Google Drive operator runbook](guides/gdrive-operator-runbook.md) and the
+[current migration status](plans/12-google-drive-source-ownership-migration.md)
+for operating gates.
+
 ## Composition root
 
 `mcp_markdown_ragdocs/app/composition.py`, `context.py`, and

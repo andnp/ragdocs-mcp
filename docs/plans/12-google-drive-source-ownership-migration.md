@@ -1,6 +1,7 @@
 # Google Drive source ownership migration
 
-**Status:** Proposed implementation plan — 2026-08-12
+**Status:** ragdocs is the current Google Drive owner; shadow comparison and
+operator controls are published — 2026-08-12
 **Design authority:** `../../devkit/specs/17-google-drive-ragdocs-ownership.md`
 **Repositories:** `mcp-markdown-ragdocs`, `devkit`, `andnp-searchkernel`
 
@@ -10,6 +11,16 @@ Make `mcp-markdown-ragdocs` the canonical, always-running owner of Google
 Drive synchronization, extraction, indexing, and searchable-source behavior.
 Make Devkit a consumer of that source through the existing searchkernel
 federation contract.
+
+## Current migration status
+
+`mcp-markdown-ragdocs` is the owner of the Google Drive source and its
+durable sync/index lifecycle. R48 added the deterministic, source-ID-keyed
+shadow comparison artifact and write/index barrier. R49 published the
+operator runbook covering credential separation, quiescence, retention,
+health, and rollback. The remaining migration work is operational validation
+and the controlled Devkit search cutover described below; historical numbered
+specifications remain unchanged.
 
 This plan is a migration of ownership, not a new Drive feature. Existing
 Devkit behavior is the compatibility baseline, especially its durable cursor,
