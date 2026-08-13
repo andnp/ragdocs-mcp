@@ -58,6 +58,8 @@ class GoogleDriveContentSource:
         page_size: int = 1000,
         retry_work_store: DriveRetryWorkStore | None = None,
         membership_store: DriveScopeMembershipStore | None = None,
+        extractor_version: str = "v1",
+        chunker_version: str = "v1",
     ) -> None:
         if not workspace_id:
             raise ValueError("workspace_id is required")
@@ -75,6 +77,8 @@ class GoogleDriveContentSource:
         self.clock = clock or (lambda: datetime.now(UTC))
         self.retry_work_store = retry_work_store
         self.membership_store = membership_store or DriveScopeMembershipStore()
+        self.extractor_version = extractor_version
+        self.chunker_version = chunker_version
 
     @staticmethod
     def scope_identity(scope: DriveScope) -> str:
@@ -165,6 +169,8 @@ class GoogleDriveContentSource:
             extraction_reason=result.reason,
             scope_memberships=(self.scope_identity(scope),) if scope else (),
             clock=self.clock,
+            extractor_version=self.extractor_version,
+            chunker_version=self.chunker_version,
         )
 
     def tombstone_for_change(self, change: DriveChange, *, scope: DriveScope | None = None) -> Record | None:
@@ -180,6 +186,8 @@ class GoogleDriveContentSource:
             clock=self.clock,
             status=RecordStatus.ARCHIVED,
             deleted=True,
+            extractor_version=self.extractor_version,
+            chunker_version=self.chunker_version,
         )
 
     def tombstone_for_error(
@@ -210,6 +218,8 @@ class GoogleDriveContentSource:
             clock=self.clock,
             status=RecordStatus.ARCHIVED,
             deleted=True,
+            extractor_version=self.extractor_version,
+            chunker_version=self.chunker_version,
         )
 
     def _status_record(
@@ -226,6 +236,8 @@ class GoogleDriveContentSource:
             extraction_reason=reason,
             scope_memberships=(self.scope_identity(scope),) if scope else (),
             clock=self.clock,
+            extractor_version=self.extractor_version,
+            chunker_version=self.chunker_version,
         )
 
     def _add_scope_membership(self, record: Record, scope: DriveScope | None) -> None:

@@ -76,6 +76,7 @@ def processing_fingerprint(
     profile: ExtractionProfile | None = None,
     *,
     extractor_version: str = "v1",
+    chunker_version: str = "v1",
 ) -> str:
     selected = profile or extraction_profile(file)
     return _digest(
@@ -85,6 +86,7 @@ def processing_fingerprint(
             "extractor_profile": selected.name if selected else None,
             "extractor_profile_version": selected.version if selected else None,
             "extractor_version": extractor_version,
+            "chunker_version": chunker_version,
             "record_schema_version": RECORD_SCHEMA_VERSION,
             "mime_type": file.mime_type,
         }
@@ -102,6 +104,8 @@ def map_drive_file(
     clock: Callable[[], datetime] | None = None,
     status: RecordStatus = RecordStatus.ACTIVE,
     deleted: bool = False,
+    extractor_version: str = "v1",
+    chunker_version: str = "v1",
 ) -> Record:
     """Map one Drive file to a stable, provider-neutral Record."""
     profile = extraction_profile(file)
@@ -114,7 +118,12 @@ def map_drive_file(
         "modified_time": file.modified_time,
         "scope_memberships": list(scope_memberships),
         "remote_fingerprint": remote_fingerprint(file),
-        "processing_fingerprint": processing_fingerprint(file, profile),
+        "processing_fingerprint": processing_fingerprint(
+            file,
+            profile,
+            extractor_version=extractor_version,
+            chunker_version=chunker_version,
+        ),
         "extraction_profile": profile.name if profile else None,
         "extraction_profile_version": profile.version if profile else None,
         "extraction_status": extraction_status,
