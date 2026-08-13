@@ -14,6 +14,7 @@ from mcp_markdown_ragdocs.gdrive.checkpoints import (
     GDriveSyncCheckpointStore,
     checkpoint_namespace,
 )
+from mcp_markdown_ragdocs.gdrive.errors import classify_provider_error
 from mcp_markdown_ragdocs.gdrive.models import DriveChange, DriveScope
 
 
@@ -34,6 +35,7 @@ class GDriveSyncProgress:
     pages_indexed: int
     items_indexed: int
     complete: bool
+    token_reset: bool = False
 
 
 class GoogleDriveSync:
@@ -145,11 +147,16 @@ class GoogleDriveSync:
         while pages_indexed < self.max_pages and items_indexed < self.max_items:
             if self._clock() - started_at >= self.max_seconds:
                 break
-            page = await self.source.client.list_changes_page(
-                scope,
-                cursor,
-                page_size=min(self.page_size, self.max_items - items_indexed),
-            )
+            try:
+                page = await self.source.client.list_changes_page(
+                    scope,
+                    cursor,
+                    page_size=min(self.page_size, self.max_items - items_indexed),
+                )
+            except Exception as error:
+                if is_invalidated_change_token(error):
+                    return await self.resync_after_token_reset(scope)
+                raise
             records = await self._materialize_changes(page.changes, scope)
             if records and self.record_writer.index_records(records) is False:
                 raise RuntimeError("Google Drive change record indexing failed")
@@ -181,6 +188,21 @@ class GoogleDriveSync:
             False,
         )
 
+    async def resync_after_token_reset(self, scope: DriveScope) -> GDriveSyncProgress:
+        """Replace an invalidated change cursor with one bounded inventory pass."""
+        namespace = self._namespace(scope)
+        start_token = (await self.source.client.get_start_page_token(scope)).token
+        self.checkpoint_store.begin_inventory(namespace, start_token)
+        progress = await self.sync_inventory(scope)
+        return GDriveSyncProgress(
+            progress.namespace,
+            progress.start_token,
+            progress.pages_indexed,
+            progress.items_indexed,
+            progress.complete,
+            token_reset=True,
+        )
+
     async def _materialize_changes(
         self,
         changes: Sequence[DriveChange],
@@ -203,4 +225,22 @@ class GoogleDriveSync:
         )
 
 
-__all__ = ["DriveRecordWriter", "GDriveSyncProgress", "GoogleDriveSync"]
+def is_invalidated_change_token(error: BaseException) -> bool:
+    """Recognize Drive responses that require a fresh change-feed start token."""
+    info = classify_provider_error(error)
+    if info.status_code == 410:
+        return True
+    reason = (info.reason or "").lower()
+    message = info.message.lower()
+    return reason in {"invalidpagetoken", "startpagenotfound", "pagetokenexpired"} or (
+        "page token" in message
+        and any(word in message for word in ("invalid", "expired", "not found"))
+    )
+
+
+__all__ = [
+    "DriveRecordWriter",
+    "GDriveSyncProgress",
+    "GoogleDriveSync",
+    "is_invalidated_change_token",
+]

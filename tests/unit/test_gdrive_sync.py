@@ -12,7 +12,13 @@ from mcp_markdown_ragdocs.gdrive.checkpoints import (
     GDriveSyncCheckpointStore,
     checkpoint_namespace,
 )
-from mcp_markdown_ragdocs.gdrive.extraction import ExtractionResult, ExtractionStatus
+from mcp_markdown_ragdocs.gdrive.extraction import (
+    DEFAULT_EXTRACTION_LIMITS,
+    ExtractionLimits,
+    ExtractionProfile,
+    ExtractionResult,
+    ExtractionStatus,
+)
 from mcp_markdown_ragdocs.gdrive.models import (
     DriveChange,
     DriveChangePage,
@@ -36,10 +42,12 @@ def _extractor(
     payload: bytes,
     mime_type: str,
     *,
-    profile: object,
-    limits: object,
+    profile: ExtractionProfile | None = None,
+    limits: ExtractionLimits = DEFAULT_EXTRACTION_LIMITS,
 ) -> ExtractionResult:
     del payload, mime_type, limits
+    if profile is None:
+        raise ValueError("profile is required")
     return ExtractionResult(
         ExtractionStatus.INDEXED,
         f"body:{profile.name}",
@@ -51,6 +59,7 @@ def _extractor(
 class _Client:
     def __init__(self) -> None:
         self.start_calls = 0
+        self.invalid_change_token: str | None = None
         self.page_tokens: list[str | None] = []
         self.change_tokens: list[str] = []
         self.pages = {
@@ -85,7 +94,8 @@ class _Client:
     async def get_start_page_token(self, scope: object) -> DriveStartPageToken:
         del scope
         self.start_calls += 1
-        return DriveStartPageToken("start-token")
+        token = "start-token" if self.start_calls == 1 else "reset-start-token"
+        return DriveStartPageToken(token)
 
     async def list_files_page(
         self,
@@ -110,7 +120,15 @@ class _Client:
     ) -> DriveChangePage:
         del scope, page_size
         self.change_tokens.append(page_token)
+        if page_token == self.invalid_change_token:
+            raise _ExpiredTokenError()
         return self.change_pages[page_token]
+
+
+class _ExpiredTokenError(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("page token expired")
+        self.resp = type("Response", (), {"status": 410})()
 
 
 class _Writer:
@@ -166,7 +184,7 @@ async def test_inventory_resume_reuses_page_checkpoint_after_durable_write(
     source = GoogleDriveContentSource(
         cast(Any, client),
         workspace_id="workspace",
-        extractor=_extractor,
+        extractor=cast(Any, _extractor),
     )
     events: list[str] = []
     store = _CheckpointStore(tmp_path, events)
@@ -201,7 +219,9 @@ async def test_inventory_resume_reuses_page_checkpoint_after_durable_write(
         "first",
         "second",
     ]
-    assert store.load(namespace).inventory_page_token is None
+    checkpoint = store.load(namespace)
+    assert checkpoint is not None
+    assert checkpoint.inventory_page_token is None
 
 
 @pytest.mark.asyncio
@@ -215,7 +235,7 @@ async def test_change_replay_advances_feed_cursor_after_each_ordered_page(
     source = GoogleDriveContentSource(
         cast(Any, client),
         workspace_id="workspace",
-        extractor=_extractor,
+        extractor=cast(Any, _extractor),
     )
     events: list[str] = []
     store = _CheckpointStore(tmp_path, events)
@@ -256,3 +276,41 @@ async def test_change_replay_advances_feed_cursor_after_each_ordered_page(
         "persist",
         "checkpoint",
     ]
+
+
+@pytest.mark.asyncio
+async def test_invalid_change_token_starts_bounded_full_resync(tmp_path: Path) -> None:
+    """
+    Replace an expired feed cursor with a fresh inventory start token.
+    """
+    client = _Client()
+    source = GoogleDriveContentSource(
+        cast(Any, client),
+        workspace_id="workspace",
+        extractor=cast(Any, _extractor),
+    )
+    store = GDriveSyncCheckpointStore(tmp_path)
+    writer = _Writer([])
+    sync = GoogleDriveSync(
+        source,
+        store,
+        cast(Any, writer),
+        scope_generation="generation",
+        max_pages=2,
+        max_seconds=60,
+    )
+
+    await sync.sync_inventory(source.scopes[0])
+    client.invalid_change_token = "start-token"
+
+    progress = await sync.sync_changes(source.scopes[0])
+    checkpoint = store.load(checkpoint_namespace("generation-shared-with-me"))
+
+    assert progress.complete is True
+    assert progress.token_reset is True
+    assert progress.start_token == "reset-start-token"
+    assert client.start_calls == 2
+    assert client.change_tokens == ["start-token"]
+    assert checkpoint is not None
+    assert checkpoint.inventory_start_token == "reset-start-token"
+    assert checkpoint.changes_token is None
