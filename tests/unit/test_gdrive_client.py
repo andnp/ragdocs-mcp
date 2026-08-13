@@ -1,10 +1,14 @@
 """Tests for the bounded Google Drive transport client."""
 
+import asyncio
+import time
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from mcp_markdown_ragdocs.gdrive.client import GoogleDriveClient
+from mcp_markdown_ragdocs.gdrive.gate import DriveRequestGate
 from mcp_markdown_ragdocs.gdrive.models import DriveScope
 
 
@@ -118,3 +122,46 @@ async def test_client_rejects_media_over_configured_bound() -> None:
 
     with pytest.raises(ValueError, match="byte limit"):
         await client.download_file("file-1")
+
+
+@pytest.mark.asyncio
+async def test_client_serializes_provider_requests_through_private_gate(
+    tmp_path: Path,
+) -> None:
+    """
+    Keep concurrent Drive requests out of the shared index transaction.
+    """
+    gate = DriveRequestGate(tmp_path / "drive-gate.db", min_interval_seconds=0)
+    active = 0
+    maximum = 0
+
+    class _ConcurrentRequest:
+        def execute(self) -> dict[str, object]:
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            time.sleep(0.02)
+            active -= 1
+            return {"files": []}
+
+    class _ConcurrentFiles:
+        def list(self, **kwargs: object) -> _ConcurrentRequest:
+            del kwargs
+            return _ConcurrentRequest()
+
+    class _ConcurrentService:
+        def files(self) -> _ConcurrentFiles:
+            return _ConcurrentFiles()
+
+    client = GoogleDriveClient(
+        cast(Any, _Session()),
+        service=cast(Any, _ConcurrentService()),
+        request_gate=gate,
+    )
+
+    await asyncio.gather(
+        client.list_files_page(DriveScope("workspace")),
+        client.list_files_page(DriveScope("workspace")),
+    )
+
+    assert maximum == 1

@@ -17,6 +17,7 @@ from mcp_markdown_ragdocs.gdrive.models import (
     DriveStartPageToken,
     DriveWatchChannel,
 )
+from mcp_markdown_ragdocs.gdrive.gate import DriveRequestGate
 from mcp_markdown_ragdocs.gdrive.session import DriveCredentialSession
 
 FILE_FIELDS = (
@@ -84,6 +85,7 @@ class GoogleDriveClient:
         service_factory: ServiceFactory | None = None,
         max_page_size: int = 1000,
         max_download_bytes: int = 25 * 1024 * 1024,
+        request_gate: DriveRequestGate | None = None,
     ) -> None:
         if max_page_size < 1:
             raise ValueError("max_page_size must be positive")
@@ -94,6 +96,7 @@ class GoogleDriveClient:
         self._service_factory = service_factory or self._build_service
         self._max_page_size = max_page_size
         self._max_download_bytes = max_download_bytes
+        self._request_gate = request_gate
 
     @staticmethod
     def _build_service(credentials: Credentials) -> DriveService:
@@ -250,8 +253,13 @@ class GoogleDriveClient:
 
     async def _execute(self, request_factory: Callable[[], DriveRequest]) -> Any:
         """Execute one provider request in a worker thread without unbounded retry."""
-        request = await asyncio.to_thread(request_factory)
-        return await asyncio.to_thread(request.execute)
+        def execute_request() -> Any:
+            request = request_factory()
+            return request.execute()
+
+        if self._request_gate is not None:
+            return await asyncio.to_thread(self._request_gate.run, execute_request)
+        return await asyncio.to_thread(execute_request)
 
 
 __all__ = ["GoogleDriveClient"]
