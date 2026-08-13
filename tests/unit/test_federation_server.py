@@ -158,17 +158,21 @@ class _SourceFilteringOrchestrator(_RankedOrchestrator):
 class _NativeDriveFilteringOrchestrator(_RankedOrchestrator):
     async def search(self, query, *, limit, filters):
         outcome = await super().search(query, limit=limit, filters=filters)
-        overlap = filters.get("source_scoped_metadata_overlaps")
-        if not isinstance(overlap, list) or not overlap:
+        constraints = filters.get("source_scoped_filters")
+        if not isinstance(constraints, list) or not constraints:
             return outcome
-        allowed = overlap[0].get("values", [])
+        constraint = constraints[0]
+        allowed_workspaces = set(constraint.get("workspace_ids", []))
+        required_metadata = constraint.get("metadata_non_empty", [])
         return SimpleNamespace(
             results=tuple(
                 result
                 for result in outcome.results
                 if result.record.source_kind != "gdrive"
-                or set(result.record.metadata.get("scope_memberships", ()))
-                & set(allowed)
+                or (
+                    result.record.workspace_id in allowed_workspaces
+                    and all(result.record.metadata.get(name) for name in required_metadata)
+                )
             )[:limit],
             failures=outcome.failures,
             degraded=outcome.degraded,
@@ -618,11 +622,11 @@ def test_drive_search_constructs_source_scoped_membership_filter():
     )
 
     assert response.status_code == 200
-    assert orchestrator.calls[0]["filters"]["source_scoped_metadata_overlaps"] == [
+    assert orchestrator.calls[0]["filters"]["source_scoped_filters"] == [
         {
             "source_kind": "gdrive",
-            "metadata_key": "scope_memberships",
-            "values": ["workspace-a"],
+            "workspace_ids": ["workspace-a"],
+            "metadata_non_empty": ["scope_memberships"],
         }
     ]
 
@@ -676,7 +680,7 @@ def test_drive_search_native_filter_defeats_unauthorized_prefix():
     authorized = _drive_result(
         source_id="authorized",
         score=0.1,
-        scope_memberships=("workspace",),
+        scope_memberships=("shared-drive:drive",),
     )
     orchestrator = _NativeDriveFilteringOrchestrator((*unauthorized, authorized))
     client = _client(
@@ -693,6 +697,32 @@ def test_drive_search_native_filter_defeats_unauthorized_prefix():
     assert response.status_code == 200
     assert [hit["source_id"] for hit in response.json()["hits"]] == ["authorized"]
     assert orchestrator.calls[0]["limit"] == 1
+
+
+def test_drive_native_filter_keeps_scope_identity_and_excludes_empty_membership():
+    """Keep a valid workspace record while excluding its empty-membership peer."""
+    orchestrator = _NativeDriveFilteringOrchestrator(
+        (
+            _drive_result(
+                source_id="valid",
+                scope_memberships=("shared-drive:drive",),
+            ),
+            _drive_result(source_id="empty", scope_memberships=()),
+        )
+    )
+    client = _client(
+        orchestrator,
+        drive_workspace_id="workspace",
+        drive_workspace_ids=("workspace",),
+    )
+
+    response = client.post(
+        "/v1/search",
+        json=_request(top_k=2, filters={"source_kinds": ["gdrive"]}),
+    )
+
+    assert response.status_code == 200
+    assert [hit["source_id"] for hit in response.json()["hits"]] == ["valid"]
 
 
 def test_drive_acl_filters_before_top_k():
@@ -829,7 +859,7 @@ def test_authenticated_joint_search_filters_by_source_kind_at_the_boundary():
         "note",
         "gdrive",
     ]
-    assert orchestrator.calls[0]["filters"]["source_scoped_metadata_overlaps"][0][
+    assert orchestrator.calls[0]["filters"]["source_scoped_filters"][0][
         "source_kind"
     ] == "gdrive"
 

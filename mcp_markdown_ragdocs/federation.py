@@ -333,13 +333,13 @@ async def execute_federation_search(
     if source_kinds:
         native_filters["source_kinds"] = cast(list[JsonValue], source_kinds)
     if drive_requested:
-        native_filters["source_scoped_metadata_overlaps"] = cast(
+        native_filters["source_scoped_filters"] = cast(
             JsonValue,
             [
                 {
                     "source_kind": DRIVE_SOURCE_KIND,
-                    "metadata_key": "scope_memberships",
-                    "values": sorted(authorized_drive_workspaces),
+                    "workspace_ids": sorted(authorized_drive_workspaces),
+                    "metadata_non_empty": ["scope_memberships"],
                 }
             ],
         )
