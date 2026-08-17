@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hashlib
-import json
 import logging
 import os
 import re
@@ -56,6 +55,12 @@ from mcp_markdown_ragdocs.gdrive.state import (
 )
 from mcp_markdown_ragdocs.models import Document
 from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
+from mcp_markdown_ragdocs.indexing.record_ports import (
+    JsonSourceMapStore,
+    LocalRecordStorage,
+    RecordStorage,
+    SourceMapStore,
+)
 
 logger = logging.getLogger(__name__)
 _GRAPH_IDENTITY_BATCH_SIZE = 100
@@ -323,9 +328,12 @@ class RecordIndexManager:
         *,
         documents_roots: list[Path] | None = None,
         content_sources: Iterable[ContentSource] = (),
+        storage: RecordStorage | None = None,
+        source_map_store: SourceMapStore | None = None,
     ) -> None:
         self._config = config
         self.kernel = kernel
+        self.storage = storage or LocalRecordStorage(kernel)
         self.embedding_provider = embedding_provider
         self._chunker = get_chunker(config.chunking)
         self._documents_roots = [
@@ -335,8 +343,10 @@ class RecordIndexManager:
         self._failed_files: list[dict[str, str]] = []
         self._state_version = 0
         self._ready = True
-        self._source_map_path = Path(config.indexing.index_path) / "record-sources.json"
-        self._source_records: dict[str, list[str]] = self._load_source_map()
+        self._source_map_store = source_map_store or JsonSourceMapStore(
+            Path(config.indexing.index_path) / "record-sources.json"
+        )
+        self._source_records: dict[str, list[str]] = self._source_map_store.load()
         self._content_sources: dict[str, ContentSource] = {}
         for source in content_sources:
             self.register_content_source(source)
@@ -426,7 +436,7 @@ class RecordIndexManager:
     def describe_documents(self) -> list[dict[str, object]]:
         descriptions: list[dict[str, object]] = []
         for doc_id, keys in sorted(self._source_records.items()):
-            records = [self.kernel.backend.hydrate_record(key) for key in keys]
+            records = [self.storage.hydrate_record(key) for key in keys]
             record = next((item for item in records if item is not None), None)
             if record is None:
                 continue
@@ -484,7 +494,7 @@ class RecordIndexManager:
         keys = self._source_records.get(self._doc_id_for_path(file_path), [])
         if not keys:
             return False
-        record = self.kernel.backend.hydrate_record(keys[0])
+        record = self.storage.hydrate_record(keys[0])
         if record is None:
             return False
         return (
@@ -492,27 +502,8 @@ class RecordIndexManager:
             and record.metadata.get(_FILE_SIZE_METADATA_KEY) == file_stat.st_size
         )
 
-    def _load_source_map(self) -> dict[str, list[str]]:
-        try:
-            value = json.loads(self._source_map_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(value, dict):
-            return {}
-        return {
-            str(doc_id): [str(key) for key in keys if isinstance(key, str)]
-            for doc_id, keys in value.items()
-            if isinstance(keys, list)
-        }
-
     def _save_source_map(self) -> None:
-        self._source_map_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._source_map_path.with_suffix(".tmp")
-        temporary.write_text(
-            json.dumps(self._source_records, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        temporary.replace(self._source_map_path)
+        self._source_map_store.save(self._source_records)
 
     def _document_record(self, document: Document) -> Record:
         return Record(
@@ -605,7 +596,7 @@ class RecordIndexManager:
         new_keys = [record.storage_key for record in prepared.records]
         stale_keys = sorted(set(old_keys) - set(new_keys))
         if stale_keys:
-            self.kernel.backend.delete(stale_keys)
+            self.storage.delete(stale_keys)
         self._source_records[prepared.document.id] = new_keys
         if update_graph:
             self._rebuild_graph()
@@ -749,7 +740,7 @@ class RecordIndexManager:
         existing = tuple(
             record
             for key in old_keys
-            if (record := self.kernel.backend.hydrate_record(key)) is not None
+            if (record := self.storage.hydrate_record(key)) is not None
             and not is_gdrive_tombstone(record)
         )
         known_scopes = set(self._gdrive_scopes_from_records(existing))
@@ -841,11 +832,14 @@ class RecordIndexManager:
         candidates: set[str] = set()
         for keys in self._source_records.values():
             candidates.update(keys)
-        for row in self.kernel.backend._record_rows():
-            candidates.add(str(row["storage_key"]))
+        candidates.update(
+            record.storage_key
+            for record in self.storage.iter_records()
+            if record.source_kind == GDRIVE_SOURCE_KIND
+        )
         matching: list[str] = []
         for key in sorted(candidates):
-            record = self.kernel.backend.hydrate_record(key)
+            record = self.storage.hydrate_record(key)
             if record is None or record.source_kind != GDRIVE_SOURCE_KIND:
                 continue
             if canonical_gdrive_source_key(record) == source_key:
@@ -860,7 +854,7 @@ class RecordIndexManager:
     ) -> None:
         stale_keys = sorted(set(old_keys) - set(new_keys))
         if stale_keys:
-            self.kernel.backend.delete(stale_keys)
+            self.storage.delete(stale_keys)
         new_key_set = set(new_keys)
         for doc_id, keys in tuple(self._source_records.items()):
             retained = [
@@ -955,15 +949,15 @@ class RecordIndexManager:
                     key
                     for key in entry.new_keys
                     if key not in entry.old_keys
-                    and self.kernel.backend.hydrate_record(key) is not None
+                    and self.storage.hydrate_record(key) is not None
                 )
                 if partial_keys:
-                    self.kernel.backend.delete(list(partial_keys))
+                    self.storage.delete(partial_keys)
                 self._gdrive_replacement_journal.complete(entry.source_key)
                 recovered = True
                 continue
             new_keys = tuple(
-                key for key in entry.new_keys if self.kernel.backend.hydrate_record(key) is not None
+                key for key in entry.new_keys if self.storage.hydrate_record(key) is not None
             )
             self._delete_gdrive_stale_keys(entry.source_key, entry.old_keys, new_keys)
             if new_keys:
@@ -990,15 +984,12 @@ class RecordIndexManager:
         }
         updates: list[Record] = []
         replacements: dict[str, str] = {}
-        for row in self.kernel.backend._record_rows():
-            if row["source_kind"] != "git_commit":
+        for record in self.storage.iter_records():
+            if record.source_kind != "git_commit":
                 continue
-            source_id = str(row["source_id"])
+            source_id = record.source_id
             commit_id = ":".join(source_id.split(":")[:2])
             if commit_id not in commit_ids:
-                continue
-            record = self.kernel.backend.hydrate_record(row["storage_key"])
-            if record is None:
                 continue
             metadata = dict(record.metadata)
             if (
@@ -1019,7 +1010,7 @@ class RecordIndexManager:
             self._source_records[doc_id] = list(dict.fromkeys(replaced))
         stale_keys = [key for key, replacement in replacements.items() if key != replacement]
         if stale_keys:
-            self.kernel.backend.delete(stale_keys)
+            self.storage.delete(stale_keys)
         self._save_source_map()
         return len(updates)
 
@@ -1030,7 +1021,7 @@ class RecordIndexManager:
         edges: list[GraphEdge] = []
         for keys in self._source_records.values():
             records = tuple(
-                self.kernel.backend.hydrate_record(key)
+                self.storage.hydrate_record(key)
                 for key in keys
             )
             hydrated = tuple(record for record in records if record is not None)
@@ -1125,7 +1116,7 @@ class RecordIndexManager:
     def remove_document(self, doc_id: str) -> None:
         keys = self._source_records.pop(doc_id, [])
         if keys:
-            self.kernel.backend.delete(keys)
+            self.storage.delete(keys)
             self._save_source_map()
             self._state_version += 1
 
@@ -1146,7 +1137,7 @@ class RecordIndexManager:
             for key in record_keys
         ]
         if keys:
-            self.kernel.backend.delete(keys)
+            self.storage.delete(keys)
         self._source_records = {
             doc_id: record_keys
             for doc_id, record_keys in self._source_records.items()
@@ -1162,7 +1153,7 @@ class RecordIndexManager:
         return
 
     def load(self) -> None:
-        self._source_records = self._load_source_map()
+        self._source_records = self._source_map_store.load()
 
     def replace_vector_store(self, _vector: Any) -> None:
         raise RuntimeError("canonical record manager uses one configured embedding provider")
