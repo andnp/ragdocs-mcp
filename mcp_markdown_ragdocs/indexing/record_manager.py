@@ -408,7 +408,7 @@ class RecordIndexManager:
         return self._content_sources.get(source_kind)
 
     def register_content_source(self, source: ContentSource) -> None:
-        self.kernel.kernel.register_content_source(source)
+        self.storage.register_content_source(source)
         self._content_sources[source.source_kind] = source
 
     def count_records(self, source_kind: str | None = None) -> int:
