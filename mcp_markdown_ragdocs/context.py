@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,10 +21,8 @@ from searchkernel.api import (
     discover_files,
     discover_files_multi_root,
     has_incomplete_bootstrap_checkpoint,
-    CURRENT_MANIFEST_SPEC_VERSION,
     load_manifest,
     save_manifest,
-    should_rebuild,
     reconcile_indices,
     semantic_tier_from_progress,
     is_fully_ready as runtime_is_fully_ready,
@@ -41,6 +38,11 @@ from mcp_markdown_ragdocs.app.composition import (
     build_gdrive_source,
     build_runtime_components,
 )
+from mcp_markdown_ragdocs.app.bootstrap import (
+    BootstrapCoordinator,
+    IndexState,
+)
+from mcp_markdown_ragdocs.app.bootstrap_manifest import ManifestCoordinator
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
 from mcp_markdown_ragdocs.indexing.record_manager import (
     RecordIndexManager,
@@ -58,32 +60,6 @@ logger = logging.getLogger(__name__)
 def _git_commit_id(source_id: str) -> str:
     parts = source_id.split(":")
     return ":".join(parts[:2]) if len(parts) >= 2 and parts[0] == "git" else source_id
-
-
-@dataclass
-class IndexState:
-    """Tracks the current state of background indexing."""
-
-    status: Literal["uninitialized", "indexing", "partial", "ready", "failed"]
-    indexed_count: int = 0
-    total_count: int = 0
-    last_error: str | None = None
-    availability: SearchAvailability | None = None
-
-    def to_dict(self) -> dict[str, object]:
-        status = self.status
-        if status == "ready" and self.availability is not None:
-            if not self.availability.is_fully_ready():
-                status = "partial"
-        payload: dict[str, object] = {
-            "status": status,
-            "indexed_count": self.indexed_count,
-            "total_count": self.total_count,
-            "last_error": self.last_error,
-        }
-        if self.availability is not None:
-            payload["availability"] = self.availability.to_dict()
-        return payload
 
 
 @dataclass
@@ -182,6 +158,22 @@ class ApplicationContext:
     def watcher(self, value: FileWatcher | None) -> None:
         self._watcher_lifecycle = WatcherLifecycle(watcher=value)
 
+    def _get_bootstrap_coordinator(self) -> BootstrapCoordinator:
+        coordinator = self.__dict__.get("_bootstrap_coordinator")
+        if isinstance(coordinator, BootstrapCoordinator):
+            return coordinator
+        coordinator = BootstrapCoordinator(self)
+        self.__dict__["_bootstrap_coordinator"] = coordinator
+        return coordinator
+
+    def _get_manifest_coordinator(self) -> ManifestCoordinator:
+        coordinator = self.__dict__.get("_manifest_coordinator")
+        if isinstance(coordinator, ManifestCoordinator):
+            return coordinator
+        coordinator = ManifestCoordinator(self)
+        self.__dict__["_manifest_coordinator"] = coordinator
+        return coordinator
+
     @staticmethod
     def _build_vector_store(config: Config, embedding_model_name: str) -> Any:
         """Retained as a compatibility hook for model lifecycle callers."""
@@ -230,21 +222,7 @@ class ApplicationContext:
         return Path(common).resolve()
 
     def _build_manifest(self) -> IndexManifest:
-        saved_manifest = load_manifest(self.index_path)
-        return IndexManifest(
-            spec_version=CURRENT_MANIFEST_SPEC_VERSION,
-            embedding_model=self.config.llm.embedding_model,
-            chunking_config={
-                "strategy": self.config.chunking.strategy,
-                "min_chunk_chars": self.config.chunking.min_chunk_chars,
-                "max_chunk_chars": self.config.chunking.max_chunk_chars,
-                "overlap_chars": self.config.chunking.overlap_chars,
-            },
-            active_model=(
-            saved_manifest.active_model if saved_manifest is not None else None
-            ),
-            migration=saved_manifest.migration if saved_manifest is not None else None,
-        )
+        return self._get_manifest_coordinator().build_manifest()
 
     def discover_files(self) -> list[str]:
         if len(self.documents_roots) <= 1:
@@ -281,64 +259,13 @@ class ApplicationContext:
         )
 
     def _check_and_rebuild_if_needed(self) -> bool:
-        self.index_path.mkdir(parents=True, exist_ok=True)
-        self._hydrate_index_path_from_fallback()
-        self.current_manifest = self._build_manifest()
-        saved_manifest = load_manifest(self.index_path)
-        self._is_virgin_startup = saved_manifest is None
-        return should_rebuild(self.current_manifest, saved_manifest)
+        return self._get_manifest_coordinator().check_and_rebuild_if_needed()
 
     def _has_persisted_index_state(self, index_path: Path) -> bool:
-        return any(
-            candidate.exists()
-            for candidate in [
-                index_path / "index.manifest.json",
-                index_path / "vector" / "docstore.json",
-                index_path / "vector" / "faiss_index.bin",
-                index_path / "graph" / "graph.json",
-            ]
-        )
+        return self._get_manifest_coordinator().has_persisted_index_state(index_path)
 
     def _hydrate_index_path_from_fallback(self) -> None:
-        if hasattr(self.index_manager, "kernel"):
-            # Canonical records use a single SQLite database.  Copying the
-            # legacy vector/graph bundle into an override path can overwrite
-            # the freshly composed database with an incompatible schema.
-            return
-        if self.fallback_index_path is None:
-            return
-        if self.index_path == self.fallback_index_path:
-            return
-        if self._has_persisted_index_state(self.index_path):
-            return
-        if not self._has_persisted_index_state(self.fallback_index_path):
-            return
-
-        logger.info(
-            "Hydrating runtime index at %s from existing persisted index at %s",
-            self.index_path,
-            self.fallback_index_path,
-        )
-
-        for directory_name in ["vector", "keyword", "graph"]:
-            source_dir = self.fallback_index_path / directory_name
-            if source_dir.exists():
-                shutil.copytree(
-                    source_dir,
-                    self.index_path / directory_name,
-                    dirs_exist_ok=True,
-                )
-
-        for file_name in [
-            "index.manifest.json",
-            "index.db",
-            "index.db-shm",
-            "index.db-wal",
-            "chunk_hashes.json",
-        ]:
-            source_file = self.fallback_index_path / file_name
-            if source_file.exists():
-                shutil.copy2(source_file, self.index_path / file_name)
+        self._get_manifest_coordinator().hydrate_index_path_from_fallback()
 
     def _compute_index_state_version(self) -> float:
         candidates = [
