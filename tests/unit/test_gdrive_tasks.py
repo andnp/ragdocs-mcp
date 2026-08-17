@@ -12,6 +12,7 @@ from mcp_markdown_ragdocs.adapters.sources.gdrive import (
 )
 from mcp_markdown_ragdocs.config import Config, GoogleDriveConfig
 from mcp_markdown_ragdocs.gdrive.tasks import (
+    GDRIVE_BACKGROUND_TASK_PRIORITY,
     GDriveTaskRuntime,
     build_gdrive_task_runtime,
     register_gdrive_tasks,
@@ -159,6 +160,9 @@ def test_registers_the_drive_lifecycle_tasks(tmp_path: Path) -> None:
     }
     assert all(task is not None for task in registered.values())
     assert huey.pending_count() + huey.scheduled_count() == 1
+    queued = huey.storage.enqueued_items() + huey.storage.scheduled_items()
+    assert len(queued) == 1
+    assert huey.deserialize_task(queued[0]).priority == GDRIVE_BACKGROUND_TASK_PRIORITY
 
 
 def test_disabled_drive_registration_is_a_no_op(tmp_path: Path) -> None:

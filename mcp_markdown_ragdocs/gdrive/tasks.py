@@ -39,6 +39,7 @@ from mcp_markdown_ragdocs.config import Config
 logger = logging.getLogger(__name__)
 
 DRIVE_HEARTBEAT_INTERVAL_SECONDS = 5.0
+GDRIVE_BACKGROUND_TASK_PRIORITY = -20
 DRIVE_CONTINUE_DELAY_SECONDS = 1.0
 DRIVE_RETRY_DELAY_SECONDS = 30.0
 DRIVE_BACKFILL_DELAY_SECONDS = 3600.0
@@ -469,7 +470,8 @@ def register_gdrive_tasks(
         "gdrive_health": health,
     }
     registered = {
-        name: huey.task(name=name)(handler) for name, handler in handlers.items()
+        name: huey.task(name=name, priority=GDRIVE_BACKGROUND_TASK_PRIORITY)(handler)
+        for name, handler in handlers.items()
     }
     scheduler = GDriveLifecycleScheduler(huey, registered, runtime)
     scheduler.startup()
