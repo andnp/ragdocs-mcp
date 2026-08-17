@@ -10,12 +10,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 from searchkernel.api import (
-    ContentSource,
     IndexManifest,
-    build_local_record_kernel,
     PublicIndexStateSnapshot,
     Record,
-    RecordIdentity,
     SearchAvailability,
     build_file_stamps,
     build_indexed_files_map,
@@ -24,7 +21,6 @@ from searchkernel.api import (
     derive_loaded_index_state_snapshot,
     discover_files,
     discover_files_multi_root,
-    get_parser_suffixes,
     has_incomplete_bootstrap_checkpoint,
     CURRENT_MANIFEST_SPEC_VERSION,
     load_manifest,
@@ -37,73 +33,26 @@ from searchkernel.api import (
 
 from mcp_markdown_ragdocs.config import (
     Config,
-    detect_project,
     load_config,
     resolve_documents_path,
-    resolve_index_path,
     resolve_project_id_for_path,
+)
+from mcp_markdown_ragdocs.app.composition import (
+    build_gdrive_source,
+    build_runtime_components,
 )
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
 from mcp_markdown_ragdocs.indexing.record_manager import (
     RecordIndexManager,
     build_embedding_provider,
-    install_bidirectional_graph_store,
 )
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-from mcp_markdown_ragdocs.app.search import (
-    ApplicationSearchUseCase,
-    build_record_search_policy,
-    build_reranker,
-    to_record_search_config,
-)
+from mcp_markdown_ragdocs.app.search import ApplicationSearchUseCase
 from mcp_markdown_ragdocs.app.services import ApplicationServices, compose_services
 
 logger = logging.getLogger(__name__)
-
-
-def build_gdrive_source(
-    config: Config,
-    *,
-    source_root: Path,
-    index_path: Path,
-) -> ContentSource:
-    """Compose Drive against the existing global record/index runtime."""
-    from mcp_markdown_ragdocs.adapters.sources.gdrive import GoogleDriveContentSource
-    from mcp_markdown_ragdocs.gdrive.client import GoogleDriveClient
-    from mcp_markdown_ragdocs.gdrive.extraction import ExtractionLimits
-    from mcp_markdown_ragdocs.gdrive.gate import DriveRequestGate
-    from mcp_markdown_ragdocs.gdrive.session import AuthorizedUserSession
-    from mcp_markdown_ragdocs.gdrive.state import GDriveStateRepository
-
-    drive_config = config.gdrive
-    session = AuthorizedUserSession(
-        drive_config.credentials_path,
-        source_root,
-        scopes=drive_config.scopes,
-    )
-    client = GoogleDriveClient(
-        session,
-        max_page_size=drive_config.page_size,
-        max_download_bytes=drive_config.max_download_bytes,
-        request_gate=DriveRequestGate(index_path / "gdrive-request-gate.db"),
-    )
-    state_repository = GDriveStateRepository(index_path / "gdrive-state.db")
-    return GoogleDriveContentSource(
-        client,
-        workspace_id=drive_config.workspace_id,
-        shared_drive_ids=drive_config.shared_drive_ids,
-        extraction_limits=ExtractionLimits(
-            max_download_bytes=drive_config.max_download_bytes,
-            max_text_bytes=drive_config.max_text_bytes,
-            max_items=drive_config.max_items,
-            max_pages=drive_config.max_pages,
-            max_seconds=drive_config.max_seconds,
-        ),
-        page_size=drive_config.page_size,
-        state_repository=state_repository,
-    )
 
 
 def _git_commit_id(source_id: str) -> str:
@@ -188,155 +137,39 @@ class ApplicationContext:
         config: Config | None = None,
     ) -> ApplicationContext:
         config = config or load_config()
-
-        detected_project = None
-        if not global_runtime:
-            detected_project = detect_project(
-                projects=config.projects,
-                project_override=project_override,
-            )
-
-        if detected_project and project_override:
-            config = load_config()
-
-        configured_index_path = resolve_index_path(config)
-        index_path = index_path_override or configured_index_path
-        fallback_index_path = None
-        if index_path_override is not None and configured_index_path != index_path:
-            fallback_index_path = configured_index_path
-
-        documents_roots = cls._resolve_documents_roots(
+        components = build_runtime_components(
             config,
-            detected_project=detected_project,
             project_override=project_override,
+            enable_watcher=enable_watcher,
+            lazy_embeddings=lazy_embeddings,
+            use_tasks=use_tasks,
+            index_path_override=index_path_override,
             documents_path_override=documents_path_override,
             global_runtime=global_runtime,
+            source_builder=build_gdrive_source,
         )
-        documents_root = cls._compute_common_documents_root(documents_roots)
-        documents_path = str(documents_root)
-
-        config.indexing.index_path = str(index_path)
-        config.indexing.documents_path = documents_path
-        config.detected_project = None if global_runtime else detected_project
-
-        saved_manifest = load_manifest(index_path)
-        active_model_identity: tuple[str, int] | None = None
-        if saved_manifest is not None and saved_manifest.active_model is not None:
-            active_namespace = saved_manifest.active_model.namespace
-            config.llm.embedding_model = active_namespace.model_name
-            config.embedding.truncate_dim = active_namespace.dim
-            active_model_identity = active_namespace.identity
-
-        embedding_model_name = config.embedding.model_name
-        if active_model_identity is not None:
-            embedding_model_name = config.llm.embedding_model
-        config.embedding.model_name = embedding_model_name
-        config.llm.embedding_model = embedding_model_name
-        if config.store.backend not in {"local", "faiss+sqlite"}:
-            raise ValueError(
-                "canonical runtime supports store.backend = 'local'; "
-                f"got {config.store.backend!r}"
-            )
-        embedding_provider = build_embedding_provider(config, embedding_model_name)
-        content_sources: list[ContentSource] = []
-        if config.gdrive.enabled:
-            content_sources.append(
-                build_gdrive_source(
-                    config,
-                    source_root=documents_root,
-                    index_path=index_path,
-                )
-            )
-        kernel_holder: dict[str, Any] = {}
-        search_policy = build_record_search_policy(
-            lambda: kernel_holder["kernel"].keyword_store,
-            lambda identity: kernel_holder["kernel"].backend.hydrate_record(identity),
-            lambda incoming: kernel_holder["kernel"].pipeline._graph_store.set_direction(
-                incoming
-            ),
-            project_uplift_multiplier=config.search.project_uplift_multiplier,
-        )
-        local_kernel = build_local_record_kernel(
-            index_path / "index.db",
-            embedding_provider=embedding_provider,
-            embedding_model_name=embedding_provider.model_name,
-            embedding_dim=embedding_provider.dim,
-            vector_engine="exact",
-            reranker=build_reranker(config.search),
-            search_policy=search_policy,
-            search_config=to_record_search_config(config.search),
-        )
-        kernel_holder["kernel"] = local_kernel
-        if not lazy_embeddings:
-            logger.info("Embedding provider is daemon-backed; no in-process warmup needed")
-
-        manager = RecordIndexManager(
-            config,
-            local_kernel,
-            embedding_provider,
-            documents_roots=documents_roots,
-            content_sources=content_sources,
-        )
-        install_bidirectional_graph_store(
-            local_kernel,
-            lambda: tuple(
-                RecordIdentity.from_storage_key(str(row["storage_key"]))
-                for row in local_kernel.backend._record_rows()
-            ),
-        )
-        kernel_holder["manager"] = manager
-        orchestrator = CanonicalSearchAdapter(
-            manager,
-            documents_path=Path(documents_path),
-        )
-        record_ingestor = manager.ingestor
-
-        watcher_lifecycle = WatcherLifecycle.create(
-            enabled=enable_watcher,
-            documents_path=config.indexing.documents_path,
-            documents_roots=documents_roots,
-            index_manager=manager,
-            cooldown=config.indexing.debounce_window_seconds,
-            include_patterns=config.indexing.include,
-            exclude_patterns=config.indexing.exclude,
-            exclude_hidden_dirs=config.indexing.exclude_hidden_dirs,
-            parser_suffixes=set(get_parser_suffixes()),
-            use_tasks=use_tasks,
-            task_backpressure_limit=config.indexing.task_backpressure_limit,
-        )
-
-        # Enable git commit indexing if configured and git is available
-        git_indexing_enabled = False
-        if config.git_indexing.enabled:
-            from mcp_markdown_ragdocs.git.repository import is_git_available
-
-            if is_git_available():
-                git_indexing_enabled = True
-                logger.info("Git commit indexing enabled")
-            else:
-                logger.warning("Git binary not found - git history search disabled")
 
         context = cls(
-            config=config,
-            index_manager=manager,
-            orchestrator=orchestrator,
-            search_use_case=orchestrator.search_use_case,
-            record_ingestor=record_ingestor,
+            config=components.config,
+            index_manager=components.index_manager,
+            orchestrator=components.orchestrator,
+            search_use_case=components.search_use_case,
+            record_ingestor=components.record_ingestor,
             use_tasks=use_tasks,
-            _watcher_lifecycle=watcher_lifecycle,
-            git_indexing_enabled=git_indexing_enabled,
-            index_path=index_path,
-            fallback_index_path=fallback_index_path,
-            documents_roots=documents_roots,
-            db_manager=local_kernel.backend.db_manager,
+            _watcher_lifecycle=components.watcher_lifecycle,
+            git_indexing_enabled=components.git_indexing_enabled,
+            index_path=components.paths.index_path,
+            fallback_index_path=components.paths.fallback_index_path,
+            documents_roots=list(components.paths.documents_roots),
+            db_manager=components.db_manager,
             current_manifest=None,
             reconciliation_task=None,
-            _active_model_identity=active_model_identity,
+            _active_model_identity=components.active_model_identity,
         )
         context.services = compose_services(
             context,
-            manager=manager,
-            search=orchestrator.search_use_case,
+            manager=components.index_manager,
+            search=components.search_use_case,
         )
         return context
 
