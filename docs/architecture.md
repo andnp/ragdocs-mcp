@@ -167,9 +167,12 @@ the score range of a single corpus.
 The application owns source-specific ingestion:
 
 1. File and git sources are discovered by the application.
-2. Parsers produce application `Document` or source records.
-3. The record manager chunks documents and assigns stable source metadata.
-4. Records cross the searchkernel ingestion port.
+2. `DocumentPlanner` parses Markdown into a `PreparedRecordDocument` with
+   stable IDs, metadata, and chunk records.
+3. `DocumentWriter` sends planned records through the ingestion port and
+   removes stale canonical keys after successful indexing.
+4. The record manager maintains source membership, failed-file state, graph
+   timing, and state-version updates around those ports.
 5. Searchkernel persists records, embeddings, and retrieval structures.
 
 `RecordIndexManager` is the application adapter around this boundary. It
