@@ -291,6 +291,7 @@ async def test_search_query_route_executes_query_when_ready() -> None:
         "strategy_stats": {"vector_count": 0},
         "query_execution_stats": {},
     }
+    assert ctx.ensure_fresh_indices_calls == 0
     assert ctx.schedule_freshness_refresh_calls == 1
     assert ctx.drain_reindex_calls == 1
     assert ctx.query_calls == [
