@@ -109,6 +109,15 @@ Application modules may import searchkernel only through public modules. The
 guard in `scripts/check_public_searchkernel_imports.py` and its corresponding
 unit test enforce this boundary.
 
+The application-facing transport boundary is enforced separately by
+`import-linter` contracts in `pyproject.toml`. `app/search.py` may not import
+CLI, daemon, MCP, HTTP server, or worker packages directly or indirectly.
+`app/services.py` has the same direct-import restriction; its existing
+`TYPE_CHECKING` annotation for `ApplicationContext` is intentionally not
+treated as a transitive runtime dependency because the context composes the
+daemon and task layers. These contracts do not restrict current domain,
+configuration, git, or adapter dependencies.
+
 ### Final application ports
 
 The runtime-facing ports are deliberately small and structural:
@@ -128,6 +137,10 @@ retains the historical `query()` tuple for in-repo callers, but delegates to
 `IndexManagerLike` and the task protocols are similarly structural seams for
 worker execution. These seams are intentional compatibility surfaces while
 the external searchkernel API remains the storage and retrieval authority.
+`IndexingService.index_document()` and `index_record()` expose boolean success
+outcomes. `SearchKernelBoundary` accepts a read-only mapping of canonical
+filters and returns `RecordSearchOutcome`; the installed pipeline is consumed
+through the matching `RecordSearchPipeline` shape.
 
 ### Score contract
 
@@ -293,6 +306,8 @@ duplicated per project merely to implement query scoping.
 Architecture quality is protected by:
 
 - public searchkernel import checks;
+- import-linter application transport contracts;
+- Ruff C901 complexity checks with a repository ceiling of 30;
 - tests for the shared query contract and transport routing;
 - real-fixture indexing and reindex tests;
 - worker, queue, lifecycle, and MCP seam coverage;

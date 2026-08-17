@@ -1,5 +1,35 @@
 # Domain and Ports Implementation Notes
 
+## Current Application Foundation
+
+The current application-facing boundary is maintained in
+`mcp_markdown_ragdocs/app/`. The foundation slice enforces these contracts:
+
+- `app/search.py` cannot import CLI, daemon, MCP, HTTP server, or worker
+  packages directly or indirectly.
+- `app/services.py` cannot import those transport packages directly. Its
+  `TYPE_CHECKING` import of `ApplicationContext` remains an intentional
+  composition annotation; following that edge would incorrectly treat the
+  context's daemon/task composition as a runtime application dependency.
+- `scripts/check_public_searchkernel_imports.py` keeps all application imports
+  on searchkernel's public modules.
+- Ruff's C901 rule is enabled with a repository-wide maximum complexity of 30.
+
+The enforced application ports are deliberately small. `SearchKernelBoundary`
+and `RecordSearchPipeline` accept `Mapping[str, object]` filters and return
+`RecordSearchOutcome`. `IndexingService.index_document()` and
+`IndexingService.index_record()` return `bool` because the current record
+manager already exposes boolean success results. `task_target()` remains an
+opaque compatibility seam for the later task-processing workstream.
+
+The import-linter contracts intentionally do not ban current domain,
+configuration, git, or adapter dependencies. Later phases may narrow those
+edges only when their composition and adapter ownership are migrated.
+
+The remainder of this document records the earlier searchkernel domain/port
+design notes and follow-up work; it is not a claim that those modules are
+owned by this application package.
+
 ## W1 Task 2, 3, 6 Summary
 
 Created pure domain types (`searchkernel/domain/`) and canonical port protocols (`searchkernel/ports/`) with inward-only dependencies enforced by import-linter.
