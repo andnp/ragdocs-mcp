@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from searchkernel.api import LocalRecordKernel, Record, RecordIdentity
+from searchkernel.api import ContentSource, LocalRecordKernel, Record, RecordIdentity
 
 from mcp_markdown_ragdocs.models import Document
 
@@ -43,6 +43,8 @@ class RecordStorage(Protocol):
 
     @property
     def db_manager(self) -> object: ...
+
+    def register_content_source(self, source: ContentSource) -> None: ...
 
     def hydrate_record(self, identity: RecordIdentity | str) -> Record | None: ...
 
@@ -84,6 +86,9 @@ class LocalRecordStorage:
     @property
     def db_manager(self) -> object:
         return self._kernel.backend.db_manager
+
+    def register_content_source(self, source: ContentSource) -> None:
+        self._kernel.kernel.register_content_source(source)
 
     def hydrate_record(self, identity: RecordIdentity | str) -> Record | None:
         if isinstance(identity, RecordIdentity):

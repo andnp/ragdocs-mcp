@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from searchkernel.api import (
+    ContentSource,
     Cursor,
     IngestionFailureMode,
     IngestionReceipt,
@@ -83,6 +84,9 @@ class _Storage:
     @property
     def db_manager(self) -> object:
         return object()
+
+    def register_content_source(self, source: ContentSource) -> None:
+        del source
 
     def hydrate_record(self, identity: RecordIdentity | str) -> Record | None:
         del identity
