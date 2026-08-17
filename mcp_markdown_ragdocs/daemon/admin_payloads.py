@@ -13,6 +13,7 @@ from mcp_markdown_ragdocs.daemon.producer import (
     producer_diagnostics,
     read_producer_metadata,
 )
+from mcp_markdown_ragdocs.daemon.storage_diagnostics import sqlite_storage_diagnostics
 from mcp_markdown_ragdocs.indexing.git_refresh_state import list_progress
 from mcp_markdown_ragdocs.indexing.reindex import reindex_status_payload
 
@@ -166,6 +167,7 @@ def _build_index_stats_payload(ctx: Any) -> dict[str, object]:
         "documents_roots": [str(root) for root in ctx.documents_roots],
         "index_path": str(ctx.index_path),
         "index_db_path": str(ctx.index_path / "index.db"),
+        "storage": sqlite_storage_diagnostics(ctx.index_path / "index.db"),
         "manifest_path": str(manifest_path),
         "manifest_exists": manifest_exists,
         "indexed_documents": indexed_documents,
@@ -232,6 +234,7 @@ def _build_admin_overview_payload(
         "socket_path": str(runtime_paths.socket_path),
         "endpoint": f"ipc://{runtime_paths.socket_path}",
         "index_db_path": str(runtime_paths.index_db_path),
+        "storage": index_payload["storage"],
         "queue_db_path": str(runtime_paths.queue_db_path),
         "indexed_documents": index_payload["indexed_documents"],
         "indexed_chunks": index_payload["indexed_chunks"],
