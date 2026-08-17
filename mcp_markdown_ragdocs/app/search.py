@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from importlib import import_module
 from pathlib import Path
@@ -38,7 +38,7 @@ class SearchKernelBoundary(Protocol):
         query: str,
         *,
         limit: int,
-        filters: dict[str, object],
+        filters: Mapping[str, object],
     ) -> RecordSearchOutcome: ...
 
     async def async_search(
@@ -46,14 +46,26 @@ class SearchKernelBoundary(Protocol):
         query: str,
         *,
         limit: int,
-        filters: dict[str, object],
+        filters: Mapping[str, object],
+    ) -> RecordSearchOutcome: ...
+
+
+class RecordSearchPipeline(Protocol):
+    """Installed pipeline capability consumed by the canonical adapter."""
+
+    async def async_search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filters: Mapping[str, object],
     ) -> RecordSearchOutcome: ...
 
 
 class PipelineSearchBoundary:
     """Adapt the canonical pipeline to the application-owned boundary."""
 
-    def __init__(self, pipeline) -> None:
+    def __init__(self, pipeline: RecordSearchPipeline) -> None:
         self._pipeline = pipeline
 
     async def search(
@@ -61,7 +73,7 @@ class PipelineSearchBoundary:
         query: str,
         *,
         limit: int,
-        filters: dict[str, object],
+        filters: Mapping[str, object],
     ) -> RecordSearchOutcome:
         return await self._pipeline.async_search(
             _normalize_graph_query(query),
@@ -74,7 +86,7 @@ class PipelineSearchBoundary:
         query: str,
         *,
         limit: int,
-        filters: dict[str, object],
+        filters: Mapping[str, object],
     ) -> RecordSearchOutcome:
         """Retain the pipeline method name for in-repo compatibility tests."""
         return await self.search(query, limit=limit, filters=filters)
@@ -749,6 +761,7 @@ class ApplicationSearchUseCase:
 __all__ = [
     "ApplicationSearchUseCase",
     "PipelineSearchBoundary",
+    "RecordSearchPipeline",
     "SearchExecution",
     "SearchKernelBoundary",
     "SearchQuery",
