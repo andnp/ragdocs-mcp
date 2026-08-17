@@ -1,12 +1,58 @@
-"""Test that domain and ports modules maintain inward-only dependencies.
+"""Test dependency direction for domain types and application-facing ports.
 
-This test verifies the dependency rule: searchkernel/domain and searchkernel/ports
-import nothing from searchkernel/adapters, runtime, stores, or concrete implementations.
+The searchkernel checks preserve its inward-only domain and port boundary. The
+application check keeps transport packages outside the application ports.
 """
 
+import ast
 import importlib
+from pathlib import Path
 
 import pytest
+
+
+PACKAGE_ROOT = Path(__file__).parents[2] / "mcp_markdown_ragdocs"
+APPLICATION_PORT_FILES = (
+    PACKAGE_ROOT / "app" / "search.py",
+    PACKAGE_ROOT / "app" / "services.py",
+)
+TRANSPORT_PACKAGES = (
+    "mcp_markdown_ragdocs.cli",
+    "mcp_markdown_ragdocs.daemon",
+    "mcp_markdown_ragdocs.mcp",
+    "mcp_markdown_ragdocs.server",
+    "mcp_markdown_ragdocs.worker",
+)
+
+
+def _imported_modules(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            imported.add(node.module)
+    return imported
+
+
+def test_application_ports_do_not_import_transport_packages() -> None:
+    """Keep application-facing ports independent from transport adapters.
+
+    The guardrail intentionally checks only transport imports, leaving current
+    domain, configuration, and adapter dependencies available for later work.
+    """
+    violations = [
+        f"{path.relative_to(PACKAGE_ROOT)} imports {module}"
+        for path in APPLICATION_PORT_FILES
+        for module in _imported_modules(path)
+        if any(
+            module == transport or module.startswith(f"{transport}.")
+            for transport in TRANSPORT_PACKAGES
+        )
+    ]
+
+    assert violations == []
 
 
 @pytest.fixture(scope="session")
