@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 LEASE_TIMEOUT_SECONDS = DEFAULT_LEASE_TIMEOUT_SECONDS
 LEASE_HEARTBEAT_INTERVAL_SECONDS = 5.0
 LEASE_RECLAIM_INTERVAL_SECONDS = 5.0
+NON_QUEUE_LEASE_TASK_NAMES = frozenset({"gdrive_scope_sync"})
 
 
 def _requeue_expired_leases(
@@ -36,6 +37,9 @@ def _requeue_expired_leases(
         claim_timeout_seconds=LEASE_TIMEOUT_SECONDS,
     )
     for lease in lease_store.reclaim_expired():
+        if lease.task_name in NON_QUEUE_LEASE_TASK_NAMES:
+            logger.info("Skipping expired non-queue lease: %s", lease.task_id)
+            continue
         if lease.payload is None:
             raise RuntimeError(
                 f"Expired lease {lease.task_id} has no serialized task payload"

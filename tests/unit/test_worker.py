@@ -160,6 +160,33 @@ class TestHueyWorker:
 
         assert results == [7]
 
+    def test_expired_drive_scope_lease_does_not_stop_worker(
+        self,
+        huey_instance: SqliteHuey,
+    ) -> None:
+        """
+        Expired Drive scope ownership must not be treated as a queued task.
+        The worker stays alive so the next Drive task can reclaim the scope.
+        """
+        lease_store = TaskLeaseStore(
+            Path(str(getattr(huey_instance.storage, "filename"))),
+        )
+        assert lease_store.claim(
+            "gdrive-scope:workspace:shared-drive:drive-1",
+            task_name="gdrive_scope_sync",
+            owner_token="stale-owner",
+            payload=b'{"scope_identity":"shared-drive:drive-1"}',
+            now=time.time() - 60.0,
+        )
+
+        worker = HueyWorker(huey_instance)
+        worker.start()
+        try:
+            time.sleep(0.1)
+            assert worker.is_running
+        finally:
+            worker.stop()
+
     def test_requeues_lease_that_expires_after_start(
         self,
         huey_instance: SqliteHuey,
