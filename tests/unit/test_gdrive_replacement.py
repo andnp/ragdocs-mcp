@@ -83,6 +83,32 @@ def test_drive_replay_is_idempotent_for_records_and_memberships(record_manager) 
     assert record_manager.count_records("gdrive") == 1
 
 
+def test_drive_batch_indexes_multiple_sources_in_one_ingestor_call(
+    record_manager,
+    monkeypatch,
+) -> None:
+    """
+    Combine independent Drive source replacements into one write pipeline pass.
+    """
+    first = _record("file-1:chunk-a", "first body")
+    second = _record("file-2:chunk-a", "second body")
+    original_index_records = record_manager.ingestor.index_records
+    calls: list[tuple[Record, ...]] = []
+
+    async def tracked_index_records(records):
+        calls.append(tuple(records))
+        return await original_index_records(records)
+
+    monkeypatch.setattr(record_manager.ingestor, "index_records", tracked_index_records)
+
+    assert record_manager.index_records((first, second)) is True
+
+    assert [[record.storage_key for record in batch] for batch in calls] == [
+        [first.storage_key, second.storage_key]
+    ]
+    assert record_manager.count_records("gdrive") == 2
+
+
 def test_drive_tombstone_removes_the_source_from_search(record_manager) -> None:
     """
     Treat a confirmed Drive tombstone as deletion rather than searchable content.

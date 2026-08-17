@@ -41,6 +41,7 @@ from searchkernel.api import (
 from mcp_markdown_ragdocs.config import Config, resolve_project_id_for_path
 from mcp_markdown_ragdocs.git.repository import iter_commit_hashes_after_timestamp
 from mcp_markdown_ragdocs.gdrive.replacement import (
+    GDriveReplacementEntry,
     GDriveReplacementJournal,
     REPLACEMENT_JOURNAL_FILENAME,
     canonical_gdrive_source_id,
@@ -296,6 +297,19 @@ class PreparedRecordDocument:
     file_path: str
     document: Document
     records: tuple[Record, ...]
+
+
+@dataclass(frozen=True)
+class _GDriveReplacementPlan:
+    source_key: str
+    old_keys: tuple[str, ...]
+    new_keys: tuple[str, ...]
+    identities: tuple[GDriveScopeIdentity, ...]
+    entry: GDriveReplacementEntry
+    records_to_index: tuple[Record, ...]
+    membership_records: tuple[Record, ...]
+    tombstones: tuple[Record, ...]
+    removed_scopes: tuple[str, ...]
 
 
 class RecordIndexManager:
@@ -679,8 +693,11 @@ class RecordIndexManager:
 
     def _index_gdrive_records(self, records: Sequence[Record]) -> bool:
         try:
-            for source_key, grouped in group_gdrive_records(records).items():
-                self._replace_gdrive_source(source_key, grouped)
+            plans = tuple(
+                self._prepare_gdrive_replacement(source_key, grouped)
+                for source_key, grouped in group_gdrive_records(records).items()
+            )
+            self._index_gdrive_plans(plans)
             self._rebuild_graph()
             self._state_version += 1
             return True
@@ -694,41 +711,41 @@ class RecordIndexManager:
         source_key: str,
         records: Sequence[Record],
     ) -> None:
+        plan = self._prepare_gdrive_replacement(source_key, records)
+        self._index_gdrive_plans((plan,))
+
+    def _prepare_gdrive_replacement(
+        self,
+        source_key: str,
+        records: Sequence[Record],
+    ) -> _GDriveReplacementPlan:
         representative = records[0]
         old_keys = self._gdrive_record_keys(source_key)
         tombstones = tuple(record for record in records if is_gdrive_tombstone(record))
-        if tombstones:
-            self._replace_gdrive_tombstone(source_key, old_keys, records, tombstones)
-            return
-
-        records = self._with_gdrive_memberships(records)
-        new_keys = tuple(dict.fromkeys(record.storage_key for record in records))
-        identities = self._gdrive_scope_identities(representative, records)
-        entry = self._gdrive_replacement_journal.prepare(
-            source_key,
-            old_keys,
-            new_keys,
-            identities,
-        )
-        receipt = _run_async(self.ingestor.index_records(records))
-        if receipt.failed:
-            raise RuntimeError(
-                "; ".join(item.error or "unknown error" for item in receipt.failures)
+        if not tombstones:
+            indexed_records = self._with_gdrive_memberships(records)
+            new_keys = tuple(
+                dict.fromkeys(record.storage_key for record in indexed_records)
             )
-        self._gdrive_replacement_journal.mark_indexed(entry, identities)
-        self._delete_gdrive_stale_keys(source_key, old_keys, new_keys)
-        self._source_records[source_key] = list(new_keys)
-        self._save_source_map()
-        self._record_gdrive_memberships(records)
-        self._gdrive_replacement_journal.complete(source_key, identities)
+            identities = self._gdrive_scope_identities(representative, indexed_records)
+            entry = self._gdrive_replacement_journal.prepare(
+                source_key,
+                old_keys,
+                new_keys,
+                identities,
+            )
+            return _GDriveReplacementPlan(
+                source_key,
+                old_keys,
+                new_keys,
+                identities,
+                entry,
+                indexed_records,
+                indexed_records,
+                (),
+                (),
+            )
 
-    def _replace_gdrive_tombstone(
-        self,
-        source_key: str,
-        old_keys: Sequence[str],
-        records: Sequence[Record],
-        tombstones: Sequence[Record],
-    ) -> None:
         existing = tuple(
             record
             for key in old_keys
@@ -766,21 +783,59 @@ class RecordIndexManager:
             new_keys,
             identities,
         )
-        if replacement_records:
-            receipt = _run_async(self.ingestor.index_records(replacement_records))
+        return _GDriveReplacementPlan(
+            source_key,
+            old_keys,
+            new_keys,
+            identities,
+            entry,
+            replacement_records,
+            (),
+            tombstones,
+            tuple(sorted(removed_scopes)),
+        )
+
+    def _index_gdrive_plans(
+        self,
+        plans: Sequence[_GDriveReplacementPlan],
+    ) -> None:
+        records_to_index = tuple(
+            record for plan in plans for record in plan.records_to_index
+        )
+        if records_to_index:
+            receipt = _run_async(self.ingestor.index_records(records_to_index))
             if receipt.failed:
                 raise RuntimeError(
                     "; ".join(item.error or "unknown error" for item in receipt.failures)
                 )
-        self._gdrive_replacement_journal.mark_indexed(entry, identities)
-        self._delete_gdrive_stale_keys(source_key, old_keys, new_keys)
-        if new_keys:
-            self._source_records[source_key] = list(new_keys)
-        else:
-            self._source_records.pop(source_key, None)
+
+        for plan in plans:
+            self._gdrive_replacement_journal.mark_indexed(
+                plan.entry,
+                plan.identities,
+            )
+        for plan in plans:
+            self._delete_gdrive_stale_keys(
+                plan.source_key,
+                plan.old_keys,
+                plan.new_keys,
+            )
+            if plan.new_keys:
+                self._source_records[plan.source_key] = list(plan.new_keys)
+            else:
+                self._source_records.pop(plan.source_key, None)
+            if plan.membership_records:
+                self._record_gdrive_memberships(plan.membership_records)
+            if plan.tombstones:
+                self._remove_gdrive_memberships(
+                    plan.tombstones,
+                    plan.removed_scopes,
+                )
+            self._gdrive_replacement_journal.complete(
+                plan.source_key,
+                plan.identities,
+            )
         self._save_source_map()
-        self._remove_gdrive_memberships(tombstones, tuple(sorted(removed_scopes)))
-        self._gdrive_replacement_journal.complete(source_key, identities)
 
     def _gdrive_record_keys(self, source_key: str) -> tuple[str, ...]:
         candidates: set[str] = set()
