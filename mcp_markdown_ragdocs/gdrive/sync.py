@@ -49,6 +49,7 @@ class GoogleDriveSync:
         *,
         scope_generation: str,
         page_size: int = 1000,
+        batch_size: int = 100,
         max_items: int = 100_000,
         max_pages: int = 500,
         max_seconds: float = 10.0,
@@ -58,6 +59,8 @@ class GoogleDriveSync:
             raise ValueError("scope_generation must be non-empty and must not contain ':'")
         if page_size < 1:
             raise ValueError("page_size must be positive")
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
         if max_items < 1:
             raise ValueError("max_items must be positive")
         if max_pages < 1:
@@ -69,6 +72,7 @@ class GoogleDriveSync:
         self.record_writer = record_writer
         self.scope_generation = scope_generation
         self.page_size = page_size
+        self.batch_size = batch_size
         self.max_items = max_items
         self.max_pages = max_pages
         self.max_seconds = max_seconds
@@ -125,9 +129,7 @@ class GoogleDriveSync:
                 records.extend(
                     self.source.scope_loss_tombstones(scope, observed_source_ids)
                 )
-            if records and self.record_writer.index_records(records) is False:
-                raise RuntimeError("Google Drive inventory record indexing failed")
-            self.record_writer.persist()
+            self._index_and_persist(records, "inventory")
             if complete_inventory:
                 self.source.reconcile_scope(scope, observed_source_ids)
             pages_indexed += 1
@@ -188,9 +190,7 @@ class GoogleDriveSync:
                     return await self.resync_after_token_reset(scope)
                 raise
             records = await self._materialize_changes(page.changes, scope)
-            if records and self.record_writer.index_records(records) is False:
-                raise RuntimeError("Google Drive change record indexing failed")
-            self.record_writer.persist()
+            self._index_and_persist(records, "change")
             pages_indexed += 1
             items_indexed += len(records)
             next_cursor = page.next_page_token or page.new_start_page_token
@@ -248,6 +248,16 @@ class GoogleDriveSync:
                     await self.source.materialize_record(change.file, scope=scope)
                 )
         return records
+
+    def _index_and_persist(self, records: Sequence[Record], kind: str) -> None:
+        if not records:
+            self.record_writer.persist()
+            return
+        for offset in range(0, len(records), self.batch_size):
+            batch = records[offset : offset + self.batch_size]
+            if self.record_writer.index_records(batch) is False:
+                raise RuntimeError(f"Google Drive {kind} record indexing failed")
+            self.record_writer.persist()
 
     def _namespace(self, scope: DriveScope) -> str:
         return checkpoint_namespace(

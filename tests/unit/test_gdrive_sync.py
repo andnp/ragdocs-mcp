@@ -226,6 +226,39 @@ async def test_inventory_resume_reuses_page_checkpoint_after_durable_write(
 
 
 @pytest.mark.asyncio
+async def test_inventory_persists_each_configured_record_batch(tmp_path: Path) -> None:
+    """
+    Split one Drive page into bounded durable index writes.
+    """
+    client = _Client()
+    client.pages = {None: DriveFilePage((_file("first"), _file("second")))}
+    source = GoogleDriveContentSource(
+        cast(Any, client),
+        workspace_id="workspace",
+        extractor=cast(Any, _extractor),
+    )
+    events: list[str] = []
+    writer = _Writer(events)
+    sync = GoogleDriveSync(
+        source,
+        _CheckpointStore(tmp_path, events),
+        cast(Any, writer),
+        scope_generation="generation",
+        batch_size=1,
+        max_seconds=60,
+    )
+
+    progress = await sync.sync_inventory(source.scopes[0])
+
+    assert progress.complete is True
+    assert [tuple(record.source_id for record in batch) for batch in writer.batches] == [
+        ("first",),
+        ("second",),
+    ]
+    assert events == ["begin", "index", "persist", "index", "persist", "checkpoint"]
+
+
+@pytest.mark.asyncio
 async def test_change_replay_advances_feed_cursor_after_each_ordered_page(
     tmp_path: Path,
 ) -> None:

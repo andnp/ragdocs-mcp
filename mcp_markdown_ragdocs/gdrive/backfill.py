@@ -157,6 +157,7 @@ class GoogleDriveBackfill:
         *,
         scope_generation: str,
         page_size: int = 1000,
+        batch_size: int = 100,
         max_items: int = 100_000,
         max_pages: int = 500,
         max_seconds: float = 10.0,
@@ -164,13 +165,20 @@ class GoogleDriveBackfill:
     ) -> None:
         if not scope_generation:
             raise ValueError("scope_generation is required")
-        if page_size < 1 or max_items < 1 or max_pages < 1 or max_seconds <= 0:
+        if (
+            page_size < 1
+            or batch_size < 1
+            or max_items < 1
+            or max_pages < 1
+            or max_seconds <= 0
+        ):
             raise ValueError("backfill bounds must be positive")
         self.source = source
         self.checkpoint_store = checkpoint_store
         self.record_writer = record_writer
         self.scope_generation = scope_generation
         self.page_size = page_size
+        self.batch_size = batch_size
         self.max_items = max_items
         self.max_pages = max_pages
         self.max_seconds = max_seconds
@@ -243,9 +251,11 @@ class GoogleDriveBackfill:
                     self.source.scope_loss_tombstones(scope, observed_source_ids)
                 )
             if records:
-                if self.record_writer.index_records(records) is False:
-                    raise RuntimeError("Google Drive backfill record indexing failed")
-                self.record_writer.persist()
+                for offset in range(0, len(records), self.batch_size):
+                    batch = records[offset : offset + self.batch_size]
+                    if self.record_writer.index_records(batch) is False:
+                        raise RuntimeError("Google Drive backfill record indexing failed")
+                    self.record_writer.persist()
                 items_reprocessed += reprocessed_count
             if complete_backfill:
                 self.source.reconcile_scope(scope, observed_source_ids)

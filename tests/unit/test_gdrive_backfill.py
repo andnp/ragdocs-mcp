@@ -161,6 +161,34 @@ async def test_backfill_resumes_from_checkpointed_page_bound(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_backfill_persists_each_configured_record_batch(tmp_path: Path) -> None:
+    """
+    Split reprocessed records into bounded durable index writes.
+    """
+    client = _Client()
+    client.pages = {None: DriveFilePage((_file("first"), _file("second")))}
+    source = GoogleDriveContentSource(
+        cast(Any, client),
+        workspace_id="workspace",
+        extractor=cast(Any, _extractor),
+    )
+    writer = _Writer()
+
+    progress = await GoogleDriveBackfill(
+        source,
+        GDriveBackfillCheckpointStore(tmp_path),
+        writer,
+        scope_generation="generation",
+        batch_size=1,
+        max_seconds=60,
+    ).run(source.scopes[0], {})
+
+    assert progress.complete is True
+    assert [record.source_id for record in writer.records] == ["first", "second"]
+    assert writer.persist_count == 2
+
+
+@pytest.mark.asyncio
 async def test_complete_backfill_replaces_stale_scope_memberships(tmp_path: Path) -> None:
     """
     Reconcile a scope snapshot after every listed page has been processed.
