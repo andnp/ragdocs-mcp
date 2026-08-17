@@ -5,7 +5,12 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from searchkernel.api import Record, RecordStatus, build_local_record_kernel
+from searchkernel.api import (
+    GraphEdge,
+    Record,
+    RecordStatus,
+    build_local_record_kernel,
+)
 
 from mcp_markdown_ragdocs.gdrive.replacement import (
     GDriveReplacementJournal,
@@ -64,6 +69,55 @@ def test_drive_replacement_deletes_stale_chunks_and_deduplicates_source_map(
         (Path(record_manager.index_path) / "record-sources.json").read_text()
     )
     assert source_map[source_key] == [replacement[0].storage_key]
+
+
+def test_drive_replacement_removes_stale_records_from_every_search_surface(
+    record_manager,
+    monkeypatch,
+) -> None:
+    """
+    Remove stale Drive records from canonical, keyword, vector, and graph data.
+    """
+    stale = _record("file-1:chunk-b", "stale body")
+    retained = _record("file-1:chunk-a", "retained body")
+    replacement = _record("file-1:chunk-a", "replacement body")
+
+    assert record_manager.index_records((stale, retained)) is True
+    record_manager.graph.upsert_edges(
+        [GraphEdge(stale.identity, retained.identity, "related_to", 1.0)]
+    )
+    keyword_before = record_manager.keyword.search("stale body", 10)
+    vector_before = record_manager.embedding_provider.embed([stale.body])[0]
+    vector_hits_before = record_manager.vector.search(
+        vector_before,
+        10,
+        model_name=record_manager.embedding_provider.model_name,
+        dim=record_manager.embedding_provider.dim,
+    )
+    assert any(hit.identity == stale.identity for hit in keyword_before)
+    assert any(hit.identity == stale.identity for hit in vector_hits_before)
+    assert any(
+        neighbor.identity == retained.identity
+        for neighbor in record_manager.graph.neighbors(stale.identity)
+    )
+
+    monkeypatch.setattr(record_manager.kernel.vector_store, "delete", lambda _keys: None)
+    assert record_manager.index_records((replacement,)) is True
+
+    assert record_manager.storage.hydrate_record(stale.storage_key) is None
+    assert all(hit.identity != stale.identity for hit in record_manager.keyword.search("stale body", 10))
+    vector_hits_after = record_manager.vector.search(
+        vector_before,
+        10,
+        model_name=record_manager.embedding_provider.model_name,
+        dim=record_manager.embedding_provider.dim,
+    )
+    assert all(hit.identity != stale.identity for hit in vector_hits_after)
+    assert record_manager.graph.neighbors(stale.identity) == []
+    assert all(
+        neighbor.identity != stale.identity
+        for neighbor in record_manager.graph.incoming_neighbors(retained.identity)
+    )
 
 
 def test_drive_replay_is_idempotent_for_records_and_memberships(record_manager) -> None:

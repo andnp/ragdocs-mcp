@@ -28,6 +28,12 @@ class RecordStorage(Protocol):
     def delete(self, storage_keys: Sequence[str]) -> None: ...
 
 
+class RecordDeletion(Protocol):
+    """Delete canonical records from every retrieval surface atomically."""
+
+    def delete(self, storage_keys: Sequence[str]) -> None: ...
+
+
 class SourceMapStore(Protocol):
     """Persist source-to-record membership with application-owned formatting."""
 
@@ -39,8 +45,13 @@ class SourceMapStore(Protocol):
 class LocalRecordStorage:
     """Adapt the public local kernel stores to the record manager port."""
 
-    def __init__(self, kernel: LocalRecordKernel) -> None:
+    def __init__(
+        self,
+        kernel: LocalRecordKernel,
+        deletion: RecordDeletion | None = None,
+    ) -> None:
         self._kernel = kernel
+        self._deletion = deletion or LocalRecordDeletion(kernel)
 
     @property
     def db_manager(self) -> object:
@@ -62,18 +73,29 @@ class LocalRecordStorage:
     def iter_records(self) -> Iterable[Record]:
         """Enumerate records through the installed local backend adapter."""
         rows = self._kernel.backend._record_rows()
+        storage_keys = [str(row["storage_key"]) for row in rows]
         identities = [
-            RecordIdentity.from_storage_key(str(row["storage_key"])) for row in rows
+            RecordIdentity.from_storage_key(storage_key) for storage_key in storage_keys
         ]
         hydrated = self.hydrate_records(identities)
         return tuple(
             record
-            for identity in identities
-            if (record := hydrated.get(identity.storage_key)) is not None
+            for storage_key in storage_keys
+            if (record := hydrated.get(storage_key)) is not None
         )
 
     def delete(self, storage_keys: Sequence[str]) -> None:
-        self._kernel.vector_store.delete(list(storage_keys))
+        self._deletion.delete(storage_keys)
+
+
+class LocalRecordDeletion:
+    """Adapt the local backend's canonical delete transaction to the port."""
+
+    def __init__(self, kernel: LocalRecordKernel) -> None:
+        self._kernel = kernel
+
+    def delete(self, storage_keys: Sequence[str]) -> None:
+        self._kernel.backend.delete(list(storage_keys))
 
 
 class JsonSourceMapStore:
@@ -109,4 +131,11 @@ class JsonSourceMapStore:
         temporary.replace(self._path)
 
 
-__all__ = ["JsonSourceMapStore", "LocalRecordStorage", "RecordStorage", "SourceMapStore"]
+__all__ = [
+    "JsonSourceMapStore",
+    "LocalRecordDeletion",
+    "LocalRecordStorage",
+    "RecordDeletion",
+    "RecordStorage",
+    "SourceMapStore",
+]
