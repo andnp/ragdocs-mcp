@@ -4,10 +4,38 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from searchkernel.api import LocalRecordKernel, Record, RecordIdentity
+
+from mcp_markdown_ragdocs.models import Document
+
+
+@dataclass(frozen=True)
+class PreparedRecordDocument:
+    """A parsed Markdown document plus its canonical chunk records."""
+
+    file_path: str
+    document: Document
+    records: tuple[Record, ...]
+
+
+class DocumentPlanner(Protocol):
+    """Plan a source file into application document and record values."""
+
+    def plan(self, file_path: str) -> PreparedRecordDocument: ...
+
+
+class DocumentWriter(Protocol):
+    """Write planned document records while removing stale storage keys."""
+
+    async def write(
+        self,
+        prepared: PreparedRecordDocument,
+        old_keys: Sequence[str],
+    ) -> tuple[str, ...]: ...
 
 
 class RecordStorage(Protocol):
