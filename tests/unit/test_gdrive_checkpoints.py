@@ -85,3 +85,15 @@ def test_checkpoint_namespaces_are_isolated(tmp_path: Path) -> None:
     assert second_checkpoint is not None
     assert first_checkpoint.inventory_start_token == "start-a"
     assert second_checkpoint.inventory_start_token == "start-b"
+
+
+def test_checkpoint_namespace_preserves_scoped_drive_identity(tmp_path: Path) -> None:
+    """
+    Persist checkpoints for Drive identities that contain a scope delimiter.
+    """
+    store = GDriveSyncCheckpointStore(tmp_path)
+    namespace = checkpoint_namespace("scope-generation-shared-drive:drive-1")
+
+    store.begin_inventory(namespace, "start-token")
+
+    assert store.load(namespace) is not None

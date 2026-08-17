@@ -16,8 +16,8 @@ GDRIVE_CHECKPOINT_FILENAME = "gdrive-sync-checkpoints.json"
 def checkpoint_namespace(scope_generation: str) -> str:
     """Return the source-specific namespace for one Drive scope generation."""
 
-    if not scope_generation or ":" in scope_generation:
-        raise ValueError("scope_generation must be non-empty and must not contain ':'")
+    if not scope_generation:
+        raise ValueError("scope_generation must be non-empty")
     return f"{GDRIVE_CHECKPOINT_NAMESPACE_PREFIX}:{scope_generation}"
 
 
