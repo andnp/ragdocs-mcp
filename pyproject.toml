@@ -58,6 +58,42 @@ package = true
 # be moved to the top of the file without breaking that bootstrap.
 "mcp_markdown_ragdocs/cli.py" = ["E402"]
 
+[tool.ruff.lint]
+extend-select = ["C901"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 30
+
+[tool.importlinter]
+root_package = "mcp_markdown_ragdocs"
+
+[[tool.importlinter.contracts]]
+name = "Application search stays transport independent"
+type = "forbidden"
+source_modules = [
+    "mcp_markdown_ragdocs.app.search",
+]
+forbidden_modules = [
+    "mcp_markdown_ragdocs.cli",
+    "mcp_markdown_ragdocs.daemon",
+    "mcp_markdown_ragdocs.mcp",
+    "mcp_markdown_ragdocs.server",
+    "mcp_markdown_ragdocs.worker",
+]
+
+[[tool.importlinter.contracts]]
+name = "Application services have no direct transport imports"
+type = "forbidden"
+source_modules = ["mcp_markdown_ragdocs.app.services"]
+forbidden_modules = [
+    "mcp_markdown_ragdocs.cli",
+    "mcp_markdown_ragdocs.daemon",
+    "mcp_markdown_ragdocs.mcp",
+    "mcp_markdown_ragdocs.server",
+    "mcp_markdown_ragdocs.worker",
+]
+allow_indirect_imports = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["mcp_markdown_ragdocs"]
 
@@ -75,9 +111,9 @@ markers = [
     "benchmark: marks benchmark tests",
 ]
 
-# The app-side public import boundary is checked by
-# scripts/check_public_searchkernel_imports.py because import-linter cannot
-# reliably inspect the externally installed searchkernel distribution.
+# The app-side public searchkernel import boundary is checked by
+# scripts/check_public_searchkernel_imports.py because import-linter does not
+# inspect the externally installed searchkernel distribution.
 
 [tool.pyright]
 # This cache-warming script depends on llama-index's optional HuggingFace
