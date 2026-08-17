@@ -20,6 +20,8 @@ from mcp_markdown_ragdocs.indexing.markdown_documents import (
     MarkdownDocumentPlanner,
     SemanticDocumentWriter,
 )
+from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
+from mcp_markdown_ragdocs.indexing.record_ports import PreparedRecordDocument
 from tests.conftest import create_test_document
 
 
@@ -99,6 +101,35 @@ class _Storage:
     def delete(self, storage_keys: Sequence[str]) -> None:
         self.events.append("delete")
         self.deleted.append(tuple(storage_keys))
+
+
+class _SourceMapStore:
+    def __init__(self) -> None:
+        self.saved: list[dict[str, list[str]]] = []
+
+    def load(self) -> dict[str, list[str]]:
+        return {}
+
+    def save(self, records: Mapping[str, Sequence[str]]) -> None:
+        self.saved.append(
+            {doc_id: list(storage_keys) for doc_id, storage_keys in records.items()}
+        )
+
+
+class _RecordingWriter:
+    def __init__(self, error: str | None = None) -> None:
+        self.error = error
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    async def write(
+        self,
+        prepared: PreparedRecordDocument,
+        old_keys: Sequence[str],
+    ) -> tuple[str, ...]:
+        self.calls.append((prepared.document.id, tuple(old_keys)))
+        if self.error is not None:
+            raise RuntimeError(self.error)
+        return tuple(record.storage_key for record in prepared.records)
 
 
 def test_markdown_planner_preserves_identity_and_chunk_metadata(record_manager) -> None:
@@ -184,3 +215,64 @@ def test_document_writer_preserves_ingestion_failure_without_deleting_stale_keys
 
     assert events == ["index"]
     assert storage.deleted == []
+
+
+def test_manager_writes_planned_document_through_ports(record_manager) -> None:
+    """
+    Route public Markdown indexing through injected planning and writing ports.
+    """
+    docs_dir = Path(record_manager._config.indexing.documents_path)
+    file_path = create_test_document(docs_dir, "guide", "# Guide\n\nManager contract")
+    planner = MarkdownDocumentPlanner(
+        record_manager._config,
+        [docs_dir],
+        get_chunker(record_manager._config.chunking),
+    )
+    source_map = _SourceMapStore()
+    writer = _RecordingWriter()
+    manager = RecordIndexManager(
+        record_manager._config,
+        record_manager.kernel,
+        record_manager.embedding_provider,
+        document_planner=planner,
+        document_writer=writer,
+        source_map_store=source_map,
+    )
+
+    assert manager.index_document(file_path) is True
+
+    prepared = planner.plan(file_path)
+    assert writer.calls == [(prepared.document.id, ())]
+    assert source_map.saved[-1] == {
+        prepared.document.id: [record.storage_key for record in prepared.records]
+    }
+    assert manager.get_state_version() == 1
+    assert manager.get_failed_files() == []
+
+
+def test_manager_preserves_writer_failure_payload(record_manager) -> None:
+    """
+    Report writer failures without advancing state or saving membership.
+    """
+    docs_dir = Path(record_manager._config.indexing.documents_path)
+    file_path = create_test_document(docs_dir, "guide", "# Guide\n\nManager failure")
+    planner = MarkdownDocumentPlanner(
+        record_manager._config,
+        [docs_dir],
+        get_chunker(record_manager._config.chunking),
+    )
+    source_map = _SourceMapStore()
+    writer = _RecordingWriter("writer failed")
+    manager = RecordIndexManager(
+        record_manager._config,
+        record_manager.kernel,
+        record_manager.embedding_provider,
+        document_planner=planner,
+        document_writer=writer,
+        source_map_store=source_map,
+    )
+
+    assert manager.index_document(file_path) is False
+    assert manager.get_failed_files() == [{"path": file_path, "error": "writer failed"}]
+    assert manager.get_state_version() == 0
+    assert source_map.saved == []
