@@ -28,7 +28,6 @@ from searchkernel.api import (
     OllamaEmbeddingProvider,
     Record,
     RecordIdentity,
-    RecordStatus,
     SemanticRecordIngestor,
     SQLiteEmbeddingCache,
     Vector,
@@ -37,7 +36,7 @@ from searchkernel.api import (
     get_chunker,
 )
 
-from mcp_markdown_ragdocs.config import Config, resolve_project_id_for_path
+from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.git.repository import iter_commit_hashes_after_timestamp
 from mcp_markdown_ragdocs.gdrive.replacement import (
     GDriveReplacementEntry,
@@ -54,10 +53,16 @@ from mcp_markdown_ragdocs.gdrive.state import (
     GDriveStateRepository,
 )
 from mcp_markdown_ragdocs.models import Document
-from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
+from mcp_markdown_ragdocs.indexing.markdown_documents import (
+    MarkdownDocumentPlanner,
+    SemanticDocumentWriter,
+)
 from mcp_markdown_ragdocs.indexing.record_ports import (
     JsonSourceMapStore,
+    DocumentPlanner,
+    DocumentWriter,
     LocalRecordStorage,
+    PreparedRecordDocument,
     RecordStorage,
     SourceMapStore,
 )
@@ -298,13 +303,6 @@ def build_embedding_provider(config: Config, model_name: str):
 
 
 @dataclass(frozen=True)
-class PreparedRecordDocument:
-    file_path: str
-    document: Document
-    records: tuple[Record, ...]
-
-
-@dataclass(frozen=True)
 class _GDriveReplacementPlan:
     source_key: str
     old_keys: tuple[str, ...]
@@ -330,16 +328,22 @@ class RecordIndexManager:
         content_sources: Iterable[ContentSource] = (),
         storage: RecordStorage | None = None,
         source_map_store: SourceMapStore | None = None,
+        document_planner: DocumentPlanner | None = None,
+        document_writer: DocumentWriter | None = None,
     ) -> None:
         self._config = config
         self.kernel = kernel
         self.storage = storage or LocalRecordStorage(kernel)
         self.embedding_provider = embedding_provider
-        self._chunker = get_chunker(config.chunking)
         self._documents_roots = [
             root.resolve()
             for root in (documents_roots or [Path(config.indexing.documents_path)])
         ]
+        self._document_planner = document_planner or MarkdownDocumentPlanner(
+            config,
+            self._documents_roots,
+            get_chunker(config.chunking),
+        )
         self._failed_files: list[dict[str, str]] = []
         self._state_version = 0
         self._ready = True
@@ -370,6 +374,10 @@ class RecordIndexManager:
             vector_store=kernel.vector_store,
             embedding_cache=self._embedding_cache,
             embedding_batch_size=max(1, config.embedding.batch_size),
+        )
+        self._document_writer = document_writer or SemanticDocumentWriter(
+            self.ingestor,
+            self.storage,
         )
         self._recover_gdrive_replacements()
 
@@ -505,82 +513,8 @@ class RecordIndexManager:
     def _save_source_map(self) -> None:
         self._source_map_store.save(self._source_records)
 
-    def _document_record(self, document: Document) -> Record:
-        return Record(
-            source_kind="note",
-            source_id=document.id,
-            title=document.id,
-            body=document.content,
-            created_at=document.modified_time,
-            updated_at=document.modified_time,
-            metadata={
-                "links": document.links,
-                "tags": document.tags,
-                "file_path": document.file_path,
-                "project_id": document.project_id,
-                **document.metadata,
-            },
-            uri=f"file://{document.file_path}",
-            status=RecordStatus.ACTIVE,
-        )
-
-    def _chunk_records(self, document: Document) -> tuple[Record, ...]:
-        chunks = self._chunker.chunk_record(self._document_record(document))
-        records: list[Record] = []
-        for chunk in chunks:
-            metadata = {
-                **document.metadata,
-                "chunk_id": chunk.chunk_id,
-                "doc_id": document.id,
-                "chunk_index": chunk.chunk_index,
-                "file_path": document.file_path,
-                "project_id": document.project_id,
-                "links": document.links,
-                "tags": document.tags,
-                **chunk.metadata,
-            }
-            metadata.setdefault(
-                "_chunk_parent_storage_key",
-                RecordIdentity(
-                    document.project_id,
-                    "note",
-                    chunk.chunk_id,
-                ).storage_key,
-            )
-            records.append(
-                Record(
-                    source_kind="note",
-                    source_id=chunk.chunk_id,
-                    title=str(chunk.metadata.get("header_path") or document.id),
-                    body=chunk.content,
-                    created_at=document.modified_time,
-                    updated_at=document.modified_time,
-                    metadata=metadata,
-                    uri=f"file://{document.file_path}",
-                    status=RecordStatus.ACTIVE,
-                    workspace_id=document.project_id,
-                    indexed_text=chunk.content,
-                )
-            )
-        return tuple(records)
-
     def prepare_document(self, file_path: str) -> PreparedRecordDocument:
-        parser = dispatch_parser(file_path)
-        document = parser.parse(file_path)
-        document.id = self._doc_id_for_path(file_path)
-        document.project_id = resolve_project_id_for_path(Path(file_path), self._config)
-        try:
-            file_stat = Path(file_path).resolve().stat()
-        except OSError:
-            file_stat = None
-        if file_stat is not None:
-            document.metadata = {
-                **document.metadata,
-                _FILE_MTIME_METADATA_KEY: file_stat.st_mtime_ns,
-                _FILE_SIZE_METADATA_KEY: file_stat.st_size,
-            }
-        records = self._chunk_records(document)
-        return PreparedRecordDocument(file_path, document, records)
+        return self._document_planner.plan(file_path)
 
     async def _index_prepared(
         self,
@@ -589,15 +523,8 @@ class RecordIndexManager:
         update_graph: bool = True,
     ) -> None:
         old_keys = self._source_records.get(prepared.document.id, [])
-        receipt = await self.ingestor.index_records(prepared.records)
-        if receipt.failed:
-            errors = "; ".join(item.error or "unknown error" for item in receipt.failures)
-            raise RuntimeError(errors)
-        new_keys = [record.storage_key for record in prepared.records]
-        stale_keys = sorted(set(old_keys) - set(new_keys))
-        if stale_keys:
-            self.storage.delete(stale_keys)
-        self._source_records[prepared.document.id] = new_keys
+        new_keys = await self._document_writer.write(prepared, old_keys)
+        self._source_records[prepared.document.id] = list(new_keys)
         if update_graph:
             self._rebuild_graph()
         self._state_version += 1
