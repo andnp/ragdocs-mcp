@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime
+from dataclasses import replace
 from pathlib import Path
 
 from searchkernel.api import (
@@ -20,6 +21,8 @@ from mcp_markdown_ragdocs.gdrive.state import (
     GDriveScopeIdentity,
     GDriveStateRepository,
 )
+from mcp_markdown_ragdocs.gdrive.replacement_policy import GDriveReplacementPolicy
+from mcp_markdown_ragdocs.indexing.record_ports import JsonSourceMapStore
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
 
 
@@ -293,3 +296,102 @@ def test_replacement_journal_persists_drive_state_status(tmp_path: Path) -> None
     status = repository.load_sync_status(identity)
     assert status is not None
     assert status.status == "healthy"
+
+
+def test_drive_policy_groups_replacements_before_saving_source_membership(
+    record_manager,
+    tmp_path: Path,
+) -> None:
+    """
+    Apply a grouped Drive batch through the isolated policy boundary.
+    """
+    first = _record("file-1:chunk-a", "first body")
+    second = _record("file-2:chunk-a", "second body")
+    second = replace(
+        second,
+        metadata={**second.metadata, "gdrive_source_id": "file-2"},
+    )
+    source_map = JsonSourceMapStore(tmp_path / "record-sources.json")
+    source_records = source_map.load()
+    policy = GDriveReplacementPolicy(
+        record_manager.ingestor,
+        record_manager.storage,
+        source_records,
+        source_map,
+        GDriveReplacementJournal(tmp_path / "gdrive-replacements.json"),
+    )
+
+    asyncio.run(policy.replace((first, second)))
+
+    saved = json.loads((tmp_path / "record-sources.json").read_text())
+    assert set(saved) == {
+        canonical_gdrive_source_key(first),
+        canonical_gdrive_source_key(second),
+    }
+    assert saved[canonical_gdrive_source_key(first)] == [first.storage_key]
+    assert saved[canonical_gdrive_source_key(second)] == [second.storage_key]
+
+
+def test_drive_policy_applies_tombstone_membership_update(
+    record_manager,
+    tmp_path: Path,
+) -> None:
+    """
+    Retain remaining scope membership while removing a tombstoned scope.
+    """
+    active = _record("file-1:chunk-a", "shared body", scopes=("drive-a", "drive-b"))
+    tombstone = _record("file-1", "ignored", deleted=True, scopes=("drive-a",))
+    source_map = JsonSourceMapStore(tmp_path / "record-sources.json")
+    repository = GDriveStateRepository(tmp_path / "gdrive-state.db")
+    policy = GDriveReplacementPolicy(
+        record_manager.ingestor,
+        record_manager.storage,
+        source_map.load(),
+        source_map,
+        GDriveReplacementJournal(tmp_path / "gdrive-replacements.json", repository),
+        repository,
+    )
+
+    asyncio.run(policy.replace((active,)))
+    asyncio.run(policy.replace((tombstone,)))
+
+    hydrated = record_manager.storage.hydrate_record(active.storage_key)
+    assert hydrated is not None
+    assert hydrated.metadata["scope_memberships"] == ["drive-b"]
+    assert repository.memberships_for_source("gdrive", "workspace", "file-1") == (
+        "drive-b",
+    )
+
+
+def test_drive_policy_recovers_indexed_journal_entry(tmp_path: Path, record_manager) -> None:
+    """
+    Complete stale cleanup and source-map repair from an indexed journal entry.
+    """
+    old = _record("file-1:chunk-a", "old body")
+    new = _record("file-1:chunk-b", "new body")
+    asyncio.run(record_manager.ingestor.index_records((old, new)))
+    source_map = JsonSourceMapStore(tmp_path / "record-sources.json")
+    source_records = {canonical_gdrive_source_key(old): [old.storage_key]}
+    journal = GDriveReplacementJournal(tmp_path / "gdrive-replacements.json")
+    entry = journal.prepare(
+        canonical_gdrive_source_key(new),
+        (old.storage_key,),
+        (new.storage_key,),
+    )
+    journal.mark_indexed(entry)
+    policy = GDriveReplacementPolicy(
+        record_manager.ingestor,
+        record_manager.storage,
+        source_records,
+        source_map,
+        journal,
+    )
+
+    assert policy.recover() is True
+
+    assert record_manager.storage.hydrate_record(old.storage_key) is None
+    assert record_manager.storage.hydrate_record(new.storage_key) is not None
+    assert json.loads((tmp_path / "record-sources.json").read_text()) == {
+        canonical_gdrive_source_key(new): [new.storage_key]
+    }
+    assert journal.load() == ()
