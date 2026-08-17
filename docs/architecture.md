@@ -175,6 +175,12 @@ The application owns source-specific ingestion:
    timing, and state-version updates around those ports.
 5. Searchkernel persists records, embeddings, and retrieval structures.
 
+Google Drive replacements use `GDriveReplacementPolicy`, which groups records
+by canonical source, preserves journal phases, applies scope membership and
+tombstone rules, removes stale canonical keys, and repairs incomplete work
+after restart. It depends on the generic record ingestion and storage ports;
+the manager still owns graph finalization and state-version timing.
+
 `RecordIndexManager` is the application adapter around this boundary. It
 maintains source-to-record bookkeeping, reconciliation, failed-file state, and
 application metadata without depending on searchkernel implementation modules.
