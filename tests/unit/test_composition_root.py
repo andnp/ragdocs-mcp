@@ -3,7 +3,10 @@
 import os
 from types import SimpleNamespace
 
-from mcp_markdown_ragdocs.app.composition import build_kernel
+from mcp_markdown_ragdocs.app.composition import (
+    build_kernel,
+    build_runtime_components,
+)
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.config import GoogleDriveConfig, load_config
 from mcp_markdown_ragdocs.context import ApplicationContext
@@ -133,3 +136,22 @@ class TestCompositionRootNoGlobalMutation:
         assert context.index_manager.content_sources == (source,)
         assert context.index_manager.get_content_source("gdrive") is source
         assert context.index_manager.kernel.backend.db_manager is context.db_manager
+
+    def test_runtime_factory_returns_one_shared_record_runtime(self, monkeypatch, tmp_path):
+        """
+        The runtime factory must keep kernel, manager, and database ownership aligned.
+        """
+        index_path = tmp_path / "index"
+        monkeypatch.setenv("SEARCHKERNEL_INDEX_PATH", str(index_path))
+
+        components = build_runtime_components(
+            load_config(),
+            enable_watcher=False,
+            lazy_embeddings=True,
+            index_path_override=index_path,
+            global_runtime=True,
+        )
+
+        assert components.index_manager.kernel is components.kernel
+        assert components.db_manager is components.kernel.backend.db_manager
+        assert components.paths.index_path == index_path
