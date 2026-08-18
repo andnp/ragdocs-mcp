@@ -1150,7 +1150,11 @@ class ApplicationContext:
         if not self.git_indexing_enabled:
             return 0
         backend = getattr(self.index_manager.kernel, "backend", None)
-        if hasattr(backend, "_db") and hasattr(backend._db, "get_connection"):
+        if (
+            backend is not None
+            and hasattr(backend, "_db")
+            and hasattr(backend._db, "get_connection")
+        ):
             cursor = backend._db.get_connection().execute(
                 "SELECT source_id FROM local_records WHERE source_kind = 'git_commit' AND status = 'active'"
             )

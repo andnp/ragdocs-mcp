@@ -106,7 +106,11 @@ class LocalRecordStorage:
     def iter_records(self) -> Iterable[Record]:
         """Enumerate records through the installed local backend adapter."""
         backend = getattr(self._kernel, "backend", None)
-        if hasattr(backend, "_db") and hasattr(backend._db, "get_connection"):
+        if (
+            backend is not None
+            and hasattr(backend, "_db")
+            and hasattr(backend._db, "get_connection")
+        ):
             cursor = backend._db.get_connection().execute("SELECT storage_key FROM local_records")
             storage_keys = [str(row[0]) for row in cursor]
         else:
