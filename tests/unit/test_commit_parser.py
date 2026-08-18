@@ -140,8 +140,27 @@ def test_parse_standard_commit():
         assert "Test User" in commit_data.author
         assert "test@example.com" in commit_data.author
         assert commit_data.title == "Add test file"
-        # Git diff-tree may not show files for new file commits in some cases
+        assert commit_data.files_changed == ["test.txt"]
         assert len(commit_data.delta_truncated) > 0  # Verify delta is captured
+
+
+def test_parse_commit_root_commit_includes_changed_files(tmp_path: Path):
+    """The per-commit parser reports files for a root commit (no parent)."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    _init_git_repo(repo_path)
+
+    commit_hash = _create_commit_with_files(repo_path, 3, "Initial commit")
+    git_dir = repo_path / ".git"
+
+    commit_data = parse_commit(git_dir, commit_hash)
+
+    assert set(commit_data.files_changed) == {
+        "file_0.txt",
+        "file_1.txt",
+        "file_2.txt",
+    }
+    assert commit_data.files_changed_total == 3
 
 
 def test_parse_commits_matches_single_commit_parser(tmp_path: Path):
