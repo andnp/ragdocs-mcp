@@ -12,7 +12,7 @@ class _OutsideRootWarningFilter(logging.Filter):
     """Coalesce repeated path-root warnings from indexing dependencies."""
 
     _MARKERS = (
-        "outside configured document roots",
+        "configured document roots",
         "outside docs root",
         "outside documents path",
     )
