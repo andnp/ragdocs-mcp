@@ -7,17 +7,19 @@ import sqlite3
 
 import pytest
 
-from mcp_markdown_ragdocs.gdrive.state import (
+from mcp_markdown_ragdocs.gdrive.adapter import (
+    GDriveStateError,
+    GDriveStateRepository,
+    UnsupportedGDriveStateSchemaError,
+)
+from mcp_markdown_ragdocs.gdrive.domain import (
     GDriveBackfillCursor,
     GDriveCheckpoint,
     GDriveScopeIdentity,
-    GDriveStateError,
-    GDriveStatePort,
-    GDriveStateRepository,
     GDriveSyncStatus,
     GDriveWatchState,
-    UnsupportedGDriveStateSchemaError,
 )
+from mcp_markdown_ragdocs.gdrive.port import GDriveStatePort
 
 
 def _identity(scope: str = "shared-with-me") -> GDriveScopeIdentity:

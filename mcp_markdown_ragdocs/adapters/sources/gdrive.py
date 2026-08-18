@@ -33,7 +33,7 @@ from mcp_markdown_ragdocs.gdrive.records import (
     map_drive_file,
 )
 from mcp_markdown_ragdocs.gdrive.retry import DriveRetryWorkStore
-from mcp_markdown_ragdocs.gdrive.state import GDriveStatePort
+from mcp_markdown_ragdocs.gdrive.port import GDriveStatePort
 
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"

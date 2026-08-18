@@ -11,11 +11,11 @@ from typing import Literal
 from searchkernel.api import Record, RecordIdentity, RecordStatus, atomic_write_json
 
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
-from mcp_markdown_ragdocs.gdrive.state import (
+from mcp_markdown_ragdocs.gdrive.domain import (
     GDriveScopeIdentity,
-    GDriveStatePort,
     GDriveSyncStatus,
 )
+from mcp_markdown_ragdocs.gdrive.port import GDriveStatePort
 
 REPLACEMENT_SCHEMA_VERSION = 1
 REPLACEMENT_JOURNAL_FILENAME = "gdrive-replacements.json"

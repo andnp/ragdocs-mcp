@@ -26,8 +26,8 @@ from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.indexing.record_manager import (
     RecordIndexManager,
     build_embedding_provider,
-    install_bidirectional_graph_store,
 )
+from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_graph_store
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
@@ -107,7 +107,7 @@ def build_gdrive_source(
     from mcp_markdown_ragdocs.gdrive.extraction import ExtractionLimits
     from mcp_markdown_ragdocs.gdrive.gate import DriveRequestGate
     from mcp_markdown_ragdocs.gdrive.session import AuthorizedUserSession
-    from mcp_markdown_ragdocs.gdrive.state import GDriveStateRepository
+    from mcp_markdown_ragdocs.gdrive.adapter import GDriveStateRepository
 
     drive_config = config.gdrive
     session = AuthorizedUserSession(

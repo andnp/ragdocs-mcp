@@ -6,7 +6,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
-from mcp_markdown_ragdocs.gdrive.state import GDriveScopeIdentity, GDriveStatePort
+from mcp_markdown_ragdocs.gdrive.domain import GDriveScopeIdentity
+from mcp_markdown_ragdocs.gdrive.port import GDriveStatePort
 
 
 @dataclass(frozen=True, slots=True)
