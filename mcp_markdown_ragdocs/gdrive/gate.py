@@ -30,6 +30,8 @@ class DriveRequestGate:
         max_concurrent: int = 1,
         provider_cooldown_seconds: float = 5.0,
         request_timeout_seconds: float = 300.0,
+        time_source: Callable[[], float] = time.time,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if min_interval_seconds < 0:
             raise ValueError("min_interval_seconds must be non-negative")
@@ -44,6 +46,8 @@ class DriveRequestGate:
         self._max_concurrent = max_concurrent
         self._provider_cooldown_seconds = provider_cooldown_seconds
         self._request_timeout_seconds = request_timeout_seconds
+        self._time = time_source
+        self._sleep = sleep
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
@@ -61,7 +65,7 @@ class DriveRequestGate:
 
     def _claim(self) -> int:
         while True:
-            now = time.time()
+            now = self._time()
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
@@ -92,7 +96,7 @@ class DriveRequestGate:
                     )
                     assert cursor.lastrowid is not None
                     return cursor.lastrowid
-            time.sleep(max(wait_for, 0.01) if wait_for > 0 else 0.01)
+            self._sleep(max(wait_for, 0.01) if wait_for > 0 else 0.01)
 
     def _release(self, slot_id: int) -> None:
         with self._connect() as connection:
@@ -108,7 +112,7 @@ class DriveRequestGate:
                 SET next_allowed_at = MAX(next_allowed_at, ?)
                 WHERE id = 1
                 """,
-                (time.time() + self._provider_cooldown_seconds,),
+                (self._time() + self._provider_cooldown_seconds,),
             )
 
     def _initialize(self) -> None:
