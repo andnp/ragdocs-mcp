@@ -179,6 +179,23 @@ class LocalBidirectionalGraphStore:
     def upsert_edges(self, edges: Sequence[GraphEdge]) -> None:
         self._graph_store.upsert_edges(edges)
 
+    def delete_edges(self, edges: Sequence[GraphEdge]) -> None:
+        self._graph_store.delete_edges(edges)
+
+    def outgoing_edges(
+        self,
+        identities: Sequence[RecordIdentity],
+        edge_type: str,
+    ) -> list[GraphEdge]:
+        """List the stored outgoing edges of one type, ignoring direction state."""
+        neighbors = self._graph_store.neighbors_many(identities, depth=1)
+        return [
+            GraphEdge(identity, neighbor.identity, edge_type, neighbor.weight)
+            for identity in identities
+            for neighbor in neighbors.get(identity.storage_key, ())
+            if neighbor.edge_type == edge_type
+        ]
+
     def graph_integrity_errors(self) -> list[str]:
         return self._graph_store.graph_integrity_errors()
 
