@@ -5,10 +5,16 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+import requests
+from google.auth import exceptions as google_auth_exceptions
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
-from mcp_markdown_ragdocs.gdrive.session import AuthorizedUserSession
+from mcp_markdown_ragdocs.gdrive.session import (
+    DRIVE_REQUEST_TIMEOUT_SECONDS,
+    AuthorizedUserSession,
+    _BoundedRequest,
+)
 
 
 class _FakeCredentials:
@@ -101,3 +107,29 @@ def test_rejects_invalid_credentials_without_refresh_token(tmp_path: Path):
 
     with pytest.raises(ValueError, match="cannot be refreshed"):
         session.get_credentials()
+
+
+def test_default_request_factory_bounds_refresh_timeout() -> None:
+    """
+    Bound the transport timeout that an OAuth token refresh actually uses.
+
+    A hung refresh can park a huey worker thread indefinitely, so assert
+    on the timeout reaching the underlying requests.Session call, not
+    merely that some request object was constructed.
+    """
+    captured: dict[str, object] = {}
+
+    class _RecordingSession:
+        def request(self, method: str, url: str, **kwargs: object) -> object:
+            captured.update(kwargs)
+            raise requests.exceptions.ConnectionError("no network in tests")
+
+        def close(self) -> None:
+            pass
+
+    request = _BoundedRequest(session=cast(requests.Session, _RecordingSession()))
+
+    with pytest.raises(google_auth_exceptions.TransportError):
+        request("https://oauth2.googleapis.com/token")
+
+    assert captured["timeout"] == DRIVE_REQUEST_TIMEOUT_SECONDS
