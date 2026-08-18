@@ -809,23 +809,6 @@ def _refresh_git_repository(git_dir: str) -> bool:
             git_dir_path,
             workspace_id=resolve_project_id_for_path(git_dir_path.parent, config),
         )
-        repair_attribution = getattr(
-            manager,
-            "reconcile_git_project_attribution",
-            None,
-        )
-        repaired = (
-            repair_attribution(git_dir_path, source.workspace_id)
-            if repair_attribution is not None
-            else 0
-        )
-        if repaired:
-            manager.persist()
-            logger.info(
-                "Repaired project attribution for %d Git records in %s",
-                repaired,
-                git_dir_path.parent,
-            )
         if (
             _bootstrap_index_path is not None
             and refresh_head is not None
@@ -845,6 +828,24 @@ def _refresh_git_repository(git_dir: str) -> bool:
                 completed_at=datetime.now(UTC).isoformat(),
             )
             return True
+
+        repair_attribution = getattr(
+            manager,
+            "reconcile_git_project_attribution",
+            None,
+        )
+        repaired = (
+            repair_attribution(git_dir_path, source.workspace_id)
+            if repair_attribution is not None
+            else 0
+        )
+        if repaired:
+            manager.persist()
+            logger.info(
+                "Repaired project attribution for %d Git records in %s",
+                repaired,
+                git_dir_path.parent,
+            )
 
         latest_cursor = cursor
         initial_embedding_metrics = _embedding_cache_metrics(manager)
