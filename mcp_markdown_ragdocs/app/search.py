@@ -17,7 +17,7 @@ from searchkernel.api import (
     RecordSearchConfig,
     RecordSearchOutcome,
     RecordSearchPolicy,
-    SearchResultProvenance,
+    RecordSearchResult,
     SearchStrategyStats,
 )
 try:
@@ -48,6 +48,32 @@ class SearchKernelBoundary(Protocol):
         limit: int,
         filters: Mapping[str, object],
     ) -> RecordSearchOutcome: ...
+
+
+class SearchExecutionPort(Protocol):
+    """Narrow execution capability consumed by the application use case."""
+
+    async def async_search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filters: Mapping[str, object],
+    ) -> RecordSearchOutcome: ...
+
+
+class SearchDiagnosticsPort(Protocol):
+    """Build transport-neutral diagnostics from a canonical outcome."""
+
+    def __call__(self, outcome: RecordSearchOutcome) -> dict[str, object]: ...
+
+
+class Reranker(Protocol):
+    """Score application documents for optional result reranking."""
+
+    model_name: str
+
+    def rerank(self, query: str, documents: list[str]) -> list[float]: ...
 
 
 class RecordSearchPipeline(Protocol):
@@ -142,14 +168,14 @@ class _SentenceTransformerReranker:
         return [float(score) for score in scores]
 
 
-def build_reranker(config: SearchConfig):
+def build_reranker(config: SearchConfig) -> Reranker | None:
     if config.reranker_model is None:
         return None
     return _SentenceTransformerReranker(config.reranker_model)
 
 
 @dataclass(frozen=True)
-class SearchQuery:
+class SearchRequest:
     query: str
     top_n: int
     top_k: int | None = None
@@ -163,6 +189,9 @@ class SearchQuery:
     retrieval_mode: str | None = None
 
 
+SearchQuery = SearchRequest
+
+
 @dataclass(frozen=True)
 class SearchExecution:
     results: list[ChunkResult]
@@ -171,7 +200,7 @@ class SearchExecution:
     query_execution_stats: dict[str, object] = field(default_factory=dict)
 
 
-def _record_outcome_diagnostics(outcome: RecordSearchOutcome) -> dict[str, object]:
+def build_search_diagnostics(outcome: RecordSearchOutcome) -> dict[str, object]:
     failures = getattr(outcome, "failures", ())
     failure_messages = [
         getattr(failure, "message", str(failure)) for failure in failures
@@ -194,6 +223,9 @@ def _record_outcome_diagnostics(outcome: RecordSearchOutcome) -> dict[str, objec
     if trace is not None and callable(getattr(trace, "to_dict", None)):
         diagnostics["trace"] = trace.to_dict()
     return diagnostics
+
+
+_record_outcome_diagnostics = build_search_diagnostics
 
 
 _DEFAULT_ABSTENTION_SCORE = 0.01
@@ -528,21 +560,23 @@ class ApplicationSearchUseCase:
 
     def __init__(
         self,
-        search_kernel: SearchKernelBoundary,
+        search_kernel: SearchExecutionPort,
         *,
         documents_roots: Sequence[Path],
         default_min_score: float | None = None,
         project_uplift_multiplier: float = 1.2,
+        diagnostics: SearchDiagnosticsPort = build_search_diagnostics,
     ) -> None:
         self._search_kernel = search_kernel
         self._pipeline = search_kernel
         self._documents_roots = tuple(documents_roots)
         self._default_min_score = default_min_score
         self._project_uplift_multiplier = project_uplift_multiplier
+        self._diagnostics = diagnostics
 
     async def execute(
         self,
-        request: SearchQuery,
+        request: SearchRequest,
         *,
         search: Callable[..., Awaitable[RecordSearchOutcome]] | None = None,
     ) -> SearchExecution:
@@ -660,7 +694,7 @@ class ApplicationSearchUseCase:
 
 
         results = [
-            self._to_chunk_result(result.record, result.score, result.provenance)
+            map_kernel_result(result)
             for result in filtered_results
         ]
 
@@ -694,40 +728,7 @@ class ApplicationSearchUseCase:
                 graph_count=strategy_counts["graph"],
                 tag_expansion_count=strategy_counts["tag_expansion"],
             ),
-            query_execution_stats={
-                **_record_outcome_diagnostics(outcome),
-            },
-        )
-
-    @staticmethod
-    def _to_chunk_result(
-        record: Record,
-        score: float,
-        provenance: SearchResultProvenance,
-    ) -> ChunkResult:
-        metadata = dict(record.metadata)
-        metadata.setdefault("record_id", record.storage_key)
-        metadata.setdefault("title", record.title)
-        metadata.setdefault("workspace_id", record.workspace_id)
-        metadata.setdefault("source_kind", record.source_kind)
-        metadata.setdefault("source_id", record.source_id)
-        project_id = _record_project_id(record)
-        metadata.setdefault("project_id", project_id)
-        file_path = str(metadata.get("file_path") or "")
-        if not file_path and record.uri:
-            file_path = record.uri.removeprefix("file://")
-        header_path = str(metadata.get("header_path") or record.title or "")
-        return ChunkResult(
-            chunk_id=str(metadata.get("chunk_id", record.source_id)),
-            doc_id=str(metadata.get("doc_id", record.source_id)),
-            score=score,
-            header_path=header_path,
-            file_path=file_path,
-            project_id=project_id,
-            content=record.body,
-            parent_chunk_id=metadata.get("parent_chunk_id"),
-            provenance=provenance,
-            metadata=metadata,
+            query_execution_stats=self._diagnostics(outcome),
         )
 
     def _is_excluded(
@@ -758,13 +759,47 @@ class ApplicationSearchUseCase:
         return bool(candidates & excluded_files)
 
 
+def map_kernel_result(result: RecordSearchResult) -> ChunkResult:
+    """Map one canonical kernel result to the application result contract."""
+    record = result.record
+    metadata = dict(record.metadata)
+    metadata.setdefault("record_id", record.storage_key)
+    metadata.setdefault("title", record.title)
+    metadata.setdefault("workspace_id", record.workspace_id)
+    metadata.setdefault("source_kind", record.source_kind)
+    metadata.setdefault("source_id", record.source_id)
+    project_id = _record_project_id(record)
+    metadata.setdefault("project_id", project_id)
+    file_path = str(metadata.get("file_path") or "")
+    if not file_path and record.uri:
+        file_path = record.uri.removeprefix("file://")
+    return ChunkResult(
+        chunk_id=str(metadata.get("chunk_id", record.source_id)),
+        doc_id=str(metadata.get("doc_id", record.source_id)),
+        score=result.score,
+        header_path=str(metadata.get("header_path") or record.title or ""),
+        file_path=file_path,
+        project_id=project_id,
+        content=record.body,
+        parent_chunk_id=metadata.get("parent_chunk_id"),
+        provenance=result.provenance,
+        metadata=metadata,
+    )
+
+
 __all__ = [
     "ApplicationSearchUseCase",
     "PipelineSearchBoundary",
     "RecordSearchPipeline",
     "SearchExecution",
     "SearchKernelBoundary",
+    "SearchDiagnosticsPort",
+    "SearchExecutionPort",
     "SearchQuery",
+    "SearchRequest",
+    "Reranker",
+    "build_search_diagnostics",
+    "map_kernel_result",
     "build_reranker",
     "to_record_search_config",
 ]

@@ -15,6 +15,7 @@ from searchkernel.api import (
 from mcp_markdown_ragdocs.app.search import (
     ApplicationSearchUseCase,
     PipelineSearchBoundary,
+    SearchExecutionPort,
     SearchQuery,
 )
 from mcp_markdown_ragdocs.models import ChunkResult
@@ -49,7 +50,7 @@ class CanonicalSearchAdapter:
             Path(root) for root in getattr(manager, "_documents_roots", (self.documents_path,))
         )
         self._pipeline = manager.kernel.pipeline
-        self._search_kernel = PipelineSearchBoundary(self._pipeline)
+        self._search_kernel: SearchExecutionPort = PipelineSearchBoundary(self._pipeline)
         search_config = getattr(config, "search", None)
         self.search_use_case = ApplicationSearchUseCase(
             self._search_kernel,
@@ -74,7 +75,7 @@ class CanonicalSearchAdapter:
         limit: int = 10,
         filters: dict[str, object] | None = None,
     ):
-        return await self._search_kernel.search(
+        return await self._search_kernel.async_search(
             query,
             limit=limit,
             filters=dict(filters or {}),
