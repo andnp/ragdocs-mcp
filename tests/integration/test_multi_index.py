@@ -497,7 +497,8 @@ def test_markdown_links_retrieve_indexed_target_chunks(tmp_path):
         "This target has enough content to produce a canonical chunk identity."
     )
 
-    manager.index_documents([str(source), str(target)])
+    manager.index_document(str(source))
+    manager.index_document(str(target))
 
     source_record = manager.prepare_document(str(source)).records[0]
     neighbors = manager.graph.neighbors(source_record.identity)
@@ -516,7 +517,8 @@ def test_root_relative_markdown_links_retrieve_graph_neighbors(tmp_path):
     source.write_text("# Source\n\nSee [target](/target.md).")
     target.write_text("# Target\n\nRoot-relative graph target content.")
 
-    manager.index_documents([str(source), str(target)])
+    manager.index_document(str(source))
+    manager.index_document(str(target))
 
     source_record = manager.prepare_document(str(source)).records[0]
     assert manager.graph.neighbors(source_record.identity)

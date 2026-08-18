@@ -178,9 +178,6 @@ class LocalBidirectionalGraphStore:
     def upsert_edges(self, edges: Sequence[GraphEdge]) -> None:
         self._graph_store.upsert_edges(edges)
 
-    def delete_edges(self, edges: Sequence[GraphEdge]) -> None:
-        self._graph_store.delete_edges(edges)
-
     def graph_integrity_errors(self) -> list[str]:
         return self._graph_store.graph_integrity_errors()
 
