@@ -10,7 +10,6 @@ from typing import Any, Protocol
 from searchkernel.api import (
     CoordinatorReceipt,
     IngestionReceipt,
-    Record,
     RecordIngestionResult,
     SearchAvailability,
     load_bootstrap_checkpoint,
@@ -38,44 +37,6 @@ class ProgressiveIndexManager(Protocol):
     ) -> None: ...
 
     def persist(self) -> None: ...
-
-
-class _VectorEmbeddingEncoder:
-    def __init__(self, vector: Any) -> None:
-        self._vector = vector
-
-    def encode(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
-        return [self._vector.get_text_embedding(text) for text in texts]
-
-
-class _NoopKeywordStore:
-    def index(self, records: list[Record]) -> None:
-        _ = records
-        return
-
-
-class _NoopVectorStore:
-    def upsert(
-        self,
-        records: list[Record],
-        model_name: str,
-        dim: int,
-    ) -> None:
-        _ = records, model_name, dim
-        return
-
-
-class _VectorEmbeddingProvider:
-    def __init__(self, vector: Any, model_name: str) -> None:
-        self._vector = vector
-        self.model_name = model_name
-        self.dim = 0
-
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        return [self._vector.get_text_embedding(text) for text in texts]
-
-    def embed_query(self, text: str) -> list[float]:
-        return self._vector.get_query_embedding(text)
 
 
 def run_progressive_bootstrap(
