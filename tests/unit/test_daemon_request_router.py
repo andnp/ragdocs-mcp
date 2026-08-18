@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import pytest
 from searchkernel.domain import Record
 
+from searchkernel.api import TaskSubmissionResult
+
 from mcp_markdown_ragdocs.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
@@ -597,3 +599,63 @@ async def test_admin_tasks_purge_route_uses_huey_storage_helpers(
         "pending_tasks": [],
         "scheduled_tasks": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_rebuild_submit_ignores_abandoned_running_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    An abandoned rebuild leaves rebuild-status.json stuck at "running"
+    with nothing to reset it. Submission must not honour that file over
+    the live writer-lease evidence that a resubmission actually found.
+    """
+    ctx = _FakeContext(ready=True)
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.request_router.read_rebuild_status",
+        lambda runtime_root: {"status": "running", "phase": "indexing_git"},
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.request_router.submit_rebuild_request",
+        lambda project_override, *, request_id: TaskSubmissionResult(status="enqueued"),
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.request_router.submit_rebuild_status",
+        lambda runtime_root, *, request_id, scope: {"status": "queued"},
+    )
+
+    payload = await handler("/api/admin/rebuild/submit", {})
+
+    assert payload["accepted"] is True
+    assert payload["already_running"] is False
+
+
+@pytest.mark.asyncio
+async def test_rebuild_submit_still_blocks_concurrent_live_rebuild(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A genuinely in-flight rebuild holds a heartbeated writer lease, so
+    submit_rebuild_request reports backpressure. A concurrent submission
+    must still be rejected rather than accepted.
+    """
+    ctx = _FakeContext(ready=True)
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.request_router.read_rebuild_status",
+        lambda runtime_root: {"status": "idle"},
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.request_router.submit_rebuild_request",
+        lambda project_override, *, request_id: TaskSubmissionResult(
+            status="backpressured"
+        ),
+    )
+
+    payload = await handler("/api/admin/rebuild/submit", {})
+
+    assert payload["accepted"] is False
+    assert payload["retry_later"] is True
