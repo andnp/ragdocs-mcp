@@ -492,7 +492,38 @@ def _default_match_for_query(query: str, result: Any) -> bool:
         _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP,
         len(meaningful_tokens),
     )
+    if required_overlap < _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP and _is_relationship_query_subject(
+        query, record
+    ):
+        required_overlap = _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP
     return len(overlap) >= required_overlap
+
+
+def _is_relationship_query_subject(query: str, record: Record) -> bool:
+    """Is `record` the document a relationship query asks about, not an answer.
+
+    The single-token overlap relaxation lets a relationship query's own
+    subject (e.g. "target" in "what links to target") slip back into results
+    on nothing more than its own title or body mentioning the query text.
+    That subject is not a graph neighbor and should not gain credibility
+    through the same relaxation meant for genuine single-word content
+    matches.
+    """
+    if not _is_relationship_query(query):
+        return False
+    target = _graph_target_query(query).strip().lower()
+    if not target:
+        return False
+    metadata = record.metadata
+    candidates = {str(record.title or "").strip().lower()}
+    file_path = metadata.get("file_path")
+    if isinstance(file_path, str) and file_path:
+        candidates.add(Path(file_path).stem.lower())
+    doc_id = metadata.get("doc_id")
+    if isinstance(doc_id, str) and doc_id:
+        candidates.add(doc_id.lower())
+        candidates.add(Path(doc_id).stem.lower())
+    return target in candidates
 
 
 def _is_relationship_query(query: str) -> bool:
