@@ -5,14 +5,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
 from searchkernel.api import Record
 
-from mcp_markdown_ragdocs.adapters.sources.gdrive import GoogleDriveContentSource
+from mcp_markdown_ragdocs.adapters.sources.gdrive import (
+    UNCHANGED_STATUS,
+    GoogleDriveContentSource,
+)
 from mcp_markdown_ragdocs.gdrive.checkpoints import (
+    GDriveMaterializationCache,
     GDriveSyncCheckpointStore,
     checkpoint_namespace,
 )
@@ -58,6 +62,7 @@ class GoogleDriveSync:
         max_pages: int = 500,
         max_seconds: float = 10.0,
         max_concurrent_materializations: int = 4,
+        materialization_cache: GDriveMaterializationCache | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not scope_generation or ":" in scope_generation:
@@ -84,6 +89,9 @@ class GoogleDriveSync:
         self.max_pages = max_pages
         self.max_seconds = max_seconds
         self.max_concurrent_materializations = max_concurrent_materializations
+        self._materialization_cache = materialization_cache or GDriveMaterializationCache(
+            checkpoint_store.path.parent
+        )
         self._clock = clock
         self._inventory_source_ids: dict[str, set[str]] = {}
 
@@ -108,6 +116,7 @@ class GoogleDriveSync:
         pages_indexed = 0
         items_indexed = 0
         started_at = self._clock()
+        known_keys = self._materialization_cache.load(namespace)
         while pages_indexed < self.max_pages and items_indexed < self.max_items:
             if self._clock() - started_at >= self.max_seconds:
                 break
@@ -116,7 +125,7 @@ class GoogleDriveSync:
                 page_token=page_token,
                 page_size=min(self.page_size, self.max_items - items_indexed),
             )
-            records = await self._materialize_files(page.files, scope)
+            records = await self._materialize_files(page.files, scope, known_keys)
             observed_source_ids.update(
                 record.source_id
                 for record in records
@@ -124,6 +133,19 @@ class GoogleDriveSync:
                     record, self.source.scope_identity(scope)
                     )
             )
+            records_to_index = [
+                record
+                for record in records
+                if record.metadata.get("extraction_status") != UNCHANGED_STATUS
+            ]
+            pending_cache_updates = {
+                record.source_id: (
+                    record.metadata["remote_fingerprint"],
+                    record.metadata["processing_fingerprint"],
+                )
+                for record in records
+                if record.metadata.get("extraction_status") == "indexed"
+            }
             complete_inventory = page.next_page_token is None
             if complete_inventory:
                 if resumed_inventory and self.source.membership_store.is_durable:
@@ -131,10 +153,11 @@ class GoogleDriveSync:
                         await self.source.collect_scope_source_ids(scope)
                     )
                     self._inventory_source_ids[namespace] = observed_source_ids
-                records.extend(
+                records_to_index.extend(
                     self.source.scope_loss_tombstones(scope, observed_source_ids)
                 )
-            self._index_and_persist(records, "inventory")
+            self._index_and_persist(records_to_index, "inventory")
+            self._materialization_cache.commit(namespace, pending_cache_updates)
             if complete_inventory:
                 self.source.reconcile_scope(scope, observed_source_ids)
             pages_indexed += 1
@@ -258,6 +281,7 @@ class GoogleDriveSync:
         self,
         files: Sequence[DriveFile],
         scope: DriveScope,
+        known_change_keys: Mapping[str, tuple[str, str]] | None = None,
     ) -> list[Record]:
         """Materialize files concurrently, preserving input order.
 
@@ -275,7 +299,9 @@ class GoogleDriveSync:
         async def _one(file: DriveFile) -> Record | None:
             async with semaphore:
                 try:
-                    return await self.source.materialize_record(file, scope=scope)
+                    return await self.source.materialize_record(
+                        file, scope=scope, known_change_keys=known_change_keys
+                    )
                 except Exception:
                     logger.exception(
                         "Google Drive materialize_record failed for %s", file.id
