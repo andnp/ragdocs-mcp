@@ -110,6 +110,44 @@ async def test_use_case_keeps_exact_single_token_matches() -> None:
 
 
 @pytest.mark.asyncio
+async def test_use_case_excludes_relationship_query_own_target() -> None:
+    """A relationship query must not return its own subject as a result.
+
+    "what links to target" reduces to a single meaningful token
+    ("target"), which would otherwise let target.md pass credibility on
+    nothing more than its own title mentioning "target" -- even though
+    it is the subject of the query, not a graph neighbor of it.
+    """
+    record = replace(
+        _record(),
+        title="Target",
+        body="Root-relative graph target content.",
+        metadata={"doc_id": "target", "file_path": "docs/target.md"},
+    )
+    outcome = RecordSearchOutcome(
+        results=(
+            RecordSearchResult(
+                record=record,
+                score=0.03,
+                provenance=SearchResultProvenance(strategies=("keyword", "vector")),
+            ),
+        )
+    )
+
+    class SearchKernel:
+        async def async_search(
+            self, query: str, *, limit: int, filters: Mapping[str, object]
+        ) -> RecordSearchOutcome:
+            return outcome
+
+    execution = await ApplicationSearchUseCase(
+        SearchKernel(), documents_roots=()
+    ).execute(SearchRequest(query="what links to target", top_n=1))
+
+    assert execution.results == []
+
+
+@pytest.mark.asyncio
 async def test_use_case_normalizes_trailing_punctuation_for_matches() -> None:
     """Treat sentence punctuation as a separator during lexical matching.
 
