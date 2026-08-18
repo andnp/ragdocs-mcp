@@ -59,7 +59,10 @@ def create_benchmark_corpus(docs_path: Path, num_docs: int = 50):
             "Machine Learning",
             "machine learning algorithms neural networks deep learning",
         ),
-        ("Cloud Infrastructure", "cloud computing AWS kubernetes docker containers"),
+        (
+            "Cloud Infrastructure",
+            "cloud computing AWS kubernetes docker containers orchestration",
+        ),
         ("Database Systems", "database SQL PostgreSQL optimization indexing queries"),
         ("Web Development", "web development React JavaScript TypeScript frontend"),
         ("Security", "security authentication encryption cryptography vulnerabilities"),
