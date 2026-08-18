@@ -334,3 +334,30 @@ async def test_git_watcher_direct_refresh_failure_preserves_cursor(
     await watcher._batch_process({git_dir})
 
     assert watcher._last_indexed[git_dir] == 123
+
+
+def test_git_ref_signature_mtime_caching(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    git_dir = tmp_path / "repo" / ".git"
+    git_dir.mkdir(parents=True)
+    head_file = git_dir / "HEAD"
+    head_file.write_text("ref: refs/heads/main\n")
+
+    subprocess_calls = 0
+
+    def fake_run(*args, **kwargs):
+        nonlocal subprocess_calls
+        subprocess_calls += 1
+        return SimpleNamespace(stdout="fake-sig\n")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
+
+    sig1 = get_git_ref_signature(git_dir)
+    assert sig1 is not None
+    assert subprocess_calls == 2
+
+    # Second call with unchanged files should hit mtime cache (0 additional subprocesses)
+    sig2 = get_git_ref_signature(git_dir)
+    assert sig2 == sig1
+    assert subprocess_calls == 2

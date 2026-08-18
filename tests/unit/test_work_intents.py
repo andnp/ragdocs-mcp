@@ -291,3 +291,19 @@ def test_work_intent_failure_count_is_added_to_legacy_database(tmp_path: Path) -
 
     assert intent is not None
     assert intent.failure_count == 0
+
+
+def test_recover_stale_claims_transitions_to_failed_after_attempt_ceiling(tmp_path: Path) -> None:
+    store = WorkIntentStore(tmp_path / "queue.db", claim_timeout_seconds=0.1)
+    intent = store.submit("index_document", "stale.md", {"file_path": "stale.md"})
+    
+    # Claim and simulate repeated stale recoveries up to ceiling
+    for i in range(6):
+        claim = store.claim(intent.intent_id, now=100.0 + i * 10)
+        assert claim is not None
+        recovered = store.recover_stale_claims(now=105.0 + i * 10)
+        assert recovered == 1
+
+    final_intent = store.get(intent.intent_id)
+    assert final_intent is not None
+    assert final_intent.state == FAILED
