@@ -183,10 +183,10 @@ class RecordIndexManager:
         self._config = config
         self.kernel = kernel
         self.storage = storage or LocalRecordStorage(kernel)
-        self._graph = graph or (
+        self._graph: GraphCapability = graph or (
             self.storage.graph
             if isinstance(self.storage, LocalRecordStorage)
-            else kernel.graph_store
+            else install_bidirectional_graph_store(kernel, self.storage.iter_identities)
         )
         self.embedding_provider = embedding_provider
         self._documents_roots = [
@@ -262,7 +262,7 @@ class RecordIndexManager:
         return self.kernel.keyword_store
 
     @property
-    def graph(self):
+    def graph(self) -> GraphCapability:
         return self._graph
 
     def is_ready(self) -> bool:
@@ -559,6 +559,7 @@ class RecordIndexManager:
             hydrated = self.storage.hydrate_records(
                 [identity for group in identities.values() for identity in group]
             )
+            sources: list[RecordIdentity] = []
             edges: list[GraphEdge] = []
             for doc_id in batch:
                 records = [
@@ -570,13 +571,34 @@ class RecordIndexManager:
                     continue
                 document_sources = _link_source_identities(records)
                 targets = self._link_targets(records[0], source_records)
+                sources.extend(document_sources)
                 edges.extend(
                     GraphEdge(source, target, _LINKS_TO_EDGE_TYPE, 1.0)
                     for source in document_sources
                     for target in targets
                     if source.storage_key != target.storage_key
                 )
+            self._delete_stale_link_edges(sources, edges)
             self._upsert_graph_edges(edges)
+
+    def _delete_stale_link_edges(
+        self,
+        sources: Sequence[RecordIdentity],
+        edges: Sequence[GraphEdge],
+    ) -> None:
+        """Drop the stored link edges the recomputed set no longer contains."""
+        if not sources:
+            return
+        current = {
+            (edge.source.storage_key, edge.target.storage_key) for edge in edges
+        }
+        stale = [
+            edge
+            for edge in self.graph.outgoing_edges(sources, _LINKS_TO_EDGE_TYPE)
+            if (edge.source.storage_key, edge.target.storage_key) not in current
+        ]
+        if stale:
+            self.graph.delete_edges(stale)
 
     def _upsert_graph_edges(self, edges: Sequence[GraphEdge]) -> None:
         for start in range(0, len(edges), _GRAPH_EDGE_BATCH_SIZE):
