@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import Protocol
 
@@ -166,21 +167,21 @@ class LocalRecordStorage:
         table at once, so callers can process records without holding the
         entire index (tens of thousands of rows) in memory simultaneously.
         """
-        identities = self.iter_identities()
+        identities = iter(self.iter_identities())
         batch_size = self._ITER_RECORDS_BATCH_SIZE
-        for start in range(0, len(identities), batch_size):
-            chunk = identities[start : start + batch_size]
+        while chunk := list(islice(identities, batch_size)):
             hydrated = self.hydrate_records(chunk)
             for identity in chunk:
                 record = hydrated.get(identity.storage_key)
                 if record is not None:
                     yield record
 
-    def iter_identities(self) -> tuple[RecordIdentity, ...]:
-        """Return canonical identities without exposing database rows."""
+    def iter_identities(self) -> Iterator[RecordIdentity]:
+        """Stream canonical identities without exposing database rows."""
         connection = self._kernel.backend.db_manager.get_connection()
         rows = connection.execute("SELECT storage_key FROM local_records")
-        return tuple(RecordIdentity.from_storage_key(str(row[0])) for row in rows)
+        for row in rows:
+            yield RecordIdentity.from_storage_key(str(row[0]))
 
     def tune_backend(self) -> None:
         """Apply the application's local SQLite performance settings."""

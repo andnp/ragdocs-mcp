@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import contextvars
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from itertools import islice
 
 from searchkernel.api import (
     GraphEdge,
@@ -19,7 +20,7 @@ class LocalBidirectionalGraphStore:
     def __init__(
         self,
         kernel: LocalRecordKernel,
-        identities: Callable[[], Sequence[RecordIdentity]],
+        identities: Callable[[], Iterable[RecordIdentity]],
     ) -> None:
         self._kernel = kernel
         self._graph_store = kernel.graph_store
@@ -152,12 +153,12 @@ class LocalBidirectionalGraphStore:
         incoming: dict[str, list[GraphNeighbor]] = {
             identity.storage_key: [] for identity in identities
         }
-        all_identities = self._identities()
+        all_identities = iter(self._identities())
         outgoing: dict[str, Sequence[GraphNeighbor]] = {}
-        for start in range(0, len(all_identities), 100):
+        while identity_batch := list(islice(all_identities, 100)):
             outgoing.update(
                 self._graph_store.neighbors_many(
-                    all_identities[start : start + 100],
+                    identity_batch,
                     depth=depth,
                     max_neighbors=None,
                 )
@@ -199,7 +200,7 @@ def _merge_graph_neighbors(
 
 def install_bidirectional_graph_store(
     kernel: LocalRecordKernel,
-    identities: Callable[[], Sequence[RecordIdentity]],
+    identities: Callable[[], Iterable[RecordIdentity]],
 ) -> LocalBidirectionalGraphStore:
     """Install and return the local graph capability adapter."""
     graph = LocalBidirectionalGraphStore(kernel, identities)
