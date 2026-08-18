@@ -95,6 +95,8 @@ from mcp_markdown_ragdocs.cli_utils.validators import (
 from mcp_markdown_ragdocs.config import load_config
 from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.coordination.queue import get_huey
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.daemon import RuntimePaths
 from mcp_markdown_ragdocs.daemon.admin_payloads import (
     _build_admin_overview_payload,
@@ -215,9 +217,13 @@ async def _run_worker_forever_async(
         logger.info("Worker runtime starting with fresh indices", exc_info=True)
 
     huey = get_huey(queue_db)
+    task_lease_store = TaskLeaseStore(queue_db)
+    work_intent_store = WorkIntentStore(queue_db)
     register_tasks(
         huey,
         task_target,
+        task_lease_store,
+        work_intent_store,
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         bootstrap_index_path=ctx.index_path,
         bootstrap_documents_roots=ctx.documents_roots,

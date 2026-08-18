@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any, cast
 
 from huey import SqliteHuey
 
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import (
     FAILED,
     PENDING,
@@ -62,7 +64,13 @@ def _register(
         filename=str(tmp_path / "queue.db"),
         immediate=False,
     )
-    tasks.register_tasks(huey, manager)
+    queue_path = Path(cast(Any, huey.storage).filename)
+    tasks.register_tasks(
+        huey,
+        manager,
+        TaskLeaseStore(queue_path),
+        WorkIntentStore(queue_path),
+    )
     return huey
 
 

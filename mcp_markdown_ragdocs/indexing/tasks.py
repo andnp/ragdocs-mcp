@@ -23,7 +23,7 @@ from searchkernel.api import (
     save_manifest,
 )
 
-from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeasePort
 from mcp_markdown_ragdocs.coordination.task_submission import (
     coalesce_pending_first_args,
     get_pending_task_first_args,
@@ -34,7 +34,7 @@ from mcp_markdown_ragdocs.coordination.task_submission import (
 from mcp_markdown_ragdocs.coordination.task_submission import (
     get_pending_task_count as get_shared_pending_task_count,
 )
-from mcp_markdown_ragdocs.coordination.work_intents import WorkIntent, WorkIntentStore
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntent, WorkIntentPort
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
@@ -62,7 +62,6 @@ from mcp_markdown_ragdocs.indexing.task_writer import (
     WRITER_LEASE_TIMEOUT_SECONDS,  # noqa: F401 - compatibility export
     run_as_writer,
     writer_is_active,
-    writer_lease_store,
     writer_owned_task,
 )
 from mcp_markdown_ragdocs.gdrive.tasks import (
@@ -118,7 +117,8 @@ _task_backpressure_limit: int = 100
 _bootstrap_index_path: Path | None = None
 _bootstrap_documents_roots: list[Path] = []
 _schedule_vocabulary_catch_up: Callable[[], bool] | None = None
-_work_intent_store: WorkIntentStore | None = None
+_task_lease_store: TaskLeasePort | None = None
+_work_intent_store: WorkIntentPort | None = None
 _git_refresh_in_flight: set[str] = set()
 _git_refresh_pending: set[str] = set()
 _git_refresh_deferred: set[str] = set()
@@ -143,13 +143,11 @@ gdrive_watch_task: Any = None
 gdrive_health_task: Any = None
 
 
-def _writer_lease_store() -> TaskLeaseStore | None:
-    if _huey is None:
-        return None
-    return writer_lease_store(cast(Any, _huey.storage).filename)
+def _writer_lease_store() -> TaskLeasePort | None:
+    return _task_lease_store
 
 
-def _intent_store() -> WorkIntentStore | None:
+def _intent_store() -> WorkIntentPort | None:
     return _work_intent_store
 
 
@@ -1146,6 +1144,8 @@ def _reindex_model(
 def register_tasks(
     huey: SqliteHuey,
     index_manager: IndexManagerLike,
+    task_lease_store: TaskLeasePort,
+    work_intent_store: WorkIntentPort,
     task_backpressure_limit: int = 100,
     bootstrap_index_path: Path | None = None,
     bootstrap_documents_roots: list[Path] | None = None,
@@ -1158,7 +1158,7 @@ def register_tasks(
     """
     global _huey, _index_manager, _task_backpressure_limit
     global _bootstrap_index_path, _bootstrap_documents_roots
-    global _schedule_vocabulary_catch_up, _work_intent_store
+    global _schedule_vocabulary_catch_up, _task_lease_store, _work_intent_store
     global index_document_task, index_documents_batch_task, index_records_batch_task
     global remove_document_task
     global remove_documents_batch_task, refresh_git_repository_task
@@ -1172,7 +1172,8 @@ def register_tasks(
     _bootstrap_index_path = bootstrap_index_path
     _bootstrap_documents_roots = list(bootstrap_documents_roots or [])
     _schedule_vocabulary_catch_up = schedule_vocabulary_catch_up
-    _work_intent_store = WorkIntentStore(cast(Any, huey.storage).filename)
+    _task_lease_store = task_lease_store
+    _work_intent_store = work_intent_store
     with _git_refresh_lock:
         _git_refresh_in_flight.clear()
         _git_refresh_pending.clear()

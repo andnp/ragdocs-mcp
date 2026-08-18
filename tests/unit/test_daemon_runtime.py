@@ -10,24 +10,25 @@ from mcp_markdown_ragdocs.daemon.runtime import create_daemon_runtime
 
 def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
     monkeypatch,
+    tmp_path: Path,
 ) -> None:
     calls: dict[str, object] = {}
     fake_ctx = SimpleNamespace(
         index_manager=object(),
         git_indexing_enabled=False,
         config=SimpleNamespace(indexing=SimpleNamespace(task_backpressure_limit=7)),
-        index_path=Path("/runtime/index"),
+        index_path=tmp_path / "index",
         documents_roots=[Path("/docs")],
         schedule_vocabulary_catch_up=lambda: True,
     )
     fake_worker = SimpleNamespace(is_running=False, pid=321)
     runtime_paths = RuntimePaths(
-        root=Path("/runtime"),
-        queue_db_path=Path("/runtime/queue.db"),
-        socket_path=Path("/runtime/daemon.sock"),
-        metadata_path=Path("/runtime/daemon.json"),
-        index_db_path=Path("/runtime/index.db"),
-        lock_path=Path("/runtime/daemon.lock"),
+        root=tmp_path,
+        queue_db_path=tmp_path / "queue.db",
+        socket_path=tmp_path / "daemon.sock",
+        metadata_path=tmp_path / "daemon.json",
+        index_db_path=tmp_path / "index.db",
+        lock_path=tmp_path / "daemon.lock",
     )
 
     monkeypatch.setattr(
@@ -37,11 +38,13 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
     monkeypatch.setattr("mcp_markdown_ragdocs.daemon.runtime.get_huey", lambda queue_db_path: "huey")
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.daemon.runtime.register_tasks",
-        lambda huey, index_manager, **kwargs: calls.setdefault(
+        lambda huey, index_manager, task_lease_store, work_intent_store, **kwargs: calls.setdefault(
             "register_tasks",
             {
                 "huey": huey,
                 "index_manager": index_manager,
+                "task_lease_store": task_lease_store,
+                "work_intent_store": work_intent_store,
                 **kwargs,
             },
         ),
@@ -88,9 +91,12 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
         "index_path_override": runtime_paths.root,
         "global_runtime": True,
     }
-    assert calls["register_tasks"] == {
+    register_tasks_call = cast(dict[str, object], calls["register_tasks"])
+    assert register_tasks_call == {
         "huey": "huey",
         "index_manager": fake_ctx.index_manager,
+        "task_lease_store": register_tasks_call["task_lease_store"],
+        "work_intent_store": register_tasks_call["work_intent_store"],
         "task_backpressure_limit": 7,
         "bootstrap_index_path": fake_ctx.index_path,
         "bootstrap_documents_roots": fake_ctx.documents_roots,

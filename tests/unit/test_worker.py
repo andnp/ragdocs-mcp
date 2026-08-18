@@ -27,6 +27,16 @@ def huey_instance(tmp_path: Path) -> SqliteHuey:
     return SqliteHuey(name="test", filename=str(tmp_path / "queue.db"), immediate=False)
 
 
+def _register_tasks(huey: SqliteHuey, index_manager: object) -> None:
+    queue_path = Path(cast(Any, huey.storage).filename)
+    indexing_tasks.register_tasks(
+        huey,
+        cast(Any, index_manager),
+        TaskLeaseStore(queue_path),
+        WorkIntentStore(queue_path),
+    )
+
+
 class TestHueyWorker:
     def test_start_creates_consumer_thread(self, huey_instance: SqliteHuey) -> None:
         """start() creates and starts a consumer thread."""
@@ -269,7 +279,7 @@ class TestHueyWorker:
             def index_record(self, record: Any) -> None:
                 del record
 
-        indexing_tasks.register_tasks(huey_instance, cast(Any, _Manager()))
+        _register_tasks(huey_instance, cast(Any, _Manager()))
         queue_path = Path(str(cast(Any, huey_instance.storage).filename))
         indexing_tasks._work_intent_store = WorkIntentStore(
             queue_path,
@@ -325,7 +335,7 @@ class TestHueyWorker:
             def persist(self) -> None:
                 return
 
-        indexing_tasks.register_tasks(huey_instance, cast(Any, _Manager()))
+        _register_tasks(huey_instance, cast(Any, _Manager()))
         queue_path = Path(str(cast(Any, huey_instance.storage).filename))
         indexing_tasks._work_intent_store = WorkIntentStore(
             queue_path,
@@ -379,7 +389,7 @@ class TestHueyWorker:
             def persist(self) -> None:
                 return
 
-        indexing_tasks.register_tasks(huey_instance, cast(Any, _Manager()))
+        _register_tasks(huey_instance, cast(Any, _Manager()))
         queue_path = Path(str(cast(Any, huey_instance.storage).filename))
         indexing_tasks._work_intent_store = WorkIntentStore(
             queue_path,

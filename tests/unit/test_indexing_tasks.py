@@ -106,6 +106,16 @@ def _queue_path(huey: SqliteHuey) -> Path:
     return Path(cast(Any, huey.storage).filename)
 
 
+def _register_tasks(huey: SqliteHuey, index_manager: object, **kwargs: Any) -> None:
+    register_tasks(
+        huey,
+        cast(Any, index_manager),
+        TaskLeaseStore(_queue_path(huey)),
+        WorkIntentStore(_queue_path(huey)),
+        **kwargs,
+    )
+
+
 @pytest.fixture()
 def fake_manager() -> FakeIndexManager:
     return FakeIndexManager()
@@ -116,6 +126,7 @@ def _reset_tasks():
     """Reset module-level state between tests."""
     tasks_mod._huey = None
     tasks_mod._index_manager = None
+    tasks_mod._task_lease_store = None
     tasks_mod._task_backpressure_limit = 100
     tasks_mod._bootstrap_index_path = None
     tasks_mod._bootstrap_documents_roots = []
@@ -131,6 +142,7 @@ def _reset_tasks():
     yield
     tasks_mod._huey = None
     tasks_mod._index_manager = None
+    tasks_mod._task_lease_store = None
     tasks_mod._task_backpressure_limit = 100
     tasks_mod._bootstrap_index_path = None
     tasks_mod._bootstrap_documents_roots = []
@@ -151,7 +163,7 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         barrier = Barrier(2)
         results: list[str] = []
 
@@ -178,7 +190,7 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
         assert store.acquire_writer("startup-indexing")
 
@@ -200,7 +212,7 @@ class TestTaskRegistration:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        register_tasks(
+        _register_tasks(
             huey_instance,
             fake_manager,
             bootstrap_index_path=tmp_path,
@@ -233,7 +245,7 @@ class TestTaskRegistration:
         fake_manager: FakeIndexManager,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
         assert store.acquire_writer("rebuild-active")
 
@@ -255,7 +267,7 @@ class TestTaskRegistration:
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
         """register_tasks() creates index and remove tasks."""
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         assert tasks_mod.index_document_task is not None
         assert tasks_mod.index_documents_batch_task is not None
         assert tasks_mod.index_records_batch_task is not None
@@ -280,14 +292,14 @@ class TestTaskRegistration:
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
         """enqueue_index/remove return True when tasks are registered."""
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         assert enqueue_index("/some/file.md") is True
         assert enqueue_remove("some-doc") is True
 
     def test_record_batch_task_indexes_and_persists_once(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         payload = Record(
             source_kind="note",
             source_id="note:1",
@@ -309,7 +321,7 @@ class TestTaskRegistration:
     def test_enqueue_respects_backpressure_limit(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
+        _register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
 
         assert enqueue_index("/some/file.md") is True
         assert enqueue_index("/some/other.md") is False
@@ -320,7 +332,7 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        register_tasks(
+        _register_tasks(
             huey_instance,
             fake_manager,
             task_backpressure_limit=1,
@@ -334,7 +346,7 @@ class TestTaskRegistration:
     def test_git_refresh_has_lower_priority_than_record_ingestion(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_refresh_git("/repo/.git") is True
         payload = Record(
@@ -355,7 +367,7 @@ class TestTaskRegistration:
     def test_document_work_precedes_git_refresh(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_refresh_git("/repo/.git") is True
         assert enqueue_index("/docs/note.md") is True
@@ -367,7 +379,7 @@ class TestTaskRegistration:
     def test_concurrent_git_refresh_submissions_coalesce(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         barrier = Barrier(2)
         results: list[str] = []
 
@@ -389,7 +401,7 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
         assert store.acquire_writer("rebuild-active")
 
@@ -412,7 +424,7 @@ class TestTaskRegistration:
     def test_startup_batch_skips_files_already_pending_in_queue(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_index("/some/file.md") is True
 
@@ -435,7 +447,7 @@ class TestTaskRegistration:
     def test_get_pending_index_document_count_counts_matching_pending_paths(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_index("/some/file.md") is True
         assert enqueue_index("/some/other.md") is True
@@ -453,7 +465,7 @@ class TestTaskRegistration:
     def test_startup_batch_deduplicates_duplicate_paths_within_batch(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         indexed = enqueue_index_batch([
             "/some/file.md",
@@ -467,7 +479,7 @@ class TestTaskRegistration:
     def test_startup_batch_preserves_force_reindex_behavior(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_index("/some/file.md") is True
 
@@ -479,7 +491,7 @@ class TestTaskRegistration:
     def test_queue_stats_include_backpressure_utilization(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         enqueue_index("/some/file.md")
 
         stats = get_queue_stats(huey_instance, backpressure_limit=4)
@@ -495,7 +507,7 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         assert tasks_mod.refresh_git_repository_task is not None
         assert enqueue_refresh_git("/repo/.git") is True
 
@@ -504,7 +516,7 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_refresh_git("/repo/.git") is True
         assert enqueue_refresh_git("/repo/.git") is False
@@ -519,7 +531,7 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_refresh_git("/repo/.git") is True
 
@@ -534,7 +546,7 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         git_dir = "/repo/.git"
         tasks_mod._git_refresh_in_flight.add(str(Path(git_dir).resolve()))
 
@@ -548,7 +560,7 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_refresh_git("/repo-a/.git") is True
 
@@ -575,7 +587,7 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         refreshed = enqueue_refresh_git_batch(
             [
@@ -591,7 +603,7 @@ class TestTaskRegistration:
     def test_submit_index_batch_reports_pending_items_as_already_represented(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_index("/some/file.md") is True
 
@@ -609,7 +621,7 @@ class TestTaskRegistration:
     def test_pending_index_count_includes_batch_tasks(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_index_batch(["/some/file.md", "/some/other.md"]) == 2
 
@@ -622,7 +634,7 @@ class TestTaskRegistration:
     def test_submit_index_batch_bounds_worker_task_size(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         file_paths = [f"/some/file-{index}.md" for index in range(65)]
 
         submission = submit_index_batch(file_paths)
@@ -636,7 +648,7 @@ class TestTaskRegistration:
     def test_submit_remove_batch_bounds_worker_task_size(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         doc_ids = [f"docs/file-{index}" for index in range(65)]
 
         submission = submit_remove_request_batch(doc_ids)
@@ -650,7 +662,7 @@ class TestTaskRegistration:
     def test_submit_index_request_batch_deduplicates_against_pending_single_and_batch_tasks(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_index("/some/file.md") is True
         assert enqueue_index_batch(["/some/batch.md"]) == 1
@@ -677,7 +689,7 @@ class TestTaskRegistration:
         fake_manager: FakeIndexManager,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
+        _register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
 
         assert enqueue_index("/some/file.md") is True
 
@@ -697,7 +709,7 @@ class TestTaskRegistration:
     def test_forced_index_request_reopens_completed_intent(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         file_path = "/some/file.md"
 
         assert tasks_mod.submit_index_request(file_path).status == "enqueued"
@@ -713,7 +725,7 @@ class TestTaskRegistration:
     def test_forced_index_batch_reopens_completed_intents(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         file_paths = ["/some/file.md", "/some/other.md"]
 
         assert submit_index_batch(file_paths).enqueued_count == 2
@@ -732,7 +744,7 @@ class TestTaskRegistration:
         fake_manager: FakeIndexManager,
         tmp_path: Path,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         first = str(tmp_path / "docs" / ".." / "file.md")
         equivalent = str(tmp_path / "file.md")
 
@@ -750,7 +762,7 @@ class TestTaskRegistration:
     def test_forced_index_batch_does_not_invalidate_active_claim(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         assert enqueue_index("/some/file.md") is True
         forced = submit_index_batch(["/some/file.md"], force=True)
 
@@ -766,7 +778,7 @@ class TestTaskRegistration:
     def test_submit_remove_request_batch_deduplicates_against_pending_single_and_batch_tasks(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         assert enqueue_remove("docs/existing") is True
         first_batch = submit_remove_request_batch(["docs/batched"])
@@ -794,7 +806,7 @@ class TestTaskRegistration:
         fake_manager: FakeIndexManager,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
+        _register_tasks(huey_instance, fake_manager, task_backpressure_limit=1)
 
         assert enqueue_remove("docs/existing") is True
 
@@ -835,7 +847,7 @@ class TestTaskExecution:
                 return super().index_document(file_path, force=force)
 
         manager = PartialManager()
-        register_tasks(huey_instance, manager)
+        _register_tasks(huey_instance, manager)
         good = str(tmp_path / "good.md")
         bad = str(tmp_path / "bad.md")
 
@@ -904,7 +916,7 @@ class TestTaskExecution:
             "run_progressive_bootstrap",
             fake_progressive_bootstrap,
         )
-        register_tasks(
+        _register_tasks(
             huey_instance,
             manager,
             bootstrap_index_path=tmp_path,
@@ -966,7 +978,7 @@ class TestTaskExecution:
             "run_progressive_bootstrap",
             fake_progressive_bootstrap,
         )
-        register_tasks(
+        _register_tasks(
             huey_instance,
             manager,
             bootstrap_index_path=tmp_path,
@@ -985,7 +997,7 @@ class TestTaskExecution:
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
         """Dequeued index task calls index_manager.index_document()."""
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         # Enqueue
         enqueue_index("/docs/test.md", force=True)
@@ -1016,7 +1028,7 @@ class TestTaskExecution:
                 return [{"path": "/docs/failed.md", "error": "parse failed"}]
 
         manager = FailedManager()
-        register_tasks(huey_instance, manager)
+        _register_tasks(huey_instance, manager)
         enqueue_index("/docs/failed.md", force=True)
         task = huey_instance.dequeue()
         assert task is not None
@@ -1055,7 +1067,7 @@ class TestTaskExecution:
             ),
         )
 
-        register_tasks(
+        _register_tasks(
             huey_instance,
             fake_manager,
             bootstrap_index_path=tmp_path,
@@ -1099,7 +1111,7 @@ class TestTaskExecution:
             ),
         )
 
-        register_tasks(
+        _register_tasks(
             huey_instance,
             fake_manager,
             bootstrap_index_path=tmp_path,
@@ -1138,7 +1150,7 @@ class TestTaskExecution:
             ),
         )
 
-        register_tasks(
+        _register_tasks(
             huey_instance,
             fake_manager,
             bootstrap_index_path=tmp_path,
@@ -1171,7 +1183,7 @@ class TestTaskExecution:
             ),
         )
 
-        register_tasks(
+        _register_tasks(
             huey_instance,
             fake_manager,
             bootstrap_index_path=tmp_path,
@@ -1190,7 +1202,7 @@ class TestTaskExecution:
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
         """Dequeued remove task calls index_manager.remove_document()."""
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         enqueue_remove("docs/readme")
         assert huey_instance.pending_count() == 1
@@ -1205,7 +1217,7 @@ class TestTaskExecution:
     def test_remove_batch_task_calls_manager_once_for_batch(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
 
         submission = submit_remove_request_batch(["docs/a", "docs/b", "docs/a"])
 
@@ -1233,7 +1245,7 @@ class TestTaskExecution:
                 super().remove_document(doc_id)
 
         manager = PartialManager()
-        register_tasks(huey_instance, manager)
+        _register_tasks(huey_instance, manager)
         assert submit_remove_request_batch(["docs/good", "docs/bad"]).enqueued_count == 2
         task = huey_instance.dequeue()
         assert task is not None
@@ -1258,7 +1270,7 @@ class TestTaskExecution:
         huey = SqliteHuey(
             name="test-e2e", filename=str(tmp_path / "e2e.db"), immediate=False
         )
-        register_tasks(huey, fake_manager)
+        _register_tasks(huey, fake_manager)
 
         # Enqueue a task
         enqueue_index("/docs/guide.md")
@@ -1317,7 +1329,7 @@ class TestTaskExecution:
         huey = SqliteHuey(
             name="test-fail", filename=str(tmp_path / "fail.db"), immediate=False
         )
-        register_tasks(huey, FailingManager())
+        _register_tasks(huey, FailingManager())
 
         enqueue_index("/bad/file.md")
 
@@ -1339,7 +1351,7 @@ class TestTaskExecution:
         monkeypatch,
         tmp_path: Path,
     ) -> None:
-        register_tasks(huey_instance, fake_manager)
+        _register_tasks(huey_instance, fake_manager)
         cast(Any, fake_manager)._config = SimpleNamespace(
             projects=[],
             detected_project="repo-project",
@@ -1423,7 +1435,7 @@ class TestTaskExecution:
             lambda _git_dir: "head-1",
         )
 
-        register_tasks(
+        _register_tasks(
             huey_instance,
             fake_manager,
             bootstrap_index_path=state_root,
@@ -1465,7 +1477,7 @@ class TestTaskExecution:
             lambda _git_dir: "head-1",
         )
 
-        register_tasks(
+        _register_tasks(
             huey_instance,
             fake_manager,
             bootstrap_index_path=state_root,
@@ -1515,7 +1527,7 @@ class TestTaskExecution:
             lambda _git_dir: "head-1",
         )
 
-        register_tasks(
+        _register_tasks(
             huey_instance,
             fake_manager,
             bootstrap_index_path=state_root,

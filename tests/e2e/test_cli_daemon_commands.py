@@ -482,6 +482,8 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
     def _fake_register_tasks(
         huey,
         index_manager,
+        task_lease_store,
+        work_intent_store,
         task_backpressure_limit=None,
         bootstrap_index_path=None,
         bootstrap_documents_roots=None,
@@ -490,6 +492,8 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
         observed["register"] = (
             huey,
             index_manager,
+            task_lease_store,
+            work_intent_store,
             task_backpressure_limit,
             bootstrap_index_path,
             bootstrap_documents_roots,
@@ -521,9 +525,9 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
         "global_runtime": True,
     }
     assert observed["queue_path"] == runtime_paths.queue_db_path
-    assert observed["register"] == (
-        fake_huey,
-        fake_ctx.index_manager,
+    register_args = cast(tuple[object, ...], observed["register"])
+    assert register_args[:2] == (fake_huey, fake_ctx.index_manager)
+    assert register_args[4:] == (
         100,
         runtime_paths.root,
         [],

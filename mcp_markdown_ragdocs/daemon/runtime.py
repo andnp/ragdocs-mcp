@@ -7,6 +7,8 @@ from typing import Any, cast
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.coordination.queue import get_huey
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.daemon import RuntimePaths, read_daemon_metadata
 from mcp_markdown_ragdocs.daemon.health import DaemonHealthServer
 from mcp_markdown_ragdocs.daemon.request_router import (
@@ -45,9 +47,13 @@ def create_daemon_runtime(
         global_runtime=True,
     )
     huey = get_huey(runtime_paths.queue_db_path)
+    task_lease_store = TaskLeaseStore(runtime_paths.queue_db_path)
+    work_intent_store = WorkIntentStore(runtime_paths.queue_db_path)
     register_tasks(
         huey,
         ctx.index_manager,
+        task_lease_store,
+        work_intent_store,
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         bootstrap_index_path=ctx.index_path,
         bootstrap_documents_roots=ctx.documents_roots,

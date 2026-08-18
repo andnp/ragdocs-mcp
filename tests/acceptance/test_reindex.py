@@ -34,6 +34,8 @@ from searchkernel.domain import RecordHit, RecordIdentity, SearchFilters, Vector
 import mcp_markdown_ragdocs.indexing.reindex as reindex_module
 import mcp_markdown_ragdocs.indexing.tasks as tasks_module
 from mcp_markdown_ragdocs.cli import cli
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.config import (
     Config,
     EmbeddingConfig,
@@ -566,7 +568,13 @@ def test_worker_returns_reindex_failure_and_persists_status(
         lambda **_kwargs: (_ for _ in ()).throw(ReindexError("provider failed")),
     )
     huey = SqliteHuey(name="reindex-worker", filename=str(tmp_path / "queue.db"))
-    register_tasks(huey, manager, bootstrap_index_path=runtime_root)
+    register_tasks(
+        huey,
+        manager,
+        TaskLeaseStore(tmp_path / "queue.db"),
+        WorkIntentStore(tmp_path / "queue.db"),
+        bootstrap_index_path=runtime_root,
+    )
 
     submission = tasks_module.submit_reindex_request(
         "start",

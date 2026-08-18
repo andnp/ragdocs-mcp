@@ -17,6 +17,8 @@ from huey import SqliteHuey
 
 from searchkernel.domain import Record
 
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.indexing.git_refresh_state import save_cursor, save_head
 from mcp_markdown_ragdocs.indexing.tasks import enqueue_refresh_git, register_tasks
 
@@ -80,6 +82,17 @@ def fake_manager(tmp_path: Path) -> FakeIndexManager:
     return manager
 
 
+def _register_tasks(huey: SqliteHuey, manager: FakeIndexManager, **kwargs: Any) -> None:
+    queue_path = Path(cast(Any, huey.storage).filename)
+    register_tasks(
+        huey,
+        manager,
+        TaskLeaseStore(queue_path),
+        WorkIntentStore(queue_path),
+        **kwargs,
+    )
+
+
 def test_refresh_git_skips_reconciliation_when_repository_unchanged(
     huey_instance: SqliteHuey,
     fake_manager: FakeIndexManager,
@@ -98,7 +111,7 @@ def test_refresh_git_skips_reconciliation_when_repository_unchanged(
         lambda _git_dir: "same-head",
     )
 
-    register_tasks(
+    _register_tasks(
         huey_instance,
         fake_manager,
         bootstrap_index_path=state_root,
@@ -138,7 +151,7 @@ def test_refresh_git_runs_reconciliation_when_repository_changed(
         _receipts,
     )
 
-    register_tasks(
+    _register_tasks(
         huey_instance,
         fake_manager,
         bootstrap_index_path=state_root,
