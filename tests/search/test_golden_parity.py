@@ -52,7 +52,7 @@ GOLDEN_PARITY_CASES = (
         expected_top_path="alpha/docs/api-authentication.md",
         expected_prefix=(
             "alpha/docs/api-authentication.md",
-            "alpha/docs/token-lifecycle.md",
+            "alpha/docs/authentication-overview.md",
         ),
     ),
     GoldenParityCase(

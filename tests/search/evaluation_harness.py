@@ -267,8 +267,8 @@ def build_search_evaluation_harness(
     path_to_doc_id: dict[str, str] = {}
     doc_id_to_path: dict[str, str] = {}
 
+    manager.index_documents([str(file_path) for file_path in corpus_files])
     for file_path in corpus_files:
-        manager.index_document(str(file_path))
         relative_path = str(file_path.relative_to(corpus_root))
         doc_id = compute_doc_id(file_path.resolve(), corpus_root)
         path_to_doc_id[relative_path] = doc_id
