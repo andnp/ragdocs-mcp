@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
-from mcp_markdown_ragdocs.gdrive.state import GDriveScopeIdentity, GDriveStateRepository
+from mcp_markdown_ragdocs.gdrive.state import GDriveScopeIdentity, GDriveStatePort
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,7 +21,7 @@ class DriveScopeMembership:
 class DriveScopeMembershipStore:
     """Keep unique scope relationships in memory or durable Drive state."""
 
-    def __init__(self, state_repository: GDriveStateRepository | None = None) -> None:
+    def __init__(self, state_repository: GDriveStatePort | None = None) -> None:
         self._memberships: dict[tuple[str, str], set[str]] = {}
         self._scope_memberships: dict[tuple[str, str], set[str]] = {}
         self._state_repository = state_repository

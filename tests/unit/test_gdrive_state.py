@@ -12,6 +12,7 @@ from mcp_markdown_ragdocs.gdrive.state import (
     GDriveCheckpoint,
     GDriveScopeIdentity,
     GDriveStateError,
+    GDriveStatePort,
     GDriveStateRepository,
     GDriveSyncStatus,
     GDriveWatchState,
@@ -21,6 +22,20 @@ from mcp_markdown_ragdocs.gdrive.state import (
 
 def _identity(scope: str = "shared-with-me") -> GDriveScopeIdentity:
     return GDriveScopeIdentity("google-drive", "workspace-a", scope)
+
+
+def test_sqlite_adapter_satisfies_the_drive_state_port(tmp_path: Path) -> None:
+    """
+    Keep application consumers independent from the SQLite state adapter.
+    """
+    state: GDriveStatePort = GDriveStateRepository(tmp_path / "state.db")
+    identity = _identity()
+
+    assert isinstance(state, GDriveStatePort)
+    assert state.add_membership(identity, "file-1") == ("shared-with-me",)
+    assert state.memberships_for_source("google-drive", "workspace-a", "file-1") == (
+        "shared-with-me",
+    )
 
 
 def test_state_survives_restart_for_each_record_type(tmp_path: Path) -> None:

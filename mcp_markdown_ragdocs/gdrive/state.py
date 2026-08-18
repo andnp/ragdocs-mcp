@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 import math
 from pathlib import Path
 import sqlite3
+from typing import Protocol, runtime_checkable
 
 STATE_SCHEMA_VERSION = 1
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
@@ -186,6 +187,43 @@ class GDriveWatchState:
 
 
 CheckpointUpdater = Callable[[GDriveCheckpoint | None], GDriveCheckpoint]
+
+
+@runtime_checkable
+class GDriveStatePort(Protocol):
+    """Application capabilities required from durable Drive state."""
+
+    def save_sync_status(self, status: GDriveSyncStatus) -> None: ...
+
+    def add_membership(
+        self,
+        identity: GDriveScopeIdentity,
+        source_id: str,
+    ) -> tuple[str, ...]: ...
+
+    def load_scope_memberships(
+        self,
+        identity: GDriveScopeIdentity,
+    ) -> GDriveScopeMembershipSnapshot: ...
+
+    def replace_scope_memberships(
+        self,
+        identity: GDriveScopeIdentity,
+        source_ids: Iterable[str],
+    ) -> tuple[str, ...]: ...
+
+    def remove_membership(
+        self,
+        identity: GDriveScopeIdentity,
+        source_id: str,
+    ) -> tuple[str, ...]: ...
+
+    def memberships_for_source(
+        self,
+        source_kind: str,
+        workspace_id: str,
+        source_id: str,
+    ) -> tuple[str, ...]: ...
 
 
 class GDriveStateRepository:
@@ -944,6 +982,7 @@ __all__ = [
     "GDriveScopeMembershipSnapshot",
     "GDriveScopeIdentity",
     "GDriveStateError",
+    "GDriveStatePort",
     "GDriveStateRepository",
     "GDriveSyncStatus",
     "GDriveWatchState",

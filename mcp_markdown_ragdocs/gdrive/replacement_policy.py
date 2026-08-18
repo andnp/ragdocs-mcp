@@ -18,7 +18,7 @@ from mcp_markdown_ragdocs.gdrive.replacement import (
 )
 from mcp_markdown_ragdocs.gdrive.state import (
     GDriveScopeIdentity,
-    GDriveStateRepository,
+    GDriveStatePort,
 )
 from mcp_markdown_ragdocs.indexing.record_ports import RecordStorage, SourceMapStore
 
@@ -46,7 +46,7 @@ class GDriveReplacementPolicy:
         source_records: dict[str, list[str]],
         source_map_store: SourceMapStore,
         journal: GDriveReplacementJournal,
-        state_repository: GDriveStateRepository | None = None,
+        state_repository: GDriveStatePort | None = None,
     ) -> None:
         self._ingestor = ingestor
         self._storage = storage

@@ -13,7 +13,7 @@ from searchkernel.api import Record, RecordIdentity, RecordStatus, atomic_write_
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
 from mcp_markdown_ragdocs.gdrive.state import (
     GDriveScopeIdentity,
-    GDriveStateRepository,
+    GDriveStatePort,
     GDriveSyncStatus,
 )
 
@@ -91,7 +91,7 @@ class GDriveReplacementJournal:
     def __init__(
         self,
         path: Path,
-        state_repository: GDriveStateRepository | None = None,
+        state_repository: GDriveStatePort | None = None,
     ) -> None:
         self.path = Path(path)
         self.state_repository = state_repository

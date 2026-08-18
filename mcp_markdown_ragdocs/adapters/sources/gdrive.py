@@ -33,7 +33,7 @@ from mcp_markdown_ragdocs.gdrive.records import (
     map_drive_file,
 )
 from mcp_markdown_ragdocs.gdrive.retry import DriveRetryWorkStore
-from mcp_markdown_ragdocs.gdrive.state import GDriveStateRepository
+from mcp_markdown_ragdocs.gdrive.state import GDriveStatePort
 
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
@@ -109,7 +109,7 @@ class GoogleDriveContentSource:
         page_size: int = 1000,
         retry_work_store: DriveRetryWorkStore | None = None,
         membership_store: DriveScopeMembershipStore | None = None,
-        state_repository: GDriveStateRepository | None = None,
+        state_repository: GDriveStatePort | None = None,
         extractor_version: str = "v1",
         chunker_version: str = "v1",
     ) -> None:
