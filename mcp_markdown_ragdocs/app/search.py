@@ -234,6 +234,7 @@ _DEFAULT_HYBRID_KEYWORD_SIGNAL = 0.01
 _DEFAULT_STRONG_KEYWORD_SIGNAL = 0.5
 _DEFAULT_HYBRID_MAX_KEYWORD_RANK = 5
 _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP = 2
+_SEARCH_TOKEN_PATTERN = re.compile(r"[a-z0-9_/\\-]+(?:\.[a-z0-9_/\\-]+)*")
 _QUERY_STOP_WORDS = frozenset(
     {
         "a", "an", "and", "are", "be", "do", "does", "for", "how", "in", "is",
@@ -264,6 +265,10 @@ _GRAPH_TARGET_SUFFIXES = (
         re.IGNORECASE,
     ),
 )
+
+
+def _search_tokens(value: str) -> set[str]:
+    return set(_SEARCH_TOKEN_PATTERN.findall(value.lower()))
 _GRAPH_INBOUND_PREFIXES = (
     re.compile(
         r"^(?:which|what)\s+(?:pages|documents|notes)\s+link to\s+",
@@ -428,7 +433,7 @@ def _is_pathless_git_record(result: Any) -> bool:
 def _artifact_query_matches_git_record(query: str, record: Record) -> bool:
     tokens = [
         token
-        for token in re.findall(r"[a-z0-9_./\\-]+", query.lower())
+        for token in _search_tokens(query)
         if any(separator in token for separator in ("_", ".", "/", "\\", "-"))
     ]
     if not tokens:
@@ -449,7 +454,7 @@ def _default_match_for_query(query: str, result: Any) -> bool:
     """Keep low-score records with an application-visible lexical signal."""
     record = result.record
     metadata = record.metadata
-    tokens = set(re.findall(r"[a-z0-9_./-]+", query.lower()))
+    tokens = _search_tokens(query)
     if not tokens:
         return False
     meaningful_tokens = tokens - _QUERY_STOP_WORDS
@@ -463,12 +468,12 @@ def _default_match_for_query(query: str, result: Any) -> bool:
         if value
     ).lower()
     if query.lower() in searchable_metadata or tokens <= set(
-        re.findall(r"[a-z0-9_./-]+", searchable_metadata)
+        _search_tokens(searchable_metadata)
     ):
         return True
     provenance = result.provenance
     strategies = getattr(provenance, "strategies", ()) if provenance else ()
-    body_tokens = set(re.findall(r"[a-z0-9_./-]+", record.body.lower()))
+    body_tokens = _search_tokens(record.body)
     overlap = meaningful_tokens & body_tokens
     if "keyword" not in strategies:
         def _fuzzy_token_match(q_token: str, target_tokens: set[str]) -> bool:
@@ -483,7 +488,11 @@ def _default_match_for_query(query: str, result: Any) -> bool:
         return len(overlap | fuzzy_matches) >= _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP
     if set(strategies) == {"keyword"}:
         return bool(overlap)
-    return len(overlap) >= _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP
+    required_overlap = min(
+        _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP,
+        len(meaningful_tokens),
+    )
+    return len(overlap) >= required_overlap
 
 
 def _is_relationship_query(query: str) -> bool:
@@ -550,8 +559,8 @@ def _metadata_query_rank(query: str, result: Any) -> int:
     )
     if any(query_text == field.lower() or query_text in field.lower() for field in fields):
         return 2
-    tokens = set(re.findall(r"[a-z0-9_./-]+", query_text))
-    field_tokens = set(re.findall(r"[a-z0-9_./-]+", " ".join(fields).lower()))
+    tokens = _search_tokens(query_text)
+    field_tokens = _search_tokens(" ".join(fields))
     return 1 if tokens and tokens <= field_tokens else 0
 
 

@@ -1,5 +1,6 @@
 """Focused contracts for the application-owned search boundary."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from collections.abc import Mapping
 
@@ -72,3 +73,68 @@ async def test_use_case_accepts_injected_diagnostics_port() -> None:
 
     assert execution.query_execution_stats == {"source": "test"}
     assert execution.results == []
+
+
+@pytest.mark.asyncio
+async def test_use_case_keeps_exact_single_token_matches() -> None:
+    """Return a document when one meaningful query token matches its body.
+
+    Exact lexical matches are user-visible search evidence even when the
+    hybrid rank score is intentionally small.
+    """
+    record = _record()
+    record = replace(record, body="API authentication using tokens")
+    outcome = RecordSearchOutcome(
+        results=(
+            RecordSearchResult(
+                record=record,
+                score=0.01,
+                provenance=SearchResultProvenance(strategies=("keyword", "vector")),
+            ),
+        )
+    )
+
+    class SearchKernel:
+        async def async_search(
+            self, query: str, *, limit: int, filters: Mapping[str, object]
+        ) -> RecordSearchOutcome:
+            return outcome
+
+    execution = await ApplicationSearchUseCase(
+        SearchKernel(), documents_roots=()
+    ).execute(SearchRequest(query="authentication", top_n=1))
+
+    assert [result.content for result in execution.results] == [
+        "API authentication using tokens"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_use_case_normalizes_trailing_punctuation_for_matches() -> None:
+    """Treat sentence punctuation as a separator during lexical matching.
+
+    A body token at the end of a sentence must match the same token in a
+    punctuation-free query.
+    """
+    record = _record()
+    outcome = RecordSearchOutcome(
+        results=(
+            RecordSearchResult(
+                record=record,
+                score=0.01,
+                provenance=SearchResultProvenance(strategies=("keyword", "vector")),
+            ),
+        )
+    )
+
+    class SearchKernel:
+        async def async_search(
+            self, query: str, *, limit: int, filters: Mapping[str, object]
+        ) -> RecordSearchOutcome:
+            return outcome
+
+    execution = await ApplicationSearchUseCase(
+        SearchKernel(), documents_roots=()
+    ).execute(SearchRequest(query="Boundary content", top_n=1))
+
+    assert [result.doc_id for result in execution.results] == ["doc-1"]
