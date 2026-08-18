@@ -1,5 +1,6 @@
 """Tests for resumable Google Drive synchronization."""
 
+import asyncio
 from pathlib import Path
 from typing import Any, cast
 
@@ -532,3 +533,149 @@ async def test_incomplete_inventory_preserves_stale_scope_memberships(
         "first",
         "stale",
     )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_materialization_preserves_input_order(tmp_path: Path) -> None:
+    """
+    Keep the page's file order even though later files finish first.
+    """
+
+    class _ReorderingClient(_Client):
+        async def download_file(self, file_id: str) -> bytes:
+            # Files earlier in the page take longer, so a naive unordered
+            # gather would return "slow-2" and "slow-0" ahead of "fast-1".
+            if file_id.startswith("slow"):
+                await asyncio.sleep(0.02)
+            return f"body:{file_id}".encode()
+
+    client = _ReorderingClient()
+    client.pages = {
+        None: DriveFilePage((_file("slow-0"), _file("fast-1"), _file("slow-2")))
+    }
+    source = GoogleDriveContentSource(
+        cast(Any, client), workspace_id="workspace", extractor=cast(Any, _extractor)
+    )
+    writer = _Writer([])
+    sync = GoogleDriveSync(
+        source,
+        GDriveSyncCheckpointStore(tmp_path),
+        cast(Any, writer),
+        scope_generation="generation",
+        max_seconds=60,
+        max_concurrent_materializations=3,
+    )
+
+    await sync.sync_inventory(source.scopes[0])
+
+    assert [record.source_id for batch in writer.batches for record in batch] == [
+        "slow-0",
+        "fast-1",
+        "slow-2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_one_failing_materialization_does_not_lose_page(tmp_path: Path) -> None:
+    """
+    Exclude only the failing file; the rest of the page still indexes.
+    """
+
+    class _FlakySource(GoogleDriveContentSource):
+        async def materialize_record(self, file, *, scope=None, known_change_keys=None):
+            if file.id == "boom":
+                raise RuntimeError("simulated bug")
+            return await super().materialize_record(
+                file, scope=scope, known_change_keys=known_change_keys
+            )
+
+    client = _Client()
+    client.pages = {
+        None: DriveFilePage((_file("first"), _file("boom"), _file("last")))
+    }
+    source = _FlakySource(
+        cast(Any, client), workspace_id="workspace", extractor=cast(Any, _extractor)
+    )
+    writer = _Writer([])
+    sync = GoogleDriveSync(
+        source,
+        GDriveSyncCheckpointStore(tmp_path),
+        cast(Any, writer),
+        scope_generation="generation",
+        max_seconds=60,
+    )
+
+    progress = await sync.sync_inventory(source.scopes[0])
+
+    assert progress.complete is True
+    assert [record.source_id for batch in writer.batches for record in batch] == [
+        "first",
+        "last",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mid_page_deadline_eventually_indexes_every_file(tmp_path: Path) -> None:
+    """
+    A deadline hit mid-page must never permanently skip the unprocessed suffix.
+
+    Runs sync_inventory repeatedly against one 10-file page whose deadline is
+    tied to the number of downloads performed so far (so it reliably fires
+    mid-page), and proves every file is indexed by some run and none is
+    downloaded twice thanks to the change-key skip.
+    """
+
+    class _OnePageClient:
+        def __init__(self) -> None:
+            self.downloads: list[str] = []
+
+        async def get_start_page_token(self, scope: object) -> DriveStartPageToken:
+            del scope
+            return DriveStartPageToken("start-token")
+
+        async def list_files_page(
+            self, scope: object, *, page_token: str | None = None, page_size: int = 1000
+        ) -> DriveFilePage:
+            del scope, page_token, page_size
+            return DriveFilePage(tuple(_file(f"f{i}") for i in range(10)))
+
+        async def download_file(self, file_id: str) -> bytes:
+            self.downloads.append(file_id)
+            return f"body:{file_id}".encode()
+
+    client = _OnePageClient()
+    source = GoogleDriveContentSource(
+        cast(Any, client), workspace_id="workspace", extractor=cast(Any, _extractor)
+    )
+    store = GDriveSyncCheckpointStore(tmp_path)
+
+    def clock() -> float:
+        return float(len(client.downloads))
+
+    def make_sync(writer: "_Writer") -> GoogleDriveSync:
+        return GoogleDriveSync(
+            source,
+            store,
+            cast(Any, writer),
+            scope_generation="generation",
+            max_seconds=3.0,
+            max_concurrent_materializations=4,
+            clock=clock,
+        )
+
+    all_indexed: list[str] = []
+    complete = False
+    runs = 0
+    while not complete and runs < 10:
+        writer = _Writer([])
+        progress = await make_sync(writer).sync_inventory(source.scopes[0])
+        all_indexed.extend(
+            record.source_id for batch in writer.batches for record in batch
+        )
+        complete = progress.complete
+        runs += 1
+
+    assert complete is True
+    assert runs > 1, "test setup should force at least one mid-page truncation"
+    assert set(all_indexed) == {f"f{i}" for i in range(10)}
+    assert sorted(client.downloads) == sorted(f"f{i}" for i in range(10))
