@@ -56,6 +56,17 @@ def _set_graph_direction(
     graph_store.set_direction(incoming)
 
 
+def _tune_sqlite_backend(kernel: LocalRecordKernel) -> None:
+    backend_db = getattr(getattr(kernel, "backend", None), "_db", None)
+    if backend_db is not None:
+        try:
+            conn = backend_db.get_connection()
+            conn.execute("PRAGMA cache_size = -64000")
+            conn.execute("PRAGMA mmap_size = 1073741824")
+        except Exception:
+            pass
+
+
 @dataclass(frozen=True)
 class RuntimePaths:
     """Resolved paths shared by every component in one local runtime."""
@@ -167,6 +178,7 @@ def assemble_runtime(
         search_policy=search_policy,
         search_config=to_record_search_config(config.search),
     )
+    _tune_sqlite_backend(local_kernel)
     kernel_holder["kernel"] = local_kernel
     if not lazy_embeddings:
         logger.info("Embedding provider is daemon-backed; no in-process warmup needed")
