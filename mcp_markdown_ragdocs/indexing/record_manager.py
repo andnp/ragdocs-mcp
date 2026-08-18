@@ -12,7 +12,7 @@ import hashlib
 import logging
 import os
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -610,15 +610,22 @@ class RecordIndexManager:
             if isinstance(document, Document)
             else Path(str(document.metadata.get("file_path", "")))
         )
-        candidates = [normalized_path.removesuffix(".md")]
-        if source_path:
-            candidates.insert(0, self._doc_id_for_markdown(source_path.parent / raw_path))
-        for root in self._documents_roots:
-            candidates.insert(0, self._doc_id_for_markdown(root / normalized_path))
-        for candidate in candidates:
-            if candidate in source_records:
-                return candidate
-        return None
+
+        def candidate_doc_ids() -> Iterator[str]:
+            for root in reversed(self._documents_roots):
+                yield self._doc_id_for_markdown(root / normalized_path)
+            if source_path:
+                yield self._doc_id_for_markdown(source_path.parent / raw_path)
+            yield normalized_path.removesuffix(".md")
+
+        return next(
+            (
+                candidate
+                for candidate in candidate_doc_ids()
+                if candidate in source_records
+            ),
+            None,
+        )
 
     def remove_document(self, doc_id: str) -> None:
         keys = self._source_records.pop(doc_id, [])
