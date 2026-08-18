@@ -6,18 +6,15 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from searchkernel.api import (
     CoordinatorReceipt,
     IngestionFailureMode,
     IngestionReceipt,
-    JsonCheckpointStore,
     Record,
     RecordIngestionResult,
-    ResumableSemanticCoordinator,
     SearchAvailability,
-    SemanticRecordIngestor,
     SourceBatch,
     get_semantic_completion_status,
     load_bootstrap_checkpoint,
@@ -324,99 +321,33 @@ def run_progressive_bootstrap(
     documents_roots: Sequence[Path],
 ) -> CoordinatorReceipt:
     """Run one bounded bootstrap source through the shared coordinator."""
-    if hasattr(manager, "kernel"):
-        pending_paths = _pending_canonical_paths(
-            manager.index_path,
-            file_paths,
-            documents_roots,
-        )
-        receipt = _run_canonical_bootstrap(manager, pending_paths)
-        successful_paths = [
-            record.source_id
-            for record in receipt.ingestion.records
-            if record.status == "committed"
-        ]
-        mark_bootstrap_files_completed(
-            manager.index_path,
-            list(documents_roots),
-            successful_paths,
-        )
-        if len(successful_paths) == len(pending_paths):
-            publish_bootstrap_availability(
-                manager.index_path,
-                SearchAvailability(
-                    lexical="available",
-                    graph="available",
-                    semantic_coarse="complete",
-                    semantic_fine="complete",
-                ),
-            )
-        return receipt
-
-    target_paths = {
-        _relative_path(file_path, documents_roots)
-        for file_path in file_paths
-    }
-    checkpoint = load_bootstrap_checkpoint(manager.index_path)
-    if checkpoint is not None:
-        target_paths = set(checkpoint.targets)
-    encoder_namespace = manager._encoder_fingerprint.namespace
-    prepared_by_file: dict[str, Any] = {}
-    records_by_file: dict[str, tuple[Record, ...]] = {}
-    source = _BootstrapFileSource(
-        manager,
+    pending_paths = _pending_canonical_paths(
+        manager.index_path,
         file_paths,
         documents_roots,
-        prepared_by_file,
-        records_by_file,
     )
-    materializer = _VectorChunkMaterializer(
-        manager,
-        index_path=manager.index_path,
-        documents_roots=documents_roots,
-        target_paths=target_paths,
-        encoder_namespace=encoder_namespace,
+    receipt = _run_canonical_bootstrap(manager, pending_paths)
+    successful_paths = [
+        record.source_id
+        for record in receipt.ingestion.records
+        if record.status == "committed"
+    ]
+    mark_bootstrap_files_completed(
+        manager.index_path,
+        list(documents_roots),
+        successful_paths,
     )
-    ingestor = _ProgressiveRecordIngestor(
-        manager,
-        index_path=manager.index_path,
-        documents_roots=documents_roots,
-        prepared_by_file=prepared_by_file,
-        records_by_file=records_by_file,
-        materializer=materializer,
-    )
-    planner_source = SemanticRecordIngestor(
-        embedding_provider=cast(
-            Any,
-            _VectorEmbeddingProvider(
-                manager.vector,
-                manager._encoder_fingerprint.model,
+    if len(successful_paths) == len(pending_paths):
+        publish_bootstrap_availability(
+            manager.index_path,
+            SearchAvailability(
+                lexical="available",
+                graph="available",
+                semantic_coarse="complete",
+                semantic_fine="complete",
             ),
-        ),
-        keyword_store=cast(Any, _NoopKeywordStore()),
-        vector_store=cast(Any, _NoopVectorStore()),
-        embedding_cache=manager._embedding_cache,
-        encoder_namespace=encoder_namespace,
-    )
-    planner = getattr(planner_source, "_planner")
-    coordinator = ResumableSemanticCoordinator(
-        planner=planner,
-        cache=manager._embedding_cache,
-        encoder=_VectorEmbeddingEncoder(manager.vector),
-        materializer=materializer,
-        record_ingestor=ingestor,
-        checkpoint_store=JsonCheckpointStore(
-            manager.index_path / "semantic.checkpoint.json"
-        ),
-    )
-    return asyncio.run(
-        coordinator.run_source(
-            source,
-            workspace_id=str(manager.index_path),
-            batch_size=64,
-            failure_mode="strict",
         )
-    )
+    return receipt
 
 
 def _pending_canonical_paths(
