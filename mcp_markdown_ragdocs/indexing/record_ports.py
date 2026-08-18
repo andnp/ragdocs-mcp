@@ -157,16 +157,24 @@ class LocalRecordStorage:
     ) -> Mapping[str, Record | None]:
         return self._kernel.backend.hydrate_records(identities)
 
+    _ITER_RECORDS_BATCH_SIZE = 500
+
     def iter_records(self) -> Iterable[Record]:
-        """Enumerate records through the local database manager boundary."""
+        """Stream records through the local database manager boundary.
+
+        Hydrates in fixed-size batches rather than materialising the whole
+        table at once, so callers can process records without holding the
+        entire index (tens of thousands of rows) in memory simultaneously.
+        """
         identities = self.iter_identities()
-        storage_keys = [identity.storage_key for identity in identities]
-        hydrated = self.hydrate_records(identities)
-        return tuple(
-            record
-            for storage_key in storage_keys
-            if (record := hydrated.get(storage_key)) is not None
-        )
+        batch_size = self._ITER_RECORDS_BATCH_SIZE
+        for start in range(0, len(identities), batch_size):
+            chunk = identities[start : start + batch_size]
+            hydrated = self.hydrate_records(chunk)
+            for identity in chunk:
+                record = hydrated.get(identity.storage_key)
+                if record is not None:
+                    yield record
 
     def iter_identities(self) -> tuple[RecordIdentity, ...]:
         """Return canonical identities without exposing database rows."""
