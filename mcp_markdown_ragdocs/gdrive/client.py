@@ -5,7 +5,9 @@ import io
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, cast, runtime_checkable
 
+import httplib2
 from google.oauth2.credentials import Credentials
+from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
@@ -20,6 +22,12 @@ from mcp_markdown_ragdocs.gdrive.models import (
 )
 from mcp_markdown_ragdocs.gdrive.gate import DriveRequestGate
 from mcp_markdown_ragdocs.gdrive.session import DriveCredentialSession
+
+# googleapiclient's default transport (built inside `build(...)`) has no
+# socket timeout, so a stalled Drive request can block a worker thread
+# indefinitely. 30s comfortably covers real Drive list/get calls while
+# still being far short of anything that looks like a hang.
+DRIVE_REQUEST_TIMEOUT_SECONDS = 30
 
 FILE_FIELDS = (
     "nextPageToken,files("
@@ -108,7 +116,11 @@ class GoogleDriveClient:
 
     @staticmethod
     def _build_service(credentials: Credentials) -> DriveService:
-        return cast(DriveService, build("drive", "v3", credentials=credentials))
+        http = AuthorizedHttp(
+            credentials,
+            http=httplib2.Http(timeout=DRIVE_REQUEST_TIMEOUT_SECONDS),
+        )
+        return cast(DriveService, build("drive", "v3", http=http))
 
     def _get_service(self) -> DriveService:
         if self._service is None:
