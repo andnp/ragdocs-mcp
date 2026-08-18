@@ -253,6 +253,8 @@ class GoogleDriveConfig:
     max_items: int = 100_000
     max_pages: int = 500
     max_seconds: float = 10.0
+    request_min_interval_seconds: float = 0.2
+    request_max_concurrent: int = 4
     push_enabled: bool = False
     push_address: str = ""
     watch_renewal_seconds: int = 3600
