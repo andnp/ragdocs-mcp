@@ -105,8 +105,13 @@ class LocalRecordStorage:
 
     def iter_records(self) -> Iterable[Record]:
         """Enumerate records through the installed local backend adapter."""
-        rows = self._kernel.backend._record_rows()
-        storage_keys = [str(row["storage_key"]) for row in rows]
+        backend = getattr(self._kernel, "backend", None)
+        if hasattr(backend, "_db") and hasattr(backend._db, "get_connection"):
+            cursor = backend._db.get_connection().execute("SELECT storage_key FROM local_records")
+            storage_keys = [str(row[0]) for row in cursor]
+        else:
+            rows = getattr(backend, "_record_rows", lambda: ())()
+            storage_keys = [str(row["storage_key"]) for row in rows]
         identities = [
             RecordIdentity.from_storage_key(storage_key) for storage_key in storage_keys
         ]

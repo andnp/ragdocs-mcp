@@ -181,8 +181,12 @@ def assemble_runtime(
     install_bidirectional_graph_store(
         local_kernel,
         lambda: tuple(
-            RecordIdentity.from_storage_key(str(row["storage_key"]))
-            for row in local_kernel.backend._record_rows()
+            RecordIdentity.from_storage_key(str(row[0] if isinstance(row, (tuple, list)) else row["storage_key"]))
+            for row in (
+                local_kernel.backend._db.get_connection().execute("SELECT storage_key FROM local_records").fetchall()
+                if hasattr(local_kernel.backend, "_db") and hasattr(local_kernel.backend._db, "get_connection")
+                else local_kernel.backend._record_rows()
+            )
         ),
     )
     orchestrator = CanonicalSearchAdapter(
