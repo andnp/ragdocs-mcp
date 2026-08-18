@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
-from datetime import UTC, datetime
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -15,7 +14,6 @@ from searchkernel.api import (
     Record,
     RecordIngestionResult,
     SearchAvailability,
-    SourceBatch,
     get_semantic_completion_status,
     load_bootstrap_checkpoint,
     mark_bootstrap_files_completed,
@@ -43,46 +41,6 @@ class ProgressiveIndexManager(Protocol):
     ) -> None: ...
 
     def persist(self) -> None: ...
-
-
-class _BootstrapFileSource:
-    source_kind = "markdown-bootstrap"
-
-    def __init__(
-        self,
-        manager: ProgressiveIndexManager,
-        file_paths: Sequence[str],
-        documents_roots: Sequence[Path],
-        prepared_by_file: dict[str, Any],
-        records_by_file: dict[str, tuple[Record, ...]],
-    ) -> None:
-        self._manager = manager
-        self._file_paths = tuple(sorted(file_paths))
-        self._documents_roots = tuple(documents_roots)
-        self.prepared_by_file = prepared_by_file
-        self.records_by_file = records_by_file
-
-    async def iter_batches(
-        self,
-        since: str | None = None,
-    ) -> AsyncIterator[SourceBatch]:
-        for file_path in self._file_paths:
-            relative_path = _relative_path(file_path, self._documents_roots)
-            if since is not None and relative_path <= since:
-                continue
-
-            prepared = await asyncio.to_thread(
-                self._manager.prepare_progressive_document,
-                file_path,
-            )
-            records = _records_for_prepared_document(
-                prepared,
-                file_path=file_path,
-                relative_path=relative_path,
-            )
-            self.prepared_by_file[relative_path] = prepared
-            self.records_by_file[relative_path] = records
-            yield SourceBatch(records=records, terminal_cursor=relative_path)
 
 
 class _VectorEmbeddingEncoder:
@@ -420,74 +378,6 @@ def _run_canonical_bootstrap(
         return CoordinatorReceipt(ingestion=ingestion)
 
     return asyncio.run(run())
-
-
-def _records_for_prepared_document(
-    prepared: Any,
-    *,
-    file_path: str,
-    relative_path: str,
-) -> tuple[Record, ...]:
-    records = tuple(
-        Record(
-            source_kind="markdown-chunk",
-            source_id=chunk.chunk_id,
-            title=_chunk_header_path(chunk) or chunk.chunk_id,
-            body=(
-                f"{_chunk_header_path(chunk)}\n\n{chunk.content}"
-                if _chunk_header_path(chunk)
-                else chunk.content
-            ),
-            created_at=_chunk_modified_time(chunk),
-            updated_at=_chunk_modified_time(chunk),
-            metadata={
-                **chunk.metadata,
-                "bootstrap_file_path": file_path,
-                "bootstrap_relative_path": relative_path,
-            },
-            uri=str(chunk.metadata.get("file_path", file_path)),
-        )
-        for chunk in prepared.chunks
-    )
-    if records:
-        return records
-    return (
-        Record(
-            source_kind="markdown-empty",
-            source_id=f"empty:{relative_path}",
-            title=relative_path,
-            body="",
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
-            metadata={
-                "bootstrap_file_path": file_path,
-                "bootstrap_relative_path": relative_path,
-            },
-            uri=file_path,
-        ),
-    )
-
-
-def _chunk_header_path(chunk: Any) -> str:
-    header_path = getattr(chunk, "header_path", None)
-    if isinstance(header_path, str):
-        return header_path
-    metadata = getattr(chunk, "metadata", {})
-    value = metadata.get("header_path")
-    return value if isinstance(value, str) else ""
-
-
-def _chunk_modified_time(chunk: Any) -> datetime:
-    modified_time = getattr(chunk, "modified_time", None)
-    if isinstance(modified_time, datetime):
-        return modified_time
-    metadata = getattr(chunk, "metadata", {})
-    value = metadata.get("modified_time")
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        return datetime.fromisoformat(value)
-    return datetime.now(UTC)
 
 
 def _chunk_for_record(prepared: Any, record: Record) -> Any | None:
