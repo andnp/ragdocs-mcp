@@ -108,35 +108,17 @@ class GoogleDriveSync:
                 page_token=page_token,
                 page_size=min(self.page_size, self.max_items - items_indexed),
             )
-            records: list[Record] = []
-            page_deadline_hit = False
-            for offset in range(0, len(page.files), self.batch_size):
-                if self._clock() - started_at >= self.max_seconds:
-                    page_deadline_hit = True
-                    break
-                sub_batch = page.files[offset : offset + self.batch_size]
-                sub_records = [
-                    await self.source.materialize_record(file, scope=scope)
-                    for file in sub_batch
-                ]
-                observed_source_ids.update(
-                    record.source_id
-                    for record in sub_records
-                    if self._record_belongs_to_scope(
-                        record, self.source.scope_identity(scope)
+            records = [
+                await self.source.materialize_record(file, scope=scope)
+                for file in page.files
+            ]
+            observed_source_ids.update(
+                record.source_id
+                for record in records
+                if self._record_belongs_to_scope(
+                    record, self.source.scope_identity(scope)
                     )
-                )
-                records.extend(sub_records)
-
-            if page_deadline_hit:
-                # A page token identifies a page boundary, not an offset within
-                # a page, so partial-page progress cannot be checkpointed. The
-                # already-materialized records are still indexed (idempotent),
-                # but the checkpoint is left untouched: the next invocation
-                # refetches this same page from the unchanged page token.
-                self._index_and_persist(records, "inventory")
-                break
-
+            )
             complete_inventory = page.next_page_token is None
             if complete_inventory:
                 if resumed_inventory and self.source.membership_store.is_durable:
