@@ -150,7 +150,7 @@ class HueyWorkerProcess:
                 process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait(timeout=1.0)
+                process.wait(timeout=5.0)
 
         self._process = None
         _remove_worker_status(self._runtime_paths)

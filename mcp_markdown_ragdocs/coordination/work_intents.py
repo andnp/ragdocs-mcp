@@ -255,11 +255,17 @@ class WorkIntentStore:
             cursor = connection.execute(
                 """
                 UPDATE work_intents
-                SET state = ?, claim_token = NULL, claim_observed_at = NULL,
+                SET state = CASE
+                        WHEN attempt >= ? THEN ?
+                        ELSE ?
+                    END,
+                    claim_token = NULL, claim_observed_at = NULL,
                     observed_at = ?, error = ?
                 WHERE state IN (?, ?) AND claim_observed_at <= ?
                 """,
                 (
+                    MAX_AUTOMATIC_FAILURES * 2,
+                    FAILED,
                     PENDING,
                     timestamp,
                     "claim expired before terminal state",
