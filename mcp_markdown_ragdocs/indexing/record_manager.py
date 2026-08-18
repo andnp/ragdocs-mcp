@@ -42,9 +42,7 @@ from mcp_markdown_ragdocs.gdrive.replacement import (
 )
 from mcp_markdown_ragdocs.gdrive.replacement_policy import GDriveReplacementPolicy
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND as GDRIVE_SOURCE_KIND
-from mcp_markdown_ragdocs.gdrive.state import (
-    GDriveStateRepository,
-)
+from mcp_markdown_ragdocs.gdrive.adapter import GDriveStateRepository
 from mcp_markdown_ragdocs.models import Document
 from mcp_markdown_ragdocs.indexing.markdown_documents import (
     MarkdownDocumentPlanner,
