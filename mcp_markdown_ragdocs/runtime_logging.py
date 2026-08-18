@@ -56,3 +56,5 @@ def configure_file_logging(log_path: Path, config: LoggingConfig) -> None:
     handler.addFilter(_OutsideRootWarningFilter())
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
+    # One line per embedding request otherwise dominates the indexing log.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
