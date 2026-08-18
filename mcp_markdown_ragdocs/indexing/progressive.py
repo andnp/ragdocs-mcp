@@ -19,22 +19,7 @@ from searchkernel.api import (
 
 
 class ProgressiveIndexManager(Protocol):
-    _encoder_fingerprint: Any
-    _embedding_cache: Any
-    vector: Any
     index_path: Path
-
-    def prepare_progressive_document(self, file_path: str) -> Any: ...
-
-    def apply_progressive_lexical_graph(
-        self,
-        prepared_documents: Sequence[Any],
-    ) -> None: ...
-
-    def finalize_progressive_documents(
-        self,
-        prepared_documents: Sequence[Any],
-    ) -> None: ...
 
     def persist(self) -> None: ...
 
