@@ -162,6 +162,7 @@ def build_gdrive_task_runtime(
         max_items=drive_config.max_items,
         max_pages=drive_config.max_pages,
         max_seconds=drive_config.max_seconds,
+        max_concurrent_materializations=drive_config.request_max_concurrent,
     )
     backfill = GoogleDriveBackfill(
         source,
