@@ -5,6 +5,7 @@ import importlib
 import json
 import logging
 import os
+import threading
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
@@ -86,6 +87,22 @@ def _require_zmq() -> tuple[_ZMQModule, _ZMQAsyncModule]:
             "pyzmq is required for the Ragdocs daemon transport. Run 'uv sync' and retry."
         ) from exc
     return cast(_ZMQModule, zmq), cast(_ZMQAsyncModule, zmq_asyncio)
+
+
+_shared_client_context_lock = threading.Lock()
+_shared_client_context: _SyncContext | None = None
+
+
+def _get_shared_client_context(zmq: _ZMQModule) -> _SyncContext:
+    global _shared_client_context
+    context = _shared_client_context
+    if context is None:
+        with _shared_client_context_lock:
+            context = _shared_client_context
+            if context is None:
+                context = zmq.Context()
+                _shared_client_context = context
+    return context
 
 
 def transport_endpoint(socket_path: Path) -> str:
@@ -295,10 +312,9 @@ class ZMQTransportClient:
         timeout_seconds: float,
     ) -> dict[str, object]:
         zmq, _ = _require_zmq()
-        context: _SyncContext | None = None
         client: _SyncSocket | None = None
         try:
-            context = zmq.Context()
+            context = _get_shared_client_context(zmq)
             client = context.socket(zmq.DEALER)
             client.linger = 0
             client.connect(transport_endpoint(socket_path))
@@ -331,8 +347,6 @@ class ZMQTransportClient:
         finally:
             if client is not None:
                 client.close(0)
-            if context is not None:
-                context.term()
 
         if not data:
             return {"status": "error", "error": "empty_response"}
