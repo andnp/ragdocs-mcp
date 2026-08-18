@@ -244,6 +244,7 @@ def test_manager_writes_planned_document_through_ports(record_manager) -> None:
     )
 
     assert manager.index_document(file_path) is True
+    manager.persist()
 
     prepared = planner.plan(file_path)
     assert writer.calls == [(prepared.document.id, ())]

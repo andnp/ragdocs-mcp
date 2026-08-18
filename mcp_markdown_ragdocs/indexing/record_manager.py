@@ -381,7 +381,6 @@ class RecordIndexManager:
                     update_graph=update_graph,
                 )
             )
-            self._save_source_map()
             return True
         except Exception as error:
             self._failed_files.append(

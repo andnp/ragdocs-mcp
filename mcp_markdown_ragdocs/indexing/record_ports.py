@@ -230,11 +230,7 @@ class JsonSourceMapStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self._path.with_suffix(".tmp")
         temporary.write_text(
-            json.dumps(
-                {doc_id: list(keys) for doc_id, keys in records.items()},
-                indent=2,
-                sort_keys=True,
-            ),
+            json.dumps({doc_id: list(keys) for doc_id, keys in records.items()}),
             encoding="utf-8",
         )
         temporary.replace(self._path)
