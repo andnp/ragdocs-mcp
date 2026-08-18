@@ -607,13 +607,13 @@ class RecordIndexManager:
         )
         candidates = [normalized_path.removesuffix(".md")]
         if source_path:
-            linked_path = (source_path.parent / raw_path).resolve()
+            linked_path = source_path.parent / raw_path
             if linked_path.suffix.lower() == ".md":
                 candidates.insert(0, self._doc_id_for_path(str(linked_path)))
             else:
                 candidates.insert(0, self._doc_id_for_path(str(linked_path.with_suffix(".md"))))
         for root in self._documents_roots:
-            linked_path = (root / normalized_path).resolve()
+            linked_path = root / normalized_path
             if linked_path.suffix.lower() == ".md":
                 candidates.insert(0, self._doc_id_for_path(str(linked_path)))
             else:
