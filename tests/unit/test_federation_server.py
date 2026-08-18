@@ -1045,14 +1045,14 @@ def test_federation_search_honors_deadline():
 def test_federation_search_returns_gateway_timeout_for_slow_native_search():
     class SlowOrchestrator(_Orchestrator):
         async def search(self, query, *, limit, filters):
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(2.0)
             return await super().search(query, limit=limit, filters=filters)
 
     client = _client(SlowOrchestrator())
     response = client.post(
         "/v1/search",
         json=_request(
-            deadline_at=(datetime.now(UTC) + timedelta(seconds=0.01)).isoformat(),
+            deadline_at=(datetime.now(UTC) + timedelta(seconds=1)).isoformat(),
         ),
     )
 
