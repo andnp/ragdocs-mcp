@@ -8,7 +8,6 @@ connects those two responsibilities.
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import hashlib
 import logging
 import os
@@ -17,13 +16,12 @@ from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from urllib.parse import unquote, urlparse
 
 from searchkernel.api import (
     ContentSource,
     GraphEdge,
-    GraphNeighbor,
     LocalRecordKernel,
     OllamaEmbeddingProvider,
     Record,
@@ -52,10 +50,12 @@ from mcp_markdown_ragdocs.indexing.markdown_documents import (
     MarkdownDocumentPlanner,
     SemanticDocumentWriter,
 )
+from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_graph_store
 from mcp_markdown_ragdocs.indexing.record_ports import (
     JsonSourceMapStore,
     DocumentPlanner,
     DocumentWriter,
+    GraphCapability,
     LocalRecordStorage,
     PreparedRecordDocument,
     RecordStorage,
@@ -63,177 +63,8 @@ from mcp_markdown_ragdocs.indexing.record_ports import (
 )
 
 logger = logging.getLogger(__name__)
-_GRAPH_IDENTITY_BATCH_SIZE = 100
 _FILE_MTIME_METADATA_KEY = "_file_mtime_ns"
 _FILE_SIZE_METADATA_KEY = "_file_size"
-
-
-class _BidirectionalGraphStore:
-    def __init__(self, graph_store: Any, identities: Any) -> None:
-        self._graph_store = graph_store
-        self._identities = identities
-        self._direction = contextvars.ContextVar(
-            "graph_direction",
-            default="outgoing",
-        )
-
-    def set_direction(self, direction: str | bool) -> None:
-        normalized = (
-            "incoming"
-            if direction is True
-            else "outgoing"
-            if direction is False
-            else direction
-        )
-        self._direction.set(normalized)
-
-    def neighbors_many(
-        self,
-        identities: Sequence[RecordIdentity],
-        *,
-        depth: int,
-        max_neighbors: int | None = None,
-    ) -> dict[str, Sequence[GraphNeighbor]]:
-        direction = self._direction.get()
-        if direction == "incoming":
-            return self.incoming_neighbors_many(
-                identities,
-                depth=depth,
-                max_neighbors=max_neighbors,
-            )
-        if direction == "both":
-            outgoing = self._outgoing_neighbors_many(
-                identities,
-                depth=depth,
-                max_neighbors=max_neighbors,
-            )
-            incoming = self.incoming_neighbors_many(
-                identities,
-                depth=depth,
-                max_neighbors=max_neighbors,
-            )
-            return {
-                identity.storage_key: _merge_graph_neighbors(
-                    outgoing.get(identity.storage_key, ()),
-                    incoming.get(identity.storage_key, ()),
-                    max_neighbors,
-                )
-                for identity in identities
-            }
-        return self._outgoing_neighbors_many(
-            identities,
-            depth=depth,
-            max_neighbors=max_neighbors,
-        )
-
-    def _outgoing_neighbors_many(
-        self,
-        identities: Sequence[RecordIdentity],
-        *,
-        depth: int,
-        max_neighbors: int | None = None,
-    ) -> dict[str, Sequence[GraphNeighbor]]:
-        return cast(
-            dict[str, Sequence[GraphNeighbor]],
-            self._graph_store.neighbors_many(
-                identities,
-                depth=depth,
-                max_neighbors=max_neighbors,
-            ),
-        )
-
-    def neighbors(
-        self,
-        identity: RecordIdentity,
-        *,
-        depth: int,
-        max_neighbors: int | None = None,
-    ) -> Sequence[GraphNeighbor]:
-        return self.neighbors_many(
-            [identity],
-            depth=depth,
-            max_neighbors=max_neighbors,
-        )[identity.storage_key]
-
-    def incoming_neighbors(
-        self,
-        identity: RecordIdentity,
-        *,
-        depth: int,
-        max_neighbors: int | None = None,
-    ) -> Sequence[GraphNeighbor]:
-        return self.incoming_neighbors_many(
-            [identity],
-            depth=depth,
-            max_neighbors=max_neighbors,
-        )[identity.storage_key]
-
-    def incoming_neighbors_many(
-        self,
-        identities: Sequence[RecordIdentity],
-        *,
-        depth: int,
-        max_neighbors: int | None = None,
-    ) -> dict[str, Sequence[GraphNeighbor]]:
-        native_loader = getattr(self._graph_store, "incoming_neighbors_many", None)
-        if callable(native_loader):
-            return cast(
-                dict[str, Sequence[GraphNeighbor]],
-                native_loader(
-                    identities,
-                    depth=depth,
-                    max_neighbors=max_neighbors,
-                ),
-            )
-        requested = {identity.storage_key for identity in identities}
-        incoming: dict[str, list[GraphNeighbor]] = {
-            identity.storage_key: [] for identity in identities
-        }
-        outgoing: dict[str, Sequence[GraphNeighbor]] = {}
-        all_identities = self._identities()
-        for start in range(0, len(all_identities), _GRAPH_IDENTITY_BATCH_SIZE):
-            outgoing.update(
-                self._graph_store.neighbors_many(
-                    all_identities[start : start + _GRAPH_IDENTITY_BATCH_SIZE],
-                    depth=depth,
-                    max_neighbors=None,
-                )
-            )
-        for source_key, neighbors in outgoing.items():
-            source = RecordIdentity.from_storage_key(source_key)
-            for neighbor in neighbors:
-                if neighbor.identity.storage_key not in requested:
-                    continue
-                incoming[neighbor.identity.storage_key].append(
-                    GraphNeighbor(source, neighbor.edge_type, neighbor.weight)
-                )
-        for key, neighbors in incoming.items():
-            neighbors.sort(key=lambda item: (-item.weight, item.identity.storage_key))
-            if max_neighbors is not None:
-                incoming[key] = neighbors[:max_neighbors]
-        return cast(dict[str, Sequence[GraphNeighbor]], incoming)
-
-
-def _merge_graph_neighbors(first, second, max_neighbors: int | None):
-    merged = {
-        neighbor.identity.storage_key: neighbor
-        for neighbor in (*first, *second)
-    }
-    neighbors = sorted(
-        merged.values(),
-        key=lambda item: (-item.weight, item.identity.storage_key),
-    )
-    return neighbors if max_neighbors is None else neighbors[:max_neighbors]
-
-
-def install_bidirectional_graph_store(
-    kernel: LocalRecordKernel,
-    identities: Any,
-) -> None:
-    kernel.pipeline._graph_store = _BidirectionalGraphStore(  # type: ignore[attr-defined]
-        kernel.graph_store,
-        identities,
-    )
 
 
 def _git_commit_id(source_id: str) -> str:
@@ -309,6 +140,7 @@ class RecordIndexManager:
         documents_roots: list[Path] | None = None,
         content_sources: Iterable[ContentSource] = (),
         storage: RecordStorage | None = None,
+        graph: GraphCapability | None = None,
         source_map_store: SourceMapStore | None = None,
         document_planner: DocumentPlanner | None = None,
         document_writer: DocumentWriter | None = None,
@@ -316,6 +148,11 @@ class RecordIndexManager:
         self._config = config
         self.kernel = kernel
         self.storage = storage or LocalRecordStorage(kernel)
+        self._graph = graph or (
+            self.storage.graph
+            if isinstance(self.storage, LocalRecordStorage)
+            else kernel.graph_store
+        )
         self.embedding_provider = embedding_provider
         self._documents_roots = [
             root.resolve()
@@ -386,7 +223,7 @@ class RecordIndexManager:
 
     @property
     def graph(self):
-        return self.kernel.graph_store
+        return self._graph
 
     def is_ready(self) -> bool:
         return self._ready
@@ -860,4 +697,9 @@ def _run_async(awaitable):
         return executor.submit(asyncio.run, awaitable).result()
 
 
-__all__ = ["PreparedRecordDocument", "RecordIndexManager", "build_embedding_provider"]
+__all__ = [
+    "PreparedRecordDocument",
+    "RecordIndexManager",
+    "build_embedding_provider",
+    "install_bidirectional_graph_store",
+]

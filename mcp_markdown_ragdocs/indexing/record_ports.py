@@ -8,7 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from searchkernel.api import ContentSource, LocalRecordKernel, Record, RecordIdentity
+from searchkernel.api import (
+    ContentSource,
+    GraphEdge,
+    GraphNeighbor,
+    LocalRecordKernel,
+    Record,
+    RecordIdentity,
+)
 
 from mcp_markdown_ragdocs.models import Document
 
@@ -58,6 +65,32 @@ class RecordStorage(Protocol):
     def delete(self, storage_keys: Sequence[str]) -> None: ...
 
 
+class GraphCapability(Protocol):
+    """Navigate and mutate record relationships without exposing a kernel."""
+
+    def set_direction(self, direction: str | bool) -> None: ...
+
+    def upsert_edges(self, edges: Sequence[GraphEdge]) -> None: ...
+
+    def neighbors_many(
+        self,
+        identities: Sequence[RecordIdentity],
+        *,
+        depth: int = 1,
+        max_neighbors: int | None = None,
+    ) -> Mapping[str, Sequence[GraphNeighbor]]: ...
+
+    def neighbors(
+        self,
+        identity: RecordIdentity,
+        *,
+        depth: int = 1,
+        max_neighbors: int | None = None,
+    ) -> Sequence[GraphNeighbor]: ...
+
+    def graph_integrity_errors(self) -> list[str]: ...
+
+
 class RecordDeletion(Protocol):
     """Delete canonical records from every retrieval surface atomically."""
 
@@ -82,10 +115,31 @@ class LocalRecordStorage:
     ) -> None:
         self._kernel = kernel
         self._deletion = deletion or LocalRecordDeletion(kernel)
+        from mcp_markdown_ragdocs.indexing.local_graph import (
+            LocalBidirectionalGraphStore,
+        )
+
+        self._graph = LocalBidirectionalGraphStore(
+            kernel,
+            self.iter_identities,
+        )
+        self._graph.install()
 
     @property
     def db_manager(self) -> object:
         return self._kernel.backend.db_manager
+
+    @property
+    def keyword_store(self) -> object:
+        return self._kernel.keyword_store
+
+    @property
+    def vector_store(self) -> object:
+        return self._kernel.vector_store
+
+    @property
+    def graph(self) -> GraphCapability:
+        return self._graph
 
     def register_content_source(self, source: ContentSource) -> None:
         self._kernel.kernel.register_content_source(source)
@@ -104,27 +158,30 @@ class LocalRecordStorage:
         return self._kernel.backend.hydrate_records(identities)
 
     def iter_records(self) -> Iterable[Record]:
-        """Enumerate records through the installed local backend adapter."""
-        backend = getattr(self._kernel, "backend", None)
-        if (
-            backend is not None
-            and hasattr(backend, "_db")
-            and hasattr(backend._db, "get_connection")
-        ):
-            cursor = backend._db.get_connection().execute("SELECT storage_key FROM local_records")
-            storage_keys = [str(row[0]) for row in cursor]
-        else:
-            rows = getattr(backend, "_record_rows", lambda: ())()
-            storage_keys = [str(row["storage_key"]) for row in rows]
-        identities = [
-            RecordIdentity.from_storage_key(storage_key) for storage_key in storage_keys
-        ]
+        """Enumerate records through the local database manager boundary."""
+        identities = self.iter_identities()
+        storage_keys = [identity.storage_key for identity in identities]
         hydrated = self.hydrate_records(identities)
         return tuple(
             record
             for storage_key in storage_keys
             if (record := hydrated.get(storage_key)) is not None
         )
+
+    def iter_identities(self) -> tuple[RecordIdentity, ...]:
+        """Return canonical identities without exposing database rows."""
+        connection = self._kernel.backend.db_manager.get_connection()
+        rows = connection.execute("SELECT storage_key FROM local_records")
+        return tuple(RecordIdentity.from_storage_key(str(row[0])) for row in rows)
+
+    def tune_backend(self) -> None:
+        """Apply the application's local SQLite performance settings."""
+        try:
+            connection = self._kernel.backend.db_manager.get_connection()
+            connection.execute("PRAGMA cache_size = -64000")
+            connection.execute("PRAGMA mmap_size = 1073741824")
+        except Exception:
+            return
 
     def delete(self, storage_keys: Sequence[str]) -> None:
         self._deletion.delete(storage_keys)
