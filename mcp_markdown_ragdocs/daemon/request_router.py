@@ -22,7 +22,6 @@ from mcp_markdown_ragdocs.daemon.record_rpc import (
     deserialize_record,
 )
 from mcp_markdown_ragdocs.indexing.rebuild_service import (
-    REBUILD_ACTIVE_STATUSES,
     read_rebuild_status,
     resolve_rebuild_scope,
     submit_rebuild_status,
@@ -525,16 +524,11 @@ async def _handle_admin_request(
             "reindex": queued_status,
         }
     if path == "/api/admin/rebuild/submit":
-        current_status = read_rebuild_status(dependencies.runtime_root)
-        current_state = str(current_status.get("status", "idle"))
-        if current_state in REBUILD_ACTIVE_STATUSES:
-            return {
-                "status": "ok",
-                "accepted": False,
-                "already_running": True,
-                "rebuild": current_status,
-            }
-
+        # Do not gate on rebuild-status.json's "running" state here: an
+        # abandoned rebuild leaves that file stuck indefinitely with no
+        # process to reset it. submit_rebuild_request cross-checks live
+        # evidence instead (a heartbeated writer lease), which self-heals
+        # once the lease goes stale.
         project_override = (
             str(payload.get("project"))
             if payload.get("project") is not None
