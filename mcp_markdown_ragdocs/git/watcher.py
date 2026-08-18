@@ -28,7 +28,7 @@ class GitWatcher:
         git_repos: list[Path],
         index_manager: IndexManager,
         config: Config,
-        poll_interval: float = 30.0,
+        poll_interval: float = 300.0,
         use_tasks: bool = False,
     ):
         self._git_repos = git_repos

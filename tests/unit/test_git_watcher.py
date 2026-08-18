@@ -92,7 +92,7 @@ def test_git_watcher_default_poll_interval(test_config, index_manager, tmp_path)
         git_repos=git_repos, index_manager=index_manager, config=test_config
     )
 
-    assert watcher._poll_interval == 30.0
+    assert watcher._poll_interval == 300.0
     assert watcher._use_tasks is False
 
 

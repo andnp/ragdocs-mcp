@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import Callable
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 from mcp_markdown_ragdocs.coordination.work_intents import (
     CLAIMED,

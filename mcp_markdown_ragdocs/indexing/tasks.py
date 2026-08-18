@@ -34,7 +34,7 @@ from mcp_markdown_ragdocs.coordination.task_submission import (
 from mcp_markdown_ragdocs.coordination.task_submission import (
     get_pending_task_count as get_shared_pending_task_count,
 )
-from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntent, WorkIntentStore
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
@@ -55,6 +55,7 @@ from mcp_markdown_ragdocs.indexing.reindex import (
     run_reindex_operation,
     write_reindex_status,
 )
+from mcp_markdown_ragdocs.indexing import task_intents
 from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
 from mcp_markdown_ragdocs.indexing.task_writer import (
     WRITER_HEARTBEAT_INTERVAL_SECONDS,  # noqa: F401 - compatibility export
@@ -64,7 +65,6 @@ from mcp_markdown_ragdocs.indexing.task_writer import (
     writer_lease_store,
     writer_owned_task,
 )
-from mcp_markdown_ragdocs.indexing import task_intents
 from mcp_markdown_ragdocs.gdrive.tasks import (
     GDriveTaskManager,
     build_gdrive_task_runtime,

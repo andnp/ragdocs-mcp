@@ -102,7 +102,7 @@ class GitContentSource:
         Returns:
             A dict indicating polling-based change detection.
         """
-        return {"poll_interval": 30}
+        return {"poll_interval": 300}
 
     def _commit_to_record(self, commit_hash: str) -> Record | None:
         """

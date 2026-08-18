@@ -236,7 +236,7 @@ class ChunkingConfig:
 class GitIndexingConfig:
     enabled: bool = True
     watch_enabled: bool = True
-    poll_interval_seconds: float = 30.0
+    poll_interval_seconds: float = 300.0
 
 
 @dataclass
