@@ -119,14 +119,14 @@ wheels = [
 
 [[package]]
 name = "andnp-searchkernel"
-version = "1.5.1"
+version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/15/b56a1bf6485b9891f98e3e1701261139d553d2489adc8095c42600468551/andnp_searchkernel-1.5.1.tar.gz", hash = "sha256:4bd60b418e8a96dcdeb80bbff87b26b4a2783c26f2095ab88d283348dcce893c", size = 582083, upload-time = "2026-08-18T05:47:30.109Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ff/96/1a309eec1c4de04aaccdd6369b1caeb9da20e10d88f3ac36bb8d3bb113bf/andnp_searchkernel-1.6.1.tar.gz", hash = "sha256:8d108861888fce7714ad60c5a2114000b04bdf0dfb0b6fa379f2611f4190822d", size = 585388, upload-time = "2026-08-18T21:30:33.578Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/2f/efa44e6865f5dafd419661a34305d32a57e161b7274aee07ad2cd3185d4b/andnp_searchkernel-1.5.1-py3-none-any.whl", hash = "sha256:7a0f6d30ad3596e7f210d0c9e93f1cd5404edd18a3c581903f09f05c7afda116", size = 280011, upload-time = "2026-08-18T05:47:28.592Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/0b/d51697af27c236d174f5e1dc915bec42a5cadecfa49698850b5fa5cd0c0a/andnp_searchkernel-1.6.1-py3-none-any.whl", hash = "sha256:1565bc8d807882b7a11e9af0dd28927cb13e8de0b4f292d92c67dd5a6ee8cbfa", size = 281546, upload-time = "2026-08-18T21:30:32.057Z" },
 ]
 
 [package.optional-dependencies]
@@ -1368,7 +1368,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "andnp-searchkernel", extras = ["faiss", "markdown", "ollama", "pgvector"], specifier = ">=1.5.1" },
+    { name = "andnp-searchkernel", extras = ["faiss", "markdown", "ollama", "pgvector"], specifier = ">=1.6.1" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "google-api-python-client", specifier = ">=2.198.0" },
