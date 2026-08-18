@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeasePort, TaskLeaseStore
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +23,14 @@ def writer_lease_store(queue_path: str | Path) -> TaskLeaseStore:
 
 
 def writer_is_active(
-    store_factory: Callable[[], TaskLeaseStore | None],
+    store_factory: Callable[[], TaskLeasePort | None],
 ) -> bool:
     store = store_factory()
     return store is not None and store.writer_owner() is not None
 
 
 def run_as_writer(
-    store_factory: Callable[[], TaskLeaseStore | None],
+    store_factory: Callable[[], TaskLeasePort | None],
     operation: Callable[[], Any],
     *,
     operation_name: str = "index write",
@@ -84,7 +84,7 @@ def run_as_writer(
 
 
 def writer_owned_task(
-    store_factory: Callable[[], TaskLeaseStore | None],
+    store_factory: Callable[[], TaskLeasePort | None],
     *,
     operation: str | None = None,
     busy_result: Any,

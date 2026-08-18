@@ -60,6 +60,8 @@ class WorkIntentPort(Protocol):
         now: float | None = None,
     ) -> tuple[WorkIntent, str] | None: ...
 
+    def start(self, intent_id: str, claim_token: str) -> bool: ...
+
     def succeed(
         self,
         intent_id: str,

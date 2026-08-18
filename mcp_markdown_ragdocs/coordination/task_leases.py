@@ -77,6 +77,19 @@ class TaskLeasePort(Protocol):
 
     def get(self, task_id: str) -> TaskLease | None: ...
 
+    def acquire_writer(self, owner_token: str, *, now: float | None = None) -> bool: ...
+
+    def heartbeat_writer(
+        self,
+        owner_token: str,
+        *,
+        now: float | None = None,
+    ) -> bool: ...
+
+    def release_writer(self, owner_token: str) -> bool: ...
+
+    def writer_owner(self, *, now: float | None = None) -> str | None: ...
+
 
 class TaskLeaseStore(TaskLeasePort):
     """SQLite adapter for the application task lease port."""

@@ -17,12 +17,8 @@ from mcp_markdown_ragdocs.coordination.work_intents import (
 logger = logging.getLogger(__name__)
 
 
-class WorkIntentTaskPort(WorkIntentPort, Protocol):
-    def start(self, intent_id: str, claim_token: str) -> bool: ...
-
-
 class WorkIntentPortProvider(Protocol):
-    def __call__(self) -> WorkIntentTaskPort | None: ...
+    def __call__(self) -> WorkIntentPort | None: ...
 
 
 def _intent_claim(
