@@ -82,7 +82,11 @@ def _summary_text(commit: CommitData) -> str:
     if commit.committer:
         parts.append(f"Committer: {commit.committer}")
     if commit.files_changed:
-        parts.append("Files changed:\n" + "\n".join(commit.files_changed))
+        files_section = "Files changed:\n" + "\n".join(commit.files_changed)
+        omitted = commit.files_changed_total - len(commit.files_changed)
+        if omitted > 0:
+            files_section += f"\n(+{omitted} more files not shown)"
+        parts.append(files_section)
     return "\n\n".join(parts)
 
 
