@@ -139,6 +139,10 @@ def test_reindex_provider_and_namespace_helpers_validate_inputs(tmp_path: Path):
         def embed(self, texts: list[str]) -> list[list[float]]:
             return [[float(len(texts))] * 2]
 
+        def embed_query(self, text: str) -> list[float]:
+            del text
+            return [1.0, 1.0]
+
     provider = _DeferredEmbeddingProvider(
         "new-model",
         2,

@@ -210,6 +210,10 @@ class _Provider:
             raise RuntimeError("embedding provider failed")
         return [[float(index + 1)] * self.dim for index, _text in enumerate(texts)]
 
+    def embed_query(self, text: str) -> list[float]:
+        del text
+        return [1.0] * self.dim
+
 
 def _record(source_id: str, dim: int) -> Record:
     now = datetime(2026, 8, 1, tzinfo=UTC)

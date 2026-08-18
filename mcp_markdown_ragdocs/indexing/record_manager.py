@@ -88,6 +88,9 @@ class _FakeEmbeddingProvider:
     def embed(self, texts: list[str]) -> list[Vector]:
         return [self._model.vector_for_text(text) for text in texts]
 
+    def embed_query(self, text: str) -> Vector:
+        return self._model.vector_for_text(text)
+
 
 class _DeterministicFakeEmbeddingModel:
     def __init__(self, dimension: int) -> None:

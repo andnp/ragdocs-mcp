@@ -313,6 +313,9 @@ class _VectorEmbeddingProvider:
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [self._vector.get_text_embedding(text) for text in texts]
 
+    def embed_query(self, text: str) -> list[float]:
+        return self._vector.get_query_embedding(text)
+
 
 def run_progressive_bootstrap(
     manager: ProgressiveIndexManager,

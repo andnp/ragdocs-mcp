@@ -168,6 +168,9 @@ class _DeferredEmbeddingProvider:
     def embed(self, texts: list[str]) -> list[list[float]]:
         return self._factory().embed(texts)
 
+    def embed_query(self, text: str) -> list[float]:
+        return self._factory().embed_query(text)
+
 
 def build_embedding_provider(
     config: Config,
