@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any, Protocol
 from searchkernel.api import (
     ChunkResult as DomainChunkResult,
     CompressionStats,
@@ -29,6 +30,17 @@ __all__ = [
 type DocumentMetadataValue = (
     str | list[str] | int | float | bool | dict[str, object] | None
 )
+
+
+class _ChunkResultSource(Protocol):
+    chunk_id: str
+    record_id: str
+    score: float
+    content: str
+    parent_chunk_id: str | None
+    parent_content: str | None
+    provenance: SearchResultProvenance | None
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -112,7 +124,7 @@ class ChunkResult:
         )
 
     @classmethod
-    def from_domain(cls, result: DomainChunkResult) -> ChunkResult:
+    def from_domain(cls, result: _ChunkResultSource) -> ChunkResult:
         """Construct a ChunkResult from a domain ChunkResult."""
         metadata = dict(result.metadata)
         header_path = metadata.pop("header_path", "")
