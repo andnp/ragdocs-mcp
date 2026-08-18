@@ -19,8 +19,14 @@ def _commit(
             "+retrieval coverage\n"
         ),
     files_changed: list[str] | None = None,
+    files_changed_total: int | None = None,
     message: str = "Explain the search change.\n\nAdd retrieval coverage.",
 ) -> CommitData:
+    resolved_files_changed = (
+        ["src/search.py", "tests/test_search.py"]
+        if files_changed is None
+        else files_changed
+    )
     return CommitData(
         hash="abc123",
         timestamp=1,
@@ -28,12 +34,13 @@ def _commit(
         committer=committer,
         title="Improve search",
         message=message,
-        files_changed=(
-            ["src/search.py", "tests/test_search.py"]
-            if files_changed is None
-            else files_changed
-        ),
+        files_changed=resolved_files_changed,
         delta_truncated=delta_truncated,
+        files_changed_total=(
+            len(resolved_files_changed)
+            if files_changed_total is None
+            else files_changed_total
+        ),
     )
 
 
@@ -50,6 +57,25 @@ def test_chunk_commit_preserves_commit_structure() -> None:
     assert "Explain the search change." in chunks[1].text
     assert "src/search.py" in chunks[2].text
     assert "tests/test_search.py" in chunks[3].text
+
+
+def test_chunk_commit_summary_names_omitted_files_when_truncated() -> None:
+    chunks = chunk_commit(
+        _commit(
+            files_changed=["src/search.py", "tests/test_search.py"],
+            files_changed_total=12,
+        )
+    )
+
+    summary_text = chunks[0].text
+    assert "(+10 more files not shown)" in summary_text
+
+
+def test_chunk_commit_summary_omits_omitted_line_when_not_truncated() -> None:
+    chunks = chunk_commit(_commit())
+
+    summary_text = chunks[0].text
+    assert "more files not shown" not in summary_text
 
 
 def test_chunk_commit_bounds_long_diff_chunks() -> None:
