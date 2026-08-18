@@ -7,6 +7,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
+from typing import BinaryIO
 
 from mcp_markdown_ragdocs.daemon.management import _resolve_daemon_python
 from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
@@ -34,6 +35,7 @@ class HueyWorkerProcess:
     ) -> None:
         self._runtime_paths = runtime_paths
         self._process: subprocess.Popen[bytes] | None = None
+        self._output_file: BinaryIO | None = None
 
     @property
     def is_running(self) -> bool:
@@ -87,11 +89,15 @@ class HueyWorkerProcess:
                 str(parent_start_time),
             ])
 
+        # Appended, never rotated: a stalled worker's stderr is the only trace
+        # of a hang, so a restart must not erase the previous failure's output.
+        output_file = _worker_output_path(self._runtime_paths).open("ab")
+        self._output_file = output_file
         self._process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=output_file,
+            stderr=output_file,
             cwd=str(Path.cwd()),
             env=os.environ.copy(),
             start_new_session=True,
@@ -153,6 +159,9 @@ class HueyWorkerProcess:
                 process.wait(timeout=5.0)
 
         self._process = None
+        if self._output_file is not None:
+            self._output_file.close()
+            self._output_file = None
         _remove_worker_status(self._runtime_paths)
 
     def restart(self, timeout: float = 5.0) -> None:
@@ -163,6 +172,10 @@ class HueyWorkerProcess:
 
 def _worker_status_path(runtime_paths: RuntimePaths) -> Path:
     return runtime_paths.root / "worker.json"
+
+
+def _worker_output_path(runtime_paths: RuntimePaths) -> Path:
+    return runtime_paths.root / "worker.subprocess.log"
 
 
 def current_process_start_time_ticks() -> int | None:
