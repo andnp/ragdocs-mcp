@@ -18,9 +18,9 @@ generic snapshot_download would miss.
 from __future__ import annotations
 
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from sentence_transformers import CrossEncoder
 
 from searchkernel.adapters.rerank import HuggingFaceReranker
-from searchkernel.search.reranker import ReRanker
 
 
 def main() -> None:
@@ -38,11 +38,9 @@ def main() -> None:
     reranker = HuggingFaceReranker()
     reranker.rerank("warmup", ["warmup document"])
 
-    print("Downloading cross-encoder/ms-marco-MiniLM-L-6-v2 (default query-pipeline reranker)...")
-    pipeline_reranker = ReRanker()
-    pipeline_reranker.rerank(
-        "warmup", [("chunk-0", 1.0)], lambda chunk_id: "warmup document content"
-    )
+    print("Downloading cross-encoder/ms-marco-MiniLM-L-6-v2 (application reranker)...")
+    pipeline_reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    pipeline_reranker.predict([("warmup", "warmup document content")])
 
     print("All test models cached.")
 
