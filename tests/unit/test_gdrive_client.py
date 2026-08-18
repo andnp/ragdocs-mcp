@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from google.oauth2.credentials import Credentials
 
-from mcp_markdown_ragdocs.gdrive.client import GoogleDriveClient
+from mcp_markdown_ragdocs.gdrive.client import DRIVE_REQUEST_TIMEOUT_SECONDS, GoogleDriveClient
 from mcp_markdown_ragdocs.gdrive.gate import DriveRequestGate
 from mcp_markdown_ragdocs.gdrive.models import DriveScope
 
@@ -244,3 +245,12 @@ async def test_client_serializes_provider_requests_through_private_gate(
     )
 
     assert maximum == 1
+
+
+def test_build_service_applies_request_timeout_to_transport() -> None:
+    credentials = Credentials(token="tok")
+
+    service = GoogleDriveClient._build_service(credentials)
+
+    transport = cast(Any, service)._http
+    assert transport.http.timeout == DRIVE_REQUEST_TIMEOUT_SECONDS
