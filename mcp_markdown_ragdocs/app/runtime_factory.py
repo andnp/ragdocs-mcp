@@ -173,7 +173,7 @@ def assemble_runtime(
         embedding_provider=embedding_provider,
         embedding_model_name=embedding_provider.model_name,
         embedding_dim=embedding_provider.dim,
-        vector_engine="exact",
+        vector_engine="auto",
         reranker=build_reranker(config.search),
         search_policy=search_policy,
         search_config=to_record_search_config(config.search),
