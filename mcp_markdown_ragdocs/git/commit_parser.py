@@ -254,7 +254,15 @@ def _get_changed_files(repo_path: Path, commit_hash: str) -> list[str]:
     """Get list of files changed in commit."""
     try:
         result = subprocess.run(
-            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_hash],
+            [
+                "git",
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "--root",
+                commit_hash,
+            ],
             cwd=repo_path,
             capture_output=True,
             text=True,
