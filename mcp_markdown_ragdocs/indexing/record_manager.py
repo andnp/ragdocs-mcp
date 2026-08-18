@@ -15,6 +15,7 @@ import re
 from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -69,6 +70,19 @@ _FILE_MTIME_METADATA_KEY = "_file_mtime_ns"
 _FILE_SIZE_METADATA_KEY = "_file_size"
 _GRAPH_EDGE_BATCH_SIZE = 1_000
 _GRAPH_REBUILD_DEBOUNCE_SECONDS = 1.0
+_DOC_ID_CACHE_SIZE = 200_000
+
+
+@lru_cache(maxsize=_DOC_ID_CACHE_SIZE)
+def _cached_doc_id(file_path: str, roots: tuple[str, ...]) -> str:
+    """Module-level cache keyed on (path, roots) so instances with different
+    ``documents_roots`` never share a result for the same path string."""
+    root_paths = [Path(root) for root in roots]
+    if len(root_paths) == 1:
+        # compute_doc_id does not canonicalize internally, unlike
+        # compute_doc_id_multi_root, so this branch must resolve first.
+        return compute_doc_id(Path(file_path).resolve(), root_paths[0])
+    return compute_doc_id_multi_root(Path(file_path), root_paths)
 
 
 def _git_commit_id(source_id: str) -> str:
@@ -165,6 +179,7 @@ class RecordIndexManager:
             root.resolve()
             for root in (documents_roots or [Path(config.indexing.documents_path)])
         ]
+        self._doc_id_cache_key = tuple(str(root) for root in self._documents_roots)
         self._document_planner = document_planner or MarkdownDocumentPlanner(
             config,
             self._documents_roots,
@@ -326,10 +341,7 @@ class RecordIndexManager:
             self.persist()
 
     def _doc_id_for_path(self, file_path: str) -> str:
-        path = Path(file_path).resolve()
-        if len(self._documents_roots) == 1:
-            return compute_doc_id(path, self._documents_roots[0])
-        return compute_doc_id_multi_root(path, self._documents_roots)
+        return _cached_doc_id(file_path, self._doc_id_cache_key)
 
     def _document_is_current(self, file_path: str) -> bool:
         try:
