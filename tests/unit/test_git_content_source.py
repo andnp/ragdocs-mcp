@@ -182,6 +182,36 @@ class TestGitContentSourceIterRecords:
             assert "timestamp" in record.metadata
             assert "files_changed" in record.metadata
 
+    def test_iter_records_assigns_unique_ids_to_each_commit_chunk(self):
+        """
+        Ensure multiple diff files cannot overwrite one another in storage.
+
+        A chunk position is global to the commit, while section indexes reset
+        for each diff file.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir) / "repo"
+            repo_path.mkdir()
+            _init_git_repo(repo_path)
+            for index in range(3):
+                (repo_path / f"file{index}.txt").write_text(f"content {index}")
+            subprocess.run(
+                ["git", "add", "."], cwd=repo_path, check=True, capture_output=True
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "Add files"],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+            )
+
+            records = list(GitContentSource(repo_path / ".git").iter_records())
+
+            assert len(records) == len({record.storage_key for record in records})
+            assert [record.metadata["chunk_index"] for record in records] == list(
+                range(len(records))
+            )
+
     def test_iter_records_multiple_commits(self):
         """Test iterating over multiple commits."""
         with tempfile.TemporaryDirectory() as tmpdir:

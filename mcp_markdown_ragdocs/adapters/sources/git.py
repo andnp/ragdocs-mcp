@@ -151,7 +151,7 @@ class GitContentSource:
             Record(
                 workspace_id=self.workspace_id,
                 source_kind=self.source_kind,
-                source_id=f"{commit_id}:{chunk.section}:{chunk.section_index}",
+                source_id=f"{commit_id}:{chunk.section}:{chunk_position}",
                 title=commit_data.title or "(no commit message)",
                 body=chunk.text,
                 created_at=commit_dt,
@@ -164,7 +164,8 @@ class GitContentSource:
                         else {}
                     ),
                     "chunk_section": chunk.section,
-                    "chunk_index": chunk.section_index,
+                    "chunk_index": chunk_position,
+                    "section_index": chunk.section_index,
                     "chunk_count": len(chunks),
                     "estimated_tokens": chunk.estimated_tokens,
                 },
@@ -173,5 +174,5 @@ class GitContentSource:
                 embedding=None,
                 embedding_model=None,
             )
-            for chunk in chunks
+            for chunk_position, chunk in enumerate(chunks)
         )
