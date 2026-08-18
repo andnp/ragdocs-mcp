@@ -11,18 +11,22 @@ from mcp_markdown_ragdocs.coordination.work_intents import (
     PENDING,
     RUNNING,
     WorkIntent,
-    WorkIntentStore,
+    WorkIntentPort,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class WorkIntentStoreProvider(Protocol):
-    def __call__(self) -> WorkIntentStore | None: ...
+class WorkIntentTaskPort(WorkIntentPort, Protocol):
+    def start(self, intent_id: str, claim_token: str) -> bool: ...
+
+
+class WorkIntentPortProvider(Protocol):
+    def __call__(self) -> WorkIntentTaskPort | None: ...
 
 
 def _intent_claim(
-    store_provider: WorkIntentStoreProvider,
+    store_provider: WorkIntentPortProvider,
     operation: str,
     canonical_key: str,
     payload: dict[str, object],
@@ -50,7 +54,7 @@ def _intent_claim(
 
 
 def _intent_claim_batch(
-    store_provider: WorkIntentStoreProvider,
+    store_provider: WorkIntentPortProvider,
     operation: str,
     items: list[tuple[str, dict[str, object]]],
     *,
@@ -77,7 +81,7 @@ def _intent_claim_batch(
 
 
 def _release_intent(
-    store_provider: WorkIntentStoreProvider,
+    store_provider: WorkIntentPortProvider,
     intent_id: str,
     claim_token: str,
 ) -> None:
@@ -86,7 +90,7 @@ def _release_intent(
         store.release(intent_id, claim_token)
 
 
-def _intent_task(store_provider: WorkIntentStoreProvider, operation: str):
+def _intent_task(store_provider: WorkIntentPortProvider, operation: str):
     def _result_outcomes(result: object, count: int) -> list[bool] | None:
         if not isinstance(result, dict):
             return None
