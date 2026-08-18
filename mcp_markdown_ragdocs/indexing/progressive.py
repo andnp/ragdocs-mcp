@@ -9,7 +9,6 @@ from typing import Any, Protocol
 
 from searchkernel.api import (
     CoordinatorReceipt,
-    IngestionFailureMode,
     IngestionReceipt,
     Record,
     RecordIngestionResult,
@@ -138,106 +137,6 @@ class _VectorChunkMaterializer:
                 graph="available",
                 semantic_coarse="complete" if complete else "backfilling",
                 semantic_fine="complete" if complete else "backfilling",
-            ),
-        )
-
-
-class _ProgressiveRecordIngestor:
-    def __init__(
-        self,
-        manager: ProgressiveIndexManager,
-        *,
-        index_path: Path,
-        documents_roots: Sequence[Path],
-        prepared_by_file: dict[str, Any],
-        records_by_file: dict[str, tuple[Record, ...]],
-        materializer: _VectorChunkMaterializer,
-    ) -> None:
-        self._manager = manager
-        self._index_path = index_path
-        self._documents_roots = tuple(documents_roots)
-        self._prepared_by_file = prepared_by_file
-        self._records_by_file = records_by_file
-        self._materializer = materializer
-        self._staged_files: set[str] = set()
-
-    async def index_records(
-        self,
-        records: Sequence[Record],
-        *,
-        checkpoint: str | None = None,
-        failure_mode: IngestionFailureMode = "strict",
-    ) -> IngestionReceipt:
-        return await asyncio.to_thread(
-            self._index_records,
-            records,
-            checkpoint,
-            failure_mode,
-        )
-
-    def _index_records(
-        self,
-        records: Sequence[Record],
-        checkpoint: str | None,
-        failure_mode: IngestionFailureMode,
-    ) -> IngestionReceipt:
-        try:
-            relative_paths = {
-                _record_relative_path(record, self._documents_roots)
-                for record in records
-            }
-            for relative_path in relative_paths:
-                if relative_path in self._staged_files:
-                    continue
-                prepared = self._prepared_by_file[relative_path]
-                self._manager.apply_progressive_lexical_graph([prepared])
-                self._manager.persist()
-                self._materializer.register_file(
-                    relative_path,
-                    prepared,
-                    self._records_by_file[relative_path],
-                )
-                self._staged_files.add(relative_path)
-                publish_bootstrap_availability(
-                    self._index_path,
-                    SearchAvailability(
-                        lexical="available",
-                        graph="available",
-                        semantic_coarse="backfilling",
-                        semantic_fine="backfilling",
-                    ),
-                )
-        except Exception:
-            if failure_mode == "strict":
-                raise
-            return IngestionReceipt(
-                source_kind="markdown-bootstrap",
-                workspace_id=None,
-                checkpoint=checkpoint,
-                records=tuple(
-                    RecordIngestionResult(
-                        source_kind=record.source_kind,
-                        source_id=record.source_id,
-                        workspace_id=record.workspace_id,
-                        status="failed",
-                        error="lexical or graph indexing failed",
-                    )
-                    for record in records
-                ),
-            )
-
-        return IngestionReceipt(
-            source_kind="markdown-bootstrap",
-            workspace_id=None,
-            checkpoint=checkpoint,
-            records=tuple(
-                RecordIngestionResult(
-                    source_kind=record.source_kind,
-                    source_id=record.source_id,
-                    workspace_id=record.workspace_id,
-                    status="committed",
-                )
-                for record in records
             ),
         )
 
@@ -387,16 +286,6 @@ def _chunk_for_record(prepared: Any, record: Record) -> Any | None:
         (chunk for chunk in prepared.chunks if chunk.chunk_id == record.source_id),
         None,
     )
-
-
-def _record_relative_path(
-    record: Record,
-    documents_roots: Sequence[Path],
-) -> str:
-    relative = record.metadata.get("bootstrap_relative_path")
-    if isinstance(relative, str):
-        return relative
-    raise ValueError(f"bootstrap record has no relative path: {record.source_id}")
 
 
 def _relative_path(file_path: str, documents_roots: Sequence[Path]) -> str:
