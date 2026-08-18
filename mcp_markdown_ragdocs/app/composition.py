@@ -76,17 +76,16 @@ def build_runtime_components(
     documents_path_override: Path | None = None,
     global_runtime: bool = False,
     source_builder: Callable[..., ContentSource] = build_gdrive_source,
+    project_detector: Callable[..., str | None] | None = None,
 ) -> RuntimeComponents:
     """Resolve application paths before delegating concrete runtime assembly."""
     detected_project = None
     if not global_runtime:
-        detected_project = detect_project(
+        detector = project_detector or detect_project
+        detected_project = detector(
             projects=config.projects,
             project_override=project_override,
         )
-
-    if detected_project and project_override:
-        config = load_config()
 
     configured_index_path = resolve_index_path(config)
     index_path = index_path_override or configured_index_path

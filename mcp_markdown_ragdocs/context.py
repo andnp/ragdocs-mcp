@@ -30,6 +30,7 @@ from searchkernel.api import (
 
 from mcp_markdown_ragdocs.config import (
     Config,
+    detect_project,
     load_config,
     resolve_documents_path,
     resolve_project_id_for_path,
@@ -123,6 +124,7 @@ class ApplicationContext:
             documents_path_override=documents_path_override,
             global_runtime=global_runtime,
             source_builder=build_gdrive_source,
+            project_detector=detect_project,
         )
 
         context = cls(
