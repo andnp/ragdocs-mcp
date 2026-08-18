@@ -12,7 +12,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
-from uuid import uuid4
 
 from searchkernel.api import (
     TaskBatchSubmissionResult,
@@ -64,6 +63,14 @@ from mcp_markdown_ragdocs.indexing.reindex import (
     write_reindex_status,
 )
 from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
+from mcp_markdown_ragdocs.indexing.task_writer import (
+    WRITER_HEARTBEAT_INTERVAL_SECONDS,  # noqa: F401 - compatibility export
+    WRITER_LEASE_TIMEOUT_SECONDS,  # noqa: F401 - compatibility export
+    run_as_writer,
+    writer_is_active,
+    writer_lease_store,
+    writer_owned_task,
+)
 from mcp_markdown_ragdocs.gdrive.tasks import (
     GDriveTaskManager,
     build_gdrive_task_runtime,
@@ -81,8 +88,6 @@ GIT_REFRESH_TASK_PRIORITY = -10
 REINDEX_TASK_PRIORITY = 200
 GIT_REFRESH_BATCH_SIZE = 25
 DOCUMENT_TASK_BATCH_SIZE = 32
-WRITER_LEASE_TIMEOUT_SECONDS = 30.0
-WRITER_HEARTBEAT_INTERVAL_SECONDS = 5.0
 
 __all__ = [
     "TaskBatchSubmissionResult",
@@ -147,10 +152,7 @@ gdrive_health_task: Any = None
 def _writer_lease_store() -> TaskLeaseStore | None:
     if _huey is None:
         return None
-    return TaskLeaseStore(
-        cast(Any, _huey.storage).filename,
-        timeout_seconds=WRITER_LEASE_TIMEOUT_SECONDS,
-    )
+    return writer_lease_store(cast(Any, _huey.storage).filename)
 
 
 def _intent_store() -> WorkIntentStore | None:
@@ -370,8 +372,7 @@ def _persist_document_manifest(
 
 
 def _writer_is_active() -> bool:
-    store = _writer_lease_store()
-    return store is not None and store.writer_owner() is not None
+    return writer_is_active(_writer_lease_store)
 
 
 def _run_as_writer(
@@ -383,51 +384,16 @@ def _run_as_writer(
     busy_result: Any,
     on_busy: Callable[[], None] | None = None,
 ) -> Any:
-    store = _writer_lease_store()
-    if store is None:
-        return busy_result
-
-    token = owner_token or uuid4().hex
-    if not store.acquire_writer(token):
-        details = ""
-        if operation_args and isinstance(operation_args[0], str):
-            details = f" argument={operation_args[0]!r}"
-        elif operation_args and isinstance(operation_args[0], list):
-            batch = operation_args[0]
-            details = f" batch_size={len(batch)}"
-            if all(isinstance(item, str) for item in batch):
-                details += f" batch_preview={batch[:3]!r}"
-        logger.warning(
-            "Writer lease busy; deferring %s%s",
-            operation_name,
-            details,
-        )
-        if on_busy is not None:
-            on_busy()
-        return busy_result
-
-    heartbeat_stop = threading.Event()
-
-    def _heartbeat() -> None:
-        while not heartbeat_stop.wait(WRITER_HEARTBEAT_INTERVAL_SECONDS):
-            if not store.heartbeat_writer(token):
-                logger.warning("Lost index writer ownership: %s", token)
-                return
-
-    heartbeat_thread = threading.Thread(
-        target=_heartbeat,
-        name=f"index-writer-heartbeat-{token[:8]}",
-        daemon=True,
+    return run_as_writer(
+        _writer_lease_store,
+        operation,
+        operation_name=operation_name,
+        operation_args=operation_args,
+        owner_token=owner_token,
+        busy_result=busy_result,
+        on_busy=on_busy,
+        on_released=_flush_deferred_git_refreshes,
     )
-    heartbeat_thread.start()
-    try:
-        return operation()
-    finally:
-        heartbeat_stop.set()
-        heartbeat_thread.join(timeout=WRITER_HEARTBEAT_INTERVAL_SECONDS)
-        released = store.release_writer(token)
-        if released and owner_token is not None:
-            _flush_deferred_git_refreshes()
 
 
 def _writer_owned_task(
@@ -436,25 +402,13 @@ def _writer_owned_task(
     busy_result: Any,
     on_busy: Callable[..., None] | None = None,
 ):
-    def _decorate(function):
-        @functools.wraps(function)
-        def _wrapped(*args, **kwargs):
-            busy_callback = on_busy
-            return _run_as_writer(
-                lambda: function(*args, **kwargs),
-                operation_name=operation or function.__name__,
-                operation_args=args,
-                busy_result=busy_result,
-                on_busy=(
-                    None
-                    if busy_callback is None
-                    else lambda: busy_callback(*args, **kwargs)
-                ),
-            )
-
-        return _wrapped
-
-    return _decorate
+    return writer_owned_task(
+        _writer_lease_store,
+        operation=operation,
+        busy_result=busy_result,
+        on_busy=on_busy,
+        on_released=_flush_deferred_git_refreshes,
+    )
 
 
 class _RejectedRecordBatch:
