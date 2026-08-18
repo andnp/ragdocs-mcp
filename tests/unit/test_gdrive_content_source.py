@@ -181,3 +181,102 @@ def test_source_creates_archived_record_for_trashed_change() -> None:
     assert record.status is RecordStatus.ARCHIVED
     assert record.metadata["extraction_reason"] == "trashed"
     assert record.metadata["deleted"] is True
+
+
+def _known_keys(record) -> dict[str, tuple[str, str]]:
+    return {
+        record.source_id: (
+            record.metadata["remote_fingerprint"],
+            record.metadata["processing_fingerprint"],
+        )
+    }
+
+
+@pytest.mark.asyncio
+async def test_unchanged_file_is_not_refetched() -> None:
+    """
+    Skip the download when the change key matches the prior materialization.
+    """
+    client = _Client((_file("text"),))
+    source = GoogleDriveContentSource(client, workspace_id="workspace", extractor=_extractor)
+
+    first = await source.materialize_record(_file("text"), scope=None)
+    second = await source.materialize_record(
+        _file("text"), scope=None, known_change_keys=_known_keys(first)
+    )
+
+    assert client.downloads == ["text"]
+    assert second.metadata["extraction_status"] == "unchanged"
+
+
+@pytest.mark.asyncio
+async def test_modified_file_is_refetched() -> None:
+    """
+    Never skip a file whose modified_time (and so remote_fingerprint) changed.
+    """
+    client = _Client((_file("text"),))
+    source = GoogleDriveContentSource(client, workspace_id="workspace", extractor=_extractor)
+    original = _file("text")
+    modified = DriveFile(
+        "text", "text.txt", "text/plain", modified_time="2026-06-01T00:00:00Z"
+    )
+
+    first = await source.materialize_record(original, scope=None)
+    second = await source.materialize_record(
+        modified, scope=None, known_change_keys=_known_keys(first)
+    )
+
+    assert client.downloads == ["text", "text"]
+    assert second.metadata["extraction_status"] == "indexed"
+
+
+@pytest.mark.asyncio
+async def test_google_native_doc_without_checksum_is_skipped_when_unchanged() -> None:
+    """
+    Fall back to modified_time for change detection on Google-native docs.
+
+    Docs/Sheets/Slides never carry md5Checksum/sha256Checksum, so
+    remote_fingerprint must still distinguish them via modified_time alone.
+    """
+    doc = _file("doc", "application/vnd.google-apps.document")
+    assert doc.md5_checksum is None and doc.sha256_checksum is None
+    client = _Client((doc,))
+    source = GoogleDriveContentSource(client, workspace_id="workspace", extractor=_extractor)
+
+    first = await source.materialize_record(doc, scope=None)
+    second = await source.materialize_record(
+        doc, scope=None, known_change_keys=_known_keys(first)
+    )
+    modified_doc = DriveFile(
+        "doc",
+        "doc.txt",
+        "application/vnd.google-apps.document",
+        modified_time="2026-06-01T00:00:00Z",
+    )
+    third = await source.materialize_record(
+        modified_doc, scope=None, known_change_keys=_known_keys(first)
+    )
+
+    assert client.exports == [("doc", "text/plain"), ("doc", "text/plain")]
+    assert second.metadata["extraction_status"] == "unchanged"
+    assert third.metadata["extraction_status"] == "indexed"
+
+
+@pytest.mark.asyncio
+async def test_extractor_version_bump_invalidates_cached_change_key() -> None:
+    """
+    Never serve a stale extraction after extractor_version changes.
+    """
+    client = _Client((_file("text"),))
+    source = GoogleDriveContentSource(
+        client, workspace_id="workspace", extractor=_extractor, extractor_version="v1"
+    )
+
+    first = await source.materialize_record(_file("text"), scope=None)
+    source.extractor_version = "v2"
+    second = await source.materialize_record(
+        _file("text"), scope=None, known_change_keys=_known_keys(first)
+    )
+
+    assert client.downloads == ["text", "text"]
+    assert second.metadata["extraction_status"] == "indexed"
