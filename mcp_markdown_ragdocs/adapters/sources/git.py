@@ -14,6 +14,7 @@ from searchkernel.domain import ChangeSignal, Cursor, Record, RecordStatus
 from mcp_markdown_ragdocs.git.commit_chunker import chunk_commit
 from mcp_markdown_ragdocs.git.commit_parser import (
     CommitData,
+    MAX_FILES_CHANGED,
     iter_commits,
     parse_commit,
 )
@@ -127,6 +128,8 @@ class GitContentSource:
 
         commit_id = f"git:{commit_data.hash}"
         chunks = chunk_commit(commit_data)
+        files_changed = commit_data.files_changed[:MAX_FILES_CHANGED]
+        files_changed_total = max(commit_data.files_changed_total, len(commit_data.files_changed))
 
         # Convert unix timestamp to datetime
         commit_dt = datetime.fromtimestamp(commit_data.timestamp, tz=UTC)
@@ -136,7 +139,7 @@ class GitContentSource:
             "author": commit_data.author,
             "committer": commit_data.committer,
             "timestamp": commit_data.timestamp,
-            "files_changed": commit_data.files_changed,
+            "files_changed_total": files_changed_total,
             "title": commit_data.title or "(no commit message)",
             "doc_id": commit_id,
             "commit_id": commit_id,
@@ -155,6 +158,11 @@ class GitContentSource:
                 updated_at=commit_dt,
                 metadata={
                     **metadata,
+                    **(
+                        {"files_changed": files_changed}
+                        if chunk.section == "summary"
+                        else {}
+                    ),
                     "chunk_section": chunk.section,
                     "chunk_index": chunk.section_index,
                     "chunk_count": len(chunks),
