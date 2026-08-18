@@ -49,6 +49,10 @@ from mcp_markdown_ragdocs.indexing.markdown_documents import (
     SemanticDocumentWriter,
 )
 from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_graph_store
+from mcp_markdown_ragdocs.indexing.graph_rebuild import (
+    DebouncedGraphRebuilder,
+    GraphSnapshot,
+)
 from mcp_markdown_ragdocs.indexing.record_ports import (
     JsonSourceMapStore,
     DocumentPlanner,
@@ -63,6 +67,8 @@ from mcp_markdown_ragdocs.indexing.record_ports import (
 logger = logging.getLogger(__name__)
 _FILE_MTIME_METADATA_KEY = "_file_mtime_ns"
 _FILE_SIZE_METADATA_KEY = "_file_size"
+_GRAPH_EDGE_BATCH_SIZE = 1_000
+_GRAPH_REBUILD_DEBOUNCE_SECONDS = 1.0
 
 
 def _git_commit_id(source_id: str) -> str:
@@ -168,6 +174,10 @@ class RecordIndexManager:
             Path(config.indexing.index_path) / "record-sources.json"
         )
         self._source_records: dict[str, list[str]] = self._source_map_store.load()
+        self._graph_rebuilder = DebouncedGraphRebuilder(
+            self._rebuild_graph_snapshot,
+            debounce_seconds=_GRAPH_REBUILD_DEBOUNCE_SECONDS,
+        )
         self._content_sources: dict[str, ContentSource] = {}
         for source in content_sources:
             self.register_content_source(source)
@@ -491,10 +501,18 @@ class RecordIndexManager:
 
     def rebuild_graph(self) -> None:
         self._rebuild_graph()
+        self._graph_rebuilder.flush()
 
     def _rebuild_graph(self) -> None:
+        snapshot: GraphSnapshot = tuple(
+            (doc_id, tuple(keys)) for doc_id, keys in self._source_records.items()
+        )
+        self._graph_rebuilder.request(snapshot)
+
+    def _rebuild_graph_snapshot(self, snapshot: GraphSnapshot) -> None:
+        source_records = dict(snapshot)
         edges: list[GraphEdge] = []
-        for keys in self._source_records.values():
+        for _, keys in snapshot:
             records = tuple(
                 self.storage.hydrate_record(key)
                 for key in keys
@@ -517,18 +535,27 @@ class RecordIndexManager:
                     self._graph_edges_for_document(
                         record,
                         tuple(dict.fromkeys(source_identities)),
+                        source_records,
                     )
                 )
-        if edges:
-            try:
-                self.graph.upsert_edges(edges)
-            except ValueError:
-                logger.debug("Skipping invalid graph edges", exc_info=True)
+                if len(edges) >= _GRAPH_EDGE_BATCH_SIZE:
+                    self._upsert_graph_edges(edges)
+                    edges.clear()
+        self._upsert_graph_edges(edges)
+
+    def _upsert_graph_edges(self, edges: Sequence[GraphEdge]) -> None:
+        if not edges:
+            return
+        try:
+            self.graph.upsert_edges(edges)
+        except ValueError:
+            logger.debug("Skipping invalid graph edges", exc_info=True)
 
     def _graph_edges_for_document(
         self,
         document: Document | Record,
         source_identities: tuple[RecordIdentity, ...],
+        source_records: dict[str, tuple[str, ...]],
     ) -> list[GraphEdge]:
         project_id = (
             document.project_id
@@ -542,10 +569,10 @@ class RecordIndexManager:
         for link in links:
             if not isinstance(link, str):
                 continue
-            target_doc_id = self._resolve_link_doc_id(document, link)
+            target_doc_id = self._resolve_link_doc_id(document, link, source_records)
             if target_doc_id is None:
                 continue
-            target_keys = self._source_records.get(target_doc_id, [])
+            target_keys = source_records.get(target_doc_id, ())
             target_ids.extend(
                 RecordIdentity.from_storage_key(key)
                 for key in target_keys
@@ -557,7 +584,12 @@ class RecordIndexManager:
             if source.workspace_id == project_id
         ]
 
-    def _resolve_link_doc_id(self, document: Document | Record, link: str) -> str | None:
+    def _resolve_link_doc_id(
+        self,
+        document: Document | Record,
+        link: str,
+        source_records: dict[str, tuple[str, ...]],
+    ) -> str | None:
         parsed = urlparse(link)
         if parsed.scheme or parsed.netloc or link.startswith("#"):
             return None
@@ -584,7 +616,7 @@ class RecordIndexManager:
             else:
                 candidates.insert(0, self._doc_id_for_path(str(linked_path.with_suffix(".md"))))
         for candidate in candidates:
-            if candidate in self._source_records:
+            if candidate in source_records:
                 return candidate
         return None
 
@@ -596,6 +628,7 @@ class RecordIndexManager:
             self._state_version += 1
 
     def persist(self) -> None:
+        self._graph_rebuilder.flush()
         self._save_source_map()
 
     def persist_checkpoint(self) -> None:
@@ -624,8 +657,12 @@ class RecordIndexManager:
         self.persist()
 
     def finalize_derived_graph_state(self) -> None:
-        """Compatibility hook; graph edges are written with each record batch."""
-        return
+        """Wait for the latest asynchronous graph rebuild to finish."""
+        self._graph_rebuilder.flush()
+
+    def close(self) -> None:
+        """Stop the graph rebuild worker after processing its latest request."""
+        self._graph_rebuilder.close()
 
     def load(self) -> None:
         self._source_records = self._source_map_store.load()

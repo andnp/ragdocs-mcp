@@ -77,6 +77,8 @@ class ContextIndexingPort(Protocol):
 
     def persist(self) -> None: ...
 
+    def close(self) -> None: ...
+
     def index_document(
         self,
         file_path: str,
@@ -1179,6 +1181,11 @@ class ApplicationContext:
         self._bootstrap_session = None
 
         await self._watcher_lifecycle.stop()
+
+        try:
+            await asyncio.to_thread(self.index_manager.close)
+        except Exception as e:  # noqa: BLE001 -- shutdown boundary; must not crash the process
+            logger.error(f"Failed to stop index manager workers: {e}")
 
         try:
             await asyncio.to_thread(self.index_manager.persist)
