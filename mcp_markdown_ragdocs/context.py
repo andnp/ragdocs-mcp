@@ -6,7 +6,7 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from searchkernel.api import (
     IndexManifest,
@@ -45,10 +45,7 @@ from mcp_markdown_ragdocs.app.bootstrap import (
 )
 from mcp_markdown_ragdocs.app.bootstrap_manifest import ManifestCoordinator
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
-from mcp_markdown_ragdocs.indexing.record_manager import (
-    RecordIndexManager,
-    build_embedding_provider,
-)
+from mcp_markdown_ragdocs.indexing.record_manager import build_embedding_provider
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
@@ -56,6 +53,67 @@ from mcp_markdown_ragdocs.app.search import ApplicationSearchUseCase
 from mcp_markdown_ragdocs.app.services import ApplicationServices, compose_services
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class ContextIndexingPort(Protocol):
+    """Indexing capabilities required by the application context."""
+
+    kernel: Any
+    ingestor: Any
+    @property
+    def vector(self) -> Any: ...
+
+    @property
+    def keyword(self) -> Any: ...
+
+    @property
+    def graph(self) -> Any: ...
+
+    @property
+    def content_sources(self) -> tuple[Any, ...]: ...
+
+    def load(self) -> None: ...
+
+    def persist(self) -> None: ...
+
+    def index_document(
+        self,
+        file_path: str,
+        force: bool = False,
+        *,
+        update_graph: bool = True,
+    ) -> bool: ...
+
+    def index_documents(
+        self,
+        file_paths: list[str],
+        force: bool = False,
+        persist: bool = False,
+    ) -> None: ...
+
+    def index_record(self, record: Record) -> bool: ...
+
+    def remove_document(self, doc_id: str) -> None: ...
+
+    def remove_documents(self, doc_ids: list[str], persist: bool = False) -> None: ...
+
+    def get_document_count(self) -> int: ...
+
+    def is_ready(self) -> bool: ...
+
+    def describe_documents(self) -> list[dict[str, object]]: ...
+
+    def get_content_source(self, source_kind: str) -> Any: ...
+
+    def reconcile_indices(
+        self,
+        discovered_files: list[str],
+        docs_path: Path,
+        documents_roots: list[Path] | None = None,
+    ) -> Any: ...
+
+    def replace_vector_store(self, _vector: Any) -> None: ...
 
 
 def _git_commit_id(source_id: str) -> str:
@@ -66,7 +124,7 @@ def _git_commit_id(source_id: str) -> str:
 @dataclass
 class ApplicationContext:
     config: Config
-    index_manager: RecordIndexManager
+    index_manager: ContextIndexingPort
     orchestrator: CanonicalSearchAdapter
     search_use_case: ApplicationSearchUseCase | None = None
     services: ApplicationServices | None = None

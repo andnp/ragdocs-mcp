@@ -9,7 +9,7 @@ from mcp_markdown_ragdocs.app.composition import (
 )
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.config import GoogleDriveConfig, load_config
-from mcp_markdown_ragdocs.context import ApplicationContext
+from mcp_markdown_ragdocs.context import ApplicationContext, ContextIndexingPort
 
 
 class TestCompositionRootNoGlobalMutation:
@@ -155,3 +155,14 @@ class TestCompositionRootNoGlobalMutation:
         assert components.index_manager.kernel is components.kernel
         assert components.db_manager is components.kernel.backend.db_manager
         assert components.paths.index_path == index_path
+
+    def test_context_index_manager_uses_application_port(self, monkeypatch, tmp_path):
+        """The composed manager satisfies the context-owned indexing capability."""
+        monkeypatch.setenv("SEARCHKERNEL_INDEX_PATH", str(tmp_path / "index"))
+
+        context = ApplicationContext.create(
+            enable_watcher=False,
+            lazy_embeddings=True,
+        )
+
+        assert isinstance(context.index_manager, ContextIndexingPort)
