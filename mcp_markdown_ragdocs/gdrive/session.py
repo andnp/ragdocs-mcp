@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -14,6 +14,25 @@ from mcp_markdown_ragdocs.gdrive.credentials import (
 
 CredentialFactory = Callable[[str, Sequence[str]], Credentials]
 RequestFactory = Callable[[], Request]
+
+# Mirrors gdrive.client.DRIVE_REQUEST_TIMEOUT_SECONDS. Importing it from
+# client.py would create a circular import: client.py imports this module
+# for DriveCredentialSession.
+DRIVE_REQUEST_TIMEOUT_SECONDS = 30
+
+
+class _BoundedRequest(Request):
+    """Request transport that bounds an unbounded OAuth token refresh.
+
+    ``Request.__call__`` defaults ``timeout`` to google-auth's internal
+    120s constant when no caller supplies one, and credential refresh
+    call sites never pass timeout explicitly. Default it here so a
+    stalled refresh cannot park a huey worker thread indefinitely.
+    """
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("timeout", DRIVE_REQUEST_TIMEOUT_SECONDS)
+        return super().__call__(*args, **kwargs)
 
 
 class DriveCredentialSession(Protocol):
@@ -34,7 +53,7 @@ class AuthorizedUserSession:
         *,
         scopes: Sequence[str] = (DEFAULT_GDRIVE_SCOPE,),
         credential_factory: CredentialFactory = Credentials.from_authorized_user_file,
-        request_factory: RequestFactory = Request,
+        request_factory: RequestFactory = _BoundedRequest,
     ) -> None:
         self._credentials_path = validate_gdrive_credentials_path(
             credentials_path,
