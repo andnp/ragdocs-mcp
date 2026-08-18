@@ -43,6 +43,15 @@ class _ChunkResultSource(Protocol):
     metadata: dict[str, Any]
 
 
+class _RecordSource(Protocol):
+    source_id: str
+    title: str
+    body: str
+    created_at: datetime
+    updated_at: datetime
+    metadata: dict[str, Any]
+
+
 @dataclass
 class Chunk:
     chunk_id: str
@@ -179,7 +188,7 @@ class Document:
         )
 
     @classmethod
-    def from_record(cls, record: Record) -> Document:
+    def from_record(cls, record: _RecordSource) -> Document:
         """Construct a Document from a domain Record."""
         # Extract metadata that Document expects
         metadata = dict(record.metadata)
@@ -243,7 +252,7 @@ class CommitResult:
         )
 
     @classmethod
-    def from_record(cls, record: Record, score: float = 0.0) -> CommitResult:
+    def from_record(cls, record: _RecordSource, score: float = 0.0) -> CommitResult:
         """Construct a CommitResult from a domain Record."""
         # Extract git-specific metadata
         metadata = record.metadata
