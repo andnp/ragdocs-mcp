@@ -66,7 +66,12 @@ Rotate credentials every 24 hours and revoke compromised tokens immediately.
         assert "Context: API Guide > Authentication" in rotation_chunk.content
         assert "#" not in rotation_chunk.content.split("\n", 1)[0]
 
-    def test_parent_header_path_uses_shared_context_for_grouped_children(self):
+    def test_header_chunker_preserves_shared_context_without_synthetic_parents(self):
+        """
+        Verify current searchkernel chunking keeps header context on children.
+
+        Searchkernel 1.5.1 no longer emits synthetic parent chunks.
+        """
         config = ChunkingConfig(
             strategy="header_based",
             min_chunk_chars=40,
@@ -91,17 +96,13 @@ Bearer tokens must be rotated every 24 hours. Include scopes and issuer validati
         doc = _make_record("parent_headers", content)
 
         chunks = chunker.chunk_record(doc)
-        parent_chunks = [c for c in chunks if "_parent_" in c.chunk_id]
-        child_chunks = [c for c in chunks if "_parent_" not in c.chunk_id]
-
-        assert len(parent_chunks) == 1
-        assert parent_chunks[0].metadata.get("header_path") == "API Guide"
-        assert "+" not in str(parent_chunks[0].metadata.get("header_path", ""))
-        assert all(
-            "+" not in str(chunk.metadata.get("header_path", ""))
-            for chunk in child_chunks
-        )
-        assert "Authentication Details" in parent_chunks[0].content
+        assert len(chunks) == 2
+        assert all("_parent_" not in chunk.chunk_id for chunk in chunks)
+        assert [chunk.metadata.get("header_path") for chunk in chunks] == [
+            "API Guide > TL;DR",
+            "API Guide > Authentication Details",
+        ]
+        assert all("Context: API Guide" in chunk.content for chunk in chunks)
 
     def test_trailing_short_section_merges_backward_into_previous_chunk(self):
         config = ChunkingConfig(

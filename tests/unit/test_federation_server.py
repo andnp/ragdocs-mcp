@@ -717,12 +717,19 @@ def test_drive_filter_compiler_retains_only_authorized_records():
         )
 
     matches = source_filters[0].matches
-    assert matches(_drive_result(source_id="authorized").record)
+    authorized = _drive_result(
+        source_id="authorized", workspace_id="workspace-a"
+    ).record
+    assert matches(authorized.workspace_id, authorized.metadata)
+    empty = _drive_result(source_id="empty", scope_memberships=()).record
     assert not matches(
-        _drive_result(source_id="empty", scope_memberships=()).record
+        empty.workspace_id,
+        empty.metadata,
     )
+    wrong = _drive_result(source_id="wrong", workspace_id="workspace-b").record
     assert not matches(
-        _drive_result(source_id="wrong", workspace_id="workspace-b").record
+        wrong.workspace_id,
+        wrong.metadata,
     )
 
 

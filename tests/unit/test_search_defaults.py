@@ -1,6 +1,3 @@
-import pytest
-from searchkernel.search.calibration import calibrate_score
-
 from mcp_markdown_ragdocs.app.search import to_record_search_config
 from mcp_markdown_ragdocs.config import SearchConfig
 
@@ -14,11 +11,6 @@ class TestSearchDefaults:
         assert config.abstention_threshold is None
         assert config.semantic_weight == 1.0
         assert config.keyword_weight == 1.0
-
-    def test_calibration_default_midpoint(self):
-        score = calibrate_score(0.035)
-
-        assert score == pytest.approx(0.5, abs=0.01)
 
     def test_abstention_threshold_maps_to_raw_kernel_score_floor(self):
         config = SearchConfig(abstention_threshold=0.025)

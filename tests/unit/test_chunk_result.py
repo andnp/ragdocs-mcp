@@ -107,7 +107,7 @@ def test_chunk_result_to_dict_includes_project_id_when_present():
 def test_chunk_result_to_dict_includes_provenance_when_present():
     provenance = SearchResultProvenance()
     provenance.add_strategy("semantic", rank=1, raw_score=0.91)
-    provenance.project_uplift = 1.2
+    provenance.parent_expanded_from = "parent_headers_chunk_0"
 
     result = ChunkResult(
         chunk_id="test_chunk_1",
@@ -125,7 +125,7 @@ def test_chunk_result_to_dict_includes_provenance_when_present():
         "strategy_details": {
             "semantic": {"rank": 1, "raw_score": 0.91},
         },
-        "adjustments": {"project_uplift": 1.2},
+        "adjustments": {"parent_expanded_from": "parent_headers_chunk_0"},
     }
 
 

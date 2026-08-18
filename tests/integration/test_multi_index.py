@@ -499,6 +499,7 @@ def test_markdown_links_retrieve_indexed_target_chunks(tmp_path):
 
     manager.index_document(str(source))
     manager.index_document(str(target))
+    manager.rebuild_graph()
 
     source_record = manager.prepare_document(str(source)).records[0]
     neighbors = manager.graph.neighbors(source_record.identity)
@@ -519,6 +520,7 @@ def test_root_relative_markdown_links_retrieve_graph_neighbors(tmp_path):
 
     manager.index_document(str(source))
     manager.index_document(str(target))
+    manager.rebuild_graph()
 
     source_record = manager.prepare_document(str(source)).records[0]
     assert manager.graph.neighbors(source_record.identity)
