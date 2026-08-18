@@ -71,7 +71,6 @@ class RuntimePaths:
     """Resolved paths shared by every component in one local runtime."""
 
     index_path: Path
-    fallback_index_path: Path | None
     documents_path: Path
     documents_roots: tuple[Path, ...]
 

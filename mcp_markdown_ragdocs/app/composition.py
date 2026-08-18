@@ -89,10 +89,6 @@ def build_runtime_components(
 
     configured_index_path = resolve_index_path(config)
     index_path = index_path_override or configured_index_path
-    fallback_index_path = None
-    if index_path_override is not None and configured_index_path != index_path:
-        fallback_index_path = configured_index_path
-
     documents_roots = _resolve_documents_roots(
         config,
         detected_project=detected_project,
@@ -126,7 +122,6 @@ def build_runtime_components(
 
     paths = RuntimePaths(
         index_path=index_path,
-        fallback_index_path=fallback_index_path,
         documents_path=documents_path,
         documents_roots=documents_roots,
     )

@@ -23,7 +23,6 @@ class ManifestHost(Protocol):
     config: Config
     index_manager: Any
     index_path: Path
-    fallback_index_path: Path | None
     current_manifest: IndexManifest | None
     _is_virgin_startup: bool
 

@@ -139,7 +139,6 @@ class ApplicationContext:
     )
     git_indexing_enabled: bool = False
     index_path: Path = field(default_factory=lambda: Path(".index_data"))
-    fallback_index_path: Path | None = None
     documents_roots: list[Path] = field(default_factory=list)
     db_manager: Any | None = None
     current_manifest: IndexManifest | None = None
@@ -199,7 +198,6 @@ class ApplicationContext:
             _watcher_lifecycle=components.watcher_lifecycle,
             git_indexing_enabled=components.git_indexing_enabled,
             index_path=components.paths.index_path,
-            fallback_index_path=components.paths.fallback_index_path,
             documents_roots=list(components.paths.documents_roots),
             db_manager=components.db_manager,
             current_manifest=None,
