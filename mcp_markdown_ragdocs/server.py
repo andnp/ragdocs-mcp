@@ -23,8 +23,8 @@ from searchkernel.api import (
 )
 from starlette.responses import JSONResponse
 
-from mcp_markdown_ragdocs.app.search import SearchQuery
 from mcp_markdown_ragdocs.app.search import ApplicationSearchUseCase
+from mcp_markdown_ragdocs.app.search_request import build_search_query, search_top_k
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.context import ApplicationContext
@@ -161,13 +161,13 @@ def create_app():
         )
         if search_use_case is not None:
             execution = await search_use_case.execute(
-                SearchQuery(
-                    query=query,
-                    top_n=top_n,
-                    project_filter=tuple(project_filter or ()),
-                    source_filter=tuple(source_filter or ()),
+                build_search_query(
+                    query,
+                    top_n,
+                    project_filter=project_filter or (),
+                    source_filter=source_filter or (),
                     project_context=project_context,
-                    excluded_files=frozenset(excluded_files or ()),
+                    excluded_files=excluded_files or (),
                     min_score=min_score,
                     similarity_threshold=similarity_threshold,
                     max_chunks_per_doc=max_chunks_per_doc,
@@ -175,9 +175,7 @@ def create_app():
             )
             results = execution.results
         else:
-            top_k = max(20, top_n * 4)
-            if project_filter:
-                top_k = max(top_k, top_n * 10)
+            top_k = search_top_k(top_n, project_filter or ())
             results, _, _ = await orchestrator.query(
                 query,
                 top_k=top_k,

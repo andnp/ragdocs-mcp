@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from searchkernel.api import Record
 
-from mcp_markdown_ragdocs.app.search import SearchQuery
+from mcp_markdown_ragdocs.app.search_request import build_search_query, search_top_k
 from mcp_markdown_ragdocs.coordination.queue import get_huey
 from mcp_markdown_ragdocs.daemon.mcp_requests import (
     build_mcp_tools_payload,
@@ -637,11 +637,11 @@ async def _handle_search_request(
         query_execution_stats: dict[str, object] = {}
         if search_use_case is not None:
             execution = await search_use_case.execute(
-                SearchQuery(
-                    query=query_text,
-                    top_n=top_n,
-                    project_filter=tuple(project_filter),
-                    source_filter=tuple(source_filter),
+                build_search_query(
+                    query_text,
+                    top_n,
+                    project_filter=project_filter,
+                    source_filter=source_filter,
                     project_context=(
                         str(payload.get("project_context"))
                         if payload.get("project_context") is not None
@@ -655,9 +655,7 @@ async def _handle_search_request(
             strategy_stats = execution.strategy_stats
             query_execution_stats = execution.query_execution_stats
         else:
-            top_k = max(20, top_n * 4)
-            if project_filter:
-                top_k = max(top_k, top_n * 10)
+            top_k = search_top_k(top_n, project_filter)
             query_kwargs: dict[str, object] = {
                 "top_k": top_k,
                 "top_n": top_n,
