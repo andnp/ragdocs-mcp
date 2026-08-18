@@ -12,8 +12,6 @@ from searchkernel.indexing.discovery import is_excluded_dir, walk_included_dirs
 import mcp_markdown_ragdocs.indexing.tasks as tasks_mod
 from mcp_markdown_ragdocs.indexing.watcher import (
     MAX_QUEUE_SIZE,
-    RECURSIVE_ROOT_WATCH_RATIO,
-    RECURSIVE_ROOT_WATCH_THRESHOLD,
     FileWatcher,
     _DocumentEventHandler,
 )
@@ -538,91 +536,7 @@ class TestFileWatcherSchedulingMode:
         scheduled_paths = [call.args[1] for call in observer.schedule.call_args_list]
         assert scheduled_paths == [str(path) for path in watched_dirs]
         assert all(call.kwargs["recursive"] is False for call in observer.schedule.call_args_list)
-        assert watcher._using_recursive_root_watches is False
         assert watcher.get_stats().watched_dirs_count == len(watched_dirs)
-
-        await watcher.stop()
-
-    @pytest.mark.asyncio
-    async def test_start_uses_recursive_root_watches_when_directory_fanout_is_large(
-        self, tmp_path, mock_index_manager, caplog
-    ):
-        caplog.set_level("INFO")
-        root_a = tmp_path / "docs-a"
-        root_b = tmp_path / "docs-b"
-        root_a.mkdir()
-        root_b.mkdir()
-        observer = MagicMock()
-
-        extra_dirs_per_root = max(
-            RECURSIVE_ROOT_WATCH_RATIO,
-            (RECURSIVE_ROOT_WATCH_THRESHOLD // 2),
-        )
-        watched_a = [root_a] + [root_a / f"dir-{i}" for i in range(extra_dirs_per_root)]
-        watched_b = [root_b] + [root_b / f"dir-{i}" for i in range(extra_dirs_per_root)]
-
-        watcher = FileWatcher(
-            documents_path=str(root_a),
-            documents_paths=[str(root_a), str(root_b)],
-            index_manager=mock_index_manager,
-        )
-
-        with (
-            patch(
-                "mcp_markdown_ragdocs.indexing.watcher.walk_dirs_with_files",
-                side_effect=[watched_a, watched_b],
-            ),
-            patch("mcp_markdown_ragdocs.indexing.watcher.Observer", return_value=observer),
-        ):
-            watcher.start()
-
-        scheduled_paths = [call.args[1] for call in observer.schedule.call_args_list]
-        assert scheduled_paths == [str(root_a), str(root_b)]
-        assert all(call.kwargs["recursive"] is True for call in observer.schedule.call_args_list)
-        assert watcher._using_recursive_root_watches is True
-        assert watcher.get_stats().watched_dirs_count == 2
-        assert "scheduled recursive root watches" in caplog.text
-
-        await watcher.stop()
-
-    @pytest.mark.asyncio
-    async def test_refresh_watches_adds_only_new_roots_in_recursive_mode(
-        self, tmp_path, mock_index_manager
-    ):
-        root_a = tmp_path / "docs-a"
-        root_b = tmp_path / "docs-b"
-        root_a.mkdir()
-        observer = MagicMock()
-
-        extra_dirs = RECURSIVE_ROOT_WATCH_THRESHOLD
-        watched_a = [root_a] + [root_a / f"dir-{i}" for i in range(extra_dirs)]
-
-        watcher = FileWatcher(
-            documents_path=str(root_a),
-            documents_paths=[str(root_a), str(root_b)],
-            index_manager=mock_index_manager,
-        )
-
-        with (
-            patch("mcp_markdown_ragdocs.indexing.watcher.walk_dirs_with_files", side_effect=[watched_a]),
-            patch("mcp_markdown_ragdocs.indexing.watcher.Observer", return_value=observer),
-        ):
-            watcher.start()
-
-        assert watcher._using_recursive_root_watches is True
-        assert [call.args[1] for call in observer.schedule.call_args_list] == [str(root_a)]
-
-        root_b.mkdir()
-        observer.schedule.reset_mock()
-
-        watcher.refresh_watches()
-
-        observer.schedule.assert_called_once_with(
-            watcher._event_handler,
-            str(root_b),
-            recursive=True,
-        )
-        assert watcher.get_stats().watched_dirs_count == 2
 
         await watcher.stop()
 
