@@ -10,7 +10,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from mcp_markdown_ragdocs.daemon import (
     DaemonMetadata,
@@ -21,10 +22,33 @@ from mcp_markdown_ragdocs.daemon import (
 from mcp_markdown_ragdocs.git.watcher import GitWatcher
 
 if TYPE_CHECKING:
+    from mcp_markdown_ragdocs.config import Config
+    from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
     from searchkernel.api import DatabaseManager
 
 
 logger = logging.getLogger(__name__)
+
+
+class LifecycleContextPort(Protocol):
+    """Application lifecycle operations required by the coordinator."""
+
+    async def start(self, background_index: bool = False) -> None: ...
+
+    async def stop(self) -> None: ...
+
+    async def ensure_ready(self, timeout: float = 60.0) -> None: ...
+
+
+@runtime_checkable
+class GitIndexingContextPort(LifecycleContextPort, Protocol):
+    """Optional context capabilities used to construct the Git watcher."""
+
+    config: Config
+    git_indexing_enabled: bool
+    index_manager: RecordIndexManager
+
+    def discover_git_repositories(self) -> list[Path]: ...
 
 
 class LifecycleState(StrEnum):
@@ -135,7 +159,7 @@ class LeaderElection:
 class LifecycleCoordinator:
     _state: LifecycleState = field(default=LifecycleState.UNINITIALIZED)
     _manage_daemon_metadata: bool = field(default=True, repr=False)
-    _ctx: Any = field(default=None)
+    _ctx: LifecycleContextPort | None = field(default=None)
     _git_watcher: GitWatcher | None = field(default=None, repr=False)
     _emergency_timer: threading.Timer | None = field(default=None, repr=False)
     _shutdown_count: int = field(default=0, repr=False)
@@ -175,7 +199,7 @@ class LifecycleCoordinator:
 
     async def start(
         self,
-        ctx: Any,
+        ctx: LifecycleContextPort,
         *,
         background_index: bool = False,
         db_manager: Any = None,
@@ -205,19 +229,23 @@ class LifecycleCoordinator:
                         "Lifecycle: replica mode (another instance is primary)"
                     )
 
+            git_context = ctx if isinstance(ctx, GitIndexingContextPort) else None
             if (
-                ctx.config.git_indexing.enabled
-                and ctx.config.git_indexing.watch_enabled
+                git_context is not None
+                and git_context.config.git_indexing.enabled
+                and git_context.config.git_indexing.watch_enabled
                 and huey_worker is None
-            ) and ctx.git_indexing_enabled:
-                repos = await asyncio.to_thread(ctx.discover_git_repositories)
+            ) and git_context.git_indexing_enabled:
+                repos = await asyncio.to_thread(
+                    git_context.discover_git_repositories
+                )
 
                 if repos:
                     self._git_watcher = GitWatcher(
                         git_repos=repos,
-                        index_manager=ctx.index_manager,
-                        config=ctx.config,
-                        poll_interval=ctx.config.git_indexing.poll_interval_seconds,
+                        index_manager=git_context.index_manager,
+                        config=git_context.config,
+                        poll_interval=git_context.config.git_indexing.poll_interval_seconds,
                         use_tasks=huey_worker is not None,
                     )
                     self._git_watcher.start()
