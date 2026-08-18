@@ -209,6 +209,40 @@ def test_removing_a_target_document_removes_the_edges_aimed_at_it(
     assert _link_edges(manager) == set()
 
 
+def test_unchanged_documents_are_not_recomputed(
+    tmp_path, local_record_kernel, deterministic_embedding_provider
+):
+    """The rebuild after one edit must touch only that document's neighborhood."""
+    root = tmp_path / "root"
+    root.mkdir()
+    for name in ("source", "target", "spectator"):
+        (root / f"{name}.md").write_text(f"# {name}\n")
+    (root / "source.md").write_text("# source\n\n[go](target.md)\n")
+
+    manager = _manager(
+        tmp_path, local_record_kernel, deterministic_embedding_provider, [root]
+    )
+    manager.index_documents(
+        [str(root / f"{name}.md") for name in ("source", "target", "spectator")],
+        force=True,
+    )
+    manager.persist()
+
+    scopes: list[list[str]] = []
+    recompute = manager._recompute_graph_documents
+
+    def spy(doc_ids, source_records):
+        scopes.append(list(doc_ids))
+        recompute(doc_ids, source_records)
+
+    manager._recompute_graph_documents = spy  # type: ignore[method-assign]
+    (root / "target.md").write_text("# target\n\nedited\n")
+    manager.index_documents([str(root / "target.md")], force=True)
+    manager.persist()
+
+    assert scopes == [["source", "target"]]
+
+
 def test_incremental_maintenance_matches_a_rebuild_from_scratch(
     tmp_path, deterministic_embedding_provider
 ):

@@ -12,6 +12,7 @@ import hashlib
 import logging
 import os
 import re
+import threading
 from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -49,10 +50,7 @@ from mcp_markdown_ragdocs.indexing.markdown_documents import (
     SemanticDocumentWriter,
 )
 from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_graph_store
-from mcp_markdown_ragdocs.indexing.graph_rebuild import (
-    DebouncedGraphRebuilder,
-    GraphSnapshot,
-)
+from mcp_markdown_ragdocs.indexing.graph_rebuild import DebouncedGraphRebuilder
 from mcp_markdown_ragdocs.indexing.record_ports import (
     JsonSourceMapStore,
     DocumentPlanner,
@@ -206,8 +204,13 @@ class RecordIndexManager:
             Path(config.indexing.index_path) / "record-sources.json"
         )
         self._source_records: dict[str, list[str]] = self._source_map_store.load()
+        self._graph_lock = threading.Lock()
+        self._graph_dirty_doc_ids: set[str] = set()
+        self._graph_full_rebuild_pending = True
+        self._graph_link_candidates: dict[str, frozenset[str]] = {}
+        self._graph_link_sources: dict[str, set[str]] = {}
         self._graph_rebuilder = DebouncedGraphRebuilder(
-            self._rebuild_graph_snapshot,
+            self._run_graph_rebuild,
             debounce_seconds=_GRAPH_REBUILD_DEBOUNCE_SECONDS,
         )
         self._content_sources: dict[str, ContentSource] = {}
@@ -389,6 +392,7 @@ class RecordIndexManager:
         old_keys = self._source_records.get(prepared.document.id, [])
         new_keys = await self._document_writer.write(prepared, old_keys)
         self._source_records[prepared.document.id] = list(new_keys)
+        self._mark_graph_dirty(prepared.document.id)
         if update_graph:
             self._rebuild_graph()
         self._state_version += 1
@@ -475,6 +479,8 @@ class RecordIndexManager:
     def _index_gdrive_records(self, records: Sequence[Record]) -> bool:
         try:
             _run_async(self._gdrive_replacement_policy.replace(records))
+            with self._graph_lock:
+                self._graph_full_rebuild_pending = True
             self._rebuild_graph()
             self._state_version += 1
             return True
@@ -529,18 +535,75 @@ class RecordIndexManager:
         return len(updates)
 
     def rebuild_graph(self) -> None:
+        """Recompute every document's link edges, repairing the whole graph."""
+        with self._graph_lock:
+            self._graph_full_rebuild_pending = True
         self._rebuild_graph()
         self._graph_rebuilder.flush()
 
-    def _rebuild_graph(self) -> None:
-        snapshot: GraphSnapshot = tuple(
-            (doc_id, tuple(keys)) for doc_id, keys in self._source_records.items()
-        )
-        self._graph_rebuilder.request(snapshot)
+    def _mark_graph_dirty(self, doc_id: str) -> None:
+        with self._graph_lock:
+            self._graph_dirty_doc_ids.add(doc_id)
 
-    def _rebuild_graph_snapshot(self, snapshot: GraphSnapshot) -> None:
-        source_records = dict(snapshot)
-        self._recompute_graph_documents(sorted(source_records), source_records)
+    def _rebuild_graph(self) -> None:
+        self._graph_rebuilder.request()
+
+    def _run_graph_rebuild(self) -> None:
+        with self._graph_lock:
+            dirty = self._graph_dirty_doc_ids
+            full = self._graph_full_rebuild_pending
+            self._graph_dirty_doc_ids = set()
+            self._graph_full_rebuild_pending = False
+        source_records = {
+            doc_id: tuple(keys)
+            for doc_id, keys in self._source_records.copy().items()
+        }
+        if full:
+            self._graph_link_candidates = {}
+            self._graph_link_sources = {}
+            scope = set(source_records)
+        else:
+            scope = self._graph_rebuild_scope(dirty, source_records)
+            for doc_id in dirty - source_records.keys():
+                self._forget_link_candidates(doc_id)
+        self._recompute_graph_documents(sorted(scope), source_records)
+
+    def _graph_rebuild_scope(
+        self,
+        dirty: set[str],
+        source_records: dict[str, tuple[str, ...]],
+    ) -> set[str]:
+        """Widen the changed documents to every source whose links may move.
+
+        A changed document gets new record keys, so any document linking at it
+        holds edges that no longer point anywhere; a removed document can also
+        hand its links to a lower-precedence candidate.
+        """
+        scope = set(dirty)
+        for doc_id in dirty:
+            scope.update(self._graph_link_sources.get(doc_id, ()))
+        return scope & source_records.keys()
+
+    def _forget_link_candidates(self, doc_id: str) -> None:
+        for target in self._graph_link_candidates.pop(doc_id, ()):
+            sources = self._graph_link_sources.get(target)
+            if sources is None:
+                continue
+            sources.discard(doc_id)
+            if not sources:
+                del self._graph_link_sources[target]
+
+    def _remember_link_candidates(
+        self,
+        doc_id: str,
+        candidates: frozenset[str],
+    ) -> None:
+        self._forget_link_candidates(doc_id)
+        if not candidates:
+            return
+        self._graph_link_candidates[doc_id] = candidates
+        for target in candidates:
+            self._graph_link_sources.setdefault(target, set()).add(doc_id)
 
     def _recompute_graph_documents(
         self,
@@ -570,7 +633,8 @@ class RecordIndexManager:
                 if not records:
                     continue
                 document_sources = _link_source_identities(records)
-                targets = self._link_targets(records[0], source_records)
+                targets, candidates = self._link_targets(records[0], source_records)
+                self._remember_link_candidates(doc_id, candidates)
                 sources.extend(document_sources)
                 edges.extend(
                     GraphEdge(source, target, _LINKS_TO_EDGE_TYPE, 1.0)
@@ -612,23 +676,29 @@ class RecordIndexManager:
         self,
         record: Record,
         source_records: dict[str, tuple[str, ...]],
-    ) -> tuple[RecordIdentity, ...]:
-        """Resolve a document's links once, for every chunk record it owns."""
+    ) -> tuple[tuple[RecordIdentity, ...], frozenset[str]]:
+        """Resolve a document's links once, for every chunk record it owns.
+
+        Returns the target identities plus the doc ids consulted while
+        resolving, which are what a later rebuild must watch for changes.
+        """
         links = record.metadata.get("links", [])
         if not isinstance(links, list):
-            return ()
+            return (), frozenset()
         targets: list[RecordIdentity] = []
+        consulted: set[str] = set()
         for link in links:
             if not isinstance(link, str):
                 continue
             for candidate in self._link_doc_id_candidates(record, link):
+                consulted.add(candidate)
                 if candidate in source_records:
                     targets.extend(
                         RecordIdentity.from_storage_key(key)
                         for key in source_records[candidate]
                     )
                     break
-        return tuple(dict.fromkeys(targets))
+        return tuple(dict.fromkeys(targets)), frozenset(consulted)
 
     def _doc_id_for_markdown(self, path: Path) -> str:
         if path.suffix.lower() != ".md":
@@ -655,6 +725,8 @@ class RecordIndexManager:
         keys = self._source_records.pop(doc_id, [])
         if keys:
             self.storage.delete(keys)
+            self._mark_graph_dirty(doc_id)
+            self._rebuild_graph()
             self._save_source_map()
             self._state_version += 1
 
@@ -685,6 +757,9 @@ class RecordIndexManager:
                 for key in record_keys
             )
         }
+        with self._graph_lock:
+            self._graph_full_rebuild_pending = True
+        self._rebuild_graph()
         self.persist()
 
     def finalize_derived_graph_state(self) -> None:
