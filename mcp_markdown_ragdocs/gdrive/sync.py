@@ -108,7 +108,7 @@ class GoogleDriveSync:
 
         observed_source_ids = self._inventory_source_ids.setdefault(namespace, set())
 
-        if checkpoint.inventory_batch and checkpoint.inventory_page_token is None:
+        if checkpoint.inventory_complete:
             return GDriveSyncProgress(namespace, start_token, 0, 0, True)
 
         resumed_inventory = checkpoint.inventory_page_token is not None
@@ -125,7 +125,12 @@ class GoogleDriveSync:
                 page_token=page_token,
                 page_size=min(self.page_size, self.max_items - items_indexed),
             )
-            records = await self._materialize_files(page.files, scope, known_keys)
+            records, truncated = await self._materialize_files(
+                page.files,
+                scope,
+                known_keys,
+                deadline_exceeded=lambda: self._clock() - started_at >= self.max_seconds,
+            )
             observed_source_ids.update(
                 record.source_id
                 for record in records
@@ -146,7 +151,7 @@ class GoogleDriveSync:
                 for record in records
                 if record.metadata.get("extraction_status") == "indexed"
             }
-            complete_inventory = page.next_page_token is None
+            complete_inventory = not truncated and page.next_page_token is None
             if complete_inventory:
                 if resumed_inventory and self.source.membership_store.is_durable:
                     observed_source_ids = set(
@@ -162,12 +167,22 @@ class GoogleDriveSync:
                 self.source.reconcile_scope(scope, observed_source_ids)
             pages_indexed += 1
             items_indexed += len(records)
+            # A truncated page re-fetches the same page_token next run: the
+            # unprocessed suffix would otherwise be permanently skipped once
+            # the checkpoint advanced past it. Change 1 makes the reprocessed
+            # prefix nearly free (its files match known_change_keys).
+            next_page_token = page_token if truncated else page.next_page_token
             checkpoint = self.checkpoint_store.persist_inventory_batch_after_index(
                 namespace,
-                page_token=page.next_page_token,
+                page_token=next_page_token,
                 batch=checkpoint.inventory_batch + 1,
+                complete=complete_inventory,
             )
-            page_token = page.next_page_token
+            page_token = next_page_token
+            if truncated:
+                return GDriveSyncProgress(
+                    namespace, start_token, pages_indexed, items_indexed, False
+                )
             if page_token is None:
                 self._inventory_source_ids.pop(namespace, None)
                 return GDriveSyncProgress(
@@ -197,7 +212,7 @@ class GoogleDriveSync:
         checkpoint = self.checkpoint_store.load(namespace)
         if checkpoint is None or checkpoint.inventory_start_token is None:
             raise ValueError("Google Drive changes require an inventory checkpoint")
-        if checkpoint.inventory_batch == 0 or checkpoint.inventory_page_token is not None:
+        if not checkpoint.inventory_complete:
             raise ValueError("Google Drive changes require completed inventory")
 
         cursor = checkpoint.changes_token or checkpoint.inventory_start_token
@@ -282,8 +297,10 @@ class GoogleDriveSync:
         files: Sequence[DriveFile],
         scope: DriveScope,
         known_change_keys: Mapping[str, tuple[str, str]] | None = None,
-    ) -> list[Record]:
-        """Materialize files concurrently, preserving input order.
+        *,
+        deadline_exceeded: Callable[[], bool] | None = None,
+    ) -> tuple[list[Record], bool]:
+        """Materialize files concurrently in order, in bounded groups.
 
         Bounded by ``max_concurrent_materializations`` so a large page cannot
         pile up unbounded ``to_thread`` calls against the executor and the
@@ -293,6 +310,12 @@ class GoogleDriveSync:
         is excluded from this pass (safe: nothing durable changes for it, so
         it is simply retried on the next sync) rather than losing the rest
         of the page.
+
+        When ``deadline_exceeded`` is given, dispatch of further groups stops
+        as soon as it reports true between groups, so one page can overrun
+        ``max_seconds`` by at most one group's worth of concurrent Drive
+        requests instead of the whole page. The second return value reports
+        whether this happened.
         """
         semaphore = asyncio.Semaphore(self.max_concurrent_materializations)
 
@@ -308,8 +331,21 @@ class GoogleDriveSync:
                     )
                     return None
 
-        results = await asyncio.gather(*(_one(file) for file in files))
-        return [record for record in results if record is not None]
+        group_size = self.max_concurrent_materializations
+        records: list[Record] = []
+        truncated = False
+        for offset in range(0, len(files), group_size):
+            group = files[offset : offset + group_size]
+            results = await asyncio.gather(*(_one(file) for file in group))
+            records.extend(record for record in results if record is not None)
+            if (
+                deadline_exceeded is not None
+                and offset + group_size < len(files)
+                and deadline_exceeded()
+            ):
+                truncated = True
+                break
+        return records, truncated
 
     def _index_and_persist(self, records: Sequence[Record], kind: str) -> None:
         if not records:

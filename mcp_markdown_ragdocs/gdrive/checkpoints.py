@@ -9,7 +9,7 @@ from pathlib import Path
 
 from searchkernel.api import atomic_write_json
 
-CHECKPOINT_SCHEMA_VERSION = 1
+CHECKPOINT_SCHEMA_VERSION = 2
 GDRIVE_CHECKPOINT_NAMESPACE_PREFIX = "gdrive-v1"
 GDRIVE_CHECKPOINT_FILENAME = "gdrive-sync-checkpoints.json"
 GDRIVE_MATERIALIZATION_CACHE_SCHEMA_VERSION = 1
@@ -37,6 +37,7 @@ class GDriveSyncCheckpoint:
     inventory_start_token: str | None = None
     inventory_page_token: str | None = None
     inventory_batch: int = 0
+    inventory_complete: bool = False
     changes_token: str | None = None
     schema_version: int = CHECKPOINT_SCHEMA_VERSION
 
@@ -65,6 +66,7 @@ class GDriveSyncCheckpoint:
             "inventory_start_token": self.inventory_start_token,
             "inventory_page_token": self.inventory_page_token,
             "inventory_batch": self.inventory_batch,
+            "inventory_complete": self.inventory_complete,
             "changes_token": self.changes_token,
         }
 
@@ -78,11 +80,14 @@ class GDriveSyncCheckpoint:
         inventory_start_token = payload.get("inventory_start_token")
         inventory_page_token = payload.get("inventory_page_token")
         inventory_batch = payload.get("inventory_batch")
+        inventory_complete = payload.get("inventory_complete", False)
         changes_token = payload.get("changes_token")
         if not isinstance(schema_version, int):
             raise ValueError("schema_version must be an integer")
         if not isinstance(inventory_batch, int) or isinstance(inventory_batch, bool):
             raise ValueError("inventory_batch must be a non-negative integer")
+        if not isinstance(inventory_complete, bool):
+            raise ValueError("inventory_complete must be a boolean")
         for field_name, value in (
             ("inventory_start_token", inventory_start_token),
             ("inventory_page_token", inventory_page_token),
@@ -95,6 +100,7 @@ class GDriveSyncCheckpoint:
             inventory_start_token=inventory_start_token,
             inventory_page_token=inventory_page_token,
             inventory_batch=inventory_batch,
+            inventory_complete=inventory_complete,
             changes_token=changes_token,
         )
 
@@ -106,6 +112,7 @@ class GDriveSyncCheckpoint:
             inventory_start_token=start_token,
             inventory_page_token=None,
             inventory_batch=0,
+            inventory_complete=False,
             changes_token=None,
         )
 
@@ -114,8 +121,17 @@ class GDriveSyncCheckpoint:
         *,
         page_token: str | None,
         batch: int,
+        complete: bool = False,
     ) -> "GDriveSyncCheckpoint":
-        """Return progress after an inventory batch has been indexed."""
+        """Return progress after an inventory batch has been indexed.
+
+        ``complete`` must only be true once the full inventory has actually
+        finished. ``page_token`` alone cannot signal this: a page truncated
+        by the ``max_seconds`` deadline re-persists the *same* page_token it
+        was fetched with (so it is re-fetched next run), which for the very
+        first page is ``None`` -- identical to the token left behind by a
+        genuinely finished inventory.
+        """
 
         if self.inventory_start_token is None:
             raise ValueError("inventory must start before an inventory batch is indexed")
@@ -125,6 +141,7 @@ class GDriveSyncCheckpoint:
             self,
             inventory_page_token=page_token,
             inventory_batch=batch,
+            inventory_complete=complete,
         )
 
     def changes_indexed(self, changes_token: str) -> "GDriveSyncCheckpoint":
@@ -187,6 +204,7 @@ class GDriveSyncCheckpointStore:
         *,
         page_token: str | None,
         batch: int,
+        complete: bool = False,
     ) -> GDriveSyncCheckpoint:
         """Persist inventory progress after the caller commits its index mutation."""
 
@@ -194,6 +212,7 @@ class GDriveSyncCheckpointStore:
         checkpoint = current.inventory_batch_indexed(
             page_token=page_token,
             batch=batch,
+            complete=complete,
         )
         self.save(namespace, checkpoint)
         return checkpoint

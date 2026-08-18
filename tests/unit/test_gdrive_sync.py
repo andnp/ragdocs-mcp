@@ -161,12 +161,14 @@ class _CheckpointStore(GDriveSyncCheckpointStore):
         *,
         page_token: str | None,
         batch: int,
+        complete: bool = False,
     ):
         self.events.append("checkpoint")
         return super().persist_inventory_batch_after_index(
             namespace,
             page_token=page_token,
             batch=batch,
+            complete=complete,
         )
 
     def persist_changes_after_index(self, namespace: str, changes_token: str):
