@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -31,12 +31,15 @@ from mcp_markdown_ragdocs.gdrive.records import (
     SOURCE_KIND,
     extraction_profile,
     map_drive_file,
+    processing_fingerprint,
+    remote_fingerprint,
 )
 from mcp_markdown_ragdocs.gdrive.retry import DriveRetryWorkStore
 from mcp_markdown_ragdocs.gdrive.port import GDriveStatePort
 
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
+UNCHANGED_STATUS = "unchanged"
 
 
 class DriveExtractor(Protocol):
@@ -227,7 +230,27 @@ class GoogleDriveContentSource:
     def cursor_for(self, record: Record) -> Cursor:
         return str(record.metadata.get("remote_fingerprint") or record.source_id)
 
-    async def materialize_record(self, file: DriveFile, *, scope: DriveScope | None = None) -> Record:
+    async def materialize_record(
+        self,
+        file: DriveFile,
+        *,
+        scope: DriveScope | None = None,
+        known_change_keys: Mapping[str, tuple[str, str]] | None = None,
+    ) -> Record:
+        """Map one Drive file to a stable, provider-neutral Record.
+
+        ``known_change_keys`` maps ``source_id`` to the (remote_fingerprint,
+        processing_fingerprint) pair last durably indexed for that file. When
+        the file's freshly computed pair matches, the expensive export or
+        download is skipped: the returned record carries
+        ``extraction_status == UNCHANGED_STATUS`` so the caller can reuse the
+        already-indexed record instead of re-indexing this placeholder.
+        Callers that omit ``known_change_keys`` get the previous
+        unconditional-fetch behavior. Shortcuts are excluded from this check:
+        the returned record is keyed by the shortcut target's id, not the
+        shortcut's own id, so a caller cannot safely infer scope membership
+        from a skip signalled at this level.
+        """
         if file.shortcut_target_id and file.mime_type == SHORTCUT_MIME_TYPE:
             try:
                 target = await self.client.get_file_metadata(file.shortcut_target_id)
@@ -248,6 +271,16 @@ class GoogleDriveContentSource:
             return self._status_record(file, scope, "folder")
         if profile is None:
             return self._status_record(file, scope, ExtractionStatus.UNSUPPORTED.value)
+        if known_change_keys is not None and known_change_keys.get(file.id) == (
+            remote_fingerprint(file),
+            processing_fingerprint(
+                file,
+                profile,
+                extractor_version=self.extractor_version,
+                chunker_version=self.chunker_version,
+            ),
+        ):
+            return self._status_record(file, scope, UNCHANGED_STATUS)
         try:
             payload = (
                 await self.client.export_file(file.id, profile.export_mime_type)
@@ -411,4 +444,4 @@ class GoogleDriveContentSource:
         return self.scope_identity(scope) in record.metadata.get("scope_memberships", ())
 
 
-__all__ = ["DriveContentClient", "GoogleDriveContentSource"]
+__all__ = ["DriveContentClient", "GoogleDriveContentSource", "UNCHANGED_STATUS"]
