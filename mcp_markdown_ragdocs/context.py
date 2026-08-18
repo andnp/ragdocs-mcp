@@ -329,9 +329,6 @@ class ApplicationContext:
             self.index_path / "index.manifest.json",
             self.index_path / "index.db",
             self.index_path / "index.db-wal",
-            self.index_path / "vector" / "docstore.json",
-            self.index_path / "vector" / "faiss_index.bin",
-            self.index_path / "graph" / "graph.json",
         ]
         version = 0.0
         for candidate in candidates:
