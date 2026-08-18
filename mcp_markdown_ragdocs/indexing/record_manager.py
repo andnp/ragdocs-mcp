@@ -44,7 +44,6 @@ from mcp_markdown_ragdocs.gdrive.replacement import (
 from mcp_markdown_ragdocs.gdrive.replacement_policy import GDriveReplacementPolicy
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND as GDRIVE_SOURCE_KIND
 from mcp_markdown_ragdocs.gdrive.adapter import GDriveStateRepository
-from mcp_markdown_ragdocs.models import Document
 from mcp_markdown_ragdocs.indexing.markdown_documents import (
     MarkdownDocumentPlanner,
     SemanticDocumentWriter,
@@ -69,6 +68,8 @@ logger = logging.getLogger(__name__)
 _FILE_MTIME_METADATA_KEY = "_file_mtime_ns"
 _FILE_SIZE_METADATA_KEY = "_file_size"
 _GRAPH_EDGE_BATCH_SIZE = 1_000
+_GRAPH_REBUILD_DOCUMENT_BATCH_SIZE = 200
+_LINKS_TO_EDGE_TYPE = "links_to"
 _GRAPH_REBUILD_DEBOUNCE_SECONDS = 1.0
 _DOC_ID_CACHE_SIZE = 200_000
 
@@ -147,6 +148,19 @@ def build_embedding_provider(config: Config, model_name: str):
         auto_pull=config.embedding.auto_pull,
         pull_timeout=config.embedding.pull_timeout_seconds,
     )
+
+
+def _link_source_identities(records: Sequence[Record]) -> tuple[RecordIdentity, ...]:
+    """List the identities a document's outgoing link edges start from."""
+    identities: list[RecordIdentity] = []
+    for record in records:
+        identities.append(record.identity)
+        parent_chunk_id = record.metadata.get("parent_chunk_id")
+        if isinstance(parent_chunk_id, str) and parent_chunk_id:
+            identities.append(
+                RecordIdentity(record.workspace_id, record.source_kind, parent_chunk_id)
+            )
+    return tuple(dict.fromkeys(identities))
 
 
 class RecordIndexManager:
@@ -526,118 +540,94 @@ class RecordIndexManager:
 
     def _rebuild_graph_snapshot(self, snapshot: GraphSnapshot) -> None:
         source_records = dict(snapshot)
-        edges: list[GraphEdge] = []
-        for _, keys in snapshot:
-            records = tuple(
-                self.storage.hydrate_record(key)
-                for key in keys
-            )
-            hydrated = tuple(record for record in records if record is not None)
-            if not hydrated:
-                continue
-            for record in hydrated:
-                source_identities = [record.identity]
-                parent_chunk_id = record.metadata.get("parent_chunk_id")
-                if isinstance(parent_chunk_id, str) and parent_chunk_id:
-                    source_identities.append(
-                        RecordIdentity(
-                            record.workspace_id,
-                            record.source_kind,
-                            parent_chunk_id,
-                        )
-                    )
-                edges.extend(
-                    self._graph_edges_for_document(
-                        record,
-                        tuple(dict.fromkeys(source_identities)),
-                        source_records,
-                    )
+        self._recompute_graph_documents(sorted(source_records), source_records)
+
+    def _recompute_graph_documents(
+        self,
+        doc_ids: Sequence[str],
+        source_records: dict[str, tuple[str, ...]],
+    ) -> None:
+        for start in range(0, len(doc_ids), _GRAPH_REBUILD_DOCUMENT_BATCH_SIZE):
+            batch = doc_ids[start : start + _GRAPH_REBUILD_DOCUMENT_BATCH_SIZE]
+            identities = {
+                doc_id: tuple(
+                    RecordIdentity.from_storage_key(key)
+                    for key in source_records.get(doc_id, ())
                 )
-                if len(edges) >= _GRAPH_EDGE_BATCH_SIZE:
-                    self._upsert_graph_edges(edges)
-                    edges.clear()
-        self._upsert_graph_edges(edges)
+                for doc_id in batch
+            }
+            hydrated = self.storage.hydrate_records(
+                [identity for group in identities.values() for identity in group]
+            )
+            edges: list[GraphEdge] = []
+            for doc_id in batch:
+                records = [
+                    record
+                    for identity in identities[doc_id]
+                    if (record := hydrated.get(identity.storage_key)) is not None
+                ]
+                if not records:
+                    continue
+                document_sources = _link_source_identities(records)
+                targets = self._link_targets(records[0], source_records)
+                edges.extend(
+                    GraphEdge(source, target, _LINKS_TO_EDGE_TYPE, 1.0)
+                    for source in document_sources
+                    for target in targets
+                    if source.storage_key != target.storage_key
+                )
+            self._upsert_graph_edges(edges)
 
     def _upsert_graph_edges(self, edges: Sequence[GraphEdge]) -> None:
-        if not edges:
-            return
-        try:
-            self.graph.upsert_edges(edges)
-        except ValueError:
-            logger.debug("Skipping invalid graph edges", exc_info=True)
+        for start in range(0, len(edges), _GRAPH_EDGE_BATCH_SIZE):
+            batch = edges[start : start + _GRAPH_EDGE_BATCH_SIZE]
+            try:
+                self.graph.upsert_edges(batch)
+            except ValueError:
+                logger.debug("Skipping invalid graph edges", exc_info=True)
 
-    def _graph_edges_for_document(
+    def _link_targets(
         self,
-        document: Document | Record,
-        source_identities: tuple[RecordIdentity, ...],
+        record: Record,
         source_records: dict[str, tuple[str, ...]],
-    ) -> list[GraphEdge]:
-        project_id = (
-            document.project_id
-            if isinstance(document, Document)
-            else document.workspace_id
-        )
-        links = document.links if isinstance(document, Document) else document.metadata.get("links", [])
+    ) -> tuple[RecordIdentity, ...]:
+        """Resolve a document's links once, for every chunk record it owns."""
+        links = record.metadata.get("links", [])
         if not isinstance(links, list):
-            return []
-        target_ids: list[RecordIdentity] = []
+            return ()
+        targets: list[RecordIdentity] = []
         for link in links:
             if not isinstance(link, str):
                 continue
-            target_doc_id = self._resolve_link_doc_id(document, link, source_records)
-            if target_doc_id is None:
-                continue
-            target_keys = source_records.get(target_doc_id, ())
-            target_ids.extend(
-                RecordIdentity.from_storage_key(key)
-                for key in target_keys
-            )
-        return [
-            GraphEdge(source, target, "links_to", 1.0)
-            for source in source_identities
-            for target in target_ids
-            if source.workspace_id == project_id
-        ]
+            for candidate in self._link_doc_id_candidates(record, link):
+                if candidate in source_records:
+                    targets.extend(
+                        RecordIdentity.from_storage_key(key)
+                        for key in source_records[candidate]
+                    )
+                    break
+        return tuple(dict.fromkeys(targets))
 
     def _doc_id_for_markdown(self, path: Path) -> str:
         if path.suffix.lower() != ".md":
             path = path.with_suffix(".md")
         return self._doc_id_for_path(str(path))
 
-    def _resolve_link_doc_id(
-        self,
-        document: Document | Record,
-        link: str,
-        source_records: dict[str, tuple[str, ...]],
-    ) -> str | None:
+    def _link_doc_id_candidates(self, record: Record, link: str) -> Iterator[str]:
+        """Yield the doc ids a Markdown link may name, highest precedence first."""
         parsed = urlparse(link)
         if parsed.scheme or parsed.netloc or link.startswith("#"):
-            return None
+            return
         raw_path = unquote(parsed.path).strip()
         if not raw_path:
-            return None
+            return
         normalized_path = raw_path.lstrip("/")
-        source_path = (
-            Path(document.file_path)
-            if isinstance(document, Document)
-            else Path(str(document.metadata.get("file_path", "")))
-        )
-
-        def candidate_doc_ids() -> Iterator[str]:
-            for root in reversed(self._documents_roots):
-                yield self._doc_id_for_markdown(root / normalized_path)
-            if source_path:
-                yield self._doc_id_for_markdown(source_path.parent / raw_path)
-            yield normalized_path.removesuffix(".md")
-
-        return next(
-            (
-                candidate
-                for candidate in candidate_doc_ids()
-                if candidate in source_records
-            ),
-            None,
-        )
+        for root in reversed(self._documents_roots):
+            yield self._doc_id_for_markdown(root / normalized_path)
+        source_path = Path(str(record.metadata.get("file_path", "")))
+        if source_path:
+            yield self._doc_id_for_markdown(source_path.parent / raw_path)
+        yield normalized_path.removesuffix(".md")
 
     def remove_document(self, doc_id: str) -> None:
         keys = self._source_records.pop(doc_id, [])
