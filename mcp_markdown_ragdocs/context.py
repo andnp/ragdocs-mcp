@@ -325,12 +325,6 @@ class ApplicationContext:
     def _check_and_rebuild_if_needed(self) -> bool:
         return self._get_manifest_coordinator().check_and_rebuild_if_needed()
 
-    def _has_persisted_index_state(self, index_path: Path) -> bool:
-        return self._get_manifest_coordinator().has_persisted_index_state(index_path)
-
-    def _hydrate_index_path_from_fallback(self) -> None:
-        self._get_manifest_coordinator().hydrate_index_path_from_fallback()
-
     def _compute_index_state_version(self) -> float:
         candidates = [
             self.index_path / "bootstrap.checkpoint.json",
