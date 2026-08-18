@@ -12,6 +12,7 @@ from searchkernel.api import truncate_delta
 
 logger = logging.getLogger(__name__)
 COMMIT_BATCH_SIZE = 32
+MAX_FILES_CHANGED = 50
 _BULK_RECORD_SEPARATOR = "\x1e"
 _BULK_FIELD_SEPARATOR = "\x1f"
 _BULK_METADATA_SEPARATOR = "\x00"
@@ -27,6 +28,12 @@ class CommitData:
     message: str
     files_changed: list[str]
     delta_truncated: str
+    files_changed_total: int = 0
+
+
+def _cap_files_changed(files: list[str]) -> tuple[list[str], int]:
+    """Cap a raw file list, preserving the true count separately."""
+    return files[:MAX_FILES_CHANGED], len(files)
 
 
 def parse_commits(
@@ -131,6 +138,7 @@ def _parse_commit_batch(
             for line in files_text.splitlines()
             if line.startswith(":") and "\t" in line
         ]
+        capped_files, files_total = _cap_files_changed(files_changed)
         parsed[hash_val] = CommitData(
             hash=hash_val,
             timestamp=timestamp,
@@ -138,8 +146,9 @@ def _parse_commit_batch(
             committer=committer.strip(),
             title=title.strip(),
             message=_clean_message(message_text),
-            files_changed=files_changed,
+            files_changed=capped_files,
             delta_truncated=truncate_delta(delta, max_delta_lines),
+            files_changed_total=files_total,
         )
 
     if set(parsed) != set(commit_hashes):
@@ -217,10 +226,12 @@ def parse_commit(
             message="",
             files_changed=[],
             delta_truncated="",
+            files_changed_total=0,
         )
 
     # Get changed files
     files_changed = _get_changed_files(repo_path, commit_hash)
+    capped_files, files_total = _cap_files_changed(files_changed)
 
     # Get delta
     delta = _get_delta(repo_path, commit_hash)
@@ -233,8 +244,9 @@ def parse_commit(
         committer=committer,
         title=title,
         message=message,
-        files_changed=files_changed,
+        files_changed=capped_files,
         delta_truncated=delta_truncated,
+        files_changed_total=files_total,
     )
 
 
