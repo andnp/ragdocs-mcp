@@ -56,6 +56,68 @@ def _create_commit(
     return result.stdout.strip()
 
 
+def _create_commit_with_files(repo_path: Path, file_count: int, message: str) -> str:
+    """Create `file_count` files in a single commit, return commit hash."""
+    for index in range(file_count):
+        (repo_path / f"file_{index}.txt").write_text(str(index))
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def test_parse_commit_caps_files_changed_over_limit(tmp_path: Path):
+    """A commit touching more files than the cap is truncated, total preserved."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    _init_git_repo(repo_path)
+    _create_commit(repo_path, "initial.txt", "initial", "Initial commit")
+
+    file_count = commit_parser.MAX_FILES_CHANGED + 10
+    commit_hash = _create_commit_with_files(repo_path, file_count, "Add many files")
+    git_dir = repo_path / ".git"
+
+    commit_data = parse_commit(git_dir, commit_hash)
+    bulk_commit_data = parse_commits(git_dir, [commit_hash])[0]
+
+    assert len(commit_data.files_changed) == commit_parser.MAX_FILES_CHANGED
+    assert commit_data.files_changed_total == file_count
+    assert len(bulk_commit_data.files_changed) == commit_parser.MAX_FILES_CHANGED
+    assert bulk_commit_data.files_changed_total == file_count
+
+
+def test_parse_commit_files_changed_under_limit_unchanged(tmp_path: Path):
+    """A commit under the cap keeps its full file list and matching total."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    _init_git_repo(repo_path)
+    _create_commit(repo_path, "initial.txt", "initial", "Initial commit")
+
+    file_count = commit_parser.MAX_FILES_CHANGED - 10
+    commit_hash = _create_commit_with_files(repo_path, file_count, "Add a few files")
+    git_dir = repo_path / ".git"
+
+    commit_data = parse_commit(git_dir, commit_hash)
+    bulk_commit_data = parse_commits(git_dir, [commit_hash])[0]
+
+    assert len(commit_data.files_changed) == file_count
+    assert commit_data.files_changed_total == file_count
+    assert len(bulk_commit_data.files_changed) == file_count
+    assert bulk_commit_data.files_changed_total == file_count
+
+
 def test_parse_standard_commit():
     """Test parsing a standard commit."""
     with tempfile.TemporaryDirectory() as tmpdir:
