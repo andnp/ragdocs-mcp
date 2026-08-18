@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import signal
+import sys
 from typing import Any, cast
 from pathlib import Path
 
@@ -314,6 +315,70 @@ def test_worker_process_health_rejects_stale_or_mismatched_status(
         lambda: 401.0,
     )
     assert worker.is_healthy() is False
+
+
+def _patch_worker_start_for_real_spawn(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.worker.process._resolve_daemon_python",
+        lambda: Path(sys.executable),
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.worker.process.current_process_start_time_ticks",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.worker.process._terminate_runtime_worker_processes",
+        lambda _runtime_paths: None,
+    )
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process.WORKER_STARTUP_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process.time.sleep", lambda _: None)
+
+
+def test_worker_process_captures_subprocess_stderr(monkeypatch, tmp_path: Path):
+    _patch_worker_start_for_real_spawn(monkeypatch)
+    real_popen = subprocess.Popen
+
+    def _fake_popen(_command: list[str], **kwargs: Any):
+        script = "import sys; sys.stderr.write('worker-crashed-here\\n')"
+        return real_popen([sys.executable, "-c", script], **kwargs)
+
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process.subprocess.Popen", _fake_popen)
+
+    worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
+    worker.start()
+    assert worker._process is not None
+    worker._process.wait(timeout=5.0)
+    worker.stop(timeout=2.0)
+
+    output = (tmp_path / "worker.subprocess.log").read_text(encoding="utf-8")
+    assert "worker-crashed-here" in output
+
+
+def test_worker_process_output_survives_restart(monkeypatch, tmp_path: Path):
+    _patch_worker_start_for_real_spawn(monkeypatch)
+    real_popen = subprocess.Popen
+    run_count = {"n": 0}
+
+    def _fake_popen(_command: list[str], **kwargs: Any):
+        run_count["n"] += 1
+        script = f"import sys; sys.stderr.write('run-{run_count['n']}-output\\n')"
+        return real_popen([sys.executable, "-c", script], **kwargs)
+
+    monkeypatch.setattr("mcp_markdown_ragdocs.worker.process.subprocess.Popen", _fake_popen)
+
+    worker = HueyWorkerProcess(runtime_paths=_paths(tmp_path))
+    worker.start()
+    assert worker._process is not None
+    worker._process.wait(timeout=5.0)
+
+    worker.restart(timeout=2.0)
+    assert worker._process is not None
+    worker._process.wait(timeout=5.0)
+    worker.stop(timeout=2.0)
+
+    output = (tmp_path / "worker.subprocess.log").read_text(encoding="utf-8")
+    assert "run-1-output" in output
+    assert "run-2-output" in output
 
 
 def test_worker_process_argument_helpers_match_exact_sequences(tmp_path: Path):
