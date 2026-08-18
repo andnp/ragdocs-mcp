@@ -587,6 +587,11 @@ class RecordIndexManager:
             if source.workspace_id == project_id
         ]
 
+    def _doc_id_for_markdown(self, path: Path) -> str:
+        if path.suffix.lower() != ".md":
+            path = path.with_suffix(".md")
+        return self._doc_id_for_path(str(path))
+
     def _resolve_link_doc_id(
         self,
         document: Document | Record,
@@ -607,17 +612,9 @@ class RecordIndexManager:
         )
         candidates = [normalized_path.removesuffix(".md")]
         if source_path:
-            linked_path = source_path.parent / raw_path
-            if linked_path.suffix.lower() == ".md":
-                candidates.insert(0, self._doc_id_for_path(str(linked_path)))
-            else:
-                candidates.insert(0, self._doc_id_for_path(str(linked_path.with_suffix(".md"))))
+            candidates.insert(0, self._doc_id_for_markdown(source_path.parent / raw_path))
         for root in self._documents_roots:
-            linked_path = root / normalized_path
-            if linked_path.suffix.lower() == ".md":
-                candidates.insert(0, self._doc_id_for_path(str(linked_path)))
-            else:
-                candidates.insert(0, self._doc_id_for_path(str(linked_path.with_suffix(".md"))))
+            candidates.insert(0, self._doc_id_for_markdown(root / normalized_path))
         for candidate in candidates:
             if candidate in source_records:
                 return candidate
