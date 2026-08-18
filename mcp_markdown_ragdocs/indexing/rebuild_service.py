@@ -146,6 +146,7 @@ def _rebuild_identity(
     *,
     config: Config,
     index_manager,
+    runtime_root: Path,
     scope: RebuildScope,
     git_targets: dict[str, str],
 ) -> dict[str, object]:
@@ -154,7 +155,7 @@ def _rebuild_identity(
     return {
         "project": scope.project,
         "documents_roots": [str(root.resolve()) for root in scope.documents_roots],
-        "index_path": str(Path(indexing.index_path).expanduser().resolve()),
+        "index_path": str(runtime_root.expanduser().resolve()),
         "config": {
             "include": list(indexing.include),
             "exclude": list(indexing.exclude),
@@ -167,11 +168,7 @@ def _rebuild_identity(
                 "parent_chunk_min_chars": chunking.parent_chunk_min_chars,
                 "parent_chunk_max_chars": chunking.parent_chunk_max_chars,
             },
-            "embedding_model": getattr(
-                config.llm,
-                "resolved_embedding_model",
-                getattr(config.llm, "embedding_model", None),
-            ),
+            "embedding_model": index_manager.embedding_provider.model_name,
             "store_backend": getattr(config.store, "backend", None),
         },
         "encoder": _encoder_identity(index_manager),
@@ -821,6 +818,7 @@ def _prepare_rebuild(
     identity = _rebuild_identity(
         config=config,
         index_manager=index_manager,
+        runtime_root=runtime_root,
         scope=scope,
         git_targets=git_targets,
     )
@@ -858,7 +856,7 @@ def _prepare_rebuild(
         _save_rebuild_checkpoint(runtime_root, checkpoint)
         if scope.is_global:
             index_manager.clear_documents()
-            manifest_path = Path(config.indexing.index_path) / "index.manifest.json"
+            manifest_path = runtime_root / "index.manifest.json"
             manifest_path.unlink(missing_ok=True)
         else:
             existing_doc_ids = _find_scope_document_ids(
@@ -870,9 +868,7 @@ def _prepare_rebuild(
                 index_manager.remove_documents(existing_doc_ids, persist=False)
                 removed_documents = len(existing_doc_ids)
                 index_manager.persist_checkpoint()
-        (Path(config.indexing.index_path) / "bootstrap.checkpoint.json").unlink(
-            missing_ok=True
-        )
+        (runtime_root / "bootstrap.checkpoint.json").unlink(missing_ok=True)
 
     total_files = len(files_to_index)
     return _RebuildPreparation(

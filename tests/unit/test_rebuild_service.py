@@ -61,6 +61,7 @@ class _RebuildManager:
         self.persist_checkpoint_calls = 0
         self.fail_document_batch = fail_document_batch
         self._encoder_fingerprint = None
+        self.embedding_provider = SimpleNamespace(model_name="test-embedding")
         self._failed_files: list[dict[str, str]] = []
         self.indexed_records: list[Record] = []
         self.ingestor = _FakeIngestor(self)
@@ -362,6 +363,42 @@ def test_run_rebuild_skips_completed_stable_batches(tmp_path: Path) -> None:
     assert resumed.clear_calls == 0
     assert resumed.indexed_batches == []
     assert result["indexed_files"] == 2
+
+
+def test_run_rebuild_reuses_checkpoint_across_configured_path_changes(
+    tmp_path: Path,
+) -> None:
+    """
+    Given a daemon-owned runtime with a changed raw config path.
+    When the same rebuild is resumed.
+    Then completed work remains reusable because runtime identity is stable.
+    """
+    config = _rebuild_config(tmp_path)
+    documents_root = Path(config.indexing.documents_path)
+    (documents_root / "one.md").write_text("one", encoding="utf-8")
+    runtime_root = tmp_path / "runtime-index"
+    config.indexing.index_path = str(tmp_path / "legacy-index")
+
+    first = _RebuildManager()
+    assert _run_rebuild(
+        tmp_path=runtime_root,
+        config=config,
+        manager=first,
+        request_id="request-1",
+    )["status"] == "succeeded"
+
+    config.indexing.index_path = str(tmp_path / "new-configured-index")
+    resumed = _RebuildManager()
+    result = _run_rebuild(
+        tmp_path=runtime_root,
+        config=config,
+        manager=resumed,
+        request_id="request-1",
+    )
+
+    assert result["status"] == "succeeded"
+    assert resumed.clear_calls == 0
+    assert resumed.indexed_batches == []
 
 
 def test_run_rebuild_fresh_request_resets_completed_corpus(tmp_path: Path) -> None:
