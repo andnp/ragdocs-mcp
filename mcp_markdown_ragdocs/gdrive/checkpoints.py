@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
@@ -11,6 +12,8 @@ from searchkernel.api import atomic_write_json
 CHECKPOINT_SCHEMA_VERSION = 1
 GDRIVE_CHECKPOINT_NAMESPACE_PREFIX = "gdrive-v1"
 GDRIVE_CHECKPOINT_FILENAME = "gdrive-sync-checkpoints.json"
+GDRIVE_MATERIALIZATION_CACHE_SCHEMA_VERSION = 1
+GDRIVE_MATERIALIZATION_CACHE_FILENAME = "gdrive-materialization-cache.json"
 
 
 def checkpoint_namespace(scope_generation: str) -> str:
@@ -234,10 +237,76 @@ def _validate_namespace(namespace: str) -> None:
         raise ValueError(f"invalid Google Drive checkpoint namespace: {namespace!r}")
 
 
+class GDriveMaterializationCache:
+    """Durable per-file change keys used to skip re-fetching unchanged content.
+
+    Keyed by (namespace, source_id), each entry is the pair of fingerprints
+    (``remote_fingerprint``, ``processing_fingerprint``) that produced the
+    last successfully indexed record for that file. A cache hit only means
+    "safe to skip the download"; callers must never treat a miss as anything
+    but "fetch it".
+    """
+
+    def __init__(self, index_root: Path) -> None:
+        self.path = Path(index_root) / GDRIVE_MATERIALIZATION_CACHE_FILENAME
+
+    def load(self, namespace: str) -> dict[str, tuple[str, str]]:
+        """Return the durable change keys known for one namespace."""
+
+        _validate_namespace(namespace)
+        raw = self._read().get(namespace)
+        result: dict[str, tuple[str, str]] = {}
+        if not isinstance(raw, dict):
+            return result
+        for source_id, entry in raw.items():
+            if (
+                isinstance(entry, list)
+                and len(entry) == 2
+                and all(isinstance(part, str) for part in entry)
+            ):
+                result[str(source_id)] = (entry[0], entry[1])
+        return result
+
+    def commit(self, namespace: str, updates: Mapping[str, tuple[str, str]]) -> None:
+        """Durably merge freshly observed change keys into one namespace."""
+
+        if not updates:
+            return
+        _validate_namespace(namespace)
+        payload = self._read()
+        existing = payload.get(namespace)
+        namespace_entries: dict[str, object] = dict(existing) if isinstance(existing, dict) else {}
+        for source_id, key in updates.items():
+            namespace_entries[source_id] = list(key)
+        payload[namespace] = namespace_entries
+        atomic_write_json(
+            self.path,
+            {
+                "schema_version": GDRIVE_MATERIALIZATION_CACHE_SCHEMA_VERSION,
+                "cache": payload,
+            },
+        )
+
+    def _read(self) -> dict[str, object]:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return {}
+        if (
+            not isinstance(raw, dict)
+            or raw.get("schema_version") != GDRIVE_MATERIALIZATION_CACHE_SCHEMA_VERSION
+        ):
+            return {}
+        cache = raw.get("cache")
+        return cache if isinstance(cache, dict) else {}
+
+
 __all__ = [
     "CHECKPOINT_SCHEMA_VERSION",
     "GDRIVE_CHECKPOINT_FILENAME",
     "GDRIVE_CHECKPOINT_NAMESPACE_PREFIX",
+    "GDRIVE_MATERIALIZATION_CACHE_FILENAME",
+    "GDriveMaterializationCache",
     "GDriveSyncCheckpoint",
     "GDriveSyncCheckpointStore",
     "checkpoint_namespace",
