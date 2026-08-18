@@ -13,6 +13,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Protocol
 
 ACTIVE_LEASE = "active"
 COMPLETED_LEASE = "completed"
@@ -36,8 +37,49 @@ class TaskLease:
     attempt: int
 
 
-class TaskLeaseStore:
-    """Stores task ownership in the same SQLite database as Huey."""
+class TaskLeasePort(Protocol):
+    """Application capabilities required for durable task leases."""
+
+    def claim(
+        self,
+        task_id: str,
+        *,
+        task_name: str | None,
+        owner_token: str,
+        payload: bytes,
+        now: float | None = None,
+    ) -> bool: ...
+
+    def heartbeat(
+        self,
+        task_id: str,
+        *,
+        owner_token: str,
+        now: float | None = None,
+    ) -> bool: ...
+
+    def complete(
+        self,
+        task_id: str,
+        *,
+        owner_token: str,
+        now: float | None = None,
+    ) -> bool: ...
+
+    def fail(
+        self,
+        task_id: str,
+        *,
+        owner_token: str,
+        error: str,
+        now: float | None = None,
+    ) -> bool: ...
+
+    def get(self, task_id: str) -> TaskLease | None: ...
+
+
+class TaskLeaseStore(TaskLeasePort):
+    """SQLite adapter for the application task lease port."""
 
     def __init__(
         self,

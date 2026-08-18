@@ -9,7 +9,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from mcp_markdown_ragdocs.coordination.task_leases import (
     DEFAULT_LEASE_TIMEOUT_SECONDS,
@@ -40,8 +40,56 @@ class WorkIntent:
     error: str | None
 
 
-class WorkIntentStore:
-    """SQLite-backed source of truth for producer work intents."""
+class WorkIntentPort(Protocol):
+    """Application capabilities required for durable work intents."""
+
+    def submit(
+        self,
+        operation: str,
+        canonical_key: str,
+        payload: dict[str, Any],
+        *,
+        force_reopen: bool = False,
+        now: float | None = None,
+    ) -> WorkIntent: ...
+
+    def claim(
+        self,
+        intent_id: str,
+        *,
+        now: float | None = None,
+    ) -> tuple[WorkIntent, str] | None: ...
+
+    def succeed(
+        self,
+        intent_id: str,
+        claim_token: str,
+        *,
+        now: float | None = None,
+    ) -> bool: ...
+
+    def fail(
+        self,
+        intent_id: str,
+        claim_token: str,
+        error: str,
+        *,
+        now: float | None = None,
+    ) -> bool: ...
+
+    def release(
+        self,
+        intent_id: str,
+        claim_token: str,
+        *,
+        now: float | None = None,
+    ) -> bool: ...
+
+    def get(self, intent_id: str) -> WorkIntent | None: ...
+
+
+class WorkIntentStore(WorkIntentPort):
+    """SQLite adapter for the application work intent port."""
 
     def __init__(
         self,
