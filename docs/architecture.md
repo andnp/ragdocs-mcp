@@ -130,6 +130,15 @@ The runtime-facing ports are deliberately small and structural:
 | daemon transport protocols | `daemon/transport.py` | Move request payloads across local IPC |
 | router context protocols | `daemon/request_router.py` | Supply query, queue, and admin dependencies |
 
+Lifecycle and task coordination ports are also enforced at their owned
+boundary: `ContextIndexingPort`, `LifecycleContextPort`,
+`GitIndexingContextPort`, `TaskQueuePort`, `TaskLeasePort`, and
+`WorkIntentPort` remain `Protocol` definitions. Task registration modules
+consume those ports and must not import or construct the concrete SQLite
+`TaskLeaseStore` or `WorkIntentStore`; the AST guard in
+`tests/unit/test_architecture_enforcement.py` keeps SQLite composition in the
+application roots.
+
 `PipelineSearchBoundary` is the compatibility adapter from the installed
 searchkernel pipeline to `SearchKernelBoundary`. `CanonicalSearchAdapter`
 retains the historical `query()` tuple for in-repo callers, but delegates to

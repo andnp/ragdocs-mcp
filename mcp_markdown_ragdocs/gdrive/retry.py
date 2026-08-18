@@ -5,10 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from mcp_markdown_ragdocs.coordination.work_intents import (
-    WorkIntent,
-    WorkIntentStore,
-)
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntent, WorkIntentPort
 from mcp_markdown_ragdocs.gdrive.errors import classify_provider_error
 
 DRIVE_RETRY_OPERATION = "gdrive_retry"
@@ -32,7 +29,7 @@ class DriveRetryWork:
 class DriveRetryWorkStore:
     """Adapt generic work intents to Drive retry semantics."""
 
-    def __init__(self, intents: WorkIntentStore) -> None:
+    def __init__(self, intents: WorkIntentPort) -> None:
         self._intents = intents
 
     def schedule(

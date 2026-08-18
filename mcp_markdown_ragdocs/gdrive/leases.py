@@ -10,7 +10,7 @@ from mcp_markdown_ragdocs.coordination.task_leases import (
     ACTIVE_LEASE,
     DEFAULT_LEASE_TIMEOUT_SECONDS,
     TaskLease,
-    TaskLeaseStore,
+    TaskLeasePort,
 )
 from mcp_markdown_ragdocs.gdrive.models import DriveScope
 
@@ -30,11 +30,14 @@ class DriveScopeLease:
 class DriveScopeLeaseStore:
     """Adapt task leases to the one-owner-per-Drive-scope contract."""
 
-    def __init__(self, leases: TaskLeaseStore) -> None:
+    def __init__(
+        self,
+        leases: TaskLeasePort,
+        *,
+        timeout_seconds: float = DEFAULT_LEASE_TIMEOUT_SECONDS,
+    ) -> None:
         self._leases = leases
-        self._timeout_seconds = float(
-            getattr(leases, "_timeout_seconds", DEFAULT_LEASE_TIMEOUT_SECONDS)
-        )
+        self._timeout_seconds = timeout_seconds
 
     def claim(
         self,

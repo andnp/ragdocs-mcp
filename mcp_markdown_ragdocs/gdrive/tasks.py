@@ -15,8 +15,8 @@ from uuid import uuid4
 from huey import Huey
 from searchkernel.api import ContentSource, Record
 
-from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
-from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeasePort
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentPort
 from mcp_markdown_ragdocs.gdrive.backfill import (
     GDriveBackfillCheckpointStore,
     GoogleDriveBackfill,
@@ -76,7 +76,7 @@ class GDriveTaskRuntime:
     manager: GDriveTaskManager
     source: GoogleDriveContentSource
     sync: GoogleDriveSync
-    intents: WorkIntentStore
+    intents: WorkIntentPort
     retry: DriveRetryWorkStore
     backfill: GoogleDriveBackfill
     leases: DriveScopeLeaseStore
@@ -133,7 +133,8 @@ class GDriveLifecycleScheduler:
 
 def build_gdrive_task_runtime(
     manager: object,
-    huey: Huey,
+    task_lease_store: TaskLeasePort,
+    work_intent_store: WorkIntentPort,
 ) -> GDriveTaskRuntime | None:
     """Compose Drive lifecycle services when the logical source is enabled."""
     if not isinstance(manager, GDriveTaskManager):
@@ -148,11 +149,7 @@ def build_gdrive_task_runtime(
     config = manager._config
     drive_config = config.gdrive
     index_path = Path(manager.index_path)
-    storage = huey.storage
-    if not isinstance(storage, _FileHueyStorage):
-        return None
-    queue_path = Path(storage.filename)
-    intents = WorkIntentStore(queue_path)
+    intents = work_intent_store
     retry = DriveRetryWorkStore(intents)
     source.retry_work_store = retry
     sync = GoogleDriveSync(
@@ -177,7 +174,7 @@ def build_gdrive_task_runtime(
         max_pages=drive_config.max_pages,
         max_seconds=drive_config.max_seconds,
     )
-    leases = DriveScopeLeaseStore(TaskLeaseStore(queue_path))
+    leases = DriveScopeLeaseStore(task_lease_store)
     watch = GoogleDriveWatch(
         source,
         GDriveWatchStateStore(index_path),

@@ -15,7 +15,10 @@ def _scopes() -> tuple[DriveScope, DriveScope]:
 
 
 def _store(tmp_path: Path) -> DriveScopeLeaseStore:
-    return DriveScopeLeaseStore(TaskLeaseStore(tmp_path / "queue.db", timeout_seconds=10))
+    return DriveScopeLeaseStore(
+        TaskLeaseStore(tmp_path / "queue.db", timeout_seconds=10),
+        timeout_seconds=10,
+    )
 
 
 def test_scope_leases_use_distinct_stable_tasks(tmp_path: Path) -> None:
