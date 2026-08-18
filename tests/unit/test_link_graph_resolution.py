@@ -1,7 +1,10 @@
 """Link-to-document resolution behind the ``links_to`` graph edges."""
 
+import os
+
 from searchkernel.domain import RecordIdentity
 
+from mcp_markdown_ragdocs.indexing import record_manager
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
 from tests.conftest import make_test_config
 
@@ -83,3 +86,81 @@ def test_link_present_in_several_roots_resolves_to_the_last_root(
     manager.persist()
 
     assert _linked_doc_ids(manager, "root_a/source") == {"root_b/notes/target"}
+
+
+def test_doc_id_for_path_is_memoized(
+    monkeypatch, tmp_path, local_record_kernel, deterministic_embedding_provider
+):
+    """The cache must skip recomputation for a path+roots pair already seen."""
+    root = tmp_path / "root"
+    root.mkdir()
+    doc = root / "doc.md"
+    doc.write_text("# Doc\n")
+    manager = _manager(
+        tmp_path, local_record_kernel, deterministic_embedding_provider, [root]
+    )
+
+    calls: list[object] = []
+    original = record_manager.compute_doc_id
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(record_manager, "compute_doc_id", spy)
+
+    first = manager._doc_id_for_path(str(doc))
+    second = manager._doc_id_for_path(str(doc))
+
+    assert first == second == "doc"
+    assert len(calls) == 1
+
+
+def test_doc_id_for_path_does_not_leak_across_manager_roots(
+    tmp_path, local_record_kernel, deterministic_embedding_provider
+):
+    """Two instances configured with different roots must not share a cached
+    result for the same path string, even though the cache is module-level."""
+    outer_root = tmp_path
+    inner_root = tmp_path / "nested"
+    inner_root.mkdir()
+    doc = inner_root / "doc.md"
+    doc.write_text("# Doc\n")
+
+    manager_inner = _manager(
+        tmp_path, local_record_kernel, deterministic_embedding_provider, [inner_root]
+    )
+    manager_outer = _manager(
+        tmp_path, local_record_kernel, deterministic_embedding_provider, [outer_root]
+    )
+
+    assert manager_inner._doc_id_for_path(str(doc)) == "doc"
+    assert manager_outer._doc_id_for_path(str(doc)) == "nested/doc"
+
+
+def test_single_root_doc_id_is_stable_across_path_forms(
+    tmp_path, local_record_kernel, deterministic_embedding_provider
+):
+    """A single-root manager must canonicalize the path before computing the
+    doc id: absolute, dotdot-laden, and relative spellings of the same file
+    must all resolve to the same doc id."""
+    root = tmp_path / "root"
+    (root / "sub").mkdir(parents=True)
+    doc = root / "sub" / "note.md"
+    doc.write_text("# Note\n")
+
+    manager = _manager(
+        tmp_path, local_record_kernel, deterministic_embedding_provider, [root]
+    )
+
+    absolute_path = str(doc)
+    dotdot_path = str(root / "sub" / ".." / "sub" / "note.md")
+    relative_path = os.path.relpath(doc, os.getcwd())
+
+    doc_id_absolute = manager._doc_id_for_path(absolute_path)
+    doc_id_dotdot = manager._doc_id_for_path(dotdot_path)
+    doc_id_relative = manager._doc_id_for_path(relative_path)
+
+    assert doc_id_absolute == "sub/note"
+    assert doc_id_dotdot == doc_id_absolute
+    assert doc_id_relative == doc_id_absolute
