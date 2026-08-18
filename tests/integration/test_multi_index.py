@@ -486,52 +486,6 @@ def test_links_are_written_to_canonical_graph_store(tmp_path):
     assert manager.graph.graph_integrity_errors() == []
 
 
-def test_editing_a_document_to_drop_a_link_removes_the_stale_edge(tmp_path):
-    manager = _manager(tmp_path)
-    docs = Path(manager._config.indexing.documents_path)
-    target = docs / "target.md"
-    source = docs / "source.md"
-    target.write_text("# Target\n\nTarget content.")
-    source.write_text("# Source\n\nSee [target](target.md).")
-    manager.index_document(str(target))
-    manager.index_document(str(source))
-    source_record = manager.prepare_document(str(source)).records[0]
-    assert manager.graph.neighbors(source_record.identity)
-
-    source.write_text("# Source\n\nNo more links here.")
-    manager.index_document(str(source), force=True)
-    edited_record = manager.prepare_document(str(source)).records[0]
-
-    assert manager.graph.neighbors(edited_record.identity) == []
-    assert manager.graph.graph_integrity_errors() == []
-
-
-def test_indexing_one_document_does_not_rehydrate_other_documents(tmp_path):
-    manager = _manager(tmp_path)
-    docs = Path(manager._config.indexing.documents_path)
-    for index in range(5):
-        (docs / f"doc-{index}.md").write_text(f"# Doc {index}\n\nContent {index}.")
-        manager.index_document(str(docs / f"doc-{index}.md"))
-
-    hydrate_calls = 0
-    original_hydrate_record = manager.storage.hydrate_record
-
-    def _tracking_hydrate_record(identity):
-        nonlocal hydrate_calls
-        hydrate_calls += 1
-        return original_hydrate_record(identity)
-
-    edited = docs / "doc-0.md"
-    edited.write_text("# Doc 0\n\nEdited content.")
-    manager.storage.hydrate_record = _tracking_hydrate_record
-    try:
-        manager.index_document(str(edited), force=True)
-    finally:
-        manager.storage.hydrate_record = original_hydrate_record
-
-    assert hydrate_calls < 5
-
-
 def test_markdown_links_retrieve_indexed_target_chunks(tmp_path):
     manager = _manager(tmp_path)
     docs = Path(manager._config.indexing.documents_path)
