@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from typing import Any, TYPE_CHECKING
+from typing import Any, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
@@ -17,14 +17,18 @@ type TaskValueExtractor = Callable[[Any], set[str]]
 type BatchTaskSubmitter = Callable[..., object]
 
 
-def get_pending_task_count(huey: SqliteHuey | None) -> int:
+class TaskQueuePort(Protocol):
+    def pending_count(self) -> int: ...
+
+
+def get_pending_task_count(huey: TaskQueuePort | None) -> int:
     if huey is None:
         return 0
     return int(huey.pending_count())
 
 
 def is_backpressured(
-    huey: SqliteHuey | None,
+    huey: TaskQueuePort | None,
     limit: int,
     *,
     item: str,
