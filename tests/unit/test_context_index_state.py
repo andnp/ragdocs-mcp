@@ -1884,18 +1884,21 @@ class TestGetIndexState:
 
 
 def test_git_total_counts_distinct_active_commits_in_canonical_index():
+    """
+    Count distinct active commits through the public record storage port.
+
+    Multiple chunks from one commit must contribute only one commit count.
+    """
     ctx = object.__new__(ApplicationContext)
     ctx.git_indexing_enabled = True
     cast(Any, ctx).index_manager = SimpleNamespace(
-        kernel=SimpleNamespace(
-            backend=SimpleNamespace(
-                _record_rows=lambda: [
-                    {"source_kind": "git_commit", "source_id": "git:abc:summary:0", "status": "active"},
-                    {"source_kind": "git_commit", "source_id": "git:abc:diff:0", "status": "active"},
-                    {"source_kind": "git_commit", "source_id": "git:def:summary:0", "status": "active"},
-                    {"source_kind": "git_commit", "source_id": "git:stale:summary:0", "status": "deleted"},
-                ]
-            )
+        storage=SimpleNamespace(
+            iter_records=lambda: [
+                SimpleNamespace(source_kind="git_commit", source_id="git:abc:summary:0", status="active"),
+                SimpleNamespace(source_kind="git_commit", source_id="git:abc:diff:0", status="active"),
+                SimpleNamespace(source_kind="git_commit", source_id="git:def:summary:0", status="active"),
+                SimpleNamespace(source_kind="git_commit", source_id="git:stale:summary:0", status="deleted"),
+            ]
         )
     )
 

@@ -225,9 +225,9 @@ async def test_git_project_attribution_reconciliation_persists(repo, kernel):
     source = GitContentSource(repo_path / ".git")
     assert manager.index_records(list(source.iter_records()))
     assert all(
-        row["workspace_id"] is None
-        for row in manager.kernel.backend._record_rows()
-        if row["source_kind"] == "git_commit"
+        record.workspace_id is None
+        for record in manager.storage.iter_records()
+        if record.source_kind == "git_commit"
     )
 
     repaired = manager.reconcile_git_project_attribution(
@@ -237,15 +237,15 @@ async def test_git_project_attribution_reconciliation_persists(repo, kernel):
 
     assert repaired > 0
     git_rows = [
-        row
-        for row in manager.kernel.backend._record_rows()
-        if row["source_kind"] == "git_commit"
+        record
+        for record in manager.storage.iter_records()
+        if record.source_kind == "git_commit"
     ]
     assert git_rows
-    assert all(row["workspace_id"] == "repo-project" for row in git_rows)
+    assert all(record.workspace_id == "repo-project" for record in git_rows)
     assert all(
-        "repo-project" in row["metadata"]
-        for row in git_rows
+        record.metadata.get("project_id") == "repo-project"
+        for record in git_rows
     )
     results, _, _ = await orchestrator.query(
         "authentication token refresh bug",

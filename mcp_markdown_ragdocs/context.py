@@ -46,6 +46,7 @@ from mcp_markdown_ragdocs.app.bootstrap import (
 from mcp_markdown_ragdocs.app.bootstrap_manifest import ManifestCoordinator
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
 from mcp_markdown_ragdocs.indexing.record_manager import build_embedding_provider
+from mcp_markdown_ragdocs.indexing.record_ports import RecordStorage
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
@@ -61,6 +62,7 @@ class ContextIndexingPort(Protocol):
 
     kernel: Any
     ingestor: Any
+    storage: RecordStorage
     @property
     def vector(self) -> Any: ...
 
@@ -1214,22 +1216,12 @@ class ApplicationContext:
         """
         if not self.git_indexing_enabled:
             return 0
-        backend = getattr(self.index_manager.kernel, "backend", None)
-        if (
-            backend is not None
-            and hasattr(backend, "_db")
-            and hasattr(backend._db, "get_connection")
-        ):
-            cursor = backend._db.get_connection().execute(
-                "SELECT source_id FROM local_records WHERE source_kind = 'git_commit' AND status = 'active'"
-            )
-            return len({_git_commit_id(str(row[0])) for row in cursor})
-        rows = getattr(backend, "_record_rows", lambda: ())()
+        records = self.index_manager.storage.iter_records()
         return len(
             {
-                _git_commit_id(str(row["source_id"]))
-                for row in rows
-                if row["source_kind"] == "git_commit" and row["status"] == "active"
+                _git_commit_id(record.source_id)
+                for record in records
+                if record.source_kind == "git_commit" and record.status == "active"
             }
         )
 

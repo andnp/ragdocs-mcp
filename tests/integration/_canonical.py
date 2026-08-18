@@ -6,7 +6,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from searchkernel.api import RecordIdentity, build_local_record_kernel
+from searchkernel.api import build_local_record_kernel
 from searchkernel.domain import Record, RecordStatus
 from searchkernel.embeddings import TEST_FAKE_EMBEDDINGS_ENV_VAR
 
@@ -54,10 +54,7 @@ def make_record_index_manager(
     )
     install_bidirectional_graph_store(
         kernel,
-        lambda: tuple(
-            RecordIdentity.from_storage_key(str(row["storage_key"]))
-            for row in kernel.backend._record_rows()
-        ),
+        lambda: manager.storage.iter_identities(),
     )
     kernel_holder["manager"] = manager
     return manager

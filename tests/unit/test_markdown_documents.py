@@ -1,7 +1,7 @@
 """Contract tests for Markdown planning and canonical document writing."""
 
 import asyncio
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -101,6 +101,9 @@ class _Storage:
 
     def iter_records(self) -> Iterable[Record]:
         return ()
+
+    def iter_identities(self) -> Iterator[RecordIdentity]:
+        return iter(())
 
     def delete(self, storage_keys: Sequence[str]) -> None:
         self.events.append("delete")

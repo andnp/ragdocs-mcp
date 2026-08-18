@@ -55,6 +55,6 @@ def test_index_stats_keeps_global_records_unattributed(tmp_path: Path) -> None:
     assert unattributed_documents == 2
     assert unattributed_chunks == 2
     assert all(
-        row["workspace_id"] is None
-        for row in manager.kernel.backend._record_rows()
+        record.workspace_id is None
+        for record in manager.storage.iter_records()
     )

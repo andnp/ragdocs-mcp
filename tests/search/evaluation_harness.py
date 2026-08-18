@@ -6,7 +6,6 @@ from pathlib import Path
 
 from searchkernel.api import (
     EmbeddingProvider,
-    RecordIdentity,
     build_local_record_kernel,
     compute_doc_id,
 )
@@ -257,10 +256,7 @@ def build_search_evaluation_harness(
     kernel_holder["manager"] = manager
     install_bidirectional_graph_store(
         local_kernel,
-        lambda: tuple(
-            RecordIdentity.from_storage_key(str(row["storage_key"]))
-            for row in local_kernel.backend._record_rows()
-        ),
+        lambda: manager.storage.iter_identities(),
     )
 
     corpus_files = sorted(corpus_root.rglob("*.md"))
