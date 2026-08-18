@@ -1201,8 +1201,16 @@ def register_tasks(
         },
     )
     gdrive_runtime = (
-        build_gdrive_task_runtime(index_manager, huey)
-        if isinstance(index_manager, GDriveTaskManager)
+        build_gdrive_task_runtime(
+            index_manager,
+            _task_lease_store,
+            _work_intent_store,
+        )
+        if (
+            isinstance(index_manager, GDriveTaskManager)
+            and _task_lease_store is not None
+            and _work_intent_store is not None
+        )
         else None
     )
     gdrive_tasks = register_gdrive_tasks(huey, gdrive_runtime)

@@ -89,6 +89,8 @@ class WorkIntentPort(Protocol):
 
     def get(self, intent_id: str) -> WorkIntent | None: ...
 
+    def list_active(self, *, limit: int = 100) -> list[WorkIntent]: ...
+
 
 class WorkIntentStore(WorkIntentPort):
     """SQLite adapter for the application work intent port."""

@@ -17,6 +17,8 @@ from mcp_markdown_ragdocs.gdrive.tasks import (
     build_gdrive_task_runtime,
     register_gdrive_tasks,
 )
+from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.gdrive.models import (
     DriveChangePage,
     DriveFile,
@@ -121,7 +123,11 @@ def _runtime(tmp_path: Path) -> tuple[GDriveTaskRuntime, SqliteHuey]:
     )
     source = GoogleDriveContentSource(_TaskClient(), workspace_id="workspace")
     manager = _TaskManager(tmp_path / "index", source)
-    runtime = build_gdrive_task_runtime(manager, queue)
+    runtime = build_gdrive_task_runtime(
+        manager,
+        TaskLeaseStore(tmp_path / "queue.db"),
+        WorkIntentStore(tmp_path / "queue.db"),
+    )
     assert runtime is not None
     return runtime, queue
 
