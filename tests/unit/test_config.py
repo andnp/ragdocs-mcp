@@ -154,6 +154,29 @@ max_items = 12
     assert config.gdrive.max_items == 12
 
 
+def test_gdrive_config_loads_request_gate_settings(tmp_path):
+    """Load the Drive request gate's concurrency settings from TOML."""
+    config_dir = tmp_path / ".mcp-markdown-ragdocs"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        """
+[gdrive]
+request_min_interval_seconds = 0.1
+request_max_concurrent = 8
+"""
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        config = load_config()
+    finally:
+        os.chdir(original_cwd)
+
+    assert config.gdrive.request_min_interval_seconds == 0.1
+    assert config.gdrive.request_max_concurrent == 8
+
+
 def test_indexing_performance_knobs_load_from_config(tmp_path):
     config_dir = tmp_path / ".mcp-markdown-ragdocs"
     config_dir.mkdir()
