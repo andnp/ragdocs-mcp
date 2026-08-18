@@ -117,7 +117,11 @@ def build_gdrive_source(
         session,
         max_page_size=drive_config.page_size,
         max_download_bytes=drive_config.max_download_bytes,
-        request_gate=DriveRequestGate(index_path / "gdrive-request-gate.db"),
+        request_gate=DriveRequestGate(
+            index_path / "gdrive-request-gate.db",
+            min_interval_seconds=drive_config.request_min_interval_seconds,
+            max_concurrent=drive_config.request_max_concurrent,
+        ),
     )
     state_repository = GDriveStateRepository(index_path / "gdrive-state.db")
     return GoogleDriveContentSource(
