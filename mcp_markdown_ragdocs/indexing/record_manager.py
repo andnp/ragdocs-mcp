@@ -348,10 +348,19 @@ class RecordIndexManager:
         update_graph: bool = True,
     ) -> None:
         old_keys = self._source_records.get(prepared.document.id, [])
+        old_records = (
+            tuple(
+                record
+                for key in old_keys
+                if (record := self.storage.hydrate_record(key)) is not None
+            )
+            if update_graph
+            else ()
+        )
         new_keys = await self._document_writer.write(prepared, old_keys)
         self._source_records[prepared.document.id] = list(new_keys)
         if update_graph:
-            self._rebuild_graph()
+            self._update_document_graph(old_records, new_keys)
         self._state_version += 1
 
     def index_document(
@@ -504,25 +513,88 @@ class RecordIndexManager:
             if not hydrated:
                 continue
             for record in hydrated:
-                source_identities = [record.identity]
-                parent_chunk_id = record.metadata.get("parent_chunk_id")
-                if isinstance(parent_chunk_id, str) and parent_chunk_id:
-                    source_identities.append(
-                        RecordIdentity(
-                            record.workspace_id,
-                            record.source_kind,
-                            parent_chunk_id,
-                        )
-                    )
                 edges.extend(
                     self._graph_edges_for_document(
                         record,
-                        tuple(dict.fromkeys(source_identities)),
+                        self._source_identities_for_record(record),
                     )
                 )
         if edges:
             try:
                 self.graph.upsert_edges(edges)
+            except ValueError:
+                logger.debug("Skipping invalid graph edges", exc_info=True)
+
+    def _source_identities_for_record(
+        self,
+        record: Record,
+    ) -> tuple[RecordIdentity, ...]:
+        source_identities = [record.identity]
+        parent_chunk_id = record.metadata.get("parent_chunk_id")
+        if isinstance(parent_chunk_id, str) and parent_chunk_id:
+            source_identities.append(
+                RecordIdentity(
+                    record.workspace_id,
+                    record.source_kind,
+                    parent_chunk_id,
+                )
+            )
+        return tuple(dict.fromkeys(source_identities))
+
+    def _update_document_graph(
+        self,
+        old_records: Sequence[Record],
+        new_keys: Sequence[str],
+    ) -> None:
+        """Recompute graph edges for one just-indexed document.
+
+        Full rebuilds hydrate and re-derive edges for every document in the
+        index; this instead touches only the source identities this one
+        document owned before and after the edit, so indexing N documents
+        does not cost O(N^2) hydrations.
+        """
+        new_records = tuple(
+            record
+            for key in new_keys
+            if (record := self.storage.hydrate_record(key)) is not None
+        )
+        stale_identities: list[RecordIdentity] = []
+        for record in (*old_records, *new_records):
+            stale_identities.extend(self._source_identities_for_record(record))
+        stale_identities = list(dict.fromkeys(stale_identities))
+
+        if stale_identities:
+            try:
+                existing = self.graph.neighbors_many(stale_identities, depth=1)
+            except ValueError:
+                existing = {}
+            old_edges = [
+                GraphEdge(
+                    RecordIdentity.from_storage_key(source_key),
+                    neighbor.identity,
+                    neighbor.edge_type,
+                    neighbor.weight,
+                )
+                for source_key, neighbors in existing.items()
+                for neighbor in neighbors
+            ]
+            if old_edges:
+                try:
+                    self.graph.delete_edges(old_edges)
+                except ValueError:
+                    logger.debug("Skipping invalid graph edge deletion", exc_info=True)
+
+        new_edges: list[GraphEdge] = []
+        for record in new_records:
+            new_edges.extend(
+                self._graph_edges_for_document(
+                    record,
+                    self._source_identities_for_record(record),
+                )
+            )
+        if new_edges:
+            try:
+                self.graph.upsert_edges(new_edges)
             except ValueError:
                 logger.debug("Skipping invalid graph edges", exc_info=True)
 

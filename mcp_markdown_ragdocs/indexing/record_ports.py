@@ -72,6 +72,8 @@ class GraphCapability(Protocol):
 
     def upsert_edges(self, edges: Sequence[GraphEdge]) -> None: ...
 
+    def delete_edges(self, edges: Sequence[GraphEdge]) -> None: ...
+
     def neighbors_many(
         self,
         identities: Sequence[RecordIdentity],
