@@ -13,10 +13,8 @@ from searchkernel.api import (
     Record,
     RecordIngestionResult,
     SearchAvailability,
-    get_semantic_completion_status,
     load_bootstrap_checkpoint,
     mark_bootstrap_files_completed,
-    mark_semantic_work_completed,
     publish_bootstrap_availability,
 )
 
@@ -48,97 +46,6 @@ class _VectorEmbeddingEncoder:
 
     def encode(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         return [self._vector.get_text_embedding(text) for text in texts]
-
-
-class _VectorChunkMaterializer:
-    def __init__(
-        self,
-        manager: ProgressiveIndexManager,
-        *,
-        index_path: Path,
-        documents_roots: Sequence[Path],
-        target_paths: set[str],
-        encoder_namespace: str,
-    ) -> None:
-        self._manager = manager
-        self._index_path = index_path
-        self._documents_roots = tuple(documents_roots)
-        self._target_paths = target_paths
-        self._encoder_namespace = encoder_namespace
-        self._chunks: dict[str, Any] = {}
-        self._pending_by_file: dict[str, set[str]] = {}
-        self._prepared_by_file: dict[str, Any] = {}
-        self._file_by_source_id: dict[str, str] = {}
-
-    def register_file(
-        self,
-        relative_path: str,
-        prepared: Any,
-        records: Sequence[Record],
-    ) -> None:
-        self._prepared_by_file[relative_path] = prepared
-        pending = self._pending_by_file.setdefault(relative_path, set())
-        for record in records:
-            source_id = record.storage_key
-            pending.add(source_id)
-            self._file_by_source_id[source_id] = relative_path
-            chunk = _chunk_for_record(prepared, record)
-            if chunk is not None:
-                self._chunks[source_id] = chunk
-
-    def materialize(
-        self,
-        source_id: str,
-        vector: Sequence[float],
-        semantic_input: Any,
-    ) -> None:
-        relative_path = self._file_by_source_id.get(source_id)
-        if relative_path is None:
-            raise ValueError(f"semantic input does not belong to the bootstrap: {source_id}")
-
-        chunk = self._chunks.get(source_id)
-        if chunk is not None:
-            self._manager._embedding_cache.put_many(
-                {semantic_input.content_hash: vector}
-            )
-            self._manager.vector.add_chunk(chunk)
-
-        pending = self._pending_by_file[relative_path]
-        pending.discard(source_id)
-        if not pending:
-            self._complete_file(relative_path)
-
-    def _complete_file(self, relative_path: str) -> None:
-        prepared = self._prepared_by_file[relative_path]
-        self._manager.finalize_progressive_documents([prepared])
-        self._manager.persist()
-        mark_semantic_work_completed(
-            self._index_path,
-            self._encoder_namespace,
-            relative_path,
-        )
-        mark_bootstrap_files_completed(
-            self._index_path,
-            list(self._documents_roots),
-            [prepared.file_path],
-        )
-
-        semantic_status = get_semantic_completion_status(
-            self._index_path,
-            self._encoder_namespace,
-        )
-        complete = self._target_paths.issubset(
-            {path for path, done in semantic_status.items() if done}
-        )
-        publish_bootstrap_availability(
-            self._index_path,
-            SearchAvailability(
-                lexical="available",
-                graph="available",
-                semantic_coarse="complete" if complete else "backfilling",
-                semantic_fine="complete" if complete else "backfilling",
-            ),
-        )
 
 
 class _NoopKeywordStore:
@@ -277,15 +184,6 @@ def _run_canonical_bootstrap(
         return CoordinatorReceipt(ingestion=ingestion)
 
     return asyncio.run(run())
-
-
-def _chunk_for_record(prepared: Any, record: Record) -> Any | None:
-    if record.source_kind == "markdown-empty":
-        return None
-    return next(
-        (chunk for chunk in prepared.chunks if chunk.chunk_id == record.source_id),
-        None,
-    )
 
 
 def _relative_path(file_path: str, documents_roots: Sequence[Path]) -> str:
