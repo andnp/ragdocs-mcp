@@ -9,6 +9,7 @@ import pytest
 from searchkernel.domain import RecordStatus
 
 from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
+from mcp_markdown_ragdocs.git.commit_parser import CommitData, MAX_FILES_CHANGED
 
 
 def _init_git_repo(path: Path) -> None:
@@ -101,6 +102,42 @@ class TestGitContentSourceInit:
 
 class TestGitContentSourceIterRecords:
     """Tests for iter_records method."""
+
+    def test_commit_metadata_keeps_file_list_on_summary_only(self):
+        """Commit file metadata is bounded and is not duplicated per chunk."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir) / "repo"
+            repo_path.mkdir()
+            _init_git_repo(repo_path)
+            source = GitContentSource(repo_path / ".git")
+            files_changed = [f"file-{index}.txt" for index in range(75)]
+
+            records = source._commit_data_to_records(
+                CommitData(
+                    hash="abc123",
+                    timestamp=1,
+                    author="Author <author@example.com>",
+                    committer="Committer <committer@example.com>",
+                    title="Compact metadata",
+                    message="Commit details",
+                    files_changed=files_changed,
+                    delta_truncated="diff --git a/file.txt b/file.txt\n+line",
+                    files_changed_total=len(files_changed),
+                )
+            )
+
+            summary = _summary_record(records)
+            non_summary = [
+                record for record in records if record is not summary
+            ]
+
+            assert summary.metadata["files_changed"] == files_changed[:MAX_FILES_CHANGED]
+            assert summary.metadata["files_changed_total"] == len(files_changed)
+            assert all("files_changed" not in record.metadata for record in non_summary)
+            assert all(
+                record.metadata["files_changed_total"] == len(files_changed)
+                for record in records
+            )
 
     def test_iter_records_single_commit(self):
         """Test iterating over a single commit."""
