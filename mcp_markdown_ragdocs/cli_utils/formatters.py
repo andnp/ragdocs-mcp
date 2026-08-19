@@ -209,6 +209,15 @@ def _render_initializing_search_response(
     console.print("[dim]Results will appear once background initialization completes.[/dim]")
 
 
+# (column header, key into the totals payload, key into each per-root row)
+_INDEX_STATS_COLUMNS = (
+    ("Discovered", "discovered_files", "discovered_files"),
+    ("Indexed docs≈", "indexed_documents", "indexed_documents_estimate"),
+    ("Indexed chunks≈", "indexed_chunks", "indexed_chunks_estimate"),
+    ("Remaining≈", "remaining_estimate", "remaining_estimate"),
+)
+
+
 def _render_index_stats_table(payload: dict[str, object]) -> None:
     console = Console()
     per_root_rows = payload.get("per_root")
@@ -217,36 +226,20 @@ def _render_index_stats_table(payload: dict[str, object]) -> None:
 
     table = Table(title="Indexed corpus by root", show_footer=True)
     table.add_column("Root", style="cyan", footer="Total")
-    table.add_column(
-        "Discovered",
-        justify="right",
-        footer=str(_as_int(payload.get("discovered_files"))),
-    )
-    table.add_column(
-        "Indexed docs≈",
-        justify="right",
-        footer=str(_as_int(payload.get("indexed_documents"))),
-    )
-    table.add_column(
-        "Indexed chunks≈",
-        justify="right",
-        footer=str(_as_int(payload.get("indexed_chunks"))),
-    )
-    table.add_column(
-        "Remaining≈",
-        justify="right",
-        footer=str(_as_int(payload.get("remaining_estimate"))),
-    )
+    for header, footer_key, _ in _INDEX_STATS_COLUMNS:
+        table.add_column(
+            header, justify="right", footer=str(_as_int(payload.get(footer_key)))
+        )
 
     for row in per_root_rows:
         if not isinstance(row, dict):
             continue
         table.add_row(
             str(row.get("root_path", "(unknown)")),
-            str(_as_int(row.get("discovered_files"))),
-            str(_as_int(row.get("indexed_documents_estimate"))),
-            str(_as_int(row.get("indexed_chunks_estimate"))),
-            str(_as_int(row.get("remaining_estimate"))),
+            *(
+                str(_as_int(row.get(row_key)))
+                for _, _, row_key in _INDEX_STATS_COLUMNS
+            ),
         )
 
     caption_parts = []
