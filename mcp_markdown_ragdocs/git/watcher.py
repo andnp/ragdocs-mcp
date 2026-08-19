@@ -14,6 +14,7 @@ from pathlib import Path
 
 from mcp_markdown_ragdocs.config import Config, resolve_project_id_for_path
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
+from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.indexing.git_refresh_state import get_head
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager as IndexManager
 
@@ -30,12 +31,14 @@ class GitWatcher:
         config: Config,
         poll_interval: float = 300.0,
         use_tasks: bool = False,
+        task_submission: TaskSubmissionPort | None = None,
     ):
         self._git_repos = git_repos
         self._index_manager = index_manager
         self._config = config
         self._poll_interval = poll_interval
         self._use_tasks = use_tasks
+        self._task_submission = task_submission
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._last_indexed: dict[Path, int] = {}
@@ -88,7 +91,14 @@ class GitWatcher:
     async def _batch_process(self, git_dirs: set[Path]) -> None:
         """Incrementally index any commits added since the last poll."""
         if self._use_tasks:
-            from mcp_markdown_ragdocs.indexing.tasks import submit_refresh_git_request
+            if self._task_submission is None:
+                from mcp_markdown_ragdocs.indexing.tasks import (
+                    submit_refresh_git_request,
+                )
+
+                submit_refresh = submit_refresh_git_request
+            else:
+                submit_refresh = self._task_submission.submit_refresh_git_request
 
             signatures = await asyncio.gather(
                 *(
@@ -103,7 +113,7 @@ class GitWatcher:
                 ) == signature:
                     continue
 
-                submission = submit_refresh_git_request(str(git_dir))
+                submission = submit_refresh(str(git_dir))
                 if submission.enqueued:
                     logger.info("Enqueued git refresh task for %s", git_dir.parent)
                     continue

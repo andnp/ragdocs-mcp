@@ -12,6 +12,7 @@ from mcp_markdown_ragdocs.config import (
     LLMConfig,
     SearchConfig,
 )
+from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.git.watcher import GitWatcher
 from mcp_markdown_ragdocs.indexing.manager import IndexManager
 from mcp_markdown_ragdocs.indexing.tasks import (
@@ -173,23 +174,24 @@ async def test_git_watcher_idempotent_stop(test_config, index_manager, tmp_path)
 
 @pytest.mark.asyncio
 async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
-    test_config, index_manager, tmp_path, monkeypatch
+    test_config, index_manager, tmp_path
 ):
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
     observed: list[str] = []
+    submission = MagicMock(spec=TaskSubmissionPort)
 
     watcher = GitWatcher(
         git_repos=[git_dir],
         index_manager=index_manager,
         config=test_config,
         use_tasks=True,
+        task_submission=submission,
     )
 
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_refresh_git_request",
+    submission.submit_refresh_git_request.side_effect = (
         lambda git_dir_str: observed.append(git_dir_str)
-        or TaskSubmissionResult(status="enqueued"),
+        or TaskSubmissionResult(status="enqueued")
     )
 
     await watcher._batch_process({git_dir})
@@ -204,12 +206,14 @@ async def test_git_watcher_skips_unchanged_repository_after_refresh(
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
     observed: list[str] = []
+    submission = MagicMock(spec=TaskSubmissionPort)
 
     watcher = GitWatcher(
         git_repos=[git_dir],
         index_manager=index_manager,
         config=test_config,
         use_tasks=True,
+        task_submission=submission,
     )
 
     monkeypatch.setattr(
@@ -220,12 +224,6 @@ async def test_git_watcher_skips_unchanged_repository_after_refresh(
         "mcp_markdown_ragdocs.git.watcher.get_head",
         lambda _root, _git_dir: "same-head",
     )
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_refresh_git_request",
-        lambda git_dir_str: observed.append(git_dir_str)
-        or TaskSubmissionResult(status="enqueued"),
-    )
-
     await watcher._batch_process({git_dir})
 
     assert observed == []
@@ -238,18 +236,19 @@ async def test_git_watcher_direct_refresh_accumulates_batches(
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
     observed: dict[str, object] = {}
+    submission = MagicMock(spec=TaskSubmissionPort)
 
     watcher = GitWatcher(
         git_repos=[git_dir],
         index_manager=index_manager,
         config=test_config,
         use_tasks=True,
+        task_submission=submission,
     )
     watcher._last_indexed[git_dir] = 123
 
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_refresh_git_request",
-        lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
+    submission.submit_refresh_git_request.return_value = TaskSubmissionResult(
+        status="unavailable"
     )
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.git.watcher.get_git_ref_signature",
@@ -298,18 +297,19 @@ async def test_git_watcher_direct_refresh_failure_preserves_cursor(
 ):
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
+    submission = MagicMock(spec=TaskSubmissionPort)
 
     watcher = GitWatcher(
         git_repos=[git_dir],
         index_manager=index_manager,
         config=test_config,
         use_tasks=True,
+        task_submission=submission,
     )
     watcher._last_indexed[git_dir] = 123
 
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_refresh_git_request",
-        lambda git_dir_str: TaskSubmissionResult(status="unavailable"),
+    submission.submit_refresh_git_request.return_value = TaskSubmissionResult(
+        status="unavailable"
     )
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.git.watcher.get_git_ref_signature",
