@@ -141,6 +141,7 @@ class TestLifecycleStateMachine:
         await coord.start(_fake_ctx(), db_manager=object(), huey_worker=worker)
 
         assert worker.start_calls == 1
+        assert "try_acquire" in to_thread_calls
         assert "start" in to_thread_calls
         assert coord.state == LifecycleState.READY_PRIMARY
 

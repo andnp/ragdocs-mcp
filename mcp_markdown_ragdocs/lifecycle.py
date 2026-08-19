@@ -136,7 +136,7 @@ class LifecycleCoordinator:
             if db_manager is not None:
                 self._leader_election = LeaderElection(db_manager)
                 self._huey_worker = huey_worker
-                if self._leader_election.try_acquire():
+                if await asyncio.to_thread(self._leader_election.try_acquire):
                     logger.info("Lifecycle: leader elected")
                     self._ensure_leader_heartbeat()
                     await self._ensure_huey_worker_running()
@@ -443,7 +443,7 @@ class LifecycleCoordinator:
                 return
             if not self._should_monitor_leader_failover():
                 return
-            if not leader_election.try_acquire():
+            if not await asyncio.to_thread(leader_election.try_acquire):
                 continue
 
             self._ensure_leader_heartbeat()
@@ -520,7 +520,7 @@ class LifecycleCoordinator:
 
         if self._leader_election is not None:
             try:
-                self._leader_election.release()
+                await asyncio.to_thread(self._leader_election.release)
             except Exception:
                 logger.exception("Error releasing leader lock")
             self._leader_election = None
