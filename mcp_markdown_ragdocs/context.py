@@ -149,7 +149,6 @@ class ApplicationContext:
     _freshness_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _freshness_task: asyncio.Task | None = field(default=None, repr=False)
     _embedding_warmup_task: asyncio.Task | None = field(default=None, repr=False)
-    _vocabulary_catch_up_task: asyncio.Task | None = field(default=None, repr=False)
     _loaded_index_state_version: float = field(default=0.0, repr=False)
     _is_virgin_startup: bool = field(default=False, repr=False)
     _bootstrap_session: BootstrapSession | None = field(default=None, repr=False)
@@ -817,27 +816,6 @@ class ApplicationContext:
             except Exception:
                 logger.exception("Error during periodic reconciliation")
 
-    async def _update_vocabulary_incremental(self) -> None:
-        return None
-
-    async def _run_vocabulary_catch_up(self) -> None:
-        try:
-            await self._update_vocabulary_incremental()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning(
-                "Background vocabulary catch-up failed; continuing to serve baseline search",
-                exc_info=True,
-            )
-
-    def _clear_vocabulary_catch_up_task(self, task: asyncio.Task) -> None:
-        if getattr(self, "_vocabulary_catch_up_task", None) is task:
-            self._vocabulary_catch_up_task = None
-
-    async def _build_initial_vocabulary(self) -> None:
-        return None
-
     def is_ready(self) -> bool:
         """Check whether the active indices can serve queries."""
         return self._get_bootstrap_coordinator().is_ready()
@@ -923,18 +901,12 @@ class ApplicationContext:
             embedding_warmup_task.cancel()
             tasks_to_cancel.append(embedding_warmup_task)
 
-        vocabulary_catch_up_task = getattr(self, "_vocabulary_catch_up_task", None)
-        if vocabulary_catch_up_task and not vocabulary_catch_up_task.done():
-            vocabulary_catch_up_task.cancel()
-            tasks_to_cancel.append(vocabulary_catch_up_task)
-
         if tasks_to_cancel:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
         self._background_index_task = None
         self.reconciliation_task = None
         self._freshness_task = None
         self._embedding_warmup_task = None
-        self._vocabulary_catch_up_task = None
         self._bootstrap_session = None
 
         await self._watcher_lifecycle.stop()
