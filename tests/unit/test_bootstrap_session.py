@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from searchkernel.indexing.bootstrap_checkpoint import (
@@ -16,6 +17,7 @@ from searchkernel.indexing.manifest import (
 from searchkernel.indexing.bootstrap_snapshot import compute_bootstrap_completed_paths
 
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
+from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.indexing.tasks import TaskBatchSubmissionResult
 
 
@@ -40,7 +42,6 @@ def _stamp(path: Path, relative_path: str | None = None) -> BootstrapFileStamp:
 @pytest.mark.asyncio
 async def test_run_reuses_completion_for_multiple_document_roots(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checkpoint paths may be common-root-relative while manifests are root-relative."""
     root_one = tmp_path / "docs-one"
@@ -70,13 +71,11 @@ async def test_run_reuses_completion_for_multiple_document_roots(
         ),
     )
 
-    enqueued: list[list[str]] = []
-    ready_calls: list[str] = []
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
-        lambda file_paths, **kwargs: enqueued.append(file_paths)
-        or pytest.fail("completed multi-root files should not be enqueued"),
+    submission = MagicMock(spec=TaskSubmissionPort)
+    submission.submit_index_batch.side_effect = lambda file_paths, **kwargs: pytest.fail(
+        "completed multi-root files should not be enqueued"
     )
+    ready_calls: list[str] = []
     session = BootstrapSession(
         index_path=tmp_path,
         documents_roots=[root_one, root_two],
@@ -96,10 +95,11 @@ async def test_run_reuses_completion_for_multiple_document_roots(
         report_failure=lambda error, indexed_count, total_count: pytest.fail(
             f"unexpected failure: {error}"
         ),
+        task_submission=submission,
     )
     await session.run()
 
-    assert enqueued == []
+    submission.submit_index_batch.assert_not_called()
     assert ready_calls == ["called"]
 
 
@@ -298,16 +298,18 @@ async def test_run_keeps_monitoring_when_remaining_work_is_already_pending(
     failures: list[tuple[str, int, int]] = []
     enqueue_checked = asyncio.Event()
 
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
-        lambda file_paths, force=False: enqueue_checked.set()
-        or TaskBatchSubmissionResult(
+    submission = MagicMock(spec=TaskSubmissionPort)
+    def submit_index_batch(
+        file_paths: list[str], **kwargs: object
+    ) -> TaskBatchSubmissionResult:
+        enqueue_checked.set()
+        return TaskBatchSubmissionResult(
             queue_available=True,
             requested_unique_count=len(set(file_paths)),
             enqueued_count=0,
             already_pending_count=len(set(file_paths)),
-        ),
-    )
+        )
+    submission.submit_index_batch.side_effect = submit_index_batch
 
     original_sleep = asyncio.sleep
 
@@ -338,6 +340,7 @@ async def test_run_keeps_monitoring_when_remaining_work_is_already_pending(
         report_failure=lambda error, indexed_count, total_count: failures.append(
             (str(error), indexed_count, total_count)
         ),
+        task_submission=submission,
     )
 
     bootstrap_task = asyncio.create_task(session.run())
@@ -439,10 +442,8 @@ async def test_run_skips_completed_files_and_finishes_ready(
             enqueued_count=len(set(file_paths)),
         )
 
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
-        fake_submit_index_batch,
-    )
+    submission = MagicMock(spec=TaskSubmissionPort)
+    submission.submit_index_batch.side_effect = fake_submit_index_batch
 
     original_sleep = asyncio.sleep
 
@@ -473,6 +474,7 @@ async def test_run_skips_completed_files_and_finishes_ready(
         report_failure=lambda error, indexed_count, total_count: pytest.fail(
             f"unexpected failure: {error}"
         ),
+        task_submission=submission,
     )
 
     await asyncio.wait_for(session.run(), timeout=1.0)
@@ -488,7 +490,6 @@ async def test_run_skips_completed_files_and_finishes_ready(
 @pytest.mark.asyncio
 async def test_run_enqueues_startup_git_refresh_batch_in_task_mode(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     Given task-backed startup bootstrap with git refresh enabled.
@@ -504,15 +505,15 @@ async def test_run_enqueues_startup_git_refresh_batch_in_task_mode(
     ready_calls: list[str] = []
     warmup_calls: list[str] = []
 
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_refresh_git_batch",
-        lambda git_dirs: git_submissions.append(git_dirs)
-        or TaskBatchSubmissionResult(
+    submission = MagicMock(spec=TaskSubmissionPort)
+    def submit_refresh_git_batch(git_dirs: list[str]) -> TaskBatchSubmissionResult:
+        git_submissions.append(git_dirs)
+        return TaskBatchSubmissionResult(
             queue_available=True,
             requested_unique_count=len(set(git_dirs)),
             enqueued_count=len(set(git_dirs)),
-        ),
-    )
+        )
+    submission.submit_refresh_git_batch.side_effect = submit_refresh_git_batch
 
     session = BootstrapSession(
         index_path=tmp_path,
@@ -533,6 +534,7 @@ async def test_run_enqueues_startup_git_refresh_batch_in_task_mode(
         report_failure=lambda error, indexed_count, total_count: pytest.fail(
             f"unexpected failure: {error}"
         ),
+        task_submission=submission,
     )
 
     await asyncio.wait_for(session.run(), timeout=1.0)

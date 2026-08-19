@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
 from searchkernel.api import (
     BootstrapFileStamp,
@@ -68,6 +69,7 @@ class BootstrapSession:
     schedule_embedding_warmup: ScheduleWarmupFn
     report_failure: ReportFailureFn
     publish_availability: PublishAvailabilityFn | None = None
+    task_submission: TaskSubmissionPort | None = None
 
     async def preload_persisted_state(self, *, rebuild_pending: bool) -> bool:
         try:
@@ -186,13 +188,15 @@ class BootstrapSession:
             )
             return
 
+        submit_index_batch = (
+            self.task_submission.submit_index_batch
+            if self.task_submission is not None
+            else indexing_tasks.submit_index_batch
+        )
         try:
-            submission = indexing_tasks.submit_index_batch(
-                remaining_files,
-                progressive=True,
-            )
+            submission = submit_index_batch(remaining_files, progressive=True)
         except TypeError:
-            submission = indexing_tasks.submit_index_batch(remaining_files)
+            submission = submit_index_batch(remaining_files)
         logger.info(
             "Enqueued %d startup indexing task(s) for %d remaining documents (%d already durably complete, %d already pending)",
             submission.enqueued_count,
@@ -226,7 +230,12 @@ class BootstrapSession:
             logger.info("No git repositories found for task-driven startup refresh")
             return
 
-        submission = indexing_tasks.submit_refresh_git_batch([str(repo) for repo in repos])
+        submit_refresh_git_batch = (
+            self.task_submission.submit_refresh_git_batch
+            if self.task_submission is not None
+            else indexing_tasks.submit_refresh_git_batch
+        )
+        submission = submit_refresh_git_batch([str(repo) for repo in repos])
         logger.info(
             "Enqueued %d startup git refresh task(s) for %d repositories (%d already pending)",
             submission.enqueued_count,
