@@ -39,7 +39,6 @@ type PublishPublicStateFn = Callable[[PublicIndexStateSnapshot], None]
 type PublishAvailabilityFn = Callable[[SearchAvailability], None]
 type MarkReadyFn = Callable[[], None]
 type ScheduleWarmupFn = Callable[[], bool]
-type ScheduleVocabularyCatchUpFn = Callable[[], bool]
 type ReportFailureFn = Callable[[Exception, int, int], None]
 
 
@@ -67,7 +66,6 @@ class BootstrapSession:
     publish_public_state: PublishPublicStateFn
     mark_ready: MarkReadyFn
     schedule_embedding_warmup: ScheduleWarmupFn
-    schedule_vocabulary_catch_up: ScheduleVocabularyCatchUpFn
     report_failure: ReportFailureFn
     publish_availability: PublishAvailabilityFn | None = None
 
@@ -268,7 +266,6 @@ class BootstrapSession:
             )
         self.mark_ready()
         self.schedule_embedding_warmup()
-        self.schedule_vocabulary_catch_up()
 
     async def _monitor_persisted_progress(
         self,
@@ -330,7 +327,6 @@ class BootstrapSession:
                         self.mark_ready()
                         self.schedule_embedding_warmup()
                     if len(completed_paths) >= total_targets:
-                        self.schedule_vocabulary_catch_up()
                         return
 
             await asyncio.sleep(0.2)

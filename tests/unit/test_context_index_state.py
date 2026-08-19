@@ -1681,16 +1681,10 @@ async def test_start_rebuild_marks_ready_without_forcing_full_vocabulary_build(
     _setattr(ctx, "_mark_index_state_loaded", lambda: None)
 
     full_index_calls: list[str] = []
-    scheduled_catch_up: list[str] = []
     forced_full_build_calls: list[str] = []
 
     _setattr(ctx, "_full_index", lambda: full_index_calls.append("called"))
     _setattr(ctx, "schedule_embedding_model_warmup", lambda: False)
-    _setattr(
-        ctx,
-        "schedule_vocabulary_catch_up",
-        lambda: scheduled_catch_up.append("called") or True,
-    )
     _setattr(
         ctx,
         "_build_initial_vocabulary",
@@ -1702,7 +1696,6 @@ async def test_start_rebuild_marks_ready_without_forcing_full_vocabulary_build(
     assert full_index_calls == ["called"]
     assert ctx._ready_event.is_set()
     assert forced_full_build_calls == []
-    assert scheduled_catch_up == ["called"]
 
 
 class TestIsReadyMethods:

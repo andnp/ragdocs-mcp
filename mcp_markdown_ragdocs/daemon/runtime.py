@@ -50,6 +50,10 @@ def create_daemon_runtime(
     huey = queue_runtime.huey
     task_lease_store = TaskLeaseStore(runtime_paths.queue_db_path)
     work_intent_store = WorkIntentStore(runtime_paths.queue_db_path)
+
+    def schedule_vocabulary_catch_up() -> bool:
+        return False
+
     register_tasks(
         huey,
         ctx.index_manager,
@@ -58,7 +62,7 @@ def create_daemon_runtime(
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         bootstrap_index_path=ctx.index_path,
         bootstrap_documents_roots=ctx.documents_roots,
-        schedule_vocabulary_catch_up=ctx.schedule_vocabulary_catch_up,
+        schedule_vocabulary_catch_up=schedule_vocabulary_catch_up,
     )
     worker = HueyWorkerProcess(runtime_paths=runtime_paths)
     health_server = DaemonHealthServer(

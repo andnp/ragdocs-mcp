@@ -186,7 +186,7 @@ async def _run_worker_forever_async(
 
         def _schedule() -> None:
             try:
-                result.set_result(ctx.schedule_vocabulary_catch_up())
+                result.set_result(False)
             except Exception as exc:  # noqa: BLE001 -- must forward any error to the awaiting future
                 result.set_exception(exc)
 

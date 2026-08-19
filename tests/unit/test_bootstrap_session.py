@@ -93,7 +93,6 @@ async def test_run_reuses_completion_for_multiple_document_roots(
         publish_public_state=lambda snapshot: None,
         mark_ready=lambda: ready_calls.append("called"),
         schedule_embedding_warmup=lambda: True,
-        schedule_vocabulary_catch_up=lambda: True,
         report_failure=lambda error, indexed_count, total_count: pytest.fail(
             f"unexpected failure: {error}"
         ),
@@ -194,7 +193,6 @@ async def test_preload_persisted_state_marks_ready_from_partial_snapshot(
         publish_public_state=published_states.append,
         mark_ready=lambda: ready_calls.append("called"),
         schedule_embedding_warmup=lambda: warmup_calls.append("called") or True,
-        schedule_vocabulary_catch_up=lambda: False,
         report_failure=lambda error, indexed_count, total_count: pytest.fail(
             f"unexpected failure: {error}"
         ),
@@ -265,7 +263,6 @@ async def test_preload_persisted_state_does_not_mark_ready_when_not_queryable(
         publish_public_state=published_states.append,
         mark_ready=lambda: ready_calls.append("called"),
         schedule_embedding_warmup=lambda: warmup_calls.append("called") or True,
-        schedule_vocabulary_catch_up=lambda: False,
         report_failure=lambda error, indexed_count, total_count: pytest.fail(
             f"unexpected failure: {error}"
         ),
@@ -338,9 +335,6 @@ async def test_run_keeps_monitoring_when_remaining_work_is_already_pending(
         publish_public_state=published_states.append,
         mark_ready=lambda: pytest.fail("session should not mark ready yet"),
         schedule_embedding_warmup=lambda: pytest.fail("warmup should not run yet"),
-        schedule_vocabulary_catch_up=lambda: pytest.fail(
-            "vocabulary catch-up should not run yet"
-        ),
         report_failure=lambda error, indexed_count, total_count: failures.append(
             (str(error), indexed_count, total_count)
         ),
@@ -397,7 +391,6 @@ async def test_run_skips_completed_files_and_finishes_ready(
     published_states = []
     ready_calls: list[str] = []
     warmup_calls: list[str] = []
-    vocabulary_calls: list[str] = []
     enqueued_batches: list[list[str]] = []
     load_calls = 0
     completion_written = False
@@ -477,7 +470,6 @@ async def test_run_skips_completed_files_and_finishes_ready(
         publish_public_state=published_states.append,
         mark_ready=lambda: ready_calls.append("called"),
         schedule_embedding_warmup=lambda: warmup_calls.append("called") or True,
-        schedule_vocabulary_catch_up=lambda: vocabulary_calls.append("called") or True,
         report_failure=lambda error, indexed_count, total_count: pytest.fail(
             f"unexpected failure: {error}"
         ),
@@ -488,7 +480,6 @@ async def test_run_skips_completed_files_and_finishes_ready(
     assert enqueued_batches == [[str(doc_two)]]
     assert ready_calls != []
     assert warmup_calls != []
-    assert vocabulary_calls == ["called"]
     assert published_states[-1].status == "ready"
     assert published_states[-1].indexed_count == 2
     assert published_states[-1].total_count == 2
@@ -539,7 +530,6 @@ async def test_run_enqueues_startup_git_refresh_batch_in_task_mode(
         publish_public_state=lambda snapshot: None,
         mark_ready=lambda: ready_calls.append("called"),
         schedule_embedding_warmup=lambda: warmup_calls.append("called") or True,
-        schedule_vocabulary_catch_up=lambda: False,
         report_failure=lambda error, indexed_count, total_count: pytest.fail(
             f"unexpected failure: {error}"
         ),

@@ -440,7 +440,6 @@ class ApplicationContext:
                 )
                 self._ready_event.set()
                 self.schedule_embedding_model_warmup()
-                self.schedule_vocabulary_catch_up()
         else:
             logger.info("Loading existing indices")
             if background_index:
@@ -481,7 +480,6 @@ class ApplicationContext:
                 self._ready_event.set()
                 self.schedule_embedding_model_warmup()
                 await self._startup_reconciliation()
-                self.schedule_vocabulary_catch_up()
 
         self._watcher_lifecycle.start(self._on_watcher_overflow)
 
@@ -548,7 +546,6 @@ class ApplicationContext:
             publish_public_state=self._publish_bootstrap_public_state,
             mark_ready=self._ready_event.set,
             schedule_embedding_warmup=self.schedule_embedding_model_warmup,
-            schedule_vocabulary_catch_up=self.schedule_vocabulary_catch_up,
             report_failure=self._report_bootstrap_failure,
             publish_availability=self._publish_bootstrap_availability,
         )
@@ -568,9 +565,6 @@ class ApplicationContext:
 
     def get_search_availability(self) -> SearchAvailability | None:
         return self._availability
-
-    def schedule_vocabulary_catch_up(self) -> bool:
-        return False
 
     def _report_bootstrap_failure(
         self,
@@ -674,7 +668,6 @@ class ApplicationContext:
                 )
                 self._ready_event.set()
                 self.schedule_embedding_model_warmup()
-                self.schedule_vocabulary_catch_up()
                 return  # Success, exit retry loop
 
             except Exception as e:
@@ -710,8 +703,6 @@ class ApplicationContext:
             self.schedule_embedding_model_warmup()
             await self._startup_reconciliation()
 
-            self.schedule_vocabulary_catch_up()
-
             self._index_state = IndexState(status="ready")
             self._publish_bootstrap_availability(
                 SearchAvailability(
@@ -734,7 +725,6 @@ class ApplicationContext:
     async def _reconcile_existing_indices_background(self) -> None:
         try:
             await self._startup_reconciliation()
-            self.schedule_vocabulary_catch_up()
         except Exception:
             logger.exception(
                 "Startup reconciliation failed after loading existing indices"
@@ -924,8 +914,6 @@ class ApplicationContext:
 
                 # Register inotify watches for any directories that appeared since startup
                 self._watcher_lifecycle.refresh_watches()
-
-                self.schedule_vocabulary_catch_up()
 
             except asyncio.CancelledError:
                 logger.info("Periodic reconciliation task cancelled")

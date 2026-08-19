@@ -97,7 +97,6 @@ class BootstrapHost(Protocol):
     def _compute_index_state_version(self) -> float: ...
     def _build_vector_store(self, config: Config, embedding_model_name: str) -> Any: ...
     def schedule_embedding_model_warmup(self) -> bool: ...
-    def schedule_vocabulary_catch_up(self) -> bool: ...
     async def _run_freshness_refresh(self) -> None: ...
     def _clear_freshness_task(self, task: asyncio.Task) -> None: ...
 
@@ -146,7 +145,6 @@ class BootstrapCoordinator:
                 host._publish_bootstrap_availability(_fully_available())
                 host._ready_event.set()
                 host.schedule_embedding_model_warmup()
-                host.schedule_vocabulary_catch_up()
         else:
             self._logger.info("Loading existing indices")
             if background_index:
@@ -173,7 +171,6 @@ class BootstrapCoordinator:
                 host._ready_event.set()
                 host.schedule_embedding_model_warmup()
                 await host._startup_reconciliation()
-                host.schedule_vocabulary_catch_up()
 
         host._watcher_lifecycle.start(host._on_watcher_overflow)
 

@@ -19,7 +19,6 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
         config=SimpleNamespace(indexing=SimpleNamespace(task_backpressure_limit=7)),
         index_path=tmp_path / "index",
         documents_roots=[Path("/docs")],
-        schedule_vocabulary_catch_up=lambda: True,
     )
     fake_worker = SimpleNamespace(is_running=False, pid=321)
     runtime_paths = RuntimePaths(
@@ -95,7 +94,7 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
         "global_runtime": True,
     }
     register_tasks_call = cast(dict[str, object], calls["register_tasks"])
-    assert register_tasks_call == {
+    assert {
         "huey": "huey",
         "index_manager": fake_ctx.index_manager,
         "task_lease_store": register_tasks_call["task_lease_store"],
@@ -103,8 +102,16 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
         "task_backpressure_limit": 7,
         "bootstrap_index_path": fake_ctx.index_path,
         "bootstrap_documents_roots": fake_ctx.documents_roots,
-        "schedule_vocabulary_catch_up": fake_ctx.schedule_vocabulary_catch_up,
+    } == {
+        key: value
+        for key, value in register_tasks_call.items()
+        if key != "schedule_vocabulary_catch_up"
     }
+    schedule_vocabulary_catch_up = register_tasks_call[
+        "schedule_vocabulary_catch_up"
+    ]
+    assert callable(schedule_vocabulary_catch_up)
+    assert schedule_vocabulary_catch_up() is False
     health_server_args = cast(dict[str, object], calls["health_server"])
     assert health_server_args == {
         "socket_path": runtime_paths.socket_path,

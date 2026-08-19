@@ -444,7 +444,6 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
             self.git_indexing_enabled = True
             self.index_path = runtime_paths.root
             self.documents_roots: list[Path] = []
-            self.schedule_vocabulary_catch_up = object()
             self.config = type(
                 "_FakeConfig",
                 (),
@@ -528,12 +527,13 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
     assert observed["queue_path"] == runtime_paths.queue_db_path
     register_args = cast(tuple[object, ...], observed["register"])
     assert register_args[:2] == (fake_huey, fake_ctx.index_manager)
-    assert register_args[4:] == (
+    assert register_args[4:7] == (
         100,
         runtime_paths.root,
         [],
-        fake_ctx.schedule_vocabulary_catch_up,
     )
+    assert callable(register_args[7])
+    assert register_args[7]() is False
     assert observed["worker_runtime_paths"] == runtime_paths
     assert runtime.worker is not None
     assert runtime.health_server is not None
