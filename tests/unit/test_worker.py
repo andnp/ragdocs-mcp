@@ -642,19 +642,19 @@ class TestWorkerRuntimeStartup:
             db_path=runtime_paths.queue_db_path,
         )
 
-        monkeypatch.setattr("mcp_markdown_ragdocs.cli.ApplicationContext.create", lambda **kwargs: fake_ctx)
+        monkeypatch.setattr("mcp_markdown_ragdocs.context.ApplicationContext.create", lambda **kwargs: fake_ctx)
         monkeypatch.setattr(
-            "mcp_markdown_ragdocs.cli.build_queue_runtime",
+            "mcp_markdown_ragdocs.coordination.queue.build_queue_runtime",
             lambda path: fake_queue_runtime,
         )
         monkeypatch.setattr(
-            "mcp_markdown_ragdocs.cli.register_tasks",
+            "mcp_markdown_ragdocs.indexing.tasks.register_tasks",
             lambda *args, **kwargs: SimpleNamespace(
                 queue_runtime=fake_queue_runtime,
                 submission=SimpleNamespace(submit_refresh_git_request=lambda git_dir: None),
             ),
         )
-        monkeypatch.setattr("mcp_markdown_ragdocs.cli.HueyWorker", lambda _huey: fake_worker)
+        monkeypatch.setattr("mcp_markdown_ragdocs.worker.consumer.HueyWorker", lambda _huey: fake_worker)
         monkeypatch.setattr(
             "mcp_markdown_ragdocs.cli._parent_process_alive",
             lambda _pid, _parent_start_time=None: False,

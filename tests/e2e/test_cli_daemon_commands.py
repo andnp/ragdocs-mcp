@@ -368,7 +368,7 @@ async def test_run_daemon_forever_releases_boot_lock_after_startup(
     )
     monkeypatch.setattr("mcp_markdown_ragdocs.cli.LifecycleCoordinator", lambda: fake_coordinator)
     monkeypatch.setattr(
-        "mcp_markdown_ragdocs.cli.create_daemon_runtime",
+        "mcp_markdown_ragdocs.daemon.runtime.create_daemon_runtime",
         lambda paths, **kwargs: fake_runtime,
     )
 

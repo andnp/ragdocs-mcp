@@ -93,10 +93,6 @@ from mcp_markdown_ragdocs.cli_utils.validators import (
     validate_timestamp_range,
 )
 from mcp_markdown_ragdocs.config import load_config
-from mcp_markdown_ragdocs.context import ApplicationContext
-from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
-from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
-from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.daemon import RuntimePaths
 from mcp_markdown_ragdocs.daemon.admin_payloads import (
     _build_admin_overview_payload,
@@ -120,16 +116,13 @@ from mcp_markdown_ragdocs.daemon.management import (
     wait_for_daemon_ready,
 )
 from mcp_markdown_ragdocs.daemon.rebuild_commands import run_rebuild_command
-from mcp_markdown_ragdocs.daemon.runtime import create_daemon_runtime
 from mcp_markdown_ragdocs.daemon.status import (
     build_daemon_status_payload,
     format_daemon_startup_result,
     request_daemon_overview,
 )
-from mcp_markdown_ragdocs.indexing.tasks import register_tasks
 from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 from mcp_markdown_ragdocs.runtime_logging import configure_file_logging
-from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 from mcp_markdown_ragdocs.worker.process import (
     is_expected_daemon_parent,
 )
@@ -192,6 +185,13 @@ async def _run_worker_forever_async(
 
         worker_loop.call_soon_threadsafe(_schedule)
         return result.result(timeout=5.0)
+
+    from mcp_markdown_ragdocs.context import ApplicationContext
+    from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
+    from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+    from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
+    from mcp_markdown_ragdocs.indexing.tasks import register_tasks
+    from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 
     config = load_config()
     configure_file_logging(index_root / "worker.log", config.logging)
@@ -402,6 +402,8 @@ def mcp(project: str | None):
 
 
 async def _run_daemon_forever() -> None:
+    from mcp_markdown_ragdocs.daemon.runtime import create_daemon_runtime
+
     runtime_paths = RuntimePaths.resolve()
     config = load_config()
     configure_file_logging(runtime_paths.root / "daemon.log", config.logging)
