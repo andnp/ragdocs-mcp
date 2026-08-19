@@ -1,6 +1,5 @@
-from types import SimpleNamespace
-
 import pytest
+from searchkernel.domain import Record
 
 from mcp_markdown_ragdocs.app.services import (
     ContextLifecycleService,
@@ -9,21 +8,35 @@ from mcp_markdown_ragdocs.app.services import (
 
 
 def test_manager_indexing_service_hides_manager_implementation() -> None:
-    manager = SimpleNamespace(
-        load=lambda: "loaded",
-        persist=lambda: "persisted",
-        index_document=lambda path: path,
-        index_record=lambda record: record,
-        get_document_count=lambda: 3,
-        is_ready=lambda: True,
-    )
+    """The service delegates only the manager operations in its application port."""
+    class FakeManager:
+        def load(self) -> None:
+            return None
+
+        def persist(self) -> None:
+            return None
+
+        def index_document(self, file_path: str) -> bool:
+            return file_path == "doc.md"
+
+        def index_record(self, record: Record) -> bool:
+            return record.source_id == "record"
+
+        def get_document_count(self) -> int:
+            return 3
+
+        def is_ready(self) -> bool:
+            return True
+
+    manager = FakeManager()
     service = ManagerIndexingService(manager)
 
     assert service.load() is None
     assert service.persist() is None
-    assert service.index_document("doc.md") == "doc.md"
+    assert service.index_document("doc.md") is True
     assert service.get_document_count() == 3
     assert service.is_ready() is True
+    assert service.task_target() is manager
 
 
 @pytest.mark.asyncio

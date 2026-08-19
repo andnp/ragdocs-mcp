@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from searchkernel.api import Record
 
@@ -21,7 +21,18 @@ class IndexingService(Protocol):
     def index_record(self, record: Record) -> bool: ...
     def get_document_count(self) -> int: ...
     def is_ready(self) -> bool: ...
-    def task_target(self) -> Any: ...
+    def task_target(self) -> object: ...
+
+
+class ManagerIndexingPort(Protocol):
+    """Manager operations owned by the application service adapter."""
+
+    def load(self) -> None: ...
+    def persist(self) -> None: ...
+    def index_document(self, file_path: str) -> bool: ...
+    def index_record(self, record: Record) -> bool: ...
+    def get_document_count(self) -> int: ...
+    def is_ready(self) -> bool: ...
 
 
 class LifecycleService(Protocol):
@@ -36,7 +47,7 @@ class LifecycleService(Protocol):
 class ManagerIndexingService:
     """Expose record manager operations without leaking its implementation."""
 
-    def __init__(self, manager: Any) -> None:
+    def __init__(self, manager: ManagerIndexingPort) -> None:
         self._manager = manager
 
     def load(self) -> None:
@@ -57,7 +68,7 @@ class ManagerIndexingService:
     def is_ready(self) -> bool:
         return self._manager.is_ready()
 
-    def task_target(self) -> Any:
+    def task_target(self) -> object:
         return self._manager
 
 
@@ -98,7 +109,7 @@ class ApplicationServices:
 def compose_services(
     context: ApplicationContext,
     *,
-    manager: Any,
+    manager: ManagerIndexingPort,
     search: ApplicationSearchUseCase,
 ) -> ApplicationServices:
     return ApplicationServices(
@@ -113,6 +124,7 @@ __all__ = [
     "ContextLifecycleService",
     "IndexingService",
     "LifecycleService",
+    "ManagerIndexingPort",
     "ManagerIndexingService",
     "compose_services",
 ]
