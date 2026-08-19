@@ -1,11 +1,20 @@
 from datetime import UTC, datetime
 from pathlib import Path
+import threading
 
 import pytest
 from searchkernel.domain import Record, RecordStatus
 
 import mcp_markdown_ragdocs.indexing.record_manager as record_manager_module
 from tests.conftest import create_test_document
+
+
+def _bridge_threads() -> list[threading.Thread]:
+    return [
+        thread
+        for thread in threading.enumerate()
+        if thread.name.startswith(record_manager_module._ASYNC_BRIDGE_THREAD_NAME)
+    ]
 
 
 def _make_record(source_id: str, body: str) -> Record:
@@ -64,3 +73,22 @@ async def test_async_index_records_avoids_sync_bridge(
     assert await record_manager.async_index_record(record)
     assert await record_manager.async_index_records(())
     assert record_manager.storage.hydrate_record(record.storage_key) is not None
+
+
+@pytest.mark.asyncio
+async def test_active_loop_bridge_is_reused_and_closed_idempotently(record_manager) -> None:
+    """Sync compatibility calls reuse one owned worker and close cleanly."""
+    first = _make_record("bridge-first", "First bridge record.")
+    second = _make_record("bridge-second", "Second bridge record.")
+
+    assert record_manager.index_record(first)
+    first_threads = _bridge_threads()
+    assert len(first_threads) == 1
+    assert not first_threads[0].daemon
+
+    assert record_manager.index_record(second)
+    assert _bridge_threads() == first_threads
+
+    record_manager.close()
+    record_manager.close()
+    assert _bridge_threads() == []

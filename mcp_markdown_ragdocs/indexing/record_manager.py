@@ -69,6 +69,7 @@ _GRAPH_REBUILD_DOCUMENT_BATCH_SIZE = 200
 _LINKS_TO_EDGE_TYPE = "links_to"
 _GRAPH_REBUILD_DEBOUNCE_SECONDS = 1.0
 _DOC_ID_CACHE_SIZE = 200_000
+_ASYNC_BRIDGE_THREAD_NAME = "mcp-ragdocs-record-manager"
 
 
 @lru_cache(maxsize=_DOC_ID_CACHE_SIZE)
@@ -179,6 +180,7 @@ class RecordIndexManager:
     ) -> None:
         self._config = config
         self.kernel = kernel
+        self._async_bridge = _AsyncLoopBridge()
         self._index_storage = storage or LocalRecordStorage(kernel)
         self.storage: RecordStorage = self._index_storage
         self._graph: GraphCapability = graph or (
@@ -430,7 +432,8 @@ class RecordIndexManager:
                 file_path,
                 force=force,
                 update_graph=update_graph,
-            )
+            ),
+            self._async_bridge,
         )
 
     async def async_index_record(self, record: Record) -> bool:
@@ -451,7 +454,7 @@ class RecordIndexManager:
             return False
 
     def index_record(self, record: Record) -> bool:
-        return _run_async(self.async_index_record(record))
+        return _run_async(self.async_index_record(record), self._async_bridge)
 
     async def async_index_records(self, records: Sequence[Record]) -> bool:
         if not records:
@@ -490,7 +493,7 @@ class RecordIndexManager:
         return bool(generic_records)
 
     def index_records(self, records: Sequence[Record]) -> bool:
-        return _run_async(self.async_index_records(records))
+        return _run_async(self.async_index_records(records), self._async_bridge)
 
     async def _async_index_gdrive_records(self, records: Sequence[Record]) -> bool:
         try:
@@ -506,7 +509,7 @@ class RecordIndexManager:
             return False
 
     def _index_gdrive_records(self, records: Sequence[Record]) -> bool:
-        return _run_async(self._async_index_gdrive_records(records))
+        return _run_async(self._async_index_gdrive_records(records), self._async_bridge)
 
     def reconcile_git_project_attribution(
         self,
@@ -787,6 +790,7 @@ class RecordIndexManager:
 
     def close(self) -> None:
         """Stop the graph rebuild worker after processing its latest request."""
+        self._async_bridge.close()
         self._graph_rebuilder.close()
 
     def load(self) -> None:
@@ -844,16 +848,53 @@ class RecordIndexManager:
         return _ReconcileResult(added, removed, 0, failed)
 
 
-def _run_async(awaitable):
-    """Run ingestion from both sync workers and an active event-loop thread."""
+class _AsyncLoopBridge:
+    """Own the worker used by sync APIs called from an active event loop."""
 
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(awaitable)
+    def __init__(self) -> None:
+        self._executor: ThreadPoolExecutor | None = None
+        self._lock = threading.Lock()
+        self._closed = False
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        return executor.submit(asyncio.run, awaitable).result()
+    def run(self, awaitable):
+        with self._lock:
+            if self._closed:
+                awaitable.close()
+                raise RuntimeError("record manager async bridge is closed")
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(awaitable)
+
+        with self._lock:
+            if self._closed:
+                awaitable.close()
+                raise RuntimeError("record manager async bridge is closed")
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix=_ASYNC_BRIDGE_THREAD_NAME,
+                )
+            executor = self._executor
+            future = executor.submit(asyncio.run, awaitable)
+        return future.result()
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            executor = self._executor
+            self._executor = None
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+
+
+def _run_async(awaitable, bridge: _AsyncLoopBridge):
+    """Run ingestion from both sync workers and active event-loop threads."""
+
+    return bridge.run(awaitable)
 
 
 __all__ = [
