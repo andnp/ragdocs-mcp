@@ -145,12 +145,11 @@ def _build_dependencies(
         index_db_path=Path("/runtime/index.db"),
         get_worker_running=lambda: True,
         get_worker_pid=lambda: 123,
-        build_admin_overview_payload=lambda ctx, runtime_root, worker_running, worker_pid, lifecycle: {
+        build_admin_overview_payload=lambda ctx, worker_running, worker_pid, lifecycle: {
             "status": "ok",
             "lifecycle": lifecycle,
             "worker_running": worker_running,
             "worker_pid": worker_pid,
-            "runtime_root": str(runtime_root),
         },
         build_index_stats_payload=lambda ctx: {"status": "ok", "indexed_documents": 1},
         build_queue_status_payload=lambda queue_path, worker_running, backpressure_limit: {
@@ -190,7 +189,6 @@ async def test_admin_overview_route_refreshes_indices_before_building_payload() 
         "lifecycle": "ready",
         "worker_running": True,
         "worker_pid": 123,
-        "runtime_root": "/runtime",
     }
 
 

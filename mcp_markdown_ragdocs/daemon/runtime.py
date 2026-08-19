@@ -85,16 +85,9 @@ def create_daemon_runtime(
                 index_db_path=runtime_paths.index_db_path,
                 get_worker_running=lambda: worker.is_running,
                 get_worker_pid=lambda: worker.pid,
-                build_admin_overview_payload=lambda current_ctx, runtime_root, worker_running, worker_pid, lifecycle: build_admin_overview_payload(
+                build_admin_overview_payload=lambda current_ctx, worker_running, worker_pid, lifecycle: build_admin_overview_payload(
                     cast(ApplicationContext, current_ctx),
-                    RuntimePaths(
-                        root=runtime_root,
-                        index_db_path=runtime_paths.index_db_path,
-                        queue_db_path=runtime_paths.queue_db_path,
-                        metadata_path=runtime_paths.metadata_path,
-                        lock_path=runtime_paths.lock_path,
-                        socket_path=runtime_paths.socket_path,
-                    ),
+                    runtime_paths,
                     queue_runtime,
                     worker_running,
                     worker_pid,

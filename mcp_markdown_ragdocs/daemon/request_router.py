@@ -368,7 +368,6 @@ async def _handle_admin_request(
         await ctx.ensure_fresh_indices()
         return dependencies.build_admin_overview_payload(
             ctx,
-            dependencies.runtime_root,
             dependencies.get_worker_running(),
             dependencies.get_worker_pid(),
             coordinator.state.value,
