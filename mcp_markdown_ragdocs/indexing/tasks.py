@@ -62,6 +62,7 @@ from mcp_markdown_ragdocs.indexing.reindex import (
 from mcp_markdown_ragdocs.indexing import task_intents
 from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
 from mcp_markdown_ragdocs.indexing.task_writer import (
+    INDEX_WRITER_RESOURCE,
     WRITER_HEARTBEAT_INTERVAL_SECONDS,  # noqa: F401 - compatibility export
     WRITER_LEASE_TIMEOUT_SECONDS,  # noqa: F401 - compatibility export
     run_as_writer,
@@ -1857,7 +1858,7 @@ def submit_rebuild_request(
     writer_store = _writer_lease_store()
     if writer_store is None:
         return TaskSubmissionResult(status="unavailable")
-    if not writer_store.acquire_writer(request_id):
+    if not writer_store.acquire_writer(INDEX_WRITER_RESOURCE, request_id):
         return TaskSubmissionResult(status="backpressured")
 
     queue_item = project_override or "__global__"
@@ -1867,7 +1868,7 @@ def submit_rebuild_request(
         item=queue_item,
         warning_message="Skipping rebuild enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
-        writer_store.release_writer(request_id)
+        writer_store.release_writer(INDEX_WRITER_RESOURCE, request_id)
         return TaskSubmissionResult(status="backpressured")
 
     claim = _intent_claim(
@@ -1876,7 +1877,7 @@ def submit_rebuild_request(
         {"project_override": project_override, "request_id": request_id},
     )
     if claim is None:
-        writer_store.release_writer(request_id)
+        writer_store.release_writer(INDEX_WRITER_RESOURCE, request_id)
         return TaskSubmissionResult(status="already_pending")
     intent, claim_token = claim
     try:
@@ -1889,7 +1890,7 @@ def submit_rebuild_request(
     except Exception:
         if _intent_store() is not None:
             _release_intent(intent.intent_id, claim_token)
-        writer_store.release_writer(request_id)
+        writer_store.release_writer(INDEX_WRITER_RESOURCE, request_id)
         raise
     return TaskSubmissionResult(status="enqueued")
 

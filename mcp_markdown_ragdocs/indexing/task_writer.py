@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 WRITER_LEASE_TIMEOUT_SECONDS = 30.0
 WRITER_HEARTBEAT_INTERVAL_SECONDS = 5.0
+INDEX_WRITER_RESOURCE = "index-writer"
 
 
 def writer_lease_store(queue_path: str | Path) -> TaskLeaseStore:
@@ -26,7 +27,7 @@ def writer_is_active(
     store_factory: Callable[[], TaskLeasePort | None],
 ) -> bool:
     store = store_factory()
-    return store is not None and store.writer_owner() is not None
+    return store is not None and store.writer_owner(INDEX_WRITER_RESOURCE) is not None
 
 
 def run_as_writer(
@@ -45,7 +46,7 @@ def run_as_writer(
         return busy_result
 
     token = owner_token or uuid4().hex
-    if not store.acquire_writer(token):
+    if not store.acquire_writer(INDEX_WRITER_RESOURCE, token):
         details = ""
         if operation_args and isinstance(operation_args[0], str):
             details = f" argument={operation_args[0]!r}"
@@ -63,7 +64,7 @@ def run_as_writer(
 
     def _heartbeat() -> None:
         while not heartbeat_stop.wait(WRITER_HEARTBEAT_INTERVAL_SECONDS):
-            if not store.heartbeat_writer(token):
+            if not store.heartbeat_writer(INDEX_WRITER_RESOURCE, token):
                 logger.warning("Lost index writer ownership: %s", token)
                 return
 
@@ -78,7 +79,7 @@ def run_as_writer(
     finally:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=WRITER_HEARTBEAT_INTERVAL_SECONDS)
-        released = store.release_writer(token)
+        released = store.release_writer(INDEX_WRITER_RESOURCE, token)
         if released and owner_token is not None and on_released is not None:
             on_released()
 

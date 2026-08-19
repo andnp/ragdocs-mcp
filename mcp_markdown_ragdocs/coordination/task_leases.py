@@ -19,7 +19,6 @@ ACTIVE_LEASE = "active"
 COMPLETED_LEASE = "completed"
 FAILED_LEASE = "failed"
 RECLAIMED_LEASE = "reclaimed"
-INDEX_WRITER_RESOURCE = "index-writer"
 DEFAULT_LEASE_TIMEOUT_SECONDS = 30.0
 
 
@@ -77,18 +76,21 @@ class TaskLeasePort(Protocol):
 
     def get(self, task_id: str) -> TaskLease | None: ...
 
-    def acquire_writer(self, owner_token: str, *, now: float | None = None) -> bool: ...
+    def acquire_writer(
+        self, resource: str, owner_token: str, *, now: float | None = None
+    ) -> bool: ...
 
     def heartbeat_writer(
         self,
+        resource: str,
         owner_token: str,
         *,
         now: float | None = None,
     ) -> bool: ...
 
-    def release_writer(self, owner_token: str) -> bool: ...
+    def release_writer(self, resource: str, owner_token: str) -> bool: ...
 
-    def writer_owner(self, *, now: float | None = None) -> str | None: ...
+    def writer_owner(self, resource: str, *, now: float | None = None) -> str | None: ...
 
 
 class TaskLeaseStore(TaskLeasePort):
@@ -291,7 +293,9 @@ class TaskLeaseStore(TaskLeasePort):
             ).fetchone()
         return None if row is None else _row_to_lease(row)
 
-    def acquire_writer(self, owner_token: str, *, now: float | None = None) -> bool:
+    def acquire_writer(
+        self, resource: str, owner_token: str, *, now: float | None = None
+    ) -> bool:
         timestamp = time.time() if now is None else now
         cutoff = timestamp - self._timeout_seconds
         with self._connect() as connection:
@@ -302,7 +306,7 @@ class TaskLeaseStore(TaskLeasePort):
                 FROM writer_leases
                 WHERE resource = ?
                 """,
-                (INDEX_WRITER_RESOURCE,),
+                (resource,),
             ).fetchone()
             if (
                 row is not None
@@ -322,12 +326,13 @@ class TaskLeaseStore(TaskLeasePort):
                     acquired_at = excluded.acquired_at,
                     heartbeat_at = excluded.heartbeat_at
                 """,
-                (INDEX_WRITER_RESOURCE, owner_token, timestamp, timestamp),
+                (resource, owner_token, timestamp, timestamp),
             )
             return True
 
     def heartbeat_writer(
         self,
+        resource: str,
         owner_token: str,
         *,
         now: float | None = None,
@@ -340,22 +345,22 @@ class TaskLeaseStore(TaskLeasePort):
                 SET heartbeat_at = ?
                 WHERE resource = ? AND owner_token = ?
                 """,
-                (timestamp, INDEX_WRITER_RESOURCE, owner_token),
+                (timestamp, resource, owner_token),
             )
             return cursor.rowcount == 1
 
-    def release_writer(self, owner_token: str) -> bool:
+    def release_writer(self, resource: str, owner_token: str) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 DELETE FROM writer_leases
                 WHERE resource = ? AND owner_token = ?
                 """,
-                (INDEX_WRITER_RESOURCE, owner_token),
+                (resource, owner_token),
             )
             return cursor.rowcount == 1
 
-    def writer_owner(self, *, now: float | None = None) -> str | None:
+    def writer_owner(self, resource: str, *, now: float | None = None) -> str | None:
         timestamp = time.time() if now is None else now
         cutoff = timestamp - self._timeout_seconds
         with self._connect() as connection:
@@ -366,14 +371,14 @@ class TaskLeaseStore(TaskLeasePort):
                 FROM writer_leases
                 WHERE resource = ?
                 """,
-                (INDEX_WRITER_RESOURCE,),
+                (resource,),
             ).fetchone()
             if row is None:
                 return None
             if row["heartbeat_at"] <= cutoff:
                 connection.execute(
                     "DELETE FROM writer_leases WHERE resource = ?",
-                    (INDEX_WRITER_RESOURCE,),
+                    (resource,),
                 )
                 return None
             return str(row["owner_token"])

@@ -37,6 +37,7 @@ from mcp_markdown_ragdocs.indexing.git_refresh_state import (
 )
 from mcp_markdown_ragdocs.indexing.tasks import (
     GIT_REFRESH_TASK_PRIORITY,
+    INDEX_WRITER_RESOURCE,
     RECORD_BATCH_TASK_PRIORITY,
     enqueue_index,
     enqueue_index_batch,
@@ -192,14 +193,14 @@ class TestTaskRegistration:
     ) -> None:
         _register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
-        assert store.acquire_writer("startup-indexing")
+        assert store.acquire_writer(INDEX_WRITER_RESOURCE, "startup-indexing")
 
         blocked = submit_rebuild_request(None, request_id="rebuild-blocked")
 
         assert blocked.status == "backpressured"
         assert huey_instance.pending_count() == 0
 
-        assert store.release_writer("startup-indexing")
+        assert store.release_writer(INDEX_WRITER_RESOURCE, "startup-indexing")
         accepted = submit_rebuild_request(None, request_id="rebuild-accepted")
 
         assert accepted.status == "enqueued"
@@ -231,7 +232,7 @@ class TestTaskRegistration:
             assert task is not None
             huey_instance.execute(task)
             store = TaskLeaseStore(_queue_path(huey_instance))
-            assert store.writer_owner() is None
+            assert store.writer_owner(INDEX_WRITER_RESOURCE) is None
             intent_store = WorkIntentStore(_queue_path(huey_instance))
             intent = intent_store.find(
                 "rebuild_index",
@@ -247,7 +248,7 @@ class TestTaskRegistration:
     ) -> None:
         _register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
-        assert store.acquire_writer("rebuild-active")
+        assert store.acquire_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
 
         tasks_mod.index_document_task("/docs/blocked.md")
         tasks_mod.refresh_git_repository_task("/repo/.git")
@@ -261,7 +262,7 @@ class TestTaskRegistration:
         assert fake_manager.indexed_records == []
         assert "Writer lease busy; deferring index_document" in caplog.text
         assert "argument='/docs/blocked.md'" in caplog.text
-        assert store.release_writer("rebuild-active") is True
+        assert store.release_writer(INDEX_WRITER_RESOURCE, "rebuild-active") is True
 
     def test_register_tasks_creates_task_functions(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -403,13 +404,13 @@ class TestTaskRegistration:
     ) -> None:
         _register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
-        assert store.acquire_writer("rebuild-active")
+        assert store.acquire_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
 
         submission = submit_refresh_git_request("/repo/.git")
         assert submission.status == "already_pending"
         assert huey_instance.pending_count() == 0
 
-        assert store.release_writer("rebuild-active")
+        assert store.release_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
         tasks_mod._run_as_writer(
             lambda: None,
             owner_token="rebuild-finished",
