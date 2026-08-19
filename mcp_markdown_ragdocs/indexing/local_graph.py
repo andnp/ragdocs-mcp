@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import contextvars
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from itertools import islice
+from typing import Protocol, runtime_checkable
 
 from searchkernel.api import (
     GraphEdge,
@@ -14,30 +15,58 @@ from searchkernel.api import (
 )
 
 
+class LocalGraphStore(Protocol):
+    """Public local graph operations consumed by the application adapter."""
+
+    def neighbors_many(
+        self,
+        identities: Sequence[RecordIdentity],
+        *,
+        depth: int,
+        max_neighbors: int | None = None,
+    ) -> Mapping[str, Sequence[GraphNeighbor]]: ...
+
+    def upsert_edges(self, edges: Sequence[GraphEdge]) -> None: ...
+
+    def delete_edges(self, edges: Sequence[GraphEdge]) -> None: ...
+
+    def graph_integrity_errors(self) -> list[str]: ...
+
+
+@runtime_checkable
+class IncomingLocalGraphStore(LocalGraphStore, Protocol):
+    """Optional public inbound traversal supported by newer SearchKernel versions."""
+
+    def incoming_neighbors_many(
+        self,
+        identities: Sequence[RecordIdentity],
+        *,
+        depth: int,
+        max_neighbors: int | None = None,
+    ) -> Mapping[str, Sequence[GraphNeighbor]]: ...
+
+
+class GraphPipelineHost(Protocol):
+    """Application-side view of a kernel pipeline used by the temporary hook."""
+
+    @property
+    def pipeline(self) -> object: ...
+
+
 class LocalBidirectionalGraphStore:
     """Adapt the local public graph store to the application's direction port."""
 
     def __init__(
         self,
-        kernel: LocalRecordKernel,
+        graph_store: LocalGraphStore,
         identities: Callable[[], Iterable[RecordIdentity]],
     ) -> None:
-        self._kernel = kernel
-        self._graph_store = kernel.graph_store
+        self._graph_store = graph_store
         self._identities = identities
         self._direction = contextvars.ContextVar(
             "graph_direction",
             default="outgoing",
         )
-
-    def install(self) -> None:
-        """Install this capability into the pipeline's graph slot.
-
-        SearchKernel 0.15 exposes graph stores publicly but does not yet expose
-        a public pipeline graph replacement hook. Keep that compatibility detail
-        inside this adapter so application callers remain port-only.
-        """
-        setattr(self._kernel.pipeline, "_graph_store", self)
 
     def set_direction(self, direction: str | bool) -> None:
         normalized = (
@@ -136,13 +165,9 @@ class LocalBidirectionalGraphStore:
         depth: int,
         max_neighbors: int | None = None,
     ) -> dict[str, Sequence[GraphNeighbor]]:
-        try:
-            incoming_loader = self._graph_store.incoming_neighbors_many
-        except AttributeError:
-            incoming_loader = None
-        if incoming_loader is not None:
+        if isinstance(self._graph_store, IncomingLocalGraphStore):
             return dict(
-                incoming_loader(
+                self._graph_store.incoming_neighbors_many(
                     identities,
                     depth=depth,
                     max_neighbors=max_neighbors,
@@ -200,6 +225,21 @@ class LocalBidirectionalGraphStore:
         return self._graph_store.graph_integrity_errors()
 
 
+class SearchKernelGraphInstaller:
+    """Temporary seam for SearchKernel's missing public graph replacement hook.
+
+    Remove this adapter when SearchKernel exposes a supported pipeline graph
+    replacement API; application callers should continue using the graph port.
+    """
+
+    def __init__(self, kernel: GraphPipelineHost) -> None:
+        self._kernel = kernel
+
+    def install(self, graph: object) -> None:
+        """Install the application graph through the current private hook."""
+        setattr(self._kernel.pipeline, "_graph_store", graph)
+
+
 def _merge_graph_neighbors(
     first: Sequence[GraphNeighbor],
     second: Sequence[GraphNeighbor],
@@ -220,9 +260,13 @@ def install_bidirectional_graph_store(
     identities: Callable[[], Iterable[RecordIdentity]],
 ) -> LocalBidirectionalGraphStore:
     """Install and return the local graph capability adapter."""
-    graph = LocalBidirectionalGraphStore(kernel, identities)
-    graph.install()
+    graph = LocalBidirectionalGraphStore(kernel.graph_store, identities)
+    SearchKernelGraphInstaller(kernel).install(graph)
     return graph
 
 
-__all__ = ["LocalBidirectionalGraphStore", "install_bidirectional_graph_store"]
+__all__ = [
+    "LocalBidirectionalGraphStore",
+    "SearchKernelGraphInstaller",
+    "install_bidirectional_graph_store",
+]
