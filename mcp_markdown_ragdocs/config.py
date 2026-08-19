@@ -4,6 +4,7 @@ import math
 import os
 import re
 import tomllib
+from copy import deepcopy
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -321,6 +322,10 @@ class Config:
     projects: list[ProjectConfig] = field(default_factory=list)
     detected_project: str | None = None
     config_warnings: list[str] = field(default_factory=list)
+
+    def snapshot(self) -> "Config":
+        """Return an independent copy for runtime-owned normalization."""
+        return deepcopy(self)
 
 
 @dataclass(frozen=True)

@@ -79,45 +79,46 @@ def build_runtime_components(
     project_detector: Callable[..., str | None] | None = None,
 ) -> RuntimeComponents:
     """Resolve application paths before delegating concrete runtime assembly."""
+    runtime_config = config.snapshot()
     detected_project = None
     if not global_runtime:
         detector = project_detector or detect_project
         detected_project = detector(
-            projects=config.projects,
+            projects=runtime_config.projects,
             project_override=project_override,
         )
 
-    configured_index_path = resolve_index_path(config)
+    configured_index_path = resolve_index_path(runtime_config)
     index_path = index_path_override or configured_index_path
     documents_roots = _resolve_documents_roots(
-        config,
+        runtime_config,
         detected_project=detected_project,
         project_override=project_override,
         documents_path_override=documents_path_override,
         global_runtime=global_runtime,
     )
     documents_path = _compute_common_documents_root(documents_roots)
-    config.indexing.index_path = str(index_path)
-    config.indexing.documents_path = str(documents_path)
-    config.detected_project = None if global_runtime else detected_project
+    runtime_config.indexing.index_path = str(index_path)
+    runtime_config.indexing.documents_path = str(documents_path)
+    runtime_config.detected_project = None if global_runtime else detected_project
 
     saved_manifest = load_manifest(index_path)
     active_model_identity: tuple[str, int] | None = None
     if saved_manifest is not None and saved_manifest.active_model is not None:
         active_namespace = saved_manifest.active_model.namespace
-        config.llm.embedding_model = active_namespace.model_name
-        config.embedding.truncate_dim = active_namespace.dim
+        runtime_config.llm.embedding_model = active_namespace.model_name
+        runtime_config.embedding.truncate_dim = active_namespace.dim
         active_model_identity = active_namespace.identity
 
-    embedding_model_name = config.embedding.model_name
+    embedding_model_name = runtime_config.embedding.model_name
     if active_model_identity is not None:
-        embedding_model_name = config.llm.embedding_model
-    config.embedding.model_name = embedding_model_name
-    config.llm.embedding_model = embedding_model_name
-    if config.store.backend not in {"local", "faiss+sqlite"}:
+        embedding_model_name = runtime_config.llm.embedding_model
+    runtime_config.embedding.model_name = embedding_model_name
+    runtime_config.llm.embedding_model = embedding_model_name
+    if runtime_config.store.backend not in {"local", "faiss+sqlite"}:
         raise ValueError(
             "canonical runtime supports store.backend = 'local'; "
-            f"got {config.store.backend!r}"
+            f"got {runtime_config.store.backend!r}"
         )
 
     paths = RuntimePaths(
@@ -126,7 +127,7 @@ def build_runtime_components(
         documents_roots=documents_roots,
     )
     return assemble_runtime(
-        config,
+        runtime_config,
         paths,
         embedding_model_name=embedding_model_name,
         active_model_identity=active_model_identity,

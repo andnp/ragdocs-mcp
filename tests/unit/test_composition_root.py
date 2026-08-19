@@ -155,6 +155,34 @@ class TestCompositionRootNoGlobalMutation:
         assert components.db_manager is components.index_manager.database_manager
         assert components.paths.index_path == index_path
 
+    def test_runtime_composition_does_not_mutate_supplied_config(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Composition normalizes an independent nested configuration snapshot."""
+        monkeypatch.setenv("SEARCHKERNEL_INDEX_PATH", str(tmp_path / "index"))
+        config = load_config()
+        config.indexing.index_path = str(tmp_path / "configured-index")
+        config.indexing.documents_path = str(tmp_path / "configured-docs")
+        config.llm.embedding_model = "configured-model"
+        config.embedding.model_name = "configured-embedding"
+        original = config.snapshot()
+
+        components = build_runtime_components(
+            config,
+            enable_watcher=False,
+            lazy_embeddings=True,
+            index_path_override=tmp_path / "runtime-index",
+            documents_path_override=tmp_path / "runtime-docs",
+            global_runtime=True,
+        )
+
+        assert config == original
+        assert components.config is not config
+        assert components.config.indexing is not config.indexing
+        assert components.config.embedding is not config.embedding
+
     def test_context_index_manager_uses_application_port(self, monkeypatch, tmp_path):
         """The composed manager satisfies the context-owned indexing capability."""
         monkeypatch.setenv("SEARCHKERNEL_INDEX_PATH", str(tmp_path / "index"))
