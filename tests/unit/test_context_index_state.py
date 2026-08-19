@@ -1080,9 +1080,10 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
             enqueued_count=len(set(file_paths)),
         )
 
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
-        fake_submit_index_batch,
+    _setattr(
+        ctx,
+        "task_submission",
+        SimpleNamespace(submit_index_batch=fake_submit_index_batch),
     )
 
     original_sleep = asyncio.sleep
@@ -1172,15 +1173,21 @@ async def test_task_bootstrap_keeps_monitoring_when_remaining_work_is_already_pe
 
     enqueue_checked = asyncio.Event()
 
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
-        lambda file_paths, force=False: enqueue_checked.set()
-        or TaskBatchSubmissionResult(
+    def fake_submit_index_batch(
+        file_paths: list[str], force: bool = False
+    ) -> TaskBatchSubmissionResult:
+        enqueue_checked.set()
+        return TaskBatchSubmissionResult(
             queue_available=True,
             requested_unique_count=len(set(file_paths)),
             enqueued_count=0,
             already_pending_count=len(set(file_paths)),
-        ),
+        )
+
+    _setattr(
+        ctx,
+        "task_submission",
+        SimpleNamespace(submit_index_batch=fake_submit_index_batch),
     )
 
     original_sleep = asyncio.sleep
@@ -1370,9 +1377,10 @@ async def test_task_bootstrap_skips_durably_completed_files(
             enqueued_count=len(set(file_paths)),
         )
 
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
-        fake_submit_index_batch,
+    _setattr(
+        ctx,
+        "task_submission",
+        SimpleNamespace(submit_index_batch=fake_submit_index_batch),
     )
 
     await asyncio.wait_for(ctx._bootstrap_via_tasks(), timeout=1.0)
@@ -1553,13 +1561,13 @@ async def test_task_backed_reconciliation_enqueues_changes_without_index_manager
             enqueued_count=len(doc_ids),
         )
 
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_index_batch",
-        fake_submit_index_batch,
-    )
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.indexing.tasks.submit_remove_request_batch",
-        fake_submit_remove_batch,
+    _setattr(
+        ctx,
+        "task_submission",
+        SimpleNamespace(
+            submit_index_batch=fake_submit_index_batch,
+            submit_remove_request_batch=fake_submit_remove_batch,
+        ),
     )
 
     await ctx._enqueue_reconciliation_tasks()

@@ -12,7 +12,6 @@ from searchkernel.api import Record, TaskSubmissionResult
 
 from mcp_markdown_ragdocs.app.search_request import build_search_query, search_top_k
 from mcp_markdown_ragdocs.coordination.queue import QueueRuntime
-from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.daemon.mcp_requests import (
     build_mcp_tools_payload,
     handle_mcp_tool_call,
@@ -47,6 +46,22 @@ type BuildAdminOverviewPayload = Callable[..., dict[str, object]]
 type BuildIndexStatsPayload = Callable[..., dict[str, object]]
 type BuildQueueStatusPayload = Callable[..., dict[str, object]]
 type SubmitRecordBatch = Callable[[list[dict[str, object]]], object | None]
+
+
+class DaemonAdminTaskSubmissionPort(Protocol):
+    def submit_rebuild_request(
+        self, project_override: str | None, *, request_id: str
+    ) -> TaskSubmissionResult: ...
+
+    def submit_reindex_request(
+        self,
+        operation: str,
+        *,
+        model: str | None,
+        truncate_dim: int | None,
+        old_model: str | None,
+        request_id: str,
+    ) -> TaskSubmissionResult: ...
 
 
 class _RecordIndexManager(Protocol):
@@ -91,35 +106,6 @@ class _RouterCoordinator(Protocol):
     def request_shutdown(self) -> None: ...
 
     async def wait_ready(self, timeout: float = 60.0) -> None: ...
-
-
-def _legacy_submit_rebuild_request(
-    project_override: str | None,
-    *,
-    request_id: str,
-) -> TaskSubmissionResult:
-    from mcp_markdown_ragdocs.indexing.tasks import submit_rebuild_request
-
-    return submit_rebuild_request(project_override, request_id=request_id)
-
-
-def _legacy_submit_reindex_request(
-    operation: str,
-    *,
-    model: str | None,
-    truncate_dim: int | None,
-    old_model: str | None,
-    request_id: str,
-) -> TaskSubmissionResult:
-    from mcp_markdown_ragdocs.indexing.tasks import submit_reindex_request
-
-    return submit_reindex_request(
-        operation,
-        model=model,
-        truncate_dim=truncate_dim,
-        old_model=old_model,
-        request_id=request_id,
-    )
 
 
 def _index_records(ctx: _RecordIndexContext, payload: dict[str, object]) -> dict[str, object]:
@@ -180,8 +166,8 @@ class DaemonRequestRouterDependencies:
     build_admin_overview_payload: BuildAdminOverviewPayload
     build_index_stats_payload: BuildIndexStatsPayload
     build_queue_status_payload: BuildQueueStatusPayload
+    task_submission: DaemonAdminTaskSubmissionPort
     submit_record_batch: SubmitRecordBatch | None = None
-    task_submission: TaskSubmissionPort | None = None
 
 
 def _record_batch_error(details: str) -> dict[str, object]:
@@ -201,8 +187,6 @@ async def _submit_record_batch(
         return error
 
     submit_record_batch = dependencies.submit_record_batch
-    if submit_record_batch is None and dependencies.task_submission is not None:
-        submit_record_batch = dependencies.task_submission.submit_record_batch
     if submit_record_batch is None:
         return await asyncio.to_thread(
             _index_records,
@@ -520,11 +504,7 @@ async def _handle_admin_request(
             truncate_dim=truncate_dim,
             old_model=old_model,
         )
-        submit_reindex_request = (
-            dependencies.task_submission.submit_reindex_request
-            if dependencies.task_submission is not None
-            else _legacy_submit_reindex_request
-        )
+        submit_reindex_request = dependencies.task_submission.submit_reindex_request
         submission = submit_reindex_request(
             operation,
             model=model,
@@ -575,11 +555,7 @@ async def _handle_admin_request(
             project_override,
         )
         request_id = uuid4().hex
-        submit_rebuild_request = (
-            dependencies.task_submission.submit_rebuild_request
-            if dependencies.task_submission is not None
-            else _legacy_submit_rebuild_request
-        )
+        submit_rebuild_request = dependencies.task_submission.submit_rebuild_request
         submission = submit_rebuild_request(
             project_override,
             request_id=request_id,

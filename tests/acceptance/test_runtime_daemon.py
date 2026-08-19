@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from collections.abc import Callable, Coroutine
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from searchkernel.api import Record, build_local_record_kernel
@@ -18,6 +18,7 @@ from mcp_markdown_ragdocs.config import (
     SearchConfig,
 )
 from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
+from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
@@ -121,6 +122,7 @@ def _runtime(
         build_admin_overview_payload=lambda *_args: {},
         build_index_stats_payload=lambda *_args: {},
         build_queue_status_payload=lambda **_kwargs: {},
+        task_submission=cast(TaskSubmissionPort, SimpleNamespace()),
     )
     return _Runtime(manager, build_daemon_request_handler(dependencies), roots)
 

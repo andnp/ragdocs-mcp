@@ -401,16 +401,11 @@ class FileWatcher:
 
         if self._use_tasks:
             if self._task_submission is None:
-                from mcp_markdown_ragdocs.indexing.tasks import (
-                    submit_index_request_batch,
-                    submit_remove_request_batch,
+                raise RuntimeError(
+                    "Task submission port is required when task mode is enabled"
                 )
-
-                submit_index = submit_index_request_batch
-                submit_remove = submit_remove_request_batch
-            else:
-                submit_index = self._task_submission.submit_index_request_batch
-                submit_remove = self._task_submission.submit_remove_request_batch
+            submit_index = self._task_submission.submit_index_request_batch
+            submit_remove = self._task_submission.submit_remove_request_batch
 
             if task_index_paths:
                 submission = submit_index(task_index_paths)

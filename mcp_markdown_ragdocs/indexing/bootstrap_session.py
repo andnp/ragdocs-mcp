@@ -8,7 +8,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
-from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
 from searchkernel.api import (
     BootstrapFileStamp,
     build_file_stamps,
@@ -188,11 +187,11 @@ class BootstrapSession:
             )
             return
 
-        submit_index_batch = (
-            self.task_submission.submit_index_batch
-            if self.task_submission is not None
-            else indexing_tasks.submit_index_batch
-        )
+        if self.task_submission is None:
+            raise RuntimeError(
+                "Task submission port is required for task-backed bootstrap"
+            )
+        submit_index_batch = self.task_submission.submit_index_batch
         try:
             submission = submit_index_batch(remaining_files, progressive=True)
         except TypeError:
@@ -230,11 +229,11 @@ class BootstrapSession:
             logger.info("No git repositories found for task-driven startup refresh")
             return
 
-        submit_refresh_git_batch = (
-            self.task_submission.submit_refresh_git_batch
-            if self.task_submission is not None
-            else indexing_tasks.submit_refresh_git_batch
-        )
+        if self.task_submission is None:
+            raise RuntimeError(
+                "Task submission port is required for task-backed Git bootstrap"
+            )
+        submit_refresh_git_batch = self.task_submission.submit_refresh_git_batch
         submission = submit_refresh_git_batch([str(repo) for repo in repos])
         logger.info(
             "Enqueued %d startup git refresh task(s) for %d repositories (%d already pending)",

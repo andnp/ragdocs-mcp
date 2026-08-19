@@ -16,8 +16,8 @@ from searchkernel.domain import Record
 from searchkernel.api import TaskSubmissionResult
 
 from mcp_markdown_ragdocs.coordination.queue import QueueRuntime
-from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.daemon.request_router import (
+    DaemonAdminTaskSubmissionPort,
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
 )
@@ -124,8 +124,10 @@ def _build_dependencies(
     coordinator: _FakeCoordinator,
     *,
     submit_record_batch=None,
-    task_submission=None,
+    task_submission: DaemonAdminTaskSubmissionPort | None = None,
 ) -> DaemonRequestRouterDependencies:
+    if task_submission is None:
+        task_submission = MagicMock(spec=DaemonAdminTaskSubmissionPort)
     queue_path = Path("/tmp") / f"mcp-ragdocs-router-{os.getpid()}.db"
     return DaemonRequestRouterDependencies(
         ctx=ctx,
@@ -624,7 +626,7 @@ async def test_rebuild_submit_ignores_abandoned_running_status(
     the live writer-lease evidence that a resubmission actually found.
     """
     ctx = _FakeContext(ready=True)
-    submission = MagicMock(spec=TaskSubmissionPort)
+    submission = MagicMock(spec=DaemonAdminTaskSubmissionPort)
     submission.submit_rebuild_request.return_value = TaskSubmissionResult(status="enqueued")
     dependencies = _build_dependencies(
         ctx,
@@ -658,7 +660,7 @@ async def test_rebuild_submit_still_blocks_concurrent_live_rebuild(
     must still be rejected rather than accepted.
     """
     ctx = _FakeContext(ready=True)
-    submission = MagicMock(spec=TaskSubmissionPort)
+    submission = MagicMock(spec=DaemonAdminTaskSubmissionPort)
     submission.submit_rebuild_request.return_value = TaskSubmissionResult(
         status="backpressured"
     )

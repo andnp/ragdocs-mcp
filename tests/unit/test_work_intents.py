@@ -58,20 +58,20 @@ class _DeterministicIndexManager:
 def _register(
     tmp_path: Path,
     manager: _DeterministicIndexManager,
-) -> SqliteHuey:
+) -> tuple[SqliteHuey, Any]:
     huey = SqliteHuey(
         name="intent-tests",
         filename=str(tmp_path / "queue.db"),
         immediate=False,
     )
     queue_path = Path(cast(Any, huey.storage).filename)
-    tasks.register_tasks(
+    runtime = tasks.register_tasks(
         huey,
         manager,
         TaskLeaseStore(queue_path),
         WorkIntentStore(queue_path),
     )
-    return huey
+    return huey, runtime
 
 
 def _execute_one(huey: SqliteHuey) -> None:
@@ -82,10 +82,12 @@ def _execute_one(huey: SqliteHuey) -> None:
 
 def test_duplicate_remove_submissions_coalesce_canonical_identity(tmp_path: Path) -> None:
     manager = _DeterministicIndexManager()
-    huey = _register(tmp_path, manager)
+    huey, runtime = _register(tmp_path, manager)
 
-    first = tasks.submit_remove_request(str(tmp_path / "docs" / ".." / "doc.md"))
-    second = tasks.submit_remove_request(str(tmp_path / "doc.md"))
+    first = runtime.submission.submit_remove_request(
+        str(tmp_path / "docs" / ".." / "doc.md")
+    )
+    second = runtime.submission.submit_remove_request(str(tmp_path / "doc.md"))
 
     assert first.status == "enqueued"
     assert second.status == "already_pending"
@@ -125,9 +127,9 @@ def test_stale_claim_cannot_terminalize_re_pended_intent(tmp_path: Path) -> None
 
 def test_failed_indexing_reopens_after_worker_restart(tmp_path: Path) -> None:
     manager = _DeterministicIndexManager(fail_once=True)
-    huey = _register(tmp_path, manager)
+    huey, runtime = _register(tmp_path, manager)
 
-    first = tasks.submit_index_request(str(tmp_path / "doc.md"))
+    first = runtime.submission.submit_index_request(str(tmp_path / "doc.md"))
     assert first.status == "enqueued"
     _execute_one(huey)
 
@@ -138,7 +140,7 @@ def test_failed_indexing_reopens_after_worker_restart(tmp_path: Path) -> None:
     assert intent is not None
     assert intent.state == FAILED
 
-    retry = tasks.submit_index_request(str(tmp_path / "doc.md"))
+    retry = runtime.submission.submit_index_request(str(tmp_path / "doc.md"))
     assert retry.status == "enqueued"
     _execute_one(huey)
 
@@ -150,12 +152,12 @@ def test_failed_indexing_reopens_after_worker_restart(tmp_path: Path) -> None:
 
 def test_completed_indexing_reopens_for_later_update(tmp_path: Path) -> None:
     manager = _DeterministicIndexManager()
-    huey = _register(tmp_path, manager)
+    huey, runtime = _register(tmp_path, manager)
     file_path = str(tmp_path / "doc.md")
 
-    assert tasks.submit_index_request(file_path).status == "enqueued"
+    assert runtime.submission.submit_index_request(file_path).status == "enqueued"
     _execute_one(huey)
-    assert tasks.submit_index_request(file_path).status == "enqueued"
+    assert runtime.submission.submit_index_request(file_path).status == "enqueued"
     _execute_one(huey)
 
     assert manager.indexed == [file_path, file_path]

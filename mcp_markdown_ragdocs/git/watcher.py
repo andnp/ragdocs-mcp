@@ -92,13 +92,10 @@ class GitWatcher:
         """Incrementally index any commits added since the last poll."""
         if self._use_tasks:
             if self._task_submission is None:
-                from mcp_markdown_ragdocs.indexing.tasks import (
-                    submit_refresh_git_request,
+                raise RuntimeError(
+                    "Task submission port is required when task mode is enabled"
                 )
-
-                submit_refresh = submit_refresh_git_request
-            else:
-                submit_refresh = self._task_submission.submit_refresh_git_request
+            submit_refresh = self._task_submission.submit_refresh_git_request
 
             signatures = await asyncio.gather(
                 *(

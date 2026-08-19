@@ -38,20 +38,88 @@ from mcp_markdown_ragdocs.indexing.git_refresh_state import (
 from mcp_markdown_ragdocs.indexing.tasks import (
     GIT_REFRESH_TASK_PRIORITY,
     RECORD_BATCH_TASK_PRIORITY,
-    enqueue_index,
-    enqueue_index_batch,
-    enqueue_refresh_git,
-    enqueue_refresh_git_batch,
-    enqueue_remove,
-    get_pending_index_document_count,
+    enqueue_index as _enqueue_index,
+    enqueue_index_batch as _enqueue_index_batch,
+    enqueue_refresh_git as _enqueue_refresh_git,
+    enqueue_refresh_git_batch as _enqueue_refresh_git_batch,
+    enqueue_remove as _enqueue_remove,
+    get_pending_index_document_count as _get_pending_index_document_count,
     register_tasks,
-    submit_index_batch,
-    submit_index_request_batch,
-    submit_rebuild_request,
-    submit_record_batch,
-    submit_refresh_git_request,
-    submit_remove_request_batch,
+    submit_index_batch as _submit_index_batch,
+    submit_index_request_batch as _submit_index_request_batch,
+    submit_rebuild_request as _submit_rebuild_request,
+    submit_record_batch as _submit_record_batch,
+    submit_refresh_git_request as _submit_refresh_git_request,
+    submit_remove_request_batch as _submit_remove_request_batch,
 )
+from mcp_markdown_ragdocs.indexing.task_runtime import TaskRuntime
+
+
+_active_runtime: TaskRuntime | None = None
+
+
+def _runtime() -> TaskRuntime:
+    assert _active_runtime is not None
+    return _active_runtime
+
+
+def enqueue_index(file_path: str, force: bool = False) -> bool:
+    return _enqueue_index(file_path, force=force, runtime=_runtime())
+
+
+def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
+    return _enqueue_index_batch(file_paths, force=force, runtime=_runtime())
+
+
+def enqueue_refresh_git(git_dir: str) -> bool:
+    return _enqueue_refresh_git(git_dir, runtime=_runtime())
+
+
+def enqueue_refresh_git_batch(git_dirs: list[str]) -> int:
+    return _enqueue_refresh_git_batch(git_dirs, runtime=_runtime())
+
+
+def enqueue_remove(doc_id: str) -> bool:
+    return _enqueue_remove(doc_id, runtime=_runtime())
+
+
+def get_pending_index_document_count(file_paths: list[str]) -> int:
+    return _get_pending_index_document_count(file_paths, runtime=_runtime())
+
+
+def submit_index_batch(
+    file_paths: list[str], force: bool = False, progressive: bool = False
+) -> Any:
+    return _submit_index_batch(
+        file_paths,
+        force=force,
+        progressive=progressive,
+        runtime=_runtime(),
+    )
+
+
+def submit_index_request_batch(file_paths: list[str], force: bool = False) -> Any:
+    return _submit_index_request_batch(file_paths, force=force, runtime=_runtime())
+
+
+def submit_rebuild_request(project_override: str | None, *, request_id: str) -> Any:
+    return _submit_rebuild_request(
+        project_override,
+        request_id=request_id,
+        runtime=_runtime(),
+    )
+
+
+def submit_record_batch(record_payloads: list[dict[str, object]]) -> Any:
+    return _submit_record_batch(record_payloads, runtime=_runtime())
+
+
+def submit_refresh_git_request(git_dir: str) -> Any:
+    return _submit_refresh_git_request(git_dir, runtime=_runtime())
+
+
+def submit_remove_request_batch(doc_ids: list[str]) -> Any:
+    return _submit_remove_request_batch(doc_ids, runtime=_runtime())
 
 
 class FakeIndexManager:
@@ -107,13 +175,15 @@ def _queue_path(huey: SqliteHuey) -> Path:
 
 
 def _register_tasks(huey: SqliteHuey, index_manager: object, **kwargs: Any):
-    return register_tasks(
+    global _active_runtime
+    _active_runtime = register_tasks(
         huey,
         cast(Any, index_manager),
         TaskLeaseStore(_queue_path(huey)),
         WorkIntentStore(_queue_path(huey)),
         **kwargs,
     )
+    return _active_runtime
 
 
 @pytest.fixture()
@@ -123,38 +193,11 @@ def fake_manager() -> FakeIndexManager:
 
 @pytest.fixture(autouse=True)
 def _reset_tasks():
-    """Reset module-level state between tests."""
-    tasks_mod._huey = None
-    tasks_mod._index_manager = None
-    tasks_mod._task_lease_store = None
-    tasks_mod._task_backpressure_limit = 100
-    tasks_mod._bootstrap_index_path = None
-    tasks_mod._bootstrap_documents_roots = []
-    tasks_mod._git_refresh_in_flight.clear()
-    tasks_mod.index_document_task = None
-    tasks_mod.index_documents_batch_task = None
-    tasks_mod.index_records_batch_task = None
-    tasks_mod.remove_document_task = None
-    tasks_mod.remove_documents_batch_task = None
-    tasks_mod.refresh_git_repository_task = None
-    tasks_mod.rebuild_index_task = None
-    tasks_mod.reindex_model_task = None
+    """Isolate each test with an explicit task runtime."""
+    global _active_runtime
+    _active_runtime = None
     yield
-    tasks_mod._huey = None
-    tasks_mod._index_manager = None
-    tasks_mod._task_lease_store = None
-    tasks_mod._task_backpressure_limit = 100
-    tasks_mod._bootstrap_index_path = None
-    tasks_mod._bootstrap_documents_roots = []
-    tasks_mod._git_refresh_in_flight.clear()
-    tasks_mod.index_document_task = None
-    tasks_mod.index_documents_batch_task = None
-    tasks_mod.index_records_batch_task = None
-    tasks_mod.remove_document_task = None
-    tasks_mod.remove_documents_batch_task = None
-    tasks_mod.refresh_git_repository_task = None
-    tasks_mod.rebuild_index_task = None
-    tasks_mod.reindex_model_task = None
+    _active_runtime = None
 
 
 class TestTaskRegistration:
@@ -245,12 +288,12 @@ class TestTaskRegistration:
         fake_manager: FakeIndexManager,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        _register_tasks(huey_instance, fake_manager)
+        runtime = _register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
         assert store.acquire_writer("rebuild-active")
 
-        tasks_mod.index_document_task("/docs/blocked.md")
-        tasks_mod.refresh_git_repository_task("/repo/.git")
+        runtime.task_handles["index_document"]("/docs/blocked.md")
+        runtime.task_handles["refresh_git_repository"]("/repo/.git")
         first = huey_instance.dequeue()
         second = huey_instance.dequeue()
         assert first is not None
@@ -262,17 +305,6 @@ class TestTaskRegistration:
         assert "Writer lease busy; deferring index_document" in caplog.text
         assert "argument='/docs/blocked.md'" in caplog.text
         assert store.release_writer("rebuild-active") is True
-
-    def test_register_tasks_creates_task_functions(
-        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
-    ) -> None:
-        """register_tasks() creates index and remove tasks."""
-        _register_tasks(huey_instance, fake_manager)
-        assert tasks_mod.index_document_task is not None
-        assert tasks_mod.index_documents_batch_task is not None
-        assert tasks_mod.index_records_batch_task is not None
-        assert tasks_mod.remove_document_task is not None
-        assert tasks_mod.remove_documents_batch_task is not None
 
     def test_register_tasks_returns_runtime_with_stable_task_names(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -307,20 +339,6 @@ class TestTaskRegistration:
             "_rebuild_index",
             "_reindex_model",
         }
-
-    def test_enqueue_without_registration_returns_false(self) -> None:
-        """enqueue_index/remove return False when tasks aren't registered."""
-        assert enqueue_index("/some/file.md") is False
-        assert enqueue_remove("some-doc") is False
-
-    def test_submit_index_request_batch_reports_unavailable_queue(self) -> None:
-        submission = submit_index_request_batch(
-            ["/some/file.md", "/some/file.md", "/some/other.md"]
-        )
-
-        assert submission.queue_available is False
-        assert submission.requested_unique_count == 2
-        assert submission.enqueued_count == 0
 
     def test_enqueue_with_registration_returns_true(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -448,6 +466,7 @@ class TestTaskRegistration:
             lambda: None,
             owner_token="rebuild-finished",
             busy_result=False,
+            runtime=_runtime(),
         )
 
         assert huey_instance.pending_count() == 1
@@ -562,16 +581,13 @@ class TestTaskRegistration:
         assert stats.backpressure_limit == 4
         assert stats.backpressure_utilization == 0.25
 
-    def test_enqueue_refresh_git_returns_false_without_registration(self) -> None:
-        assert enqueue_refresh_git("/repo/.git") is False
-
     def test_register_tasks_creates_git_refresh_task(
         self,
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        _register_tasks(huey_instance, fake_manager)
-        assert tasks_mod.refresh_git_repository_task is not None
+        runtime = _register_tasks(huey_instance, fake_manager)
+        assert runtime.task_handles["refresh_git_repository"] is not None
         assert enqueue_refresh_git("/repo/.git") is True
 
     def test_enqueue_refresh_git_skips_repo_already_pending_in_queue(
@@ -609,9 +625,9 @@ class TestTaskRegistration:
         huey_instance: SqliteHuey,
         fake_manager: FakeIndexManager,
     ) -> None:
-        _register_tasks(huey_instance, fake_manager)
+        runtime = _register_tasks(huey_instance, fake_manager)
         git_dir = "/repo/.git"
-        tasks_mod._git_refresh_in_flight.add(str(Path(git_dir).resolve()))
+        runtime.git_refresh_in_flight.add(str(Path(git_dir).resolve()))
 
         submission = submit_refresh_git_request(git_dir)
 
@@ -772,15 +788,15 @@ class TestTaskRegistration:
     def test_forced_index_request_reopens_completed_intent(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
-        _register_tasks(huey_instance, fake_manager)
+        runtime = _register_tasks(huey_instance, fake_manager)
         file_path = "/some/file.md"
 
-        assert tasks_mod.submit_index_request(file_path).status == "enqueued"
+        assert tasks_mod.submit_index_request(file_path, runtime=runtime).status == "enqueued"
         task = huey_instance.dequeue()
         assert task is not None
         huey_instance.execute(task)
 
-        forced = tasks_mod.submit_index_request(file_path, force=True)
+        forced = tasks_mod.submit_index_request(file_path, force=True, runtime=runtime)
 
         assert forced.status == "enqueued"
         assert huey_instance.pending_count() == 1

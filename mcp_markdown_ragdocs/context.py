@@ -383,13 +383,11 @@ class ApplicationContext:
             logger.info("No git repositories found for task-driven startup refresh")
             return
 
-        from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
-
-        submit_refresh_git_batch = (
-            self.task_submission.submit_refresh_git_batch
-            if self.task_submission is not None
-            else indexing_tasks.submit_refresh_git_batch
-        )
+        if self.task_submission is None:
+            raise RuntimeError(
+                "Task submission port is required for task-backed Git refresh"
+            )
+        submit_refresh_git_batch = self.task_submission.submit_refresh_git_batch
         submission = submit_refresh_git_batch([str(repo) for repo in repos])
         logger.info(
             "Enqueued %d startup git refresh task(s) for %d repositories (%d already pending)",
@@ -717,18 +715,12 @@ class ApplicationContext:
             logger.info("Task-backed reconciliation complete: no changes needed")
             return
 
-        from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
-
-        submit_index_batch = (
-            self.task_submission.submit_index_batch
-            if self.task_submission is not None
-            else indexing_tasks.submit_index_batch
-        )
-        submit_remove_request_batch = (
-            self.task_submission.submit_remove_request_batch
-            if self.task_submission is not None
-            else indexing_tasks.submit_remove_request_batch
-        )
+        if self.task_submission is None:
+            raise RuntimeError(
+                "Task submission port is required for task-backed reconciliation"
+            )
+        submit_index_batch = self.task_submission.submit_index_batch
+        submit_remove_request_batch = self.task_submission.submit_remove_request_batch
 
         index_submission, remove_submission = await asyncio.gather(
             asyncio.to_thread(submit_index_batch, files_to_add),

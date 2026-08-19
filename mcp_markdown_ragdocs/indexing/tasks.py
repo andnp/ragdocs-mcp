@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -112,13 +111,25 @@ class IndexManagerLike(Protocol):
     def index_record(self, record: Record) -> Any: ...
 
 
-class _RegisteredTaskSubmission:
-    """Temporary adapter for callers not yet migrated to TaskRuntime."""
+class _RuntimeTaskSubmission:
+    """Submission adapter bound to one registered runtime instance."""
+
+    def __init__(self) -> None:
+        self._runtime: TaskRuntime | None = None
+
+    def bind(self, runtime: TaskRuntime) -> None:
+        self._runtime = runtime
+
+    @property
+    def runtime(self) -> TaskRuntime:
+        if self._runtime is None:
+            raise RuntimeError("Task submission adapter is not bound to a runtime")
+        return self._runtime
 
     def submit_index_request(
         self, file_path: str, force: bool = False
     ) -> TaskSubmissionResult:
-        return submit_index_request(file_path, force=force)
+        return submit_index_request(file_path, force=force, runtime=self.runtime)
 
     def submit_index_batch(
         self,
@@ -126,38 +137,43 @@ class _RegisteredTaskSubmission:
         force: bool = False,
         progressive: bool = False,
     ) -> TaskBatchSubmissionResult:
-        return submit_index_batch(file_paths, force=force, progressive=progressive)
+        return submit_index_batch(
+            file_paths,
+            force=force,
+            progressive=progressive,
+            runtime=self.runtime,
+        )
 
     def submit_index_request_batch(
         self, file_paths: list[str], force: bool = False
     ) -> TaskBatchSubmissionResult:
-        return submit_index_request_batch(file_paths, force=force)
+        return submit_index_request_batch(
+            file_paths,
+            force=force,
+            runtime=self.runtime,
+        )
 
     def submit_record_batch(
         self, record_payloads: list[dict[str, object]]
     ) -> object | None:
-        return submit_record_batch(record_payloads)
+        return submit_record_batch(record_payloads, runtime=self.runtime)
 
     def submit_remove_request(self, doc_id: str) -> TaskSubmissionResult:
-        return submit_remove_request(doc_id)
+        return submit_remove_request(doc_id, runtime=self.runtime)
 
     def submit_remove_request_batch(
         self, doc_ids: list[str]
     ) -> TaskBatchSubmissionResult:
-        return submit_remove_request_batch(doc_ids)
-
-    def submit_refresh_git_request(self, git_dir: str) -> TaskSubmissionResult:
-        return submit_refresh_git_request(git_dir)
-
-    def submit_refresh_git_batch(
-        self, git_dirs: list[str]
-    ) -> TaskBatchSubmissionResult:
-        return submit_refresh_git_batch(git_dirs)
+        return submit_remove_request_batch(doc_ids, runtime=self.runtime)
 
     def submit_rebuild_request(
         self, project_override: str | None, *, request_id: str
     ) -> TaskSubmissionResult:
-        return submit_rebuild_request(project_override, request_id=request_id)
+        return submit_rebuild_request(
+            project_override,
+            request_id=request_id,
+            runtime=self.runtime,
+        )
 
     def submit_reindex_request(
         self,
@@ -174,63 +190,24 @@ class _RegisteredTaskSubmission:
             truncate_dim=truncate_dim,
             old_model=old_model,
             request_id=request_id,
+            runtime=self.runtime,
         )
 
-
-class _RuntimeTaskSubmission(_RegisteredTaskSubmission):
-    """Submission adapter bound to one registered runtime instance."""
-
-    def __init__(self, runtime: TaskRuntime) -> None:
-        self._runtime = runtime
-
     def submit_refresh_git_request(self, git_dir: str) -> TaskSubmissionResult:
-        return submit_refresh_git_request(git_dir, runtime=self._runtime)
+        return submit_refresh_git_request(git_dir, runtime=self.runtime)
 
     def submit_refresh_git_batch(
         self, git_dirs: list[str]
     ) -> TaskBatchSubmissionResult:
-        return submit_refresh_git_batch(git_dirs, runtime=self._runtime)
+        return submit_refresh_git_batch(git_dirs, runtime=self.runtime)
 
 
-# Module-level references set during initialization
-_huey: SqliteHuey | None = None
-_index_manager: IndexManagerLike | None = None
-_task_backpressure_limit: int = 100
-_bootstrap_index_path: Path | None = None
-_bootstrap_documents_roots: list[Path] = []
-_schedule_vocabulary_catch_up: Callable[[], bool] | None = None
-_task_lease_store: TaskLeasePort | None = None
-_work_intent_store: WorkIntentPort | None = None
-_git_refresh_in_flight: set[str] = set()
-_git_refresh_pending: set[str] = set()
-_git_refresh_deferred: set[str] = set()
-_git_refresh_lock = threading.Lock()
-
-# Task references (set after register_tasks is called)
-index_document_task: Any = None
-index_documents_batch_task: Any = None
-index_records_batch_task: Any = None
-remove_document_task: Any = None
-remove_documents_batch_task: Any = None
-refresh_git_repository_task: Any = None
-rebuild_index_task: Any = None
-reindex_model_task: Any = None
-gdrive_inventory_task: Any = None
-gdrive_startup_task: Any = None
-gdrive_changes_task: Any = None
-gdrive_retry_task: Any = None
-gdrive_backfill_task: Any = None
-gdrive_lease_task: Any = None
-gdrive_watch_task: Any = None
-gdrive_health_task: Any = None
+def _writer_lease_store(runtime: TaskRuntime) -> TaskLeasePort | None:
+    return runtime.task_lease_store
 
 
-def _writer_lease_store(runtime: TaskRuntime | None = None) -> TaskLeasePort | None:
-    return runtime.task_lease_store if runtime is not None else _task_lease_store
-
-
-def _intent_store(runtime: TaskRuntime | None = None) -> WorkIntentPort | None:
-    return runtime.work_intent_store if runtime is not None else _work_intent_store
+def _intent_store(runtime: TaskRuntime) -> WorkIntentPort | None:
+    return runtime.work_intent_store
 
 
 def _canonical_document_identity(document_id: str) -> str:
@@ -257,7 +234,7 @@ def _intent_claim(
     payload: dict[str, object],
     *,
     force_reopen: bool = False,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> tuple[WorkIntent, str] | None:
     return task_intents._intent_claim(
         lambda: _intent_store(runtime),
@@ -273,9 +250,13 @@ def _intent_claim_batch(
     items: list[tuple[str, dict[str, object]]],
     *,
     force_reopen: bool = False,
+    runtime: TaskRuntime,
 ) -> tuple[list[tuple[str, tuple[str, str]]], int]:
     return task_intents._intent_claim_batch(
-        _intent_store, operation, items, force_reopen=force_reopen
+        lambda: _intent_store(runtime),
+        operation,
+        items,
+        force_reopen=force_reopen,
     )
 
 
@@ -283,17 +264,13 @@ def _release_intent(
     intent_id: str,
     claim_token: str,
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> None:
     task_intents._release_intent(
         lambda: _intent_store(runtime),
         intent_id,
         claim_token,
     )
-
-
-def _intent_task(operation: str):
-    return task_intents._intent_task(_intent_store, operation)
 
 
 def _batch_result(outcomes: list[bool], *, error: str) -> dict[str, object]:
@@ -327,18 +304,10 @@ def _persist_document_manifest(
     *,
     indexed_paths: list[str] | None = None,
     removed_doc_ids: list[str] | None = None,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> None:
-    bootstrap_index_path = (
-        runtime.bootstrap_index_path
-        if runtime is not None
-        else _bootstrap_index_path
-    )
-    bootstrap_documents_roots = (
-        runtime.bootstrap_documents_roots
-        if runtime is not None
-        else _bootstrap_documents_roots
-    )
+    bootstrap_index_path = runtime.bootstrap_index_path
+    bootstrap_documents_roots = runtime.bootstrap_documents_roots
     if bootstrap_index_path is None or not bootstrap_documents_roots:
         return
 
@@ -361,7 +330,7 @@ def _persist_document_manifest(
     save_manifest(bootstrap_index_path, manifest)
 
 
-def _writer_is_active(runtime: TaskRuntime | None = None) -> bool:
+def _writer_is_active(runtime: TaskRuntime) -> bool:
     return writer_is_active(lambda: _writer_lease_store(runtime))
 
 
@@ -373,18 +342,14 @@ def _run_as_writer(
     owner_token: str | None = None,
     busy_result: Any,
     on_busy: Callable[[], None] | None = None,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> Any:
-    store_provider = (
-        (lambda: runtime.task_lease_store)
-        if runtime is not None
-        else _writer_lease_store
-    )
-    release_callback = (
-        (lambda: _flush_deferred_git_refreshes(runtime))
-        if runtime is not None
-        else _flush_deferred_git_refreshes
-    )
+    def store_provider() -> TaskLeasePort | None:
+        return runtime.task_lease_store
+
+    def release_callback() -> None:
+        _flush_deferred_git_refreshes(runtime)
+
     return run_as_writer(
         store_provider,
         operation,
@@ -394,21 +359,6 @@ def _run_as_writer(
         busy_result=busy_result,
         on_busy=on_busy,
         on_released=release_callback,
-    )
-
-
-def _writer_owned_task(
-    *,
-    operation: str | None = None,
-    busy_result: Any,
-    on_busy: Callable[..., None] | None = None,
-):
-    return writer_owned_task(
-        _writer_lease_store,
-        operation=operation,
-        busy_result=busy_result,
-        on_busy=on_busy,
-        on_released=_flush_deferred_git_refreshes,
     )
 
 
@@ -521,14 +471,10 @@ def _save_git_refresh_progress(
     started_at: datetime | None = None,
     updated_at: datetime | None = None,
     metrics: dict[str, int] | None = None,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
     **fields: object,
 ) -> None:
-    bootstrap_index_path = (
-        runtime.bootstrap_index_path
-        if runtime is not None
-        else _bootstrap_index_path
-    )
+    bootstrap_index_path = runtime.bootstrap_index_path
     if bootstrap_index_path is None:
         return
     timestamp = updated_at or datetime.now(UTC)
@@ -554,35 +500,23 @@ _save_git_refresh_progress_global = _save_git_refresh_progress
 def _defer_git_refresh(
     git_dir: str,
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> None:
     repo_key = _git_refresh_key(git_dir)
-    lock = runtime.git_refresh_lock if runtime is not None else _git_refresh_lock
-    pending = runtime.git_refresh_pending if runtime is not None else _git_refresh_pending
-    deferred = (
-        runtime.git_refresh_deferred
-        if runtime is not None
-        else _git_refresh_deferred
-    )
+    lock = runtime.git_refresh_lock
+    pending = runtime.git_refresh_pending
+    deferred = runtime.git_refresh_deferred
     with lock:
         pending.add(repo_key)
         deferred.add(repo_key)
     logger.info("Deferred git refresh until index writer release: %s", git_dir)
 
 
-def _flush_deferred_git_refreshes(runtime: TaskRuntime | None = None) -> None:
-    lock = runtime.git_refresh_lock if runtime is not None else _git_refresh_lock
-    pending = runtime.git_refresh_pending if runtime is not None else _git_refresh_pending
-    deferred_state = (
-        runtime.git_refresh_deferred
-        if runtime is not None
-        else _git_refresh_deferred
-    )
-    submit_refresh = (
-        runtime.submission.submit_refresh_git_request
-        if runtime is not None
-        else submit_refresh_git_request
-    )
+def _flush_deferred_git_refreshes(runtime: TaskRuntime) -> None:
+    lock = runtime.git_refresh_lock
+    pending = runtime.git_refresh_pending
+    deferred_state = runtime.git_refresh_deferred
+    submit_refresh = runtime.submission.submit_refresh_git_request
     with lock:
         deferred = list(deferred_state)
         deferred_state.difference_update(deferred)
@@ -604,10 +538,10 @@ def _index_document(
     file_path: str,
     force: bool = False,
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> bool:
     """Index or re-index a single document."""
-    manager = runtime.index_manager if runtime is not None else _index_manager
+    manager = runtime.index_manager
     if manager is None:
         logger.error("IndexManager not available for task execution")
         return False
@@ -626,16 +560,8 @@ def _index_document(
             manager.persist()
             if manager_result:
                 _persist_document_manifest(indexed_paths=[file_path], runtime=runtime)
-            bootstrap_index_path = (
-                runtime.bootstrap_index_path
-                if runtime is not None
-                else _bootstrap_index_path
-            )
-            bootstrap_documents_roots = (
-                runtime.bootstrap_documents_roots
-                if runtime is not None
-                else _bootstrap_documents_roots
-            )
+            bootstrap_index_path = runtime.bootstrap_index_path
+            bootstrap_documents_roots = runtime.bootstrap_documents_roots
             if bootstrap_index_path is not None and bootstrap_documents_roots:
                 mark_bootstrap_file_completed(
                     bootstrap_index_path,
@@ -661,23 +587,15 @@ def _index_documents_batch(
     force: bool = False,
     progressive: bool = False,
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> bool:
     """Index a burst of documents and persist once after the batch."""
-    manager = runtime.index_manager if runtime is not None else _index_manager
+    manager = runtime.index_manager
     if manager is None:
         logger.error("IndexManager not available for batch task execution")
         return False
-    bootstrap_index_path = (
-        runtime.bootstrap_index_path
-        if runtime is not None
-        else _bootstrap_index_path
-    )
-    bootstrap_documents_roots = (
-        runtime.bootstrap_documents_roots
-        if runtime is not None
-        else _bootstrap_documents_roots
-    )
+    bootstrap_index_path = runtime.bootstrap_index_path
+    bootstrap_documents_roots = runtime.bootstrap_documents_roots
 
     unique_file_paths = list(dict.fromkeys(file_paths))
     if not unique_file_paths:
@@ -688,7 +606,7 @@ def _index_documents_batch(
         "prepare_progressive_document",
         None,
     )
-    canonical_index = hasattr(_index_manager, "kernel")
+    canonical_index = hasattr(manager, "kernel")
     if (
         progressive
         and not force
@@ -826,7 +744,7 @@ def _index_documents_batch(
 def _index_records_batch_core(
     record_payloads: list[dict[str, object]],
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> dict[str, object]:
     """Deserialize, index, and persist a Record batch in the worker.
 
@@ -834,7 +752,7 @@ def _index_records_batch_core(
     entire write path in the worker prevents the daemon and worker from
     mutating the same persisted index concurrently.
     """
-    manager = runtime.index_manager if runtime is not None else _index_manager
+    manager = runtime.index_manager
     if manager is None:
         logger.error("IndexManager not available for record batch task")
         return {
@@ -893,23 +811,13 @@ def _index_records_batch_core(
     return {"status": "ok", "indexed_count": len(records)}
 
 
-@_writer_owned_task(
-    busy_result={
-        "status": "error",
-        "error": "index_writer_busy",
-        "details": "Index writer is owned by a rebuild. Retry shortly.",
-    }
-)
-def _index_records_batch(record_payloads: list[dict[str, object]]) -> dict[str, object]:
-    return _index_records_batch_core(record_payloads)
-
 def _remove_document_core(
     doc_id: str,
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> bool:
     """Remove a document from all indices."""
-    manager = runtime.index_manager if runtime is not None else _index_manager
+    manager = runtime.index_manager
     if manager is None:
         logger.error("IndexManager not available for task execution")
         return False
@@ -923,18 +831,13 @@ def _remove_document_core(
         logger.exception("Task failed: remove %s", doc_id)
         return False
 
-@_writer_owned_task(busy_result=False)
-def _remove_document(doc_id: str) -> bool:
-    return _remove_document_core(doc_id)
-
-
 def _remove_documents_batch_core(
     doc_ids: list[str],
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> bool | dict[str, object]:
     """Remove a burst of documents and persist once after the batch."""
-    manager = runtime.index_manager if runtime is not None else _index_manager
+    manager = runtime.index_manager
     if manager is None:
         logger.error("IndexManager not available for batch task execution")
         return False
@@ -992,36 +895,20 @@ def _remove_documents_batch_core(
     )
 
 
-@_writer_owned_task(busy_result=False)
-def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
-    return _remove_documents_batch_core(doc_ids)
-
 def _refresh_git_repository_core(
     git_dir: str,
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> bool:
     """Refresh the git index for one repository."""
-    manager = runtime.index_manager if runtime is not None else _index_manager
+    manager = runtime.index_manager
     if manager is None:
         logger.error("IndexManager not available for git refresh task")
         return False
-    bootstrap_index_path = (
-        runtime.bootstrap_index_path
-        if runtime is not None
-        else _bootstrap_index_path
-    )
-    refresh_lock = runtime.git_refresh_lock if runtime is not None else _git_refresh_lock
-    refresh_in_flight = (
-        runtime.git_refresh_in_flight
-        if runtime is not None
-        else _git_refresh_in_flight
-    )
-    refresh_deferred = (
-        runtime.git_refresh_deferred
-        if runtime is not None
-        else _git_refresh_deferred
-    )
+    bootstrap_index_path = runtime.bootstrap_index_path
+    refresh_lock = runtime.git_refresh_lock
+    refresh_in_flight = runtime.git_refresh_in_flight
+    refresh_deferred = runtime.git_refresh_deferred
     save_progress_for_runtime = _save_git_refresh_progress_global
 
     def _save_git_refresh_progress(*args: Any, **kwargs: Any) -> None:
@@ -1264,41 +1151,20 @@ def _refresh_git_repository_core(
         with refresh_lock:
             refresh_in_flight.discard(repo_key)
             if repo_key not in refresh_deferred:
-                pending = (
-                    runtime.git_refresh_pending
-                    if runtime is not None
-                    else _git_refresh_pending
-                )
-                pending.discard(repo_key)
+                runtime.git_refresh_pending.discard(repo_key)
 
-
-@_writer_owned_task(busy_result=False, on_busy=_defer_git_refresh)
-def _refresh_git_repository(git_dir: str) -> bool:
-    return _refresh_git_repository_core(git_dir)
 
 def _rebuild_index_core(
     project_override: str | None,
     request_id: str,
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> bool:
     """Run a daemon-owned rebuild inside the long-lived worker runtime."""
-    manager = runtime.index_manager if runtime is not None else _index_manager
-    runtime_root = (
-        runtime.bootstrap_index_path
-        if runtime is not None
-        else _bootstrap_index_path
-    )
-    documents_roots = (
-        runtime.bootstrap_documents_roots
-        if runtime is not None
-        else _bootstrap_documents_roots
-    )
-    schedule_vocabulary_catch_up = (
-        runtime.schedule_vocabulary_catch_up
-        if runtime is not None
-        else _schedule_vocabulary_catch_up
-    )
+    manager = runtime.index_manager
+    runtime_root = runtime.bootstrap_index_path
+    documents_roots = runtime.bootstrap_documents_roots
+    schedule_vocabulary_catch_up = runtime.schedule_vocabulary_catch_up
     if manager is None:
         logger.error("IndexManager not available for rebuild task execution")
         return False
@@ -1358,9 +1224,6 @@ def _rebuild_index_core(
     return payload.get("status") == "succeeded"
 
 
-def _rebuild_index(project_override: str | None, request_id: str) -> bool:
-    return _rebuild_index_core(project_override, request_id)
-
 def _reindex_model_core(
     operation: str,
     model: str | None,
@@ -1368,15 +1231,11 @@ def _reindex_model_core(
     old_model: str | None,
     request_id: str,
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> dict[str, object]:
     """Run one durable model-migration operation in the worker."""
-    manager = runtime.index_manager if runtime is not None else _index_manager
-    runtime_root = (
-        runtime.bootstrap_index_path
-        if runtime is not None
-        else _bootstrap_index_path
-    )
+    manager = runtime.index_manager
+    runtime_root = runtime.bootstrap_index_path
     if manager is None:
         return {"status": "error", "error": "reindex_queue_unavailable"}
     if runtime_root is None:
@@ -1454,28 +1313,6 @@ def _reindex_model_core(
         }
 
 
-@_writer_owned_task(
-    busy_result={
-        "status": "error",
-        "error": "index_writer_busy",
-        "details": "Index writer is owned by a rebuild. Retry shortly.",
-    }
-)
-def _reindex_model(
-    operation: str,
-    model: str | None,
-    truncate_dim: int | None,
-    old_model: str | None,
-    request_id: str,
-) -> dict[str, object]:
-    return _reindex_model_core(
-        operation,
-        model,
-        truncate_dim,
-        old_model,
-        request_id,
-    )
-
 def register_tasks(
     huey: SqliteHuey,
     index_manager: IndexManagerLike,
@@ -1491,33 +1328,11 @@ def register_tasks(
     Must be called before enqueuing tasks. Typically called during
     application startup when the worker is being configured.
     """
-    global _huey, _index_manager, _task_backpressure_limit
-    global _bootstrap_index_path, _bootstrap_documents_roots
-    global _schedule_vocabulary_catch_up, _task_lease_store, _work_intent_store
-    global index_document_task, index_documents_batch_task, index_records_batch_task
-    global remove_document_task
-    global remove_documents_batch_task, refresh_git_repository_task
-    global rebuild_index_task, reindex_model_task
-    global gdrive_inventory_task, gdrive_startup_task, gdrive_changes_task, gdrive_retry_task
-    global gdrive_backfill_task, gdrive_lease_task, gdrive_watch_task
-    global gdrive_health_task
-    _huey = huey
-    _index_manager = index_manager
-    _task_backpressure_limit = max(1, task_backpressure_limit)
-    _bootstrap_index_path = bootstrap_index_path
-    _bootstrap_documents_roots = list(bootstrap_documents_roots or [])
-    _schedule_vocabulary_catch_up = schedule_vocabulary_catch_up
-    _task_lease_store = task_lease_store
-    _work_intent_store = work_intent_store
-    with _git_refresh_lock:
-        _git_refresh_in_flight.clear()
-        _git_refresh_pending.clear()
-        _git_refresh_deferred.clear()
-
     storage_filename = cast(Any, huey.storage).filename
+    submission = _RuntimeTaskSubmission()
     runtime = TaskRuntime(
         queue_runtime=QueueRuntime(huey=huey, db_path=Path(storage_filename)),
-        submission=_RegisteredTaskSubmission(),
+        submission=submission,
         index_manager=index_manager,
         task_backpressure_limit=max(1, task_backpressure_limit),
         bootstrap_index_path=bootstrap_index_path,
@@ -1616,55 +1431,48 @@ def register_tasks(
         },
     )
     gdrive_runtime = (
-        build_gdrive_task_runtime(
-            index_manager,
-            _task_lease_store,
-            _work_intent_store,
-        )
+        build_gdrive_task_runtime(index_manager, task_lease_store, work_intent_store)
         if (
             isinstance(index_manager, GDriveTaskManager)
-            and _task_lease_store is not None
-            and _work_intent_store is not None
+            and task_lease_store is not None
+            and work_intent_store is not None
         )
         else None
     )
     gdrive_tasks = register_gdrive_tasks(huey, gdrive_runtime)
-    index_document_task = registered_tasks["index_document"]
-    index_documents_batch_task = registered_tasks["index_documents_batch"]
-    index_records_batch_task = registered_tasks["index_records_batch"]
-    remove_document_task = registered_tasks["remove_document"]
-    remove_documents_batch_task = registered_tasks["remove_documents_batch"]
-    refresh_git_repository_task = registered_tasks["refresh_git_repository"]
-    rebuild_index_task = registered_tasks["rebuild_index"]
-    reindex_model_task = registered_tasks["reindex_model"]
-    gdrive_startup_task = gdrive_tasks.get("gdrive_startup")
-    gdrive_inventory_task = gdrive_tasks.get("gdrive_inventory")
-    gdrive_changes_task = gdrive_tasks.get("gdrive_changes")
-    gdrive_retry_task = gdrive_tasks.get("gdrive_retry")
-    gdrive_backfill_task = gdrive_tasks.get("gdrive_backfill")
-    gdrive_lease_task = gdrive_tasks.get("gdrive_lease")
-    gdrive_watch_task = gdrive_tasks.get("gdrive_watch")
-    gdrive_health_task = gdrive_tasks.get("gdrive_health")
     logger.info("Indexing tasks registered with Huey")
     runtime.task_handles = registered_tasks
     runtime.gdrive_task_handles = gdrive_tasks
-    runtime.submission = _RuntimeTaskSubmission(runtime)
+    submission.bind(runtime)
     return runtime
 
 
-def enqueue_index(file_path: str, force: bool = False) -> bool:
+def enqueue_index(
+    file_path: str,
+    force: bool = False,
+    *,
+    runtime: TaskRuntime,
+) -> bool:
     """Enqueue an index_document task. Returns True if enqueued, False if no Huey."""
-    return submit_index_request(file_path, force=force).enqueued
+    return submit_index_request(file_path, force=force, runtime=runtime).enqueued
 
 
-def submit_index_request(file_path: str, force: bool = False) -> TaskSubmissionResult:
-    if index_document_task is None or _huey is None:
+def submit_index_request(
+    file_path: str,
+    force: bool = False,
+    *,
+    runtime: TaskRuntime,
+) -> TaskSubmissionResult:
+    task = runtime.task_handles.get("index_document")
+    huey = runtime.queue_runtime.huey
+    task_backpressure_limit = runtime.task_backpressure_limit
+    if task is None or huey is None:
         return TaskSubmissionResult(status="unavailable")
-    if _writer_is_active():
+    if _writer_is_active(runtime):
         return TaskSubmissionResult(status="already_pending")
     if is_backpressured(
-        _huey,
-        _task_backpressure_limit,
+        huey,
+        task_backpressure_limit,
         item=file_path,
         warning_message="Skipping index enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
@@ -1674,35 +1482,43 @@ def submit_index_request(file_path: str, force: bool = False) -> TaskSubmissionR
         _canonical_document_identity(file_path),
         {"file_path": file_path, "force": force},
         force_reopen=force,
+        runtime=runtime,
     )
     if claim is None:
         return TaskSubmissionResult(status="already_pending")
     intent, claim_token = claim
     try:
-        index_document_task(
+        task(
             file_path,
             force=force,
             intent_id=intent.intent_id,
             claim_token=claim_token,
         )
     except Exception:
-        if _intent_store() is not None:
-            _release_intent(intent.intent_id, claim_token)
+        if _intent_store(runtime) is not None:
+            _release_intent(intent.intent_id, claim_token, runtime=runtime)
         raise
     return TaskSubmissionResult(status="enqueued")
 
 
-def _get_pending_task_first_args(task_name: str) -> set[str]:
+def _get_pending_task_first_args(
+    task_name: str,
+    *,
+    runtime: TaskRuntime,
+) -> set[str]:
     """Return first positional string args already pending for the given task name."""
     return get_pending_task_first_args(
-        _huey,
+        runtime.queue_runtime.huey,
         task_name,
         inspection_failure_log_message="Failed to inspect pending Huey tasks; startup batch dedupe disabled",
         deserialize_failure_log_message="Failed to deserialize pending Huey task while inspecting startup queue",
     )
 
 
-def _get_pending_index_document_paths() -> set[str]:
+def _get_pending_index_document_paths(
+    *,
+    runtime: TaskRuntime,
+) -> set[str]:
     """Return file paths already pending in single or batch index tasks."""
 
     def _extract_values(task: object) -> set[str]:
@@ -1718,7 +1534,7 @@ def _get_pending_index_document_paths() -> set[str]:
         return set()
 
     return get_pending_task_values(
-        _huey,
+        runtime.queue_runtime.huey,
         {"_index_document", "_index_documents_batch"},
         value_extractor=lambda task: {
             _canonical_document_identity(value)
@@ -1729,12 +1545,21 @@ def _get_pending_index_document_paths() -> set[str]:
     )
 
 
-def _get_pending_refresh_git_dirs() -> set[str]:
+def _get_pending_refresh_git_dirs(
+    *,
+    runtime: TaskRuntime,
+) -> set[str]:
     """Return git dirs already pending in the queue for _refresh_git_repository tasks."""
-    return _get_pending_task_first_args("_refresh_git_repository")
+    return _get_pending_task_first_args(
+        "_refresh_git_repository",
+        runtime=runtime,
+    )
 
 
-def _get_pending_remove_doc_ids() -> set[str]:
+def _get_pending_remove_doc_ids(
+    *,
+    runtime: TaskRuntime,
+) -> set[str]:
     """Return doc IDs already pending in single or batch remove tasks."""
 
     def _extract_values(task: object) -> set[str]:
@@ -1750,7 +1575,7 @@ def _get_pending_remove_doc_ids() -> set[str]:
         return set()
 
     return get_pending_task_values(
-        _huey,
+        runtime.queue_runtime.huey,
         {"_remove_document", "_remove_documents_batch"},
         value_extractor=lambda task: {
             _canonical_document_identity(value)
@@ -1768,8 +1593,11 @@ def _submit_backpressure_limited_batch_request(
     items: list[str],
     task_kwargs: dict[str, object] | None = None,
     pending_items: set[str] | None = None,
+    runtime: TaskRuntime,
 ) -> TaskBatchSubmissionResult:
-    if _huey is None:
+    huey = runtime.queue_runtime.huey
+    task_backpressure_limit = runtime.task_backpressure_limit
+    if huey is None:
         return TaskBatchSubmissionResult(
             queue_available=False,
             requested_unique_count=len(set(items)),
@@ -1792,8 +1620,8 @@ def _submit_backpressure_limited_batch_request(
         )
 
     if is_backpressured(
-        _huey,
-        _task_backpressure_limit,
+        huey,
+        task_backpressure_limit,
         item=f"{len(remaining_items)} {batch_name}(s)",
         warning_message="Skipping %s batch enqueue due to task queue backpressure (%d pending >= %d limit)",
     ):
@@ -1818,28 +1646,37 @@ def _submit_backpressure_limited_batch_request(
     )
 
 
-def enqueue_index_batch(file_paths: list[str], force: bool = False) -> int:
+def enqueue_index_batch(
+    file_paths: list[str],
+    force: bool = False,
+    *,
+    runtime: TaskRuntime,
+) -> int:
     """Enqueue many index tasks without watcher backpressure throttling.
 
     Intended for cold-start/bootstrap flows where the full corpus needs to be
     materialized durably by the worker.
     """
-    return submit_index_batch(file_paths, force=force).enqueued_count
+    return submit_index_batch(file_paths, force=force, runtime=runtime).enqueued_count
 
 
 def submit_index_batch(
     file_paths: list[str],
     force: bool = False,
     progressive: bool = False,
+    *,
+    runtime: TaskRuntime,
 ) -> TaskBatchSubmissionResult:
-    if index_documents_batch_task is None or _huey is None:
+    task = runtime.task_handles.get("index_documents_batch")
+    huey = runtime.queue_runtime.huey
+    if task is None or huey is None:
         return TaskBatchSubmissionResult(
             queue_available=False,
             requested_unique_count=len(_unique_document_paths(file_paths)),
             enqueued_count=0,
         )
     unique_file_paths = _unique_document_paths(file_paths)
-    if _writer_is_active():
+    if _writer_is_active(runtime):
         unique_count = len(unique_file_paths)
         return TaskBatchSubmissionResult(
             queue_available=True,
@@ -1848,7 +1685,11 @@ def submit_index_batch(
             already_pending_count=unique_count,
         )
 
-    pending_paths = set() if force else _get_pending_index_document_paths()
+    pending_paths = (
+        set()
+        if force
+        else _get_pending_index_document_paths(runtime=runtime)
+    )
     requested_unique_paths = {
         _canonical_document_identity(file_path) for file_path in unique_file_paths
     }
@@ -1872,6 +1713,7 @@ def submit_index_batch(
             for file_path in remaining_paths
         ],
         force_reopen=force,
+        runtime=runtime,
     )
     already_pending_count += skipped_count
     claim_by_key = {key: claim for key, claim in keyed_claims}
@@ -1896,13 +1738,17 @@ def submit_index_batch(
                 }
                 if progressive:
                     kwargs["progressive"] = True
-                index_documents_batch_task(batch_paths, **kwargs)
+                task(batch_paths, **kwargs)
                 submitted_claims.extend(batch_claims)
         except Exception:
-            if _intent_store() is not None:
+            if _intent_store(runtime) is not None:
                 for intent_id, claim_token in claims:
                     if (intent_id, claim_token) not in submitted_claims:
-                        _release_intent(intent_id, claim_token)
+                        _release_intent(
+                            intent_id,
+                            claim_token,
+                            runtime=runtime,
+                        )
             raise
         enqueued_count = len(claims)
 
@@ -1923,15 +1769,23 @@ def submit_index_batch(
 def submit_index_request_batch(
     file_paths: list[str],
     force: bool = False,
+    *,
+    runtime: TaskRuntime,
 ) -> TaskBatchSubmissionResult:
-    if index_documents_batch_task is None or _huey is None:
+    task = runtime.task_handles.get("index_documents_batch")
+    huey = runtime.queue_runtime.huey
+    if task is None or huey is None:
         return TaskBatchSubmissionResult(
             queue_available=False,
             requested_unique_count=len(_unique_document_paths(file_paths)),
             enqueued_count=0,
         )
     unique_paths = _unique_document_paths(file_paths)
-    pending_paths = set() if force else _get_pending_index_document_paths()
+    pending_paths = (
+        set()
+        if force
+        else _get_pending_index_document_paths(runtime=runtime)
+    )
     remaining_paths = [
         file_path
         for file_path in unique_paths
@@ -1939,8 +1793,8 @@ def submit_index_request_batch(
     ]
     already_pending_count = len(unique_paths) - len(remaining_paths)
     if is_backpressured(
-        _huey,
-        _task_backpressure_limit,
+        huey,
+        runtime.task_backpressure_limit,
         item=f"{len(remaining_paths)} file(s)",
         warning_message=(
             "Skipping %s due to task queue backpressure "
@@ -1954,7 +1808,11 @@ def submit_index_request_batch(
             already_pending_count=already_pending_count,
             backpressured_items=tuple(remaining_paths),
         )
-    submission = submit_index_batch(remaining_paths, force=force)
+    submission = submit_index_batch(
+        remaining_paths,
+        force=force,
+        runtime=runtime,
+    )
     return TaskBatchSubmissionResult(
         queue_available=True,
         requested_unique_count=len(unique_paths),
@@ -1967,11 +1825,15 @@ def submit_index_request_batch(
 
 def submit_record_batch(
     record_payloads: list[dict[str, object]],
+    *,
+    runtime: TaskRuntime,
 ) -> object | None:
     """Queue a Record batch and return its Huey result handle."""
-    if index_records_batch_task is None or _huey is None:
+    task = runtime.task_handles.get("index_records_batch")
+    huey = runtime.queue_runtime.huey
+    if task is None or huey is None:
         return None
-    if _writer_is_active():
+    if _writer_is_active(runtime):
         return _RejectedRecordBatch()
     canonical_key = hashlib.sha256(
         json.dumps(record_payloads, sort_keys=True, separators=(",", ":")).encode()
@@ -1980,48 +1842,60 @@ def submit_record_batch(
         "index_records_batch",
         canonical_key,
         {"record_count": len(record_payloads)},
+        runtime=runtime,
     )
     if claim is None:
         return _RejectedRecordBatch()
     intent, claim_token = claim
     try:
-        return index_records_batch_task(
+        return task(
             record_payloads,
             priority=RECORD_BATCH_TASK_PRIORITY,
             intent_id=intent.intent_id,
             claim_token=claim_token,
         )
     except Exception:
-        if _intent_store() is not None:
-            _release_intent(intent.intent_id, claim_token)
+        if _intent_store(runtime) is not None:
+            _release_intent(intent.intent_id, claim_token, runtime=runtime)
         raise
 
 
-def get_pending_index_document_count(file_paths: list[str]) -> int:
+def get_pending_index_document_count(
+    file_paths: list[str],
+    *,
+    runtime: TaskRuntime,
+) -> int:
     """Count how many of the given file paths are already pending in Huey."""
     if not file_paths:
         return 0
 
-    pending_paths = _get_pending_index_document_paths()
+    pending_paths = _get_pending_index_document_paths(runtime=runtime)
     unique_paths = {
         _canonical_document_identity(file_path) for file_path in file_paths
     }
     return sum(1 for file_path in unique_paths if file_path in pending_paths)
 
 
-def enqueue_remove(doc_id: str) -> bool:
+def enqueue_remove(doc_id: str, *, runtime: TaskRuntime) -> bool:
     """Enqueue a remove_document task. Returns True if enqueued, False if no Huey."""
-    return submit_remove_request(doc_id).enqueued
+    return submit_remove_request(doc_id, runtime=runtime).enqueued
 
 
-def submit_remove_request(doc_id: str) -> TaskSubmissionResult:
-    if remove_document_task is None or _huey is None:
+def submit_remove_request(
+    doc_id: str,
+    *,
+    runtime: TaskRuntime,
+) -> TaskSubmissionResult:
+    task = runtime.task_handles.get("remove_document")
+    huey = runtime.queue_runtime.huey
+    task_backpressure_limit = runtime.task_backpressure_limit
+    if task is None or huey is None:
         return TaskSubmissionResult(status="unavailable")
-    if _writer_is_active():
+    if _writer_is_active(runtime):
         return TaskSubmissionResult(status="already_pending")
     if is_backpressured(
-        _huey,
-        _task_backpressure_limit,
+        huey,
+        task_backpressure_limit,
         item=doc_id,
         warning_message="Skipping remove enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
@@ -2030,31 +1904,39 @@ def submit_remove_request(doc_id: str) -> TaskSubmissionResult:
         "remove_document",
         _canonical_document_identity(doc_id),
         {"doc_id": doc_id},
+        runtime=runtime,
     )
     if claim is None:
         return TaskSubmissionResult(status="already_pending")
     intent, claim_token = claim
     try:
-        remove_document_task(
+        task(
             doc_id,
             intent_id=intent.intent_id,
             claim_token=claim_token,
         )
     except Exception:
-        if _intent_store() is not None:
-            _release_intent(intent.intent_id, claim_token)
+        if _intent_store(runtime) is not None:
+            _release_intent(intent.intent_id, claim_token, runtime=runtime)
         raise
     return TaskSubmissionResult(status="enqueued")
 
 
-def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult:
-    if remove_documents_batch_task is None:
+def submit_remove_request_batch(
+    doc_ids: list[str],
+    *,
+    runtime: TaskRuntime,
+) -> TaskBatchSubmissionResult:
+    task = runtime.task_handles.get("remove_documents_batch")
+    huey = runtime.queue_runtime.huey
+    task_backpressure_limit = runtime.task_backpressure_limit
+    if task is None:
         return TaskBatchSubmissionResult(
             queue_available=False,
             requested_unique_count=len(set(doc_ids)),
             enqueued_count=0,
         )
-    if _writer_is_active():
+    if _writer_is_active(runtime):
         unique_count = len(set(doc_ids))
         return TaskBatchSubmissionResult(
             queue_available=True,
@@ -2064,7 +1946,7 @@ def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult
         )
 
     unique_doc_ids = list(dict.fromkeys(doc_ids))
-    pending_doc_ids = _get_pending_remove_doc_ids()
+    pending_doc_ids = _get_pending_remove_doc_ids(runtime=runtime)
     remaining_doc_ids = [
         doc_id
         for doc_id in unique_doc_ids
@@ -2079,8 +1961,8 @@ def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult
             already_pending_count=already_pending_count,
         )
     if is_backpressured(
-        _huey,
-        _task_backpressure_limit,
+        huey,
+        task_backpressure_limit,
         item=f"{len(remaining_doc_ids)} document(s)",
         warning_message="Skipping %s due to task queue backpressure (%d pending >= %d limit)",
     ):
@@ -2100,6 +1982,7 @@ def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult
             )
             for doc_id in remaining_doc_ids
         ],
+        runtime=runtime,
     )
     already_pending_count += skipped_count
     claims = [claim for _, claim in keyed_claims]
@@ -2125,13 +2008,13 @@ def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult
                 claim_by_key[_canonical_document_identity(doc_id)]
                 for doc_id in batch_doc_ids
             ]
-            remove_documents_batch_task(batch_doc_ids, intent_claims=batch_claims)
+            task(batch_doc_ids, intent_claims=batch_claims)
             submitted_claims.extend(batch_claims)
     except Exception:
-        if _intent_store() is not None:
+        if _intent_store(runtime) is not None:
             for intent_id, claim_token in claims:
                 if (intent_id, claim_token) not in submitted_claims:
-                    _release_intent(intent_id, claim_token)
+                    _release_intent(intent_id, claim_token, runtime=runtime)
         raise
     return TaskBatchSubmissionResult(
         queue_available=True,
@@ -2141,40 +2024,24 @@ def submit_remove_request_batch(doc_ids: list[str]) -> TaskBatchSubmissionResult
     )
 
 
-def enqueue_refresh_git(git_dir: str) -> bool:
+def enqueue_refresh_git(git_dir: str, *, runtime: TaskRuntime) -> bool:
     """Enqueue a refresh_git_repository task. Returns True if enqueued."""
-    return submit_refresh_git_request(git_dir).enqueued
+    return submit_refresh_git_request(git_dir, runtime=runtime).enqueued
 
 
 def submit_refresh_git_request(
     git_dir: str,
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> TaskSubmissionResult:
-    task = (
-        runtime.task_handles.get("refresh_git_repository")
-        if runtime is not None
-        else refresh_git_repository_task
-    )
-    huey = runtime.queue_runtime.huey if runtime is not None else _huey
-    lock = runtime.git_refresh_lock if runtime is not None else _git_refresh_lock
-    in_flight = (
-        runtime.git_refresh_in_flight
-        if runtime is not None
-        else _git_refresh_in_flight
-    )
-    pending = runtime.git_refresh_pending if runtime is not None else _git_refresh_pending
-    deferred = (
-        runtime.git_refresh_deferred
-        if runtime is not None
-        else _git_refresh_deferred
-    )
-    task_backpressure_limit = (
-        runtime.task_backpressure_limit
-        if runtime is not None
-        else _task_backpressure_limit
-    )
-    if task is None or huey is None:
+    task = runtime.task_handles.get("refresh_git_repository")
+    huey = runtime.queue_runtime.huey
+    lock = runtime.git_refresh_lock
+    in_flight = runtime.git_refresh_in_flight
+    pending = runtime.git_refresh_pending
+    deferred = runtime.git_refresh_deferred
+    task_backpressure_limit = runtime.task_backpressure_limit
+    if task is None:
         return TaskSubmissionResult(status="unavailable")
     git_dir_key = _git_refresh_key(git_dir)
     with lock:
@@ -2252,23 +2119,18 @@ def submit_refresh_git_request(
     return TaskSubmissionResult(status="already_pending")
 
 
-def enqueue_refresh_git_batch(git_dirs: list[str]) -> int:
+def enqueue_refresh_git_batch(git_dirs: list[str], *, runtime: TaskRuntime) -> int:
     """Enqueue many git refresh tasks, respecting queue backpressure."""
-    return submit_refresh_git_batch(git_dirs).enqueued_count
+    return submit_refresh_git_batch(git_dirs, runtime=runtime).enqueued_count
 
 
 def submit_refresh_git_batch(
     git_dirs: list[str],
     *,
-    runtime: TaskRuntime | None = None,
+    runtime: TaskRuntime,
 ) -> TaskBatchSubmissionResult:
-    task = (
-        runtime.task_handles.get("refresh_git_repository")
-        if runtime is not None
-        else refresh_git_repository_task
-    )
-    huey = runtime.queue_runtime.huey if runtime is not None else _huey
-    if task is None or huey is None:
+    task = runtime.task_handles.get("refresh_git_repository")
+    if task is None:
         return TaskBatchSubmissionResult(
             queue_available=False,
             requested_unique_count=len(set(git_dirs)),
@@ -2301,11 +2163,15 @@ def submit_rebuild_request(
     project_override: str | None,
     *,
     request_id: str,
+    runtime: TaskRuntime,
 ) -> TaskSubmissionResult:
-    if rebuild_index_task is None or _huey is None:
+    task = runtime.task_handles.get("rebuild_index")
+    huey = runtime.queue_runtime.huey
+    task_backpressure_limit = runtime.task_backpressure_limit
+    if task is None:
         return TaskSubmissionResult(status="unavailable")
 
-    writer_store = _writer_lease_store()
+    writer_store = _writer_lease_store(runtime)
     if writer_store is None:
         return TaskSubmissionResult(status="unavailable")
     if not writer_store.acquire_writer(request_id):
@@ -2313,8 +2179,8 @@ def submit_rebuild_request(
 
     queue_item = project_override or "__global__"
     if is_backpressured(
-        _huey,
-        _task_backpressure_limit,
+        huey,
+        task_backpressure_limit,
         item=queue_item,
         warning_message="Skipping rebuild enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
@@ -2325,21 +2191,22 @@ def submit_rebuild_request(
         "rebuild_index",
         f"{project_override or '__global__'}:{request_id}",
         {"project_override": project_override, "request_id": request_id},
+        runtime=runtime,
     )
     if claim is None:
         writer_store.release_writer(request_id)
         return TaskSubmissionResult(status="already_pending")
     intent, claim_token = claim
     try:
-        rebuild_index_task(
+        task(
             project_override,
             request_id=request_id,
             intent_id=intent.intent_id,
             claim_token=claim_token,
         )
     except Exception:
-        if _intent_store() is not None:
-            _release_intent(intent.intent_id, claim_token)
+        if _intent_store(runtime) is not None:
+            _release_intent(intent.intent_id, claim_token, runtime=runtime)
         writer_store.release_writer(request_id)
         raise
     return TaskSubmissionResult(status="enqueued")
@@ -2352,14 +2219,18 @@ def submit_reindex_request(
     truncate_dim: int | None,
     old_model: str | None,
     request_id: str,
+    runtime: TaskRuntime,
 ) -> TaskSubmissionResult:
-    if reindex_model_task is None or _huey is None:
+    task = runtime.task_handles.get("reindex_model")
+    huey = runtime.queue_runtime.huey
+    task_backpressure_limit = runtime.task_backpressure_limit
+    if task is None:
         return TaskSubmissionResult(status="unavailable")
-    if _writer_is_active():
+    if _writer_is_active(runtime):
         return TaskSubmissionResult(status="already_pending")
     if is_backpressured(
-        _huey,
-        _task_backpressure_limit,
+        huey,
+        task_backpressure_limit,
         item=f"reindex:{operation}",
         warning_message="Skipping reindex enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
@@ -2374,12 +2245,13 @@ def submit_reindex_request(
             "old_model": old_model,
             "request_id": request_id,
         },
+        runtime=runtime,
     )
     if claim is None:
         return TaskSubmissionResult(status="already_pending")
     intent, claim_token = claim
     try:
-        reindex_model_task(
+        task(
             operation,
             model,
             truncate_dim,
@@ -2390,15 +2262,16 @@ def submit_reindex_request(
             claim_token=claim_token,
         )
     except Exception:
-        if _intent_store() is not None:
-            _release_intent(intent.intent_id, claim_token)
+        if _intent_store(runtime) is not None:
+            _release_intent(intent.intent_id, claim_token, runtime=runtime)
         raise
     return TaskSubmissionResult(status="enqueued")
 
 
-def get_pending_task_count() -> int:
-    return get_shared_pending_task_count(_huey)
+def get_pending_task_count(runtime: TaskRuntime) -> int:
+    huey = runtime.queue_runtime.huey
+    return get_shared_pending_task_count(huey)
 
 
-def is_task_queue_available() -> bool:
-    return _huey is not None and index_document_task is not None
+def is_task_queue_available(runtime: TaskRuntime) -> bool:
+    return runtime.task_handles.get("index_document") is not None

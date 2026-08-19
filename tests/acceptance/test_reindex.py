@@ -45,6 +45,7 @@ from mcp_markdown_ragdocs.config import (
     StoreConfig,
 )
 from mcp_markdown_ragdocs.daemon.request_router import (
+    DaemonAdminTaskSubmissionPort,
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
 )
@@ -473,7 +474,32 @@ def test_run_reindex_reports_active_model_manifest_and_status(
     assert payload["checkpoint"] == len(store.load_records(ModelNamespace("new-model", 1024)))
 
 
-def _router_dependencies(ctx: object, runtime_root: Path) -> DaemonRequestRouterDependencies:
+class _UnavailableAdminTaskSubmission:
+    def submit_rebuild_request(
+        self, project_override: str | None, *, request_id: str
+    ) -> TaskSubmissionResult:
+        return TaskSubmissionResult(status="unavailable")
+
+    def submit_reindex_request(
+        self,
+        operation: str,
+        *,
+        model: str | None,
+        truncate_dim: int | None,
+        old_model: str | None,
+        request_id: str,
+    ) -> TaskSubmissionResult:
+        return TaskSubmissionResult(status="unavailable")
+
+
+def _router_dependencies(
+    ctx: object,
+    runtime_root: Path,
+    *,
+    task_submission: DaemonAdminTaskSubmissionPort | None = None,
+) -> DaemonRequestRouterDependencies:
+    if task_submission is None:
+        task_submission = _UnavailableAdminTaskSubmission()
     return DaemonRequestRouterDependencies(
         ctx=ctx,
         coordinator=SimpleNamespace(),
@@ -486,6 +512,7 @@ def _router_dependencies(ctx: object, runtime_root: Path) -> DaemonRequestRouter
         build_admin_overview_payload=lambda *_args, **_kwargs: {},
         build_index_stats_payload=lambda *_args, **_kwargs: {},
         build_queue_status_payload=lambda *_args, **_kwargs: {},
+        task_submission=task_submission,
     )
 
 
@@ -526,12 +553,13 @@ async def test_daemon_reports_worker_queue_failure_instead_of_accepting_request(
 ) -> None:
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.daemon.request_router.submit_reindex_request",
-        lambda *_args, **_kwargs: TaskSubmissionResult(status="unavailable"),
-    )
+    task_submission = _UnavailableAdminTaskSubmission()
     handler = build_daemon_request_handler(
-        _router_dependencies(_router_context(tmp_path, "pgvector"), runtime_root)
+        _router_dependencies(
+            _router_context(tmp_path, "pgvector"),
+            runtime_root,
+            task_submission=task_submission,
+        )
     )
 
     payload = await handler(
@@ -548,15 +576,7 @@ async def test_daemon_reports_worker_queue_failure_instead_of_accepting_request(
 
 @pytest.fixture
 def reset_task_registration():
-    tasks_module._huey = None
-    tasks_module._index_manager = None
-    tasks_module._bootstrap_index_path = None
-    tasks_module.reindex_model_task = None
     yield
-    tasks_module._huey = None
-    tasks_module._index_manager = None
-    tasks_module._bootstrap_index_path = None
-    tasks_module.reindex_model_task = None
 
 
 def test_worker_returns_reindex_failure_and_persists_status(
@@ -574,7 +594,7 @@ def test_worker_returns_reindex_failure_and_persists_status(
         lambda **_kwargs: (_ for _ in ()).throw(ReindexError("provider failed")),
     )
     huey = SqliteHuey(name="reindex-worker", filename=str(tmp_path / "queue.db"))
-    register_tasks(
+    runtime = register_tasks(
         huey,
         manager,
         TaskLeaseStore(tmp_path / "queue.db"),
@@ -582,7 +602,7 @@ def test_worker_returns_reindex_failure_and_persists_status(
         bootstrap_index_path=runtime_root,
     )
 
-    submission = tasks_module.submit_reindex_request(
+    submission = runtime.submission.submit_reindex_request(
         "start",
         model="new-model",
         truncate_dim=1024,

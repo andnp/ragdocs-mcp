@@ -28,9 +28,9 @@ def huey_instance(tmp_path: Path) -> SqliteHuey:
     return SqliteHuey(name="test", filename=str(tmp_path / "queue.db"), immediate=False)
 
 
-def _register_tasks(huey: SqliteHuey, index_manager: object) -> None:
+def _register_tasks(huey: SqliteHuey, index_manager: object) -> Any:
     queue_path = Path(cast(Any, huey.storage).filename)
-    indexing_tasks.register_tasks(
+    return indexing_tasks.register_tasks(
         huey,
         cast(Any, index_manager),
         TaskLeaseStore(queue_path),
@@ -280,13 +280,13 @@ class TestHueyWorker:
             def index_record(self, record: Any) -> None:
                 del record
 
-        _register_tasks(huey_instance, cast(Any, _Manager()))
+        runtime = _register_tasks(huey_instance, cast(Any, _Manager()))
         queue_path = Path(str(cast(Any, huey_instance.storage).filename))
-        indexing_tasks._work_intent_store = WorkIntentStore(
+        runtime.work_intent_store = WorkIntentStore(
             queue_path,
             claim_timeout_seconds=0.1,
         )
-        assert indexing_tasks.submit_index_request("delayed.md").enqueued
+        assert runtime.submission.submit_index_request("delayed.md").enqueued
         task = huey_instance.dequeue()
         assert task is not None
         lease_store = TaskLeaseStore(queue_path, timeout_seconds=0.1)
@@ -315,7 +315,7 @@ class TestHueyWorker:
         finally:
             worker.stop()
 
-        intent = indexing_tasks._work_intent_store.find(
+        intent = runtime.work_intent_store.find(
             "index_document", "delayed.md"
         )
         assert intent is not None
@@ -336,13 +336,13 @@ class TestHueyWorker:
             def persist(self) -> None:
                 return
 
-        _register_tasks(huey_instance, cast(Any, _Manager()))
+        runtime = _register_tasks(huey_instance, cast(Any, _Manager()))
         queue_path = Path(str(cast(Any, huey_instance.storage).filename))
-        indexing_tasks._work_intent_store = WorkIntentStore(
+        runtime.work_intent_store = WorkIntentStore(
             queue_path,
             claim_timeout_seconds=0.1,
         )
-        assert indexing_tasks.submit_index_request("queued.md").enqueued
+        assert runtime.submission.submit_index_request("queued.md").enqueued
         with sqlite3.connect(queue_path) as connection:
             connection.execute(
                 "UPDATE work_intents SET claim_observed_at = ?",
@@ -366,7 +366,7 @@ class TestHueyWorker:
         finally:
             worker.stop()
 
-        intent = indexing_tasks._work_intent_store.find("index_document", "queued.md")
+        intent = runtime.work_intent_store.find("index_document", "queued.md")
         assert intent is not None
         assert intent.state == "succeeded"
 
@@ -390,13 +390,13 @@ class TestHueyWorker:
             def persist(self) -> None:
                 return
 
-        _register_tasks(huey_instance, cast(Any, _Manager()))
+        runtime = _register_tasks(huey_instance, cast(Any, _Manager()))
         queue_path = Path(str(cast(Any, huey_instance.storage).filename))
-        indexing_tasks._work_intent_store = WorkIntentStore(
+        runtime.work_intent_store = WorkIntentStore(
             queue_path,
             claim_timeout_seconds=0.1,
         )
-        assert indexing_tasks.submit_index_request("long-running.md").enqueued
+        assert runtime.submission.submit_index_request("long-running.md").enqueued
         monkeypatch.setattr(
             "mcp_markdown_ragdocs.worker.consumer.LEASE_TIMEOUT_SECONDS",
             0.1,
@@ -415,7 +415,7 @@ class TestHueyWorker:
         try:
             assert started.wait(timeout=5.0)
             time.sleep(0.25)
-            intent = indexing_tasks._work_intent_store.find(
+            intent = runtime.work_intent_store.find(
                 "index_document", "long-running.md"
             )
             assert intent is not None
@@ -428,7 +428,7 @@ class TestHueyWorker:
             release.set()
             worker.stop()
 
-        intent = indexing_tasks._work_intent_store.find(
+        intent = runtime.work_intent_store.find(
             "index_document", "long-running.md"
         )
         assert intent is not None
