@@ -220,7 +220,7 @@ async def _run_worker_forever_async(
     huey = queue_runtime.huey
     task_lease_store = TaskLeaseStore(queue_db)
     work_intent_store = WorkIntentStore(queue_db)
-    register_tasks(
+    task_runtime = register_tasks(
         huey,
         task_target,
         task_lease_store,
@@ -230,6 +230,7 @@ async def _run_worker_forever_async(
         bootstrap_documents_roots=ctx.documents_roots,
         schedule_vocabulary_catch_up=_schedule_worker_vocabulary_catch_up,
     )
+    ctx.attach_task_runtime(task_runtime)
     worker = HueyWorker(huey)
 
     stop_requested = False
@@ -266,6 +267,7 @@ async def _run_worker_forever_async(
                 config=ctx.config,
                 poll_interval=ctx.config.git_indexing.poll_interval_seconds,
                 use_tasks=True,
+                task_submission=task_runtime.submission,
             )
             git_watcher.start()
 

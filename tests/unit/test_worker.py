@@ -611,6 +611,9 @@ class TestWorkerRuntimeStartup:
                 self.index_path = tmp_path / "index_data"
                 self.documents_roots: list[Path] = []
 
+            def attach_task_runtime(self, task_runtime: object) -> None:
+                self.task_runtime = task_runtime
+
         class _FakeHueyWorker:
             def __init__(self, _huey: object) -> None:
                 self.is_running = True
@@ -634,13 +637,23 @@ class TestWorkerRuntimeStartup:
             lock_path=tmp_path / "daemon.lock",
             socket_path=tmp_path / "daemon.sock",
         )
+        fake_queue_runtime = SimpleNamespace(
+            huey=object(),
+            db_path=runtime_paths.queue_db_path,
+        )
 
         monkeypatch.setattr("mcp_markdown_ragdocs.cli.ApplicationContext.create", lambda **kwargs: fake_ctx)
         monkeypatch.setattr(
             "mcp_markdown_ragdocs.cli.build_queue_runtime",
-            lambda path: SimpleNamespace(huey=object(), db_path=path),
+            lambda path: fake_queue_runtime,
         )
-        monkeypatch.setattr("mcp_markdown_ragdocs.cli.register_tasks", lambda *args, **kwargs: None)
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.cli.register_tasks",
+            lambda *args, **kwargs: SimpleNamespace(
+                queue_runtime=fake_queue_runtime,
+                submission=SimpleNamespace(submit_refresh_git_request=lambda git_dir: None),
+            ),
+        )
         monkeypatch.setattr("mcp_markdown_ragdocs.cli.HueyWorker", lambda _huey: fake_worker)
         monkeypatch.setattr(
             "mcp_markdown_ragdocs.cli._parent_process_alive",

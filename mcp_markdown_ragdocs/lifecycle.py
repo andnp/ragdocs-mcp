@@ -163,6 +163,7 @@ class LifecycleCoordinator:
                         config=git_context.config,
                         poll_interval=git_context.config.git_indexing.poll_interval_seconds,
                         use_tasks=huey_worker is not None,
+                        task_submission=getattr(git_context, "task_submission", None),
                     )
                     self._git_watcher.start()
                     logger.info(

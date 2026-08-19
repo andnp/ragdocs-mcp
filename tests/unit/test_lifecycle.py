@@ -176,10 +176,12 @@ class TestLifecycleStateMachine:
                 config,
                 poll_interval,
                 use_tasks,
+                task_submission,
             ) -> None:
                 observed["git_repos"] = git_repos
                 observed["index_manager"] = index_manager
                 observed["use_tasks"] = use_tasks
+                observed["task_submission"] = task_submission
 
             def start(self) -> None:
                 observed["started"] = True
