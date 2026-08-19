@@ -11,7 +11,11 @@ from pathlib import Path
 import pytest
 from huey import SqliteHuey
 
-from mcp_markdown_ragdocs.coordination.queue import get_huey, reset_huey
+from mcp_markdown_ragdocs.coordination.queue import (
+    build_queue_runtime,
+    get_huey,
+    reset_huey,
+)
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 
 
@@ -24,6 +28,17 @@ def _clean_huey():
 
 
 class TestHueySetup:
+    def test_queue_runtime_preserves_queue_identity_and_path(self, tmp_path: Path) -> None:
+        """The explicit runtime exposes the same configured Huey and path."""
+        db_path = tmp_path / "runtime" / "queue.db"
+
+        runtime = build_queue_runtime(db_path)
+
+        assert runtime.huey is get_huey()
+        assert runtime.db_path == db_path
+        assert runtime.huey.name == "ragdocs"
+        assert runtime.huey.immediate is False
+
     def test_get_huey_returns_sqlite_instance(self, tmp_path: Path) -> None:
         """get_huey() returns a SqliteHuey instance."""
         huey = get_huey(tmp_path / "queue.db")
