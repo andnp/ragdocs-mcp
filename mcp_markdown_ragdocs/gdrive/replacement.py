@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from searchkernel.api import Record, RecordIdentity, RecordStatus, atomic_write_json
+from searchkernel.api import Record, RecordIdentity, RecordStatus
 
+from mcp_markdown_ragdocs.gdrive.json_record_store import (
+    read_json_envelope,
+    write_json_envelope,
+)
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
 from mcp_markdown_ragdocs.gdrive.domain import (
     GDriveScopeIdentity,
@@ -145,14 +148,13 @@ class GDriveReplacementJournal:
     def load(self) -> tuple[GDriveReplacementEntry, ...]:
         """Load valid journal entries in stable source-key order."""
 
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return ()
-        if not isinstance(payload, dict) or payload.get("schema_version") != REPLACEMENT_SCHEMA_VERSION:
-            return ()
-        raw_entries = payload.get("entries")
-        if not isinstance(raw_entries, list):
+        raw_entries = read_json_envelope(
+            self.path,
+            schema_version=REPLACEMENT_SCHEMA_VERSION,
+            key="entries",
+            expected_type=list,
+        )
+        if raw_entries is None:
             return ()
         entries: list[GDriveReplacementEntry] = []
         for raw in raw_entries:
@@ -188,20 +190,19 @@ class GDriveReplacementJournal:
         self._write_all((*entries, entry))
 
     def _write_all(self, entries: Sequence[GDriveReplacementEntry]) -> None:
-        atomic_write_json(
+        write_json_envelope(
             self.path,
-            {
-                "schema_version": REPLACEMENT_SCHEMA_VERSION,
-                "entries": [
-                    {
-                        "source_key": entry.source_key,
-                        "old_keys": list(entry.old_keys),
-                        "new_keys": list(entry.new_keys),
-                        "phase": entry.phase,
-                    }
-                    for entry in sorted(entries, key=lambda item: item.source_key)
-                ],
-            },
+            schema_version=REPLACEMENT_SCHEMA_VERSION,
+            key="entries",
+            value=[
+                {
+                    "source_key": entry.source_key,
+                    "old_keys": list(entry.old_keys),
+                    "new_keys": list(entry.new_keys),
+                    "phase": entry.phase,
+                }
+                for entry in sorted(entries, key=lambda item: item.source_key)
+            ],
         )
 
     def _save_status(
