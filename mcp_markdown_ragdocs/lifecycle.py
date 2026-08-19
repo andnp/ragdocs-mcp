@@ -481,10 +481,37 @@ class LifecycleCoordinator:
                 return
 
             try:
-                leader_election.heartbeat()
+                if not await asyncio.to_thread(leader_election.heartbeat):
+                    await self._step_down_after_leadership_loss()
+                    return
             except Exception:
                 logger.exception("Failed to refresh leader heartbeat")
+                await self._step_down_after_leadership_loss()
                 return
+
+    async def _step_down_after_leadership_loss(self) -> None:
+        leader_election = self._leader_election
+        if leader_election is None or leader_election.is_leader:
+            return
+
+        if self._worker_supervision_task is not None:
+            self._worker_supervision_task.cancel()
+            await asyncio.gather(
+                self._worker_supervision_task,
+                return_exceptions=True,
+            )
+            self._worker_supervision_task = None
+
+        if self._worker_supervisor is not None:
+            try:
+                await asyncio.to_thread(self._worker_supervisor.stop)
+            except Exception:
+                logger.exception("Error stopping worker after leadership loss")
+
+        if self._state == LifecycleState.READY_PRIMARY:
+            self._state = LifecycleState.READY_REPLICA
+        self._write_daemon_metadata()
+        self._ensure_leader_monitor()
 
     async def _cleanup_resources(self) -> None:
         self._cancel_emergency_timer()

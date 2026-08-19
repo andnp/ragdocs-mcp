@@ -376,6 +376,61 @@ class TestWorkerSupervision:
 
         assert worker.restart_calls == 1
 
+    @pytest.mark.asyncio
+    async def test_lost_heartbeat_stops_worker_and_restarts_monitor(self) -> None:
+        """Leadership loss demotes the coordinator and resumes failover monitoring."""
+        coord = _make_coordinator()
+        coord._state = LifecycleState.READY_PRIMARY
+        coord._leader_monitor_interval = 60.0
+
+        class _FakeLeader:
+            _heartbeat_interval = 0.0
+            is_leader = True
+
+            def heartbeat(self) -> bool:
+                self.is_leader = False
+                return False
+
+            def try_acquire(self) -> bool:
+                return False
+
+        class _FakeSupervisor:
+            def __init__(self) -> None:
+                self.stop_calls = 0
+
+            async def start(self) -> None:
+                return None
+
+            def stop(self) -> None:
+                self.stop_calls += 1
+
+            def is_healthy(self) -> bool:
+                return True
+
+            async def restart(self) -> None:
+                return None
+
+        async def _worker_loop() -> None:
+            await asyncio.Event().wait()
+
+        worker_supervisor = _FakeSupervisor()
+        coord._leader_election = _FakeLeader()
+        coord._worker_supervisor = worker_supervisor
+        coord._huey_worker = object()
+        coord._worker_supervision_task = asyncio.create_task(_worker_loop())
+
+        with patch.object(coord, "_write_daemon_metadata"):
+            await coord._heartbeat_leader()
+
+        assert coord.state == LifecycleState.READY_REPLICA
+        assert worker_supervisor.stop_calls == 1
+        assert coord._worker_supervision_task is None
+        assert coord._leader_monitor_task is not None
+
+        coord._leader_monitor_task.cancel()
+        await asyncio.gather(coord._leader_monitor_task, return_exceptions=True)
+        coord._leader_monitor_task = None
+
 
 class TestLeaderFailover:
     @pytest.mark.asyncio
