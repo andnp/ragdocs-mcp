@@ -19,9 +19,11 @@ from mcp_markdown_ragdocs.app.runtime_factory import (
 from mcp_markdown_ragdocs.config import (
     Config,
     detect_project,
+    is_canonical_runtime_backend,
     load_config,
     resolve_documents_path,
     resolve_index_path,
+    supports_durable_reindex,
 )
 
 
@@ -115,11 +117,14 @@ def build_runtime_components(
         embedding_model_name = runtime_config.llm.embedding_model
     runtime_config.embedding.model_name = embedding_model_name
     runtime_config.llm.embedding_model = embedding_model_name
-    if runtime_config.store.backend not in {"local", "faiss+sqlite"}:
-        raise ValueError(
+    if not is_canonical_runtime_backend(runtime_config.store.backend):
+        message = (
             "canonical runtime supports store.backend = 'local'; "
             f"got {runtime_config.store.backend!r}"
         )
+        if supports_durable_reindex(runtime_config.store.backend):
+            message += "; pgvector is available only for durable model migration"
+        raise ValueError(message)
 
     paths = RuntimePaths(
         index_path=index_path,

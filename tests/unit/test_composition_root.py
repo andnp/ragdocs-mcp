@@ -3,12 +3,20 @@
 import os
 from types import SimpleNamespace
 
+import pytest
+
 from mcp_markdown_ragdocs.app.composition import (
     build_kernel,
     build_runtime_components,
 )
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
-from mcp_markdown_ragdocs.config import GoogleDriveConfig, load_config
+from mcp_markdown_ragdocs.config import (
+    GoogleDriveConfig,
+    StoreConfig,
+    is_canonical_runtime_backend,
+    load_config,
+    supports_durable_reindex,
+)
 from mcp_markdown_ragdocs.context import ApplicationContext, ContextIndexingPort
 
 
@@ -182,6 +190,42 @@ class TestCompositionRootNoGlobalMutation:
         assert components.config is not config
         assert components.config.indexing is not config.indexing
         assert components.config.embedding is not config.embedding
+
+    def test_backend_capabilities_preserve_runtime_and_reindex_boundaries(self):
+        """Backend predicates preserve local compatibility and isolate pgvector.
+
+        Legacy local aliases remain runtime-compatible while pgvector is not.
+        """
+        assert is_canonical_runtime_backend("local")
+        assert is_canonical_runtime_backend("faiss+sqlite")
+        assert not is_canonical_runtime_backend("pgvector")
+        assert supports_durable_reindex("pgvector")
+        assert not supports_durable_reindex("local")
+        assert not supports_durable_reindex("unknown")
+
+    def test_pgvector_reports_actionable_runtime_capability_error(
+        self,
+        tmp_path,
+    ):
+        """Canonical composition explains that pgvector is reindex-only.
+
+        The error remains a ValueError for existing callers.
+        """
+        config = load_config()
+        config.store = StoreConfig(backend="pgvector", pg_dsn="test-dsn")
+
+        with pytest.raises(
+            ValueError,
+            match="pgvector is available only for durable model migration",
+        ):
+            build_runtime_components(
+                config,
+                enable_watcher=False,
+                lazy_embeddings=True,
+                index_path_override=tmp_path / "index",
+                documents_path_override=tmp_path / "docs",
+                global_runtime=True,
+            )
 
     def test_context_index_manager_uses_application_port(self, monkeypatch, tmp_path):
         """The composed manager satisfies the context-owned indexing capability."""

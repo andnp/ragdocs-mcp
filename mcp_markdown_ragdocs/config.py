@@ -280,6 +280,20 @@ class StoreConfig:
     pg_dsn: str = ""  # retained for configuration-file compatibility
 
 
+CANONICAL_RUNTIME_BACKENDS = frozenset({"local", "faiss+sqlite"})
+DURABLE_REINDEX_BACKENDS = frozenset({"pgvector"})
+
+
+def is_canonical_runtime_backend(backend: str) -> bool:
+    """Return whether a backend can assemble the canonical application runtime."""
+    return backend in CANONICAL_RUNTIME_BACKENDS
+
+
+def supports_durable_reindex(backend: str) -> bool:
+    """Return whether a backend provides model-scoped durable migration storage."""
+    return backend in DURABLE_REINDEX_BACKENDS
+
+
 @dataclass
 class EmbeddingConfig:
     # Embeddings are served by Ollama so worker and query processes do not
