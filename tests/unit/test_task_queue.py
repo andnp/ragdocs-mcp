@@ -8,59 +8,48 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from huey import SqliteHuey
 
-from mcp_markdown_ragdocs.coordination.queue import (
-    build_queue_runtime,
-    get_huey,
-    reset_huey,
-)
+from mcp_markdown_ragdocs.coordination.queue import QueueRuntime, build_queue_runtime
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 
 
-@pytest.fixture(autouse=True)
-def _clean_huey():
-    """Reset the module-level Huey instance between tests."""
-    reset_huey()
-    yield
-    reset_huey()
-
-
 class TestHueySetup:
-    def test_queue_runtime_preserves_queue_identity_and_path(self, tmp_path: Path) -> None:
-        """The explicit runtime exposes the same configured Huey and path."""
-        db_path = tmp_path / "runtime" / "queue.db"
+    def test_queue_runtime_validates_storage_identity(self, tmp_path: Path) -> None:
+        """A runtime rejects a database path that does not match its queue."""
+        huey = SqliteHuey(
+            name="test",
+            filename=str(tmp_path / "queue.db"),
+            immediate=False,
+        )
 
-        runtime = build_queue_runtime(db_path)
+        try:
+            QueueRuntime(huey=huey, db_path=tmp_path / "other.db")
+        except ValueError as error:
+            assert str(error) == "QueueRuntime path must match the Huey storage path"
+        else:
+            raise AssertionError("mismatched queue identity should be rejected")
 
-        assert runtime.huey is get_huey()
-        assert runtime.db_path == db_path
-        assert runtime.huey.name == "ragdocs"
-        assert runtime.huey.immediate is False
+    def test_queue_runtime_instances_are_isolated(self, tmp_path: Path) -> None:
+        """Separate runtime construction produces separate queues and paths."""
+        first = build_queue_runtime(tmp_path / "first" / "queue.db")
+        second = build_queue_runtime(tmp_path / "second" / "queue.db")
 
-    def test_get_huey_returns_sqlite_instance(self, tmp_path: Path) -> None:
-        """get_huey() returns a SqliteHuey instance."""
-        huey = get_huey(tmp_path / "queue.db")
-        assert isinstance(huey, SqliteHuey)
+        assert first.huey is not second.huey
+        assert first.db_path != second.db_path
+        assert first.huey.name == "ragdocs"
+        assert second.huey.name == "ragdocs"
+        assert first.huey.immediate is False
+        assert second.huey.immediate is False
 
-    def test_get_huey_is_singleton(self, tmp_path: Path) -> None:
-        """Repeated calls return the same instance."""
-        first = get_huey(tmp_path / "queue.db")
-        second = get_huey()
-        assert first is second
-
-    def test_get_huey_requires_path_on_first_call(self) -> None:
-        """get_huey() raises RuntimeError if no path on first call."""
-        with pytest.raises(RuntimeError, match="db_path required"):
-            get_huey()
-
-    def test_huey_creates_parent_dirs(self, tmp_path: Path) -> None:
-        """get_huey() creates parent directories."""
-        deep_path = tmp_path / "a" / "b" / "c" / "queue.db"
-        huey = get_huey(deep_path)
-        assert deep_path.parent.exists()
-        assert isinstance(huey, SqliteHuey)
+    def test_queue_runtime_rejects_directory_path(self, tmp_path: Path) -> None:
+        """A runtime requires a database filename rather than a directory."""
+        try:
+            build_queue_runtime(tmp_path)
+        except ValueError as error:
+            assert str(error) == "QueueRuntime requires a database file path"
+        else:
+            raise AssertionError("directory paths should be rejected")
 
 
 class TestTaskPersistence:
@@ -113,18 +102,6 @@ class TestTaskPersistence:
 
         # Queue should be empty now
         assert huey.pending_count() == 0
-
-    def test_reset_huey_allows_reinit(self, tmp_path: Path) -> None:
-        """After reset_huey(), a new instance can be created."""
-        path1 = tmp_path / "q1.db"
-        path2 = tmp_path / "q2.db"
-
-        h1 = get_huey(path1)
-        reset_huey()
-        h2 = get_huey(path2)
-
-        assert h1 is not h2
-
 
 class TestTaskLeases:
     def test_claim_heartbeat_and_reclaim(self, tmp_path: Path) -> None:
