@@ -298,11 +298,22 @@ def _persist_document_manifest(
     *,
     indexed_paths: list[str] | None = None,
     removed_doc_ids: list[str] | None = None,
+    runtime: TaskRuntime | None = None,
 ) -> None:
-    if _bootstrap_index_path is None or not _bootstrap_documents_roots:
+    bootstrap_index_path = (
+        runtime.bootstrap_index_path
+        if runtime is not None
+        else _bootstrap_index_path
+    )
+    bootstrap_documents_roots = (
+        runtime.bootstrap_documents_roots
+        if runtime is not None
+        else _bootstrap_documents_roots
+    )
+    if bootstrap_index_path is None or not bootstrap_documents_roots:
         return
 
-    manifest = load_manifest(_bootstrap_index_path)
+    manifest = load_manifest(bootstrap_index_path)
     if manifest is None:
         return
 
@@ -310,15 +321,15 @@ def _persist_document_manifest(
     indexed_files.update(
         build_indexed_files_map(
             indexed_paths or [],
-            _bootstrap_documents_roots[0],
-            _bootstrap_documents_roots,
+            bootstrap_documents_roots[0],
+            bootstrap_documents_roots,
         )
     )
     for doc_id in removed_doc_ids or []:
         indexed_files.pop(doc_id, None)
 
     manifest.indexed_files = indexed_files
-    save_manifest(_bootstrap_index_path, manifest)
+    save_manifest(bootstrap_index_path, manifest)
 
 
 def _writer_is_active() -> bool:
@@ -333,9 +344,15 @@ def _run_as_writer(
     owner_token: str | None = None,
     busy_result: Any,
     on_busy: Callable[[], None] | None = None,
+    runtime: TaskRuntime | None = None,
 ) -> Any:
+    store_provider = (
+        (lambda: runtime.task_lease_store)
+        if runtime is not None
+        else _writer_lease_store
+    )
     return run_as_writer(
-        _writer_lease_store,
+        store_provider,
         operation,
         operation_name=operation_name,
         operation_args=operation_args,
@@ -368,6 +385,44 @@ class _RejectedRecordBatch:
             "error": "index_writer_busy",
             "details": "Index writer is owned by a rebuild. Retry shortly.",
         }
+
+
+def _bind_runtime_handler(
+    runtime: TaskRuntime,
+    handler: Callable[..., Any],
+    name: str,
+) -> Callable[..., Any]:
+    def _bound(*args: Any, **kwargs: Any) -> Any:
+        return handler(*args, runtime=runtime, **kwargs)
+
+    _bound.__name__ = name
+    return _bound
+
+
+def _runtime_writer_handler(
+    runtime: TaskRuntime,
+    handler: Callable[..., Any],
+    *,
+    name: str,
+    busy_result: Any,
+    on_busy: Callable[..., None] | None = None,
+) -> Callable[..., Any]:
+    return writer_owned_task(
+        lambda: runtime.task_lease_store,
+        busy_result=busy_result,
+        on_busy=on_busy,
+    )(_bind_runtime_handler(runtime, handler, name))
+
+
+def _runtime_intent_handler(
+    runtime: TaskRuntime,
+    operation: str,
+    handler: Callable[..., Any],
+) -> Callable[..., Any]:
+    return task_intents._intent_task(
+        lambda: runtime.work_intent_store,
+        operation,
+    )(handler)
 
 
 def _git_refresh_key(git_dir: str | Path) -> str:
@@ -477,12 +532,17 @@ def _flush_deferred_git_refreshes() -> None:
             )
 
 
-def _index_document(file_path: str, force: bool = False) -> bool:
+def _index_document(
+    file_path: str,
+    force: bool = False,
+    *,
+    runtime: TaskRuntime | None = None,
+) -> bool:
     """Index or re-index a single document."""
-    if _index_manager is None:
+    manager = runtime.index_manager if runtime is not None else _index_manager
+    if manager is None:
         logger.error("IndexManager not available for task execution")
         return False
-    manager = _index_manager
     logger.info("Index task started: path=%s force=%s", file_path, force)
 
     def _operation() -> bool:
@@ -497,11 +557,21 @@ def _index_document(file_path: str, force: bool = False) -> bool:
             )
             manager.persist()
             if manager_result:
-                _persist_document_manifest(indexed_paths=[file_path])
-            if _bootstrap_index_path is not None and _bootstrap_documents_roots:
+                _persist_document_manifest(indexed_paths=[file_path], runtime=runtime)
+            bootstrap_index_path = (
+                runtime.bootstrap_index_path
+                if runtime is not None
+                else _bootstrap_index_path
+            )
+            bootstrap_documents_roots = (
+                runtime.bootstrap_documents_roots
+                if runtime is not None
+                else _bootstrap_documents_roots
+            )
+            if bootstrap_index_path is not None and bootstrap_documents_roots:
                 mark_bootstrap_file_completed(
-                    _bootstrap_index_path,
-                    _bootstrap_documents_roots,
+                    bootstrap_index_path,
+                    bootstrap_documents_roots,
                     file_path,
                 )
             logger.info("Task completed: indexed %s", file_path)
@@ -515,25 +585,38 @@ def _index_document(file_path: str, force: bool = False) -> bool:
         operation_name="index_document",
         operation_args=(file_path,),
         busy_result=False,
+        runtime=runtime,
     )
 
 def _index_documents_batch(
     file_paths: list[str],
     force: bool = False,
     progressive: bool = False,
+    *,
+    runtime: TaskRuntime | None = None,
 ) -> bool:
     """Index a burst of documents and persist once after the batch."""
-    if _index_manager is None:
+    manager = runtime.index_manager if runtime is not None else _index_manager
+    if manager is None:
         logger.error("IndexManager not available for batch task execution")
         return False
-    manager = _index_manager
+    bootstrap_index_path = (
+        runtime.bootstrap_index_path
+        if runtime is not None
+        else _bootstrap_index_path
+    )
+    bootstrap_documents_roots = (
+        runtime.bootstrap_documents_roots
+        if runtime is not None
+        else _bootstrap_documents_roots
+    )
 
     unique_file_paths = list(dict.fromkeys(file_paths))
     if not unique_file_paths:
         return True
 
     progressive_index = getattr(
-        _index_manager,
+        manager,
         "prepare_progressive_document",
         None,
     )
@@ -542,16 +625,16 @@ def _index_documents_batch(
         progressive
         and not force
         and (progressive_index is not None or canonical_index)
-        and _bootstrap_index_path is not None
-        and _bootstrap_documents_roots
-        and has_incomplete_bootstrap_checkpoint(_bootstrap_index_path)
+        and bootstrap_index_path is not None
+        and bootstrap_documents_roots
+        and has_incomplete_bootstrap_checkpoint(bootstrap_index_path)
     ):
         def _progressive_operation() -> bool | dict[str, object]:
             try:
                 receipt = run_progressive_bootstrap(
                     cast(ProgressiveIndexManager, manager),
                     unique_file_paths,
-                    documents_roots=_bootstrap_documents_roots,
+                    documents_roots=bootstrap_documents_roots,
                 )
             except Exception:
                 logger.exception(
@@ -564,7 +647,10 @@ def _index_documents_batch(
                 receipt.successful,
             )
             if receipt.failed == 0:
-                _persist_document_manifest(indexed_paths=unique_file_paths)
+                _persist_document_manifest(
+                    indexed_paths=unique_file_paths,
+                    runtime=runtime,
+                )
             records = getattr(getattr(receipt, "ingestion", None), "records", ())
             outcomes = [
                 getattr(record, "status", None) == "committed"
@@ -583,6 +669,7 @@ def _index_documents_batch(
             operation_name="index_documents_batch",
             operation_args=(unique_file_paths,),
             busy_result=False,
+            runtime=runtime,
         )
 
     def _operation() -> bool | dict[str, object]:
@@ -596,7 +683,7 @@ def _index_documents_batch(
                 persist=True,
             )
             completed_paths = unique_file_paths
-            _persist_document_manifest(indexed_paths=completed_paths)
+            _persist_document_manifest(indexed_paths=completed_paths, runtime=runtime)
         except Exception:
             logger.warning(
                 "Batch index task failed; retrying files individually before one final persist",
@@ -623,7 +710,10 @@ def _index_documents_batch(
             if completed_paths:
                 try:
                     manager.persist()
-                    _persist_document_manifest(indexed_paths=completed_paths)
+                    _persist_document_manifest(
+                        indexed_paths=completed_paths,
+                        runtime=runtime,
+                    )
                 except Exception:
                     logger.exception(
                         "Batch fallback persist failed for %d indexed document(s)",
@@ -636,12 +726,12 @@ def _index_documents_batch(
 
         if (
             completed_paths
-            and _bootstrap_index_path is not None
-            and _bootstrap_documents_roots
+            and bootstrap_index_path is not None
+            and bootstrap_documents_roots
         ):
             mark_bootstrap_files_completed(
-                _bootstrap_index_path,
-                _bootstrap_documents_roots,
+                bootstrap_index_path,
+                bootstrap_documents_roots,
                 completed_paths,
             )
 
@@ -662,17 +752,13 @@ def _index_documents_batch(
         operation_name="index_documents_batch",
         operation_args=(unique_file_paths,),
         busy_result=False,
+        runtime=runtime,
     )
 
-@_writer_owned_task(
-    busy_result={
-        "status": "error",
-        "error": "index_writer_busy",
-        "details": "Index writer is owned by a rebuild. Retry shortly.",
-    }
-)
-def _index_records_batch(
+def _index_records_batch_core(
     record_payloads: list[dict[str, object]],
+    *,
+    runtime: TaskRuntime | None = None,
 ) -> dict[str, object]:
     """Deserialize, index, and persist a Record batch in the worker.
 
@@ -680,7 +766,8 @@ def _index_records_batch(
     entire write path in the worker prevents the daemon and worker from
     mutating the same persisted index concurrently.
     """
-    if _index_manager is None:
+    manager = runtime.index_manager if runtime is not None else _index_manager
+    if manager is None:
         logger.error("IndexManager not available for record batch task")
         return {
             "status": "error",
@@ -709,7 +796,7 @@ def _index_records_batch(
 
     for index, record in enumerate(records):
         try:
-            _index_manager.index_record(record)
+            manager.index_record(record)
         except Exception as exc:
             logger.exception(
                 "Task failed within record batch at index %d",
@@ -724,7 +811,7 @@ def _index_records_batch(
             }
 
     try:
-        _index_manager.persist()
+        manager.persist()
     except Exception as exc:
         logger.exception("Task failed to persist record batch")
         return {
@@ -737,16 +824,31 @@ def _index_records_batch(
     logger.info("Task completed: indexed %d record(s) in batch", len(records))
     return {"status": "ok", "indexed_count": len(records)}
 
-@_writer_owned_task(busy_result=False)
-def _remove_document(doc_id: str) -> bool:
+
+@_writer_owned_task(
+    busy_result={
+        "status": "error",
+        "error": "index_writer_busy",
+        "details": "Index writer is owned by a rebuild. Retry shortly.",
+    }
+)
+def _index_records_batch(record_payloads: list[dict[str, object]]) -> dict[str, object]:
+    return _index_records_batch_core(record_payloads)
+
+def _remove_document_core(
+    doc_id: str,
+    *,
+    runtime: TaskRuntime | None = None,
+) -> bool:
     """Remove a document from all indices."""
-    if _index_manager is None:
+    manager = runtime.index_manager if runtime is not None else _index_manager
+    if manager is None:
         logger.error("IndexManager not available for task execution")
         return False
     try:
-        _index_manager.remove_document(doc_id)
-        _index_manager.persist()
-        _persist_document_manifest(removed_doc_ids=[doc_id])
+        manager.remove_document(doc_id)
+        manager.persist()
+        _persist_document_manifest(removed_doc_ids=[doc_id], runtime=runtime)
         logger.info("Task completed: removed %s", doc_id)
         return True
     except Exception:
@@ -754,9 +856,18 @@ def _remove_document(doc_id: str) -> bool:
         return False
 
 @_writer_owned_task(busy_result=False)
-def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
+def _remove_document(doc_id: str) -> bool:
+    return _remove_document_core(doc_id)
+
+
+def _remove_documents_batch_core(
+    doc_ids: list[str],
+    *,
+    runtime: TaskRuntime | None = None,
+) -> bool | dict[str, object]:
     """Remove a burst of documents and persist once after the batch."""
-    if _index_manager is None:
+    manager = runtime.index_manager if runtime is not None else _index_manager
+    if manager is None:
         logger.error("IndexManager not available for batch task execution")
         return False
     unique_doc_ids = list(dict.fromkeys(doc_ids))
@@ -767,9 +878,9 @@ def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
     failures: list[str] = []
 
     try:
-        _index_manager.remove_documents(unique_doc_ids, persist=True)
+        manager.remove_documents(unique_doc_ids, persist=True)
         removed_doc_ids = unique_doc_ids
-        _persist_document_manifest(removed_doc_ids=removed_doc_ids)
+        _persist_document_manifest(removed_doc_ids=removed_doc_ids, runtime=runtime)
     except Exception:
         logger.warning(
             "Batch remove task failed; retrying documents individually before one final persist",
@@ -777,7 +888,7 @@ def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
         )
         for doc_id in unique_doc_ids:
             try:
-                _index_manager.remove_document(doc_id)
+                manager.remove_document(doc_id)
                 removed_doc_ids.append(doc_id)
             except Exception:
                 failures.append(doc_id)
@@ -788,8 +899,11 @@ def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
 
         if removed_doc_ids:
             try:
-                _index_manager.persist()
-                _persist_document_manifest(removed_doc_ids=removed_doc_ids)
+                manager.persist()
+                _persist_document_manifest(
+                    removed_doc_ids=removed_doc_ids,
+                    runtime=runtime,
+                )
             except Exception:
                 logger.exception(
                     "Batch fallback persist failed for %d removed document(s)",
@@ -808,6 +922,11 @@ def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
         [doc_id in removed_doc_ids for doc_id in unique_doc_ids],
         error="batch item failed",
     )
+
+
+@_writer_owned_task(busy_result=False)
+def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
+    return _remove_documents_batch_core(doc_ids)
 
 @_writer_owned_task(busy_result=False, on_busy=_defer_git_refresh)
 def _refresh_git_repository(git_dir: str) -> bool:
@@ -1246,19 +1365,69 @@ def register_tasks(
         _git_refresh_pending.clear()
         _git_refresh_deferred.clear()
 
+    storage_filename = cast(Any, huey.storage).filename
+    runtime = TaskRuntime(
+        queue_runtime=QueueRuntime(huey=huey, db_path=Path(storage_filename)),
+        submission=_RegisteredTaskSubmission(),
+        index_manager=index_manager,
+        task_backpressure_limit=max(1, task_backpressure_limit),
+        bootstrap_index_path=bootstrap_index_path,
+        bootstrap_documents_roots=list(bootstrap_documents_roots or []),
+        schedule_vocabulary_catch_up=schedule_vocabulary_catch_up,
+        task_lease_store=task_lease_store,
+        work_intent_store=work_intent_store,
+    )
+
     registered_tasks = register_huey_tasks(
         huey,
         {
-            "index_document": _intent_task("index_document")(_index_document),
-            "index_documents_batch": _intent_task("index_documents_batch")(
-                _index_documents_batch
+            "index_document": _runtime_intent_handler(
+                runtime,
+                "index_document",
+                _bind_runtime_handler(runtime, _index_document, "_index_document"),
             ),
-            "index_records_batch": _intent_task("index_records_batch")(
-                _index_records_batch
+            "index_documents_batch": _runtime_intent_handler(
+                runtime,
+                "index_documents_batch",
+                _bind_runtime_handler(
+                    runtime,
+                    _index_documents_batch,
+                    "_index_documents_batch",
+                ),
             ),
-            "remove_document": _intent_task("remove_document")(_remove_document),
-            "remove_documents_batch": _intent_task("remove_documents_batch")(
-                _remove_documents_batch
+            "index_records_batch": _runtime_intent_handler(
+                runtime,
+                "index_records_batch",
+                _runtime_writer_handler(
+                    runtime,
+                    _index_records_batch_core,
+                    name="_index_records_batch",
+                    busy_result={
+                        "status": "error",
+                        "error": "index_writer_busy",
+                        "details": "Index writer is owned by a rebuild. Retry shortly.",
+                    },
+                ),
+            ),
+            "remove_document": _runtime_intent_handler(
+                runtime,
+                "remove_document",
+                _runtime_writer_handler(
+                    runtime,
+                    _remove_document_core,
+                    name="_remove_document",
+                    busy_result=False,
+                ),
+            ),
+            "remove_documents_batch": _runtime_intent_handler(
+                runtime,
+                "remove_documents_batch",
+                _runtime_writer_handler(
+                    runtime,
+                    _remove_documents_batch_core,
+                    name="_remove_documents_batch",
+                    busy_result=False,
+                ),
             ),
             "refresh_git_repository": _intent_task("refresh_git_repository")(
                 _refresh_git_repository
@@ -1298,13 +1467,9 @@ def register_tasks(
     gdrive_watch_task = gdrive_tasks.get("gdrive_watch")
     gdrive_health_task = gdrive_tasks.get("gdrive_health")
     logger.info("Indexing tasks registered with Huey")
-    storage_filename = cast(Any, huey.storage).filename
-    return TaskRuntime(
-        queue_runtime=QueueRuntime(huey=huey, db_path=Path(storage_filename)),
-        submission=_RegisteredTaskSubmission(),
-        task_handles=registered_tasks,
-        gdrive_task_handles=gdrive_tasks,
-    )
+    runtime.task_handles = registered_tasks
+    runtime.gdrive_task_handles = gdrive_tasks
+    return runtime
 
 
 def enqueue_index(file_path: str, force: bool = False) -> bool:
