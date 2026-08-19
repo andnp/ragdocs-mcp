@@ -455,6 +455,35 @@ class TestTaskRegistration:
         assert task is not None
         assert task.args == ("/repo/.git",)
 
+    def test_git_refresh_deferred_state_is_owned_by_each_runtime(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        runtime_one = _register_tasks(huey_instance, fake_manager)
+        second_huey = SqliteHuey(
+            name="test-tasks-second",
+            filename=str(tmp_path / "second.db"),
+            immediate=False,
+        )
+        runtime_two = _register_tasks(second_huey, FakeIndexManager())
+
+        first_store = TaskLeaseStore(_queue_path(huey_instance))
+        assert first_store.acquire_writer("rebuild-active")
+
+        assert (
+            runtime_one.submission.submit_refresh_git_request("/repo/.git").status
+            == "already_pending"
+        )
+        assert str(Path("/repo/.git").resolve()) in runtime_one.git_refresh_deferred
+        assert runtime_two.git_refresh_deferred == set()
+        assert (
+            runtime_two.submission.submit_refresh_git_request("/repo/.git").status
+            == "enqueued"
+        )
+        assert first_store.release_writer("rebuild-active")
+
     def test_startup_batch_skips_files_already_pending_in_queue(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:

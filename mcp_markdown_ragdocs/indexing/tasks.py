@@ -177,6 +177,21 @@ class _RegisteredTaskSubmission:
         )
 
 
+class _RuntimeTaskSubmission(_RegisteredTaskSubmission):
+    """Submission adapter bound to one registered runtime instance."""
+
+    def __init__(self, runtime: TaskRuntime) -> None:
+        self._runtime = runtime
+
+    def submit_refresh_git_request(self, git_dir: str) -> TaskSubmissionResult:
+        return submit_refresh_git_request(git_dir, runtime=self._runtime)
+
+    def submit_refresh_git_batch(
+        self, git_dirs: list[str]
+    ) -> TaskBatchSubmissionResult:
+        return submit_refresh_git_batch(git_dirs, runtime=self._runtime)
+
+
 # Module-level references set during initialization
 _huey: SqliteHuey | None = None
 _index_manager: IndexManagerLike | None = None
@@ -210,12 +225,12 @@ gdrive_watch_task: Any = None
 gdrive_health_task: Any = None
 
 
-def _writer_lease_store() -> TaskLeasePort | None:
-    return _task_lease_store
+def _writer_lease_store(runtime: TaskRuntime | None = None) -> TaskLeasePort | None:
+    return runtime.task_lease_store if runtime is not None else _task_lease_store
 
 
-def _intent_store() -> WorkIntentPort | None:
-    return _work_intent_store
+def _intent_store(runtime: TaskRuntime | None = None) -> WorkIntentPort | None:
+    return runtime.work_intent_store if runtime is not None else _work_intent_store
 
 
 def _canonical_document_identity(document_id: str) -> str:
@@ -242,9 +257,14 @@ def _intent_claim(
     payload: dict[str, object],
     *,
     force_reopen: bool = False,
+    runtime: TaskRuntime | None = None,
 ) -> tuple[WorkIntent, str] | None:
     return task_intents._intent_claim(
-        _intent_store, operation, canonical_key, payload, force_reopen=force_reopen
+        lambda: _intent_store(runtime),
+        operation,
+        canonical_key,
+        payload,
+        force_reopen=force_reopen,
     )
 
 
@@ -259,8 +279,17 @@ def _intent_claim_batch(
     )
 
 
-def _release_intent(intent_id: str, claim_token: str) -> None:
-    task_intents._release_intent(_intent_store, intent_id, claim_token)
+def _release_intent(
+    intent_id: str,
+    claim_token: str,
+    *,
+    runtime: TaskRuntime | None = None,
+) -> None:
+    task_intents._release_intent(
+        lambda: _intent_store(runtime),
+        intent_id,
+        claim_token,
+    )
 
 
 def _intent_task(operation: str):
@@ -332,8 +361,8 @@ def _persist_document_manifest(
     save_manifest(bootstrap_index_path, manifest)
 
 
-def _writer_is_active() -> bool:
-    return writer_is_active(_writer_lease_store)
+def _writer_is_active(runtime: TaskRuntime | None = None) -> bool:
+    return writer_is_active(lambda: _writer_lease_store(runtime))
 
 
 def _run_as_writer(
@@ -406,11 +435,13 @@ def _runtime_writer_handler(
     name: str,
     busy_result: Any,
     on_busy: Callable[..., None] | None = None,
+    on_released: Callable[[], None] | None = None,
 ) -> Callable[..., Any]:
     return writer_owned_task(
         lambda: runtime.task_lease_store,
         busy_result=busy_result,
         on_busy=on_busy,
+        on_released=on_released,
     )(_bind_runtime_handler(runtime, handler, name))
 
 
@@ -485,9 +516,15 @@ def _save_git_refresh_progress(
     started_at: datetime | None = None,
     updated_at: datetime | None = None,
     metrics: dict[str, int] | None = None,
+    runtime: TaskRuntime | None = None,
     **fields: object,
 ) -> None:
-    if _bootstrap_index_path is None:
+    bootstrap_index_path = (
+        runtime.bootstrap_index_path
+        if runtime is not None
+        else _bootstrap_index_path
+    )
+    if bootstrap_index_path is None:
         return
     timestamp = updated_at or datetime.now(UTC)
     progress: dict[str, object] = {
@@ -503,29 +540,55 @@ def _save_git_refresh_progress(
     progress.update(fields)
     if metrics:
         progress.update(metrics)
-    save_progress(_bootstrap_index_path, git_dir, progress)
+    save_progress(bootstrap_index_path, git_dir, progress)
 
 
-def _defer_git_refresh(git_dir: str) -> None:
+_save_git_refresh_progress_global = _save_git_refresh_progress
+
+
+def _defer_git_refresh(
+    git_dir: str,
+    *,
+    runtime: TaskRuntime | None = None,
+) -> None:
     repo_key = _git_refresh_key(git_dir)
-    with _git_refresh_lock:
-        _git_refresh_pending.add(repo_key)
-        _git_refresh_deferred.add(repo_key)
+    lock = runtime.git_refresh_lock if runtime is not None else _git_refresh_lock
+    pending = runtime.git_refresh_pending if runtime is not None else _git_refresh_pending
+    deferred = (
+        runtime.git_refresh_deferred
+        if runtime is not None
+        else _git_refresh_deferred
+    )
+    with lock:
+        pending.add(repo_key)
+        deferred.add(repo_key)
     logger.info("Deferred git refresh until index writer release: %s", git_dir)
 
 
-def _flush_deferred_git_refreshes() -> None:
-    with _git_refresh_lock:
-        deferred = list(_git_refresh_deferred)
-        _git_refresh_deferred.difference_update(deferred)
-        _git_refresh_pending.difference_update(deferred)
+def _flush_deferred_git_refreshes(runtime: TaskRuntime | None = None) -> None:
+    lock = runtime.git_refresh_lock if runtime is not None else _git_refresh_lock
+    pending = runtime.git_refresh_pending if runtime is not None else _git_refresh_pending
+    deferred_state = (
+        runtime.git_refresh_deferred
+        if runtime is not None
+        else _git_refresh_deferred
+    )
+    submit_refresh = (
+        runtime.submission.submit_refresh_git_request
+        if runtime is not None
+        else submit_refresh_git_request
+    )
+    with lock:
+        deferred = list(deferred_state)
+        deferred_state.difference_update(deferred)
+        pending.difference_update(deferred)
 
     for git_dir in deferred:
-        submission = submit_refresh_git_request(git_dir)
+        submission = submit_refresh(git_dir)
         if submission.should_retry_later or not submission.queue_available:
-            with _git_refresh_lock:
-                _git_refresh_pending.add(git_dir)
-                _git_refresh_deferred.add(git_dir)
+            with lock:
+                pending.add(git_dir)
+                deferred_state.add(git_dir)
             logger.info(
                 "Keeping deferred git refresh for a later retry: %s",
                 git_dir,
@@ -928,13 +991,37 @@ def _remove_documents_batch_core(
 def _remove_documents_batch(doc_ids: list[str]) -> bool | dict[str, object]:
     return _remove_documents_batch_core(doc_ids)
 
-@_writer_owned_task(busy_result=False, on_busy=_defer_git_refresh)
-def _refresh_git_repository(git_dir: str) -> bool:
+def _refresh_git_repository_core(
+    git_dir: str,
+    *,
+    runtime: TaskRuntime | None = None,
+) -> bool:
     """Refresh the git index for one repository."""
-    if _index_manager is None:
+    manager = runtime.index_manager if runtime is not None else _index_manager
+    if manager is None:
         logger.error("IndexManager not available for git refresh task")
         return False
-    manager = _index_manager
+    bootstrap_index_path = (
+        runtime.bootstrap_index_path
+        if runtime is not None
+        else _bootstrap_index_path
+    )
+    refresh_lock = runtime.git_refresh_lock if runtime is not None else _git_refresh_lock
+    refresh_in_flight = (
+        runtime.git_refresh_in_flight
+        if runtime is not None
+        else _git_refresh_in_flight
+    )
+    refresh_deferred = (
+        runtime.git_refresh_deferred
+        if runtime is not None
+        else _git_refresh_deferred
+    )
+    save_progress_for_runtime = _save_git_refresh_progress_global
+
+    def _save_git_refresh_progress(*args: Any, **kwargs: Any) -> None:
+        save_progress_for_runtime(*args, runtime=runtime, **kwargs)
+
     from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
     from mcp_markdown_ragdocs.config import (
         load_config,
@@ -945,11 +1032,11 @@ def _refresh_git_repository(git_dir: str) -> bool:
     )
     git_dir_path = Path(git_dir).resolve()
     repo_key = str(git_dir_path)
-    with _git_refresh_lock:
-        if repo_key in _git_refresh_in_flight:
+    with refresh_lock:
+        if repo_key in refresh_in_flight:
             logger.info("Skipping git refresh already running for %s", git_dir_path)
             return True
-        _git_refresh_in_flight.add(repo_key)
+        refresh_in_flight.add(repo_key)
 
     started_at = datetime.now(UTC)
     _save_git_refresh_progress(
@@ -983,8 +1070,8 @@ def _refresh_git_repository(git_dir: str) -> bool:
             newest_commit=newest_commit,
         )
         cursor = (
-            get_cursor(_bootstrap_index_path, git_dir_path)
-            if _bootstrap_index_path is not None
+            get_cursor(bootstrap_index_path, git_dir_path)
+            if bootstrap_index_path is not None
             else None
         )
         since = str(max(0, cursor - 1)) if cursor is not None else None
@@ -994,10 +1081,10 @@ def _refresh_git_repository(git_dir: str) -> bool:
             workspace_id=resolve_project_id_for_path(git_dir_path.parent, config),
         )
         if (
-            _bootstrap_index_path is not None
+            bootstrap_index_path is not None
             and refresh_head is not None
             and cursor is not None
-            and get_head(_bootstrap_index_path, git_dir_path) == refresh_head
+            and get_head(bootstrap_index_path, git_dir_path) == refresh_head
         ):
             logger.debug("Skipping unchanged git repository %s", git_dir_path)
             _save_git_refresh_progress(
@@ -1098,8 +1185,8 @@ def _refresh_git_repository(git_dir: str) -> bool:
                         f"{receipt.failed} record(s)"
                     )
                 manager.persist()
-                if _bootstrap_index_path is not None and latest_cursor is not None:
-                    save_cursor(_bootstrap_index_path, git_dir_path, latest_cursor)
+                if bootstrap_index_path is not None and latest_cursor is not None:
+                    save_cursor(bootstrap_index_path, git_dir_path, latest_cursor)
                 _save_git_refresh_progress(
                     git_dir_path,
                     state="running",
@@ -1115,10 +1202,10 @@ def _refresh_git_repository(git_dir: str) -> bool:
                 )
 
         asyncio.run(_ingest())
-        if _bootstrap_index_path is not None and refresh_head is not None:
+        if bootstrap_index_path is not None and refresh_head is not None:
             # Persist the head observed before ingestion. A commit created
             # during the task must remain visible to the next poll.
-            save_head(_bootstrap_index_path, git_dir_path, refresh_head)
+            save_head(bootstrap_index_path, git_dir_path, refresh_head)
         final_embedding_metrics = _embedding_cache_metrics(manager)
         metric_deltas = {
             key: value - initial_embedding_metrics.get(key, 0)
@@ -1169,10 +1256,20 @@ def _refresh_git_repository(git_dir: str) -> bool:
         logger.exception("Task failed: refresh git %s", git_dir_path)
         return False
     finally:
-        with _git_refresh_lock:
-            _git_refresh_in_flight.discard(repo_key)
-            if repo_key not in _git_refresh_deferred:
-                _git_refresh_pending.discard(repo_key)
+        with refresh_lock:
+            refresh_in_flight.discard(repo_key)
+            if repo_key not in refresh_deferred:
+                pending = (
+                    runtime.git_refresh_pending
+                    if runtime is not None
+                    else _git_refresh_pending
+                )
+                pending.discard(repo_key)
+
+
+@_writer_owned_task(busy_result=False, on_busy=_defer_git_refresh)
+def _refresh_git_repository(git_dir: str) -> bool:
+    return _refresh_git_repository_core(git_dir)
 
 def _rebuild_index(project_override: str | None, request_id: str) -> bool:
     """Run a daemon-owned rebuild inside the long-lived worker runtime."""
@@ -1429,8 +1526,20 @@ def register_tasks(
                     busy_result=False,
                 ),
             ),
-            "refresh_git_repository": _intent_task("refresh_git_repository")(
-                _refresh_git_repository
+            "refresh_git_repository": _runtime_intent_handler(
+                runtime,
+                "refresh_git_repository",
+                _runtime_writer_handler(
+                    runtime,
+                    _refresh_git_repository_core,
+                    name="_refresh_git_repository",
+                    busy_result=False,
+                    on_busy=lambda git_dir: _defer_git_refresh(
+                        git_dir,
+                        runtime=runtime,
+                    ),
+                    on_released=lambda: _flush_deferred_git_refreshes(runtime),
+                ),
             ),
             "rebuild_index": _intent_task("rebuild_index")(_rebuild_index),
             "reindex_model": _intent_task("reindex_model")(_reindex_model),
@@ -1469,6 +1578,7 @@ def register_tasks(
     logger.info("Indexing tasks registered with Huey")
     runtime.task_handles = registered_tasks
     runtime.gdrive_task_handles = gdrive_tasks
+    runtime.submission = _RuntimeTaskSubmission(runtime)
     return runtime
 
 
@@ -1966,76 +2076,107 @@ def enqueue_refresh_git(git_dir: str) -> bool:
     return submit_refresh_git_request(git_dir).enqueued
 
 
-def submit_refresh_git_request(git_dir: str) -> TaskSubmissionResult:
-    if refresh_git_repository_task is None or _huey is None:
+def submit_refresh_git_request(
+    git_dir: str,
+    *,
+    runtime: TaskRuntime | None = None,
+) -> TaskSubmissionResult:
+    task = (
+        runtime.task_handles.get("refresh_git_repository")
+        if runtime is not None
+        else refresh_git_repository_task
+    )
+    huey = runtime.queue_runtime.huey if runtime is not None else _huey
+    lock = runtime.git_refresh_lock if runtime is not None else _git_refresh_lock
+    in_flight = (
+        runtime.git_refresh_in_flight
+        if runtime is not None
+        else _git_refresh_in_flight
+    )
+    pending = runtime.git_refresh_pending if runtime is not None else _git_refresh_pending
+    deferred = (
+        runtime.git_refresh_deferred
+        if runtime is not None
+        else _git_refresh_deferred
+    )
+    task_backpressure_limit = (
+        runtime.task_backpressure_limit
+        if runtime is not None
+        else _task_backpressure_limit
+    )
+    if task is None or huey is None:
         return TaskSubmissionResult(status="unavailable")
     git_dir_key = _git_refresh_key(git_dir)
-    with _git_refresh_lock:
+    with lock:
         if (
-            git_dir_key in _git_refresh_in_flight
-            or git_dir_key in _git_refresh_pending
-            or git_dir_key in _git_refresh_deferred
+            git_dir_key in in_flight
+            or git_dir_key in pending
+            or git_dir_key in deferred
         ):
             logger.info(
                 "Skipping git refresh enqueue for %s because it is already queued or running",
                 git_dir,
             )
             return TaskSubmissionResult(status="already_pending")
-        if _writer_is_active():
-            _git_refresh_pending.add(git_dir_key)
-            _git_refresh_deferred.add(git_dir_key)
+        if _writer_is_active(runtime):
+            pending.add(git_dir_key)
+            deferred.add(git_dir_key)
             _save_git_refresh_progress(
                 Path(git_dir),
                 state="queued",
                 queued_at=datetime.now(UTC).isoformat(),
+                runtime=runtime,
             )
             logger.info("Deferring git refresh while rebuild owns the writer: %s", git_dir)
             return TaskSubmissionResult(status="already_pending")
-        _git_refresh_pending.add(git_dir_key)
+        pending.add(git_dir_key)
 
     if is_backpressured(
-        _huey,
-        _task_backpressure_limit,
+        huey,
+        task_backpressure_limit,
         item=git_dir,
         warning_message="Skipping git refresh enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
-        with _git_refresh_lock:
-            _git_refresh_pending.discard(git_dir_key)
+        with lock:
+            pending.discard(git_dir_key)
         _save_git_refresh_progress(
             Path(git_dir),
             state="backpressured",
             error="task queue backpressure",
             completed_at=datetime.now(UTC).isoformat(),
+            runtime=runtime,
         )
         return TaskSubmissionResult(status="backpressured")
     claim = _intent_claim(
         "refresh_git_repository",
         _git_refresh_key(git_dir),
         {"git_dir": git_dir},
+        runtime=runtime,
     )
     if claim is None:
-        with _git_refresh_lock:
-            _git_refresh_pending.discard(git_dir_key)
+        with lock:
+            pending.discard(git_dir_key)
         return TaskSubmissionResult(status="already_pending")
     intent, claim_token = claim
     try:
-        refresh_git_repository_task(
+        task(
             git_dir,
             priority=GIT_REFRESH_TASK_PRIORITY,
             intent_id=intent.intent_id,
             claim_token=claim_token,
         )
     except Exception:
-        if _intent_store() is not None:
-            _release_intent(intent.intent_id, claim_token)
-        with _git_refresh_lock:
-            _git_refresh_pending.discard(git_dir_key)
+        if _intent_store(runtime) is not None:
+            _release_intent(intent.intent_id, claim_token, runtime=runtime)
+        with lock:
+            pending.discard(git_dir_key)
         raise
     if claim:
         _save_git_refresh_progress(
             Path(git_dir),
             state="queued",
             queued_at=datetime.now(UTC).isoformat(),
+            runtime=runtime,
         )
         return TaskSubmissionResult(status="enqueued")
     return TaskSubmissionResult(status="already_pending")
@@ -2046,8 +2187,18 @@ def enqueue_refresh_git_batch(git_dirs: list[str]) -> int:
     return submit_refresh_git_batch(git_dirs).enqueued_count
 
 
-def submit_refresh_git_batch(git_dirs: list[str]) -> TaskBatchSubmissionResult:
-    if refresh_git_repository_task is None or _huey is None:
+def submit_refresh_git_batch(
+    git_dirs: list[str],
+    *,
+    runtime: TaskRuntime | None = None,
+) -> TaskBatchSubmissionResult:
+    task = (
+        runtime.task_handles.get("refresh_git_repository")
+        if runtime is not None
+        else refresh_git_repository_task
+    )
+    huey = runtime.queue_runtime.huey if runtime is not None else _huey
+    if task is None or huey is None:
         return TaskBatchSubmissionResult(
             queue_available=False,
             requested_unique_count=len(set(git_dirs)),
@@ -2059,7 +2210,7 @@ def submit_refresh_git_batch(git_dirs: list[str]) -> TaskBatchSubmissionResult:
     already_pending_count = 0
     backpressured_items: list[str] = []
     for git_dir in unique_git_dirs:
-        submission = submit_refresh_git_request(git_dir)
+        submission = submit_refresh_git_request(git_dir, runtime=runtime)
         if submission.status == "enqueued":
             enqueued_count += 1
         elif submission.status == "already_pending":

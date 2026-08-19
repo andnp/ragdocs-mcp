@@ -43,3 +43,7 @@ class TaskRuntime:
     )
     task_lease_store: TaskLeasePort | None = field(default=None, repr=False)
     work_intent_store: WorkIntentPort | None = field(default=None, repr=False)
+    git_refresh_in_flight: set[str] = field(default_factory=set, repr=False)
+    git_refresh_pending: set[str] = field(default_factory=set, repr=False)
+    git_refresh_deferred: set[str] = field(default_factory=set, repr=False)
+    git_refresh_lock: Lock = field(default_factory=Lock, repr=False)
