@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-import json
 from pathlib import Path
 
-from searchkernel.api import atomic_write_json
+from mcp_markdown_ragdocs.gdrive.json_record_store import JsonEnvelopeStore
 
 CHECKPOINT_SCHEMA_VERSION = 2
 GDRIVE_CHECKPOINT_NAMESPACE_PREFIX = "gdrive-v1"
@@ -157,6 +156,7 @@ class GDriveSyncCheckpointStore:
 
     def __init__(self, index_root: Path) -> None:
         self.path = checkpoint_path(index_root)
+        self._envelope = JsonEnvelopeStore(self.path, CHECKPOINT_SCHEMA_VERSION, "checkpoints")
 
     def load(self, namespace: str) -> GDriveSyncCheckpoint | None:
         """Load one namespace, treating missing or invalid state as empty."""
@@ -177,13 +177,7 @@ class GDriveSyncCheckpointStore:
         _validate_namespace(namespace)
         payload = self._read_payload()
         payload[namespace] = checkpoint.to_payload()
-        atomic_write_json(
-            self.path,
-            {
-                "schema_version": CHECKPOINT_SCHEMA_VERSION,
-                "checkpoints": payload,
-            },
-        )
+        self._envelope.write(payload)
 
     def begin_inventory(
         self,
@@ -236,18 +230,7 @@ class GDriveSyncCheckpointStore:
         return checkpoint
 
     def _read_payload(self) -> dict[str, object]:
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(raw, dict):
-            return {}
-        if raw.get("schema_version") != CHECKPOINT_SCHEMA_VERSION:
-            return {}
-        checkpoints = raw.get("checkpoints")
-        if not isinstance(checkpoints, dict):
-            return {}
-        return dict(checkpoints)
+        return self._envelope.read(dict) or {}
 
 
 def _validate_namespace(namespace: str) -> None:

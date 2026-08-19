@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from searchkernel.api import Record, RecordIdentity, RecordStatus, atomic_write_json
+from searchkernel.api import Record, RecordIdentity, RecordStatus
 
+from mcp_markdown_ragdocs.gdrive.json_record_store import JsonEnvelopeStore
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
 from mcp_markdown_ragdocs.gdrive.domain import (
     GDriveScopeIdentity,
@@ -95,6 +95,7 @@ class GDriveReplacementJournal:
     ) -> None:
         self.path = Path(path)
         self.state_repository = state_repository
+        self._envelope = JsonEnvelopeStore(self.path, REPLACEMENT_SCHEMA_VERSION, "entries")
 
     def prepare(
         self,
@@ -145,14 +146,8 @@ class GDriveReplacementJournal:
     def load(self) -> tuple[GDriveReplacementEntry, ...]:
         """Load valid journal entries in stable source-key order."""
 
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return ()
-        if not isinstance(payload, dict) or payload.get("schema_version") != REPLACEMENT_SCHEMA_VERSION:
-            return ()
-        raw_entries = payload.get("entries")
-        if not isinstance(raw_entries, list):
+        raw_entries = self._envelope.read(list)
+        if raw_entries is None:
             return ()
         entries: list[GDriveReplacementEntry] = []
         for raw in raw_entries:
@@ -188,20 +183,16 @@ class GDriveReplacementJournal:
         self._write_all((*entries, entry))
 
     def _write_all(self, entries: Sequence[GDriveReplacementEntry]) -> None:
-        atomic_write_json(
-            self.path,
-            {
-                "schema_version": REPLACEMENT_SCHEMA_VERSION,
-                "entries": [
-                    {
-                        "source_key": entry.source_key,
-                        "old_keys": list(entry.old_keys),
-                        "new_keys": list(entry.new_keys),
-                        "phase": entry.phase,
-                    }
-                    for entry in sorted(entries, key=lambda item: item.source_key)
-                ],
-            },
+        self._envelope.write(
+            [
+                {
+                    "source_key": entry.source_key,
+                    "old_keys": list(entry.old_keys),
+                    "new_keys": list(entry.new_keys),
+                    "phase": entry.phase,
+                }
+                for entry in sorted(entries, key=lambda item: item.source_key)
+            ]
         )
 
     def _save_status(
