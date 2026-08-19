@@ -380,6 +380,11 @@ def _run_as_writer(
         if runtime is not None
         else _writer_lease_store
     )
+    release_callback = (
+        (lambda: _flush_deferred_git_refreshes(runtime))
+        if runtime is not None
+        else _flush_deferred_git_refreshes
+    )
     return run_as_writer(
         store_provider,
         operation,
@@ -388,7 +393,7 @@ def _run_as_writer(
         owner_token=owner_token,
         busy_result=busy_result,
         on_busy=on_busy,
-        on_released=_flush_deferred_git_refreshes,
+        on_released=release_callback,
     )
 
 
@@ -1271,16 +1276,35 @@ def _refresh_git_repository_core(
 def _refresh_git_repository(git_dir: str) -> bool:
     return _refresh_git_repository_core(git_dir)
 
-def _rebuild_index(project_override: str | None, request_id: str) -> bool:
+def _rebuild_index_core(
+    project_override: str | None,
+    request_id: str,
+    *,
+    runtime: TaskRuntime | None = None,
+) -> bool:
     """Run a daemon-owned rebuild inside the long-lived worker runtime."""
-    if _index_manager is None:
+    manager = runtime.index_manager if runtime is not None else _index_manager
+    runtime_root = (
+        runtime.bootstrap_index_path
+        if runtime is not None
+        else _bootstrap_index_path
+    )
+    documents_roots = (
+        runtime.bootstrap_documents_roots
+        if runtime is not None
+        else _bootstrap_documents_roots
+    )
+    schedule_vocabulary_catch_up = (
+        runtime.schedule_vocabulary_catch_up
+        if runtime is not None
+        else _schedule_vocabulary_catch_up
+    )
+    if manager is None:
         logger.error("IndexManager not available for rebuild task execution")
         return False
-    if _bootstrap_index_path is None:
+    if runtime_root is None:
         logger.error("Runtime root not configured for rebuild task execution")
         return False
-    runtime_root = _bootstrap_index_path
-    manager = _index_manager
 
     from mcp_markdown_ragdocs.config import load_config
 
@@ -1290,7 +1314,7 @@ def _rebuild_index(project_override: str | None, request_id: str) -> bool:
                 runtime_root=runtime_root,
                 config=load_config(),
                 index_manager=manager,
-                global_documents_roots=_bootstrap_documents_roots,
+                global_documents_roots=documents_roots,
                 request_id=request_id,
                 project_override=project_override,
                 schedule_vocabulary_catch_up=None,
@@ -1303,6 +1327,7 @@ def _rebuild_index(project_override: str | None, request_id: str) -> bool:
         _operation,
         owner_token=request_id,
         busy_result={"status": "failed", "error": "index_writer_busy"},
+        runtime=runtime,
     )
     if payload.get("error") != "index_writer_busy":
         payload = write_rebuild_status(
@@ -1313,9 +1338,9 @@ def _rebuild_index(project_override: str | None, request_id: str) -> bool:
                 "writer_owner": None,
             },
         )
-    if payload.get("status") == "succeeded" and _schedule_vocabulary_catch_up is not None:
+    if payload.get("status") == "succeeded" and schedule_vocabulary_catch_up is not None:
         try:
-            scheduled = bool(_schedule_vocabulary_catch_up())
+            scheduled = bool(schedule_vocabulary_catch_up())
         except Exception:
             logger.warning(
                 "Failed to schedule vocabulary catch-up after rebuild",
@@ -1332,28 +1357,32 @@ def _rebuild_index(project_override: str | None, request_id: str) -> bool:
                 )
     return payload.get("status") == "succeeded"
 
-@_writer_owned_task(
-    busy_result={
-        "status": "error",
-        "error": "index_writer_busy",
-        "details": "Index writer is owned by a rebuild. Retry shortly.",
-    }
-)
-def _reindex_model(
+
+def _rebuild_index(project_override: str | None, request_id: str) -> bool:
+    return _rebuild_index_core(project_override, request_id)
+
+def _reindex_model_core(
     operation: str,
     model: str | None,
     truncate_dim: int | None,
     old_model: str | None,
     request_id: str,
+    *,
+    runtime: TaskRuntime | None = None,
 ) -> dict[str, object]:
     """Run one durable model-migration operation in the worker."""
-    if _index_manager is None:
+    manager = runtime.index_manager if runtime is not None else _index_manager
+    runtime_root = (
+        runtime.bootstrap_index_path
+        if runtime is not None
+        else _bootstrap_index_path
+    )
+    if manager is None:
         return {"status": "error", "error": "reindex_queue_unavailable"}
-    if _bootstrap_index_path is None:
+    if runtime_root is None:
         return {"status": "error", "error": "reindex_runtime_unavailable"}
     from mcp_markdown_ragdocs.config import load_config
 
-    runtime_root = _bootstrap_index_path
     write_reindex_status(
         runtime_root,
         {
@@ -1369,7 +1398,7 @@ def _reindex_model(
         },
     )
     try:
-        config = getattr(_index_manager, "_config", None) or load_config()
+        config = getattr(manager, "_config", None) or load_config()
         state = run_reindex_operation(
             config=config,
             index_path=runtime_root,
@@ -1382,7 +1411,7 @@ def _reindex_model(
 
         namespace = state.source if state.phase.value == "rollback" else state.target
         replace_vector_store = getattr(
-            _index_manager,
+            manager,
             "replace_vector_store",
             None,
         )
@@ -1423,6 +1452,29 @@ def _reindex_model(
             "request_id": request_id,
             "error": str(exc),
         }
+
+
+@_writer_owned_task(
+    busy_result={
+        "status": "error",
+        "error": "index_writer_busy",
+        "details": "Index writer is owned by a rebuild. Retry shortly.",
+    }
+)
+def _reindex_model(
+    operation: str,
+    model: str | None,
+    truncate_dim: int | None,
+    old_model: str | None,
+    request_id: str,
+) -> dict[str, object]:
+    return _reindex_model_core(
+        operation,
+        model,
+        truncate_dim,
+        old_model,
+        request_id,
+    )
 
 def register_tasks(
     huey: SqliteHuey,
@@ -1541,8 +1593,26 @@ def register_tasks(
                     on_released=lambda: _flush_deferred_git_refreshes(runtime),
                 ),
             ),
-            "rebuild_index": _intent_task("rebuild_index")(_rebuild_index),
-            "reindex_model": _intent_task("reindex_model")(_reindex_model),
+            "rebuild_index": _runtime_intent_handler(
+                runtime,
+                "rebuild_index",
+                _bind_runtime_handler(runtime, _rebuild_index_core, "_rebuild_index"),
+            ),
+            "reindex_model": _runtime_intent_handler(
+                runtime,
+                "reindex_model",
+                _runtime_writer_handler(
+                    runtime,
+                    _reindex_model_core,
+                    name="_reindex_model",
+                    busy_result={
+                        "status": "error",
+                        "error": "index_writer_busy",
+                        "details": "Index writer is owned by a rebuild.",
+                    },
+                    on_released=lambda: _flush_deferred_git_refreshes(runtime),
+                ),
+            ),
         },
     )
     gdrive_runtime = (
