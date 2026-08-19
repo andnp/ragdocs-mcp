@@ -14,8 +14,14 @@ from searchkernel.api import (
     GraphEdge,
     GraphNeighbor,
     LocalRecordKernel,
+    KeywordStore,
     Record,
     RecordIdentity,
+    RecordIngestor,
+    SQLiteEmbeddingCache,
+    SemanticRecordIngestor,
+    Vector,
+    VectorStore,
 )
 
 from mcp_markdown_ragdocs.models import Document
@@ -63,6 +69,34 @@ class RecordStorage(Protocol):
     def iter_identities(self) -> Iterator[RecordIdentity]: ...
 
     def delete(self, storage_keys: Sequence[str]) -> None: ...
+
+    @property
+    def database_manager(self) -> object: ...
+
+    @property
+    def keyword_store(self) -> KeywordStore: ...
+
+    @property
+    def vector_store(self) -> VectorStore: ...
+
+    def create_ingestor(
+        self,
+        embedding_provider: "EmbeddingProvider",
+        *,
+        cache_path: Path,
+        batch_size: int,
+    ) -> RecordIngestor: ...
+
+
+class EmbeddingProvider(Protocol):
+    """Embedding capability required by the local ingestion adapter."""
+
+    model_name: str
+    dim: int
+
+    def embed(self, texts: list[str]) -> list[Vector]: ...
+
+    def embed_query(self, text: str) -> Vector: ...
 
 
 class GraphCapability(Protocol):
@@ -136,6 +170,38 @@ class LocalRecordStorage:
     @property
     def graph(self) -> GraphCapability:
         return self._graph
+
+    @property
+    def database_manager(self) -> object:
+        return self._kernel.backend.db_manager
+
+    @property
+    def keyword_store(self) -> KeywordStore:
+        return self._kernel.keyword_store
+
+    @property
+    def vector_store(self) -> VectorStore:
+        return self._kernel.vector_store
+
+    def create_ingestor(
+        self,
+        embedding_provider: EmbeddingProvider,
+        *,
+        cache_path: Path,
+        batch_size: int,
+    ) -> RecordIngestor:
+        embedding_cache = SQLiteEmbeddingCache(
+            cache_path,
+            encoder_namespace=embedding_provider.model_name,
+            dimension=embedding_provider.dim,
+        )
+        return SemanticRecordIngestor(
+            embedding_provider=embedding_provider,
+            keyword_store=self.keyword_store,
+            vector_store=self.vector_store,
+            embedding_cache=embedding_cache,
+            embedding_batch_size=max(1, batch_size),
+        )
 
     def register_content_source(self, source: ContentSource) -> None:
         self._kernel.kernel.register_content_source(source)
@@ -232,6 +298,7 @@ class JsonSourceMapStore:
 
 __all__ = [
     "JsonSourceMapStore",
+    "EmbeddingProvider",
     "LocalRecordDeletion",
     "LocalRecordStorage",
     "RecordDeletion",
