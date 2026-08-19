@@ -29,6 +29,13 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
         index_db_path=tmp_path / "index.db",
         lock_path=tmp_path / "daemon.lock",
     )
+    fake_queue_runtime = SimpleNamespace(
+        huey="huey",
+        db_path=runtime_paths.queue_db_path,
+    )
+    fake_ctx.attach_task_runtime = lambda task_runtime: calls.update(
+        {"task_runtime": task_runtime}
+    )
 
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.daemon.runtime.ApplicationContext.create",
@@ -36,20 +43,24 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
     )
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.daemon.runtime.build_queue_runtime",
-        lambda queue_db_path: SimpleNamespace(huey="huey", db_path=queue_db_path),
+        lambda queue_db_path: fake_queue_runtime,
     )
+    def fake_register_tasks(huey, index_manager, task_lease_store, work_intent_store, **kwargs):
+        calls["register_tasks"] = {
+            "huey": huey,
+            "index_manager": index_manager,
+            "task_lease_store": task_lease_store,
+            "work_intent_store": work_intent_store,
+            **kwargs,
+        }
+        return SimpleNamespace(
+            queue_runtime=fake_queue_runtime,
+            submission=SimpleNamespace(submit_record_batch=lambda records: None),
+        )
+
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.daemon.runtime.register_tasks",
-        lambda huey, index_manager, task_lease_store, work_intent_store, **kwargs: calls.setdefault(
-            "register_tasks",
-            {
-                "huey": huey,
-                "index_manager": index_manager,
-                "task_lease_store": task_lease_store,
-                "work_intent_store": work_intent_store,
-                **kwargs,
-            },
-        ),
+        fake_register_tasks,
     )
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.daemon.runtime.HueyWorkerProcess",

@@ -456,6 +456,9 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
                 },
             )()
 
+        def attach_task_runtime(self, task_runtime):
+            observed["task_runtime"] = task_runtime
+
     class _FakeWorker:
         is_running = False
         pid = None
@@ -469,6 +472,10 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
 
     fake_ctx = _FakeContext()
     fake_huey = object()
+    fake_queue_runtime = SimpleNamespace(
+        huey=fake_huey,
+        db_path=runtime_paths.queue_db_path,
+    )
     fake_coordinator = object()
 
     def _fake_create(**kwargs):
@@ -477,7 +484,7 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
 
     def _fake_build_queue_runtime(path):
         observed["queue_path"] = path
-        return SimpleNamespace(huey=fake_huey, db_path=path)
+        return fake_queue_runtime
 
     def _fake_register_tasks(
         huey,
@@ -498,6 +505,10 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
             bootstrap_index_path,
             bootstrap_documents_roots,
             schedule_vocabulary_catch_up,
+        )
+        return SimpleNamespace(
+            queue_runtime=fake_queue_runtime,
+            submission=SimpleNamespace(submit_record_batch=lambda records: None),
         )
 
     monkeypatch.setattr("mcp_markdown_ragdocs.daemon.runtime.ApplicationContext.create", _fake_create)

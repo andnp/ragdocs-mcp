@@ -15,7 +15,7 @@ from mcp_markdown_ragdocs.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
 )
-from mcp_markdown_ragdocs.indexing.tasks import register_tasks, submit_record_batch
+from mcp_markdown_ragdocs.indexing.tasks import register_tasks
 from mcp_markdown_ragdocs.worker.process import HueyWorkerProcess
 
 BuildAdminOverviewPayload = Callable[[ApplicationContext, RuntimePaths, QueueRuntime, bool, int | None, str], dict[str, object]]
@@ -54,7 +54,7 @@ def create_daemon_runtime(
     def schedule_vocabulary_catch_up() -> bool:
         return False
 
-    register_tasks(
+    task_runtime = register_tasks(
         huey,
         ctx.index_manager,
         task_lease_store,
@@ -64,6 +64,8 @@ def create_daemon_runtime(
         bootstrap_documents_roots=ctx.documents_roots,
         schedule_vocabulary_catch_up=schedule_vocabulary_catch_up,
     )
+    ctx.attach_task_runtime(task_runtime)
+    queue_runtime = task_runtime.queue_runtime
     worker = HueyWorkerProcess(runtime_paths=runtime_paths)
     health_server = DaemonHealthServer(
         socket_path=runtime_paths.socket_path,
@@ -95,7 +97,8 @@ def create_daemon_runtime(
                 ),
                 build_index_stats_payload=build_index_stats_payload,
                 build_queue_status_payload=build_queue_status_payload,
-                submit_record_batch=submit_record_batch,
+                submit_record_batch=task_runtime.submission.submit_record_batch,
+                task_submission=task_runtime.submission,
             )
         ),
     )
