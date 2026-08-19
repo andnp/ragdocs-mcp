@@ -9,10 +9,7 @@ from typing import Literal
 
 from searchkernel.api import Record, RecordIdentity, RecordStatus
 
-from mcp_markdown_ragdocs.gdrive.json_record_store import (
-    read_json_envelope,
-    write_json_envelope,
-)
+from mcp_markdown_ragdocs.gdrive.json_record_store import JsonEnvelopeStore
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
 from mcp_markdown_ragdocs.gdrive.domain import (
     GDriveScopeIdentity,
@@ -98,6 +95,7 @@ class GDriveReplacementJournal:
     ) -> None:
         self.path = Path(path)
         self.state_repository = state_repository
+        self._envelope = JsonEnvelopeStore(self.path, REPLACEMENT_SCHEMA_VERSION, "entries")
 
     def prepare(
         self,
@@ -148,12 +146,7 @@ class GDriveReplacementJournal:
     def load(self) -> tuple[GDriveReplacementEntry, ...]:
         """Load valid journal entries in stable source-key order."""
 
-        raw_entries = read_json_envelope(
-            self.path,
-            schema_version=REPLACEMENT_SCHEMA_VERSION,
-            key="entries",
-            expected_type=list,
-        )
+        raw_entries = self._envelope.read(list)
         if raw_entries is None:
             return ()
         entries: list[GDriveReplacementEntry] = []
@@ -190,11 +183,8 @@ class GDriveReplacementJournal:
         self._write_all((*entries, entry))
 
     def _write_all(self, entries: Sequence[GDriveReplacementEntry]) -> None:
-        write_json_envelope(
-            self.path,
-            schema_version=REPLACEMENT_SCHEMA_VERSION,
-            key="entries",
-            value=[
+        self._envelope.write(
+            [
                 {
                     "source_key": entry.source_key,
                     "old_keys": list(entry.old_keys),
@@ -202,7 +192,7 @@ class GDriveReplacementJournal:
                     "phase": entry.phase,
                 }
                 for entry in sorted(entries, key=lambda item: item.source_key)
-            ],
+            ]
         )
 
     def _save_status(

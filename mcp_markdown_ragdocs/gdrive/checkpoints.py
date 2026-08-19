@@ -5,10 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from mcp_markdown_ragdocs.gdrive.json_record_store import (
-    read_json_envelope,
-    write_json_envelope,
-)
+from mcp_markdown_ragdocs.gdrive.json_record_store import JsonEnvelopeStore
 
 CHECKPOINT_SCHEMA_VERSION = 1
 GDRIVE_CHECKPOINT_NAMESPACE_PREFIX = "gdrive-v1"
@@ -139,6 +136,7 @@ class GDriveSyncCheckpointStore:
 
     def __init__(self, index_root: Path) -> None:
         self.path = checkpoint_path(index_root)
+        self._envelope = JsonEnvelopeStore(self.path, CHECKPOINT_SCHEMA_VERSION, "checkpoints")
 
     def load(self, namespace: str) -> GDriveSyncCheckpoint | None:
         """Load one namespace, treating missing or invalid state as empty."""
@@ -159,12 +157,7 @@ class GDriveSyncCheckpointStore:
         _validate_namespace(namespace)
         payload = self._read_payload()
         payload[namespace] = checkpoint.to_payload()
-        write_json_envelope(
-            self.path,
-            schema_version=CHECKPOINT_SCHEMA_VERSION,
-            key="checkpoints",
-            value=payload,
-        )
+        self._envelope.write(payload)
 
     def begin_inventory(
         self,
@@ -215,15 +208,7 @@ class GDriveSyncCheckpointStore:
         return checkpoint
 
     def _read_payload(self) -> dict[str, object]:
-        return (
-            read_json_envelope(
-                self.path,
-                schema_version=CHECKPOINT_SCHEMA_VERSION,
-                key="checkpoints",
-                expected_type=dict,
-            )
-            or {}
-        )
+        return self._envelope.read(dict) or {}
 
 
 def _validate_namespace(namespace: str) -> None:

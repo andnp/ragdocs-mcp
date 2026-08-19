@@ -8,10 +8,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from mcp_markdown_ragdocs.gdrive.json_record_store import (
-    read_json_envelope,
-    write_json_envelope,
-)
+from mcp_markdown_ragdocs.gdrive.json_record_store import JsonEnvelopeStore
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
 
 HEALTH_SCHEMA_VERSION = 1
@@ -186,16 +183,12 @@ class GDriveHealthStore:
 
     def __init__(self, index_root: Path) -> None:
         self.path = Path(index_root) / HEALTH_STATE_FILENAME
+        self._envelope = JsonEnvelopeStore(self.path, HEALTH_SCHEMA_VERSION, "states")
 
     def save(self, health: DriveSourceHealth) -> None:
         states = self._read()
         states[health.workspace_id] = health.to_payload()
-        write_json_envelope(
-            self.path,
-            schema_version=HEALTH_SCHEMA_VERSION,
-            key="states",
-            value=states,
-        )
+        self._envelope.write(states)
 
     def scopes_for(
         self,
@@ -312,12 +305,7 @@ class GDriveHealthStore:
         return self._read().get(workspace_id)
 
     def _read(self) -> dict[str, dict[str, object]]:
-        states = read_json_envelope(
-            self.path,
-            schema_version=HEALTH_SCHEMA_VERSION,
-            key="states",
-            expected_type=dict,
-        )
+        states = self._envelope.read(dict)
         if states is None:
             return {}
         return {
