@@ -24,6 +24,7 @@ from searchkernel.api import (
 )
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeasePort
+from mcp_markdown_ragdocs.coordination.queue import QueueRuntime
 from mcp_markdown_ragdocs.coordination.task_submission import (
     coalesce_pending_first_args,
     get_pending_task_first_args,
@@ -57,6 +58,7 @@ from mcp_markdown_ragdocs.indexing.reindex import (
 )
 from mcp_markdown_ragdocs.indexing import task_intents
 from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
+from mcp_markdown_ragdocs.indexing.task_runtime import TaskRuntime
 from mcp_markdown_ragdocs.indexing.task_writer import (
     WRITER_HEARTBEAT_INTERVAL_SECONDS,  # noqa: F401 - compatibility export
     WRITER_LEASE_TIMEOUT_SECONDS,  # noqa: F401 - compatibility export
@@ -108,6 +110,71 @@ class IndexManagerLike(Protocol):
     ) -> None: ...
     def persist(self) -> None: ...
     def index_record(self, record: Record) -> Any: ...
+
+
+class _RegisteredTaskSubmission:
+    """Temporary adapter for callers not yet migrated to TaskRuntime."""
+
+    def submit_index_request(
+        self, file_path: str, force: bool = False
+    ) -> TaskSubmissionResult:
+        return submit_index_request(file_path, force=force)
+
+    def submit_index_batch(
+        self,
+        file_paths: list[str],
+        force: bool = False,
+        progressive: bool = False,
+    ) -> TaskBatchSubmissionResult:
+        return submit_index_batch(file_paths, force=force, progressive=progressive)
+
+    def submit_index_request_batch(
+        self, file_paths: list[str], force: bool = False
+    ) -> TaskBatchSubmissionResult:
+        return submit_index_request_batch(file_paths, force=force)
+
+    def submit_record_batch(
+        self, record_payloads: list[dict[str, object]]
+    ) -> object | None:
+        return submit_record_batch(record_payloads)
+
+    def submit_remove_request(self, doc_id: str) -> TaskSubmissionResult:
+        return submit_remove_request(doc_id)
+
+    def submit_remove_request_batch(
+        self, doc_ids: list[str]
+    ) -> TaskBatchSubmissionResult:
+        return submit_remove_request_batch(doc_ids)
+
+    def submit_refresh_git_request(self, git_dir: str) -> TaskSubmissionResult:
+        return submit_refresh_git_request(git_dir)
+
+    def submit_refresh_git_batch(
+        self, git_dirs: list[str]
+    ) -> TaskBatchSubmissionResult:
+        return submit_refresh_git_batch(git_dirs)
+
+    def submit_rebuild_request(
+        self, project_override: str | None, *, request_id: str
+    ) -> TaskSubmissionResult:
+        return submit_rebuild_request(project_override, request_id=request_id)
+
+    def submit_reindex_request(
+        self,
+        operation: str,
+        *,
+        model: str | None,
+        truncate_dim: int | None,
+        old_model: str | None,
+        request_id: str,
+    ) -> TaskSubmissionResult:
+        return submit_reindex_request(
+            operation,
+            model=model,
+            truncate_dim=truncate_dim,
+            old_model=old_model,
+            request_id=request_id,
+        )
 
 
 # Module-level references set during initialization
@@ -1150,7 +1217,7 @@ def register_tasks(
     bootstrap_index_path: Path | None = None,
     bootstrap_documents_roots: list[Path] | None = None,
     schedule_vocabulary_catch_up: Callable[[], bool] | None = None,
-) -> None:
+) -> TaskRuntime:
     """Register indexing tasks with the given Huey instance.
 
     Must be called before enqueuing tasks. Typically called during
@@ -1231,6 +1298,13 @@ def register_tasks(
     gdrive_watch_task = gdrive_tasks.get("gdrive_watch")
     gdrive_health_task = gdrive_tasks.get("gdrive_health")
     logger.info("Indexing tasks registered with Huey")
+    storage_filename = cast(Any, huey.storage).filename
+    return TaskRuntime(
+        queue_runtime=QueueRuntime(huey=huey, db_path=Path(storage_filename)),
+        submission=_RegisteredTaskSubmission(),
+        task_handles=registered_tasks,
+        gdrive_task_handles=gdrive_tasks,
+    )
 
 
 def enqueue_index(file_path: str, force: bool = False) -> bool:

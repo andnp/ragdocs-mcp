@@ -106,8 +106,8 @@ def _queue_path(huey: SqliteHuey) -> Path:
     return Path(cast(Any, huey.storage).filename)
 
 
-def _register_tasks(huey: SqliteHuey, index_manager: object, **kwargs: Any) -> None:
-    register_tasks(
+def _register_tasks(huey: SqliteHuey, index_manager: object, **kwargs: Any):
+    return register_tasks(
         huey,
         cast(Any, index_manager),
         TaskLeaseStore(_queue_path(huey)),
@@ -273,6 +273,40 @@ class TestTaskRegistration:
         assert tasks_mod.index_records_batch_task is not None
         assert tasks_mod.remove_document_task is not None
         assert tasks_mod.remove_documents_batch_task is not None
+
+    def test_register_tasks_returns_runtime_with_stable_task_names(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Given a newly registered Huey runtime.
+        When its task handles are inspected.
+        Then legacy serialized task names remain unchanged.
+        """
+        runtime = _register_tasks(huey_instance, fake_manager)
+
+        assert runtime.queue_runtime.huey is huey_instance
+        assert set(runtime.task_handles) == {
+            "index_document",
+            "index_documents_batch",
+            "index_records_batch",
+            "remove_document",
+            "remove_documents_batch",
+            "refresh_git_repository",
+            "rebuild_index",
+            "reindex_model",
+        }
+        assert {
+            task.func.__name__ for task in runtime.task_handles.values()
+        } == {
+            "_index_document",
+            "_index_documents_batch",
+            "_index_records_batch",
+            "_remove_document",
+            "_remove_documents_batch",
+            "_refresh_git_repository",
+            "_rebuild_index",
+            "_reindex_model",
+        }
 
     def test_enqueue_without_registration_returns_false(self) -> None:
         """enqueue_index/remove return False when tasks aren't registered."""
