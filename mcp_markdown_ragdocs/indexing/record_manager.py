@@ -394,7 +394,7 @@ class RecordIndexManager:
             self._rebuild_graph()
         self._state_version += 1
 
-    def index_document(
+    async def async_index_document(
         self,
         file_path: str,
         force: bool = False,
@@ -406,11 +406,9 @@ class RecordIndexManager:
                 logger.debug("Skipping unchanged document: %s", file_path)
                 return True
             prepared = self.prepare_document(file_path)
-            _run_async(
-                self._index_prepared(
-                    prepared,
-                    update_graph=update_graph,
-                )
+            await self._index_prepared(
+                prepared,
+                update_graph=update_graph,
             )
             return True
         except Exception as error:
@@ -419,6 +417,21 @@ class RecordIndexManager:
             )
             logger.exception("Failed to index %s", file_path)
             return False
+
+    def index_document(
+        self,
+        file_path: str,
+        force: bool = False,
+        *,
+        update_graph: bool = True,
+    ) -> bool:
+        return _run_async(
+            self.async_index_document(
+                file_path,
+                force=force,
+                update_graph=update_graph,
+            )
+        )
 
     def index_record(self, record: Record) -> bool:
         if record.source_kind == GDRIVE_SOURCE_KIND:
