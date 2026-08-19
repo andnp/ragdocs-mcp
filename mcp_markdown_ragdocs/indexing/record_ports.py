@@ -49,9 +49,6 @@ class DocumentWriter(Protocol):
 class RecordStorage(Protocol):
     """Read and mutate canonical records without exposing a kernel backend."""
 
-    @property
-    def db_manager(self) -> object: ...
-
     def register_content_source(self, source: ContentSource) -> None: ...
 
     def hydrate_record(self, identity: RecordIdentity | str) -> Record | None: ...
@@ -135,18 +132,6 @@ class LocalRecordStorage:
             self.iter_identities,
         )
         self._graph.install()
-
-    @property
-    def db_manager(self) -> object:
-        return self._kernel.backend.db_manager
-
-    @property
-    def keyword_store(self) -> object:
-        return self._kernel.keyword_store
-
-    @property
-    def vector_store(self) -> object:
-        return self._kernel.vector_store
 
     @property
     def graph(self) -> GraphCapability:
