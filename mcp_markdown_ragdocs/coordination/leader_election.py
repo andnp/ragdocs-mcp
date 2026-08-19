@@ -87,17 +87,34 @@ class LeaderElection:
                 conn.commit()
         self._is_leader = False
 
-    def heartbeat(self) -> None:
+    def heartbeat(self) -> bool:
         if not self._is_leader:
-            return
+            return False
         conn = self._db.get_connection()
-        conn.execute(
-            "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
-            (
-                "leader_id",
-                json.dumps(
-                    {"instance_id": self._instance_id, "heartbeat": time.time()}
-                ),
-            ),
-        )
-        conn.commit()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT value FROM system_state WHERE key = 'leader_id'"
+            ).fetchone()
+            if row is None:
+                conn.rollback()
+                self._is_leader = False
+                return False
+
+            leader_data = json.loads(row[0])
+            if leader_data.get("instance_id") != self._instance_id:
+                conn.rollback()
+                self._is_leader = False
+                return False
+
+            leader_data["heartbeat"] = time.time()
+            conn.execute(
+                "UPDATE system_state SET value = ? WHERE key = ? AND value = ?",
+                (json.dumps(leader_data), "leader_id", row[0]),
+            )
+            conn.commit()
+            self._is_leader = True
+            return True
+        except Exception:
+            conn.rollback()
+            raise

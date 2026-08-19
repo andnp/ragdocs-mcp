@@ -139,10 +139,39 @@ class TestLeaderElection:
         assert first.try_acquire() is True
 
         # Heartbeat refreshes the timestamp
-        first.heartbeat()
+        assert first.heartbeat() is True
 
         second = LeaderElection(db, instance_id="instance-2")
         assert second.try_acquire() is False
+
+    def test_heartbeat_rejects_replaced_leader(self, db: DatabaseManager) -> None:
+        """A replaced leader cannot overwrite the active lease."""
+        first = LeaderElection(db, instance_id="instance-1")
+        assert first.try_acquire() is True
+
+        conn = db.get_connection()
+        acquired_at = time.time()
+        replacement = json.dumps(
+            {
+                "instance_id": "instance-2",
+                "heartbeat": acquired_at,
+                "acquired_at": acquired_at,
+            }
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
+            ("leader_id", replacement),
+        )
+        conn.commit()
+
+        assert first.heartbeat() is False
+        assert first.is_leader is False
+
+        row = conn.execute(
+            "SELECT value FROM system_state WHERE key = 'leader_id'"
+        ).fetchone()
+        assert row is not None
+        assert json.loads(row[0]) == json.loads(replacement)
 
     def test_release_allows_takeover(self, db: DatabaseManager) -> None:
         """After release(), another instance can acquire immediately."""
