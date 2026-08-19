@@ -340,6 +340,40 @@ class TestTaskRegistration:
             "_reindex_model",
         }
 
+    def test_registered_runtimes_isolate_queue_and_manager(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        """
+        Given two independently composed task runtimes.
+        When each runtime submits and executes document work.
+        Then queue contents and indexing effects remain isolated.
+        """
+        second_huey = SqliteHuey(
+            name="test-tasks-isolated",
+            filename=str(tmp_path / "isolated.db"),
+            immediate=False,
+        )
+        second_manager = FakeIndexManager()
+        first_runtime = _register_tasks(huey_instance, fake_manager)
+        second_runtime = _register_tasks(second_huey, second_manager)
+
+        assert first_runtime.submission.submit_index_request("first.md").enqueued
+        assert second_runtime.submission.submit_index_request("second.md").enqueued
+        assert huey_instance.pending_count() == 1
+        assert second_huey.pending_count() == 1
+
+        first_task = huey_instance.dequeue()
+        second_task = second_huey.dequeue()
+        assert first_task is not None
+        assert second_task is not None
+        assert huey_instance.execute(first_task) is True
+        assert second_huey.execute(second_task) is True
+        assert fake_manager.indexed == [("first.md", False)]
+        assert second_manager.indexed == [("second.md", False)]
+
     def test_enqueue_with_registration_returns_true(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
