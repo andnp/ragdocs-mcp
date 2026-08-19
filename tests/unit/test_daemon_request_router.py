@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from huey import SqliteHuey
@@ -14,6 +16,7 @@ from searchkernel.domain import Record
 from searchkernel.api import TaskSubmissionResult
 
 from mcp_markdown_ragdocs.coordination.queue import QueueRuntime
+from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
@@ -121,7 +124,9 @@ def _build_dependencies(
     coordinator: _FakeCoordinator,
     *,
     submit_record_batch=None,
+    task_submission=None,
 ) -> DaemonRequestRouterDependencies:
+    queue_path = Path("/tmp") / f"mcp-ragdocs-router-{os.getpid()}.db"
     return DaemonRequestRouterDependencies(
         ctx=ctx,
         coordinator=coordinator,
@@ -129,10 +134,10 @@ def _build_dependencies(
         queue_runtime=QueueRuntime(
             huey=SqliteHuey(
                 name="router-test",
-                filename=":memory:",
+                filename=str(queue_path),
                 immediate=False,
             ),
-            db_path=Path("/runtime/queue.db"),
+            db_path=queue_path,
         ),
         socket_path=Path("/runtime/daemon.sock"),
         index_db_path=Path("/runtime/index.db"),
@@ -153,6 +158,7 @@ def _build_dependencies(
             "backpressure_limit": backpressure_limit,
         },
         submit_record_batch=submit_record_batch,
+        task_submission=task_submission,
     )
 
 
@@ -546,7 +552,8 @@ async def test_admin_tasks_purge_route_uses_huey_storage_helpers(
 ) -> None:
     ctx = _FakeContext(ready=True)
     coordinator = _FakeCoordinator()
-    handler = build_daemon_request_handler(_build_dependencies(ctx, coordinator))
+    dependencies = _build_dependencies(ctx, coordinator)
+    handler = build_daemon_request_handler(dependencies)
 
     observed: dict[str, object] = {}
     def _purge(huey, *, state, worker_running, backpressure_limit):
@@ -586,7 +593,7 @@ async def test_admin_tasks_purge_route_uses_huey_storage_helpers(
     assert observed["huey"] is not None
     assert payload == {
         "status": "ok",
-        "queue_db_path": "/runtime/queue.db",
+        "queue_db_path": str(dependencies.queue_runtime.db_path),
         "purged_state": "scheduled",
         "purged_counts": {
             "pending": 0,
@@ -617,15 +624,18 @@ async def test_rebuild_submit_ignores_abandoned_running_status(
     the live writer-lease evidence that a resubmission actually found.
     """
     ctx = _FakeContext(ready=True)
-    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+    submission = MagicMock(spec=TaskSubmissionPort)
+    submission.submit_rebuild_request.return_value = TaskSubmissionResult(status="enqueued")
+    dependencies = _build_dependencies(
+        ctx,
+        _FakeCoordinator(),
+        task_submission=submission,
+    )
+    handler = build_daemon_request_handler(dependencies)
 
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.daemon.request_router.read_rebuild_status",
         lambda runtime_root: {"status": "running", "phase": "indexing_git"},
-    )
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.daemon.request_router.submit_rebuild_request",
-        lambda project_override, *, request_id: TaskSubmissionResult(status="enqueued"),
     )
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.daemon.request_router.submit_rebuild_status",
@@ -648,17 +658,20 @@ async def test_rebuild_submit_still_blocks_concurrent_live_rebuild(
     must still be rejected rather than accepted.
     """
     ctx = _FakeContext(ready=True)
-    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+    submission = MagicMock(spec=TaskSubmissionPort)
+    submission.submit_rebuild_request.return_value = TaskSubmissionResult(
+        status="backpressured"
+    )
+    dependencies = _build_dependencies(
+        ctx,
+        _FakeCoordinator(),
+        task_submission=submission,
+    )
+    handler = build_daemon_request_handler(dependencies)
 
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.daemon.request_router.read_rebuild_status",
         lambda runtime_root: {"status": "idle"},
-    )
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.daemon.request_router.submit_rebuild_request",
-        lambda project_override, *, request_id: TaskSubmissionResult(
-            status="backpressured"
-        ),
     )
 
     payload = await handler("/api/admin/rebuild/submit", {})
