@@ -20,7 +20,6 @@ from searchkernel.api import (
     derive_loaded_index_state_snapshot,
     discover_files,
     discover_files_multi_root,
-    has_incomplete_bootstrap_checkpoint,
     load_manifest,
     save_manifest,
     reconcile_indices,
@@ -400,108 +399,9 @@ class ApplicationContext:
                 self._bootstrap_session = None
 
     async def start(self, background_index: bool = False) -> None:
-        needs_rebuild = await asyncio.to_thread(self._check_and_rebuild_if_needed)
-        resume_bootstrap = False
-        if background_index and self.use_tasks:
-            resume_bootstrap = await asyncio.to_thread(
-                has_incomplete_bootstrap_checkpoint,
-                self.index_path,
-            )
-        startup_git_refresh_enqueued = False
-
-        if needs_rebuild or resume_bootstrap:
-            if resume_bootstrap and not needs_rebuild:
-                logger.info("Resuming interrupted task bootstrap from checkpoint")
-            else:
-                logger.info("Index rebuild required - indexing all documents")
-            if background_index:
-                if self.use_tasks:
-                    await self._preload_existing_indices_for_background_bootstrap(
-                        rebuild_pending=needs_rebuild,
-                    )
-                    startup_git_refresh_enqueued = self.git_indexing_enabled
-                    self._background_index_task = asyncio.create_task(
-                        self._bootstrap_via_tasks()
-                    )
-                else:
-                    self._background_index_task = asyncio.create_task(
-                        self._background_index()
-                    )
-            else:
-                self._full_index()
-                self._mark_index_state_loaded()
-                self._publish_bootstrap_availability(
-                    SearchAvailability(
-                        lexical="available",
-                        graph="available",
-                        semantic_coarse="complete",
-                        semantic_fine="complete",
-                    )
-                )
-                self._ready_event.set()
-                self.schedule_embedding_model_warmup()
-        else:
-            logger.info("Loading existing indices")
-            if background_index:
-                if self.use_tasks:
-                    await asyncio.to_thread(self.index_manager.load)
-                    self._mark_index_state_loaded()
-                    self._refresh_index_state_from_loaded_indices()
-                    self._publish_bootstrap_availability(
-                        SearchAvailability(
-                            lexical="available",
-                            graph="available",
-                            semantic_coarse="complete",
-                            semantic_fine="complete",
-                        )
-                    )
-                    self._ready_event.set()
-                    self.schedule_embedding_model_warmup()
-                    self._background_index_task = asyncio.create_task(
-                        self._reconcile_existing_indices_background()
-                    )
-                else:
-                    self._index_state = IndexState(status="indexing")
-                    self._background_index_task = asyncio.create_task(
-                        self._load_existing_indices_background()
-                    )
-            else:
-                await asyncio.to_thread(self.index_manager.load)
-                self._mark_index_state_loaded()
-                self._index_state = IndexState(status="ready")
-                self._publish_bootstrap_availability(
-                    SearchAvailability(
-                        lexical="available",
-                        graph="available",
-                        semantic_coarse="complete",
-                        semantic_fine="complete",
-                    )
-                )
-                self._ready_event.set()
-                self.schedule_embedding_model_warmup()
-                await self._startup_reconciliation()
-
-        self._watcher_lifecycle.start(self._on_watcher_overflow)
-
-        # Index git commits after document indexing
-        if self.git_indexing_enabled:
-            if background_index:
-                if self.use_tasks:
-                    if not startup_git_refresh_enqueued:
-                        asyncio.create_task(self._enqueue_initial_git_refresh_tasks())
-                else:
-                    asyncio.create_task(self._index_git_commits_initial_with_timeout())
-            else:
-                self._index_git_commits_initial_sync()
-
-        if self.config.indexing.reconciliation_interval_seconds > 0:
-            self.reconciliation_task = asyncio.create_task(
-                self._periodic_reconciliation()
-            )
-            logger.info(
-                f"Periodic reconciliation enabled (interval: "
-                f"{self.config.indexing.reconciliation_interval_seconds}s)"
-            )
+        await self._get_bootstrap_coordinator().start(
+            background_index=background_index
+        )
 
     def _bootstrap_relative_path_for_file(self, file_path: str) -> str | None:
         stamps = build_file_stamps([file_path], self.documents_roots)
