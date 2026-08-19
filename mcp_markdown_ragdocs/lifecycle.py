@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import signal
@@ -13,18 +12,22 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from mcp_markdown_ragdocs.coordination.leader_election import LeaderElection
+from mcp_markdown_ragdocs.coordination.lifecycle_ports import (
+    DaemonMetadataAdapter,
+    LifecycleMetadataPort,
+    WorkerSupervisionAdapter,
+    WorkerSupervisionPort,
+)
 from mcp_markdown_ragdocs.daemon import (
     DaemonMetadata,
     RuntimePaths,
-    remove_daemon_metadata,
-    write_daemon_metadata,
 )
 from mcp_markdown_ragdocs.git.watcher import GitWatcher
 
 if TYPE_CHECKING:
     from mcp_markdown_ragdocs.config import Config
     from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
-    from searchkernel.api import DatabaseManager
 
 
 logger = logging.getLogger(__name__)
@@ -62,99 +65,6 @@ class LifecycleState(StrEnum):
     TERMINATED = "terminated"
 
 
-class LeaderElection:
-    """SQLite-based leader election using system_state table."""
-
-    def __init__(
-        self,
-        db_manager: DatabaseManager,
-        instance_id: str | None = None,
-    ) -> None:
-        self._db = db_manager
-        self._instance_id = instance_id or f"pid_{os.getpid()}_{time.monotonic_ns()}"
-        self._heartbeat_interval = 5.0  # seconds
-        self._leader_timeout = 15.0  # seconds
-        self._heartbeat_task: asyncio.Task[None] | None = None
-        self._is_leader = False
-
-    @property
-    def is_leader(self) -> bool:
-        return self._is_leader
-
-    @property
-    def instance_id(self) -> str:
-        return self._instance_id
-
-    def try_acquire(self) -> bool:
-        """Try to become the leader. Returns True if acquired."""
-        conn = self._db.get_connection()
-        now = time.time()
-
-        row = conn.execute(
-            "SELECT value FROM system_state WHERE key = 'leader_id'"
-        ).fetchone()
-
-        if row is not None:
-            leader_data = json.loads(row[0])
-            last_heartbeat = leader_data.get("heartbeat", 0)
-
-            # Leader is still alive — can't take over
-            if now - last_heartbeat < self._leader_timeout:
-                if leader_data.get("instance_id") == self._instance_id:
-                    self._is_leader = True
-                    return True
-                return False
-
-        # No leader or leader timed out — try to acquire
-        leader_data_json = json.dumps(
-            {
-                "instance_id": self._instance_id,
-                "heartbeat": now,
-                "acquired_at": now,
-            }
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
-            ("leader_id", leader_data_json),
-        )
-        conn.commit()
-        self._is_leader = True
-        return True
-
-    def release(self) -> None:
-        """Release leadership."""
-        if not self._is_leader:
-            return
-        conn = self._db.get_connection()
-        row = conn.execute(
-            "SELECT value FROM system_state WHERE key = 'leader_id'"
-        ).fetchone()
-        if row:
-            leader_data = json.loads(row[0])
-            if leader_data.get("instance_id") == self._instance_id:
-                conn.execute("DELETE FROM system_state WHERE key = 'leader_id'")
-                conn.commit()
-        self._is_leader = False
-
-    def heartbeat(self) -> None:
-        """Update heartbeat timestamp."""
-        if not self._is_leader:
-            return
-        conn = self._db.get_connection()
-        now = time.time()
-        leader_data_json = json.dumps(
-            {
-                "instance_id": self._instance_id,
-                "heartbeat": now,
-            }
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
-            ("leader_id", leader_data_json),
-        )
-        conn.commit()
-
-
 @dataclass
 class LifecycleCoordinator:
     _state: LifecycleState = field(default=LifecycleState.UNINITIALIZED)
@@ -187,6 +97,8 @@ class LifecycleCoordinator:
         repr=False,
     )
     _leader_monitor_interval: float = field(default=5.0, repr=False)
+    _metadata: LifecycleMetadataPort | None = field(default=None, repr=False)
+    _worker_supervisor: WorkerSupervisionPort | None = field(default=None, repr=False)
 
     @property
     def state(self) -> LifecycleState:
@@ -210,6 +122,10 @@ class LifecycleCoordinator:
 
         self._state = LifecycleState.STARTING
         self._ctx = ctx
+        self._metadata = DaemonMetadataAdapter(self._runtime_paths)
+        self._worker_supervisor = (
+            WorkerSupervisionAdapter(huey_worker) if huey_worker is not None else None
+        )
         if self._started_at is None:
             self._started_at = time.time()
         self._write_daemon_metadata()
@@ -428,12 +344,15 @@ class LifecycleCoordinator:
             index_db_path=str(self._runtime_paths.index_db_path),
             queue_db_path=str(self._runtime_paths.queue_db_path),
         )
-        write_daemon_metadata(self._runtime_paths.metadata_path, metadata)
+        if self._metadata is None:
+            self._metadata = DaemonMetadataAdapter(self._runtime_paths)
+        self._metadata.write(metadata)
 
     def _remove_daemon_metadata(self) -> None:
         if not self._manage_daemon_metadata:
             return
-        remove_daemon_metadata(self._runtime_paths.metadata_path)
+        if self._metadata is not None:
+            self._metadata.remove()
 
     async def _promote_when_ready(self) -> None:
         if self._ctx is None:
@@ -495,7 +414,11 @@ class LifecycleCoordinator:
     async def _ensure_huey_worker_running(self) -> None:
         if self._huey_worker is None:
             return
-        await asyncio.to_thread(self._huey_worker.start)
+        if self._worker_supervisor is None:
+            self._worker_supervisor = WorkerSupervisionAdapter(self._huey_worker)
+        if self._worker_supervisor is None:
+            return
+        await self._worker_supervisor.start()
         if (
             self._worker_supervision_task is not None
             and not self._worker_supervision_task.done()
@@ -588,10 +511,12 @@ class LifecycleCoordinator:
 
         if self._huey_worker is not None:
             try:
-                self._huey_worker.stop()
+                if self._worker_supervisor is not None:
+                    self._worker_supervisor.stop()
             except Exception:
                 logger.exception("Error stopping Huey worker")
             self._huey_worker = None
+            self._worker_supervisor = None
 
         if self._leader_election is not None:
             try:
@@ -620,7 +545,9 @@ class LifecycleCoordinator:
         while True:
             await asyncio.sleep(5.0)
 
-            worker = self._huey_worker
+            worker = self._worker_supervisor
+            if worker is None and self._huey_worker is not None:
+                worker = WorkerSupervisionAdapter(self._huey_worker)
             if worker is None:
                 return
             if self._state in (
@@ -635,7 +562,7 @@ class LifecycleCoordinator:
 
             logger.warning("Huey worker subprocess is unhealthy; restarting")
             try:
-                await asyncio.to_thread(worker.restart)
+                await worker.restart()
             except Exception:
                 logger.exception("Failed to restart Huey worker subprocess")
 
