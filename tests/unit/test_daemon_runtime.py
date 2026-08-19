@@ -75,7 +75,7 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
     runtime = create_daemon_runtime(
         runtime_paths,
         coordinator=SimpleNamespace(state=SimpleNamespace(value="ready")),
-        build_admin_overview_payload=lambda ctx, runtime_paths, worker_running, worker_pid, lifecycle: {
+        build_admin_overview_payload=lambda ctx, runtime_paths, queue_runtime, worker_running, worker_pid, lifecycle: {
             "lifecycle": lifecycle,
             "worker_pid": worker_pid,
         },

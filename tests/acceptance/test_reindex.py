@@ -29,6 +29,8 @@ from searchkernel.api import (
     load_manifest,
     save_manifest,
 )
+
+from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
 from searchkernel.domain import RecordHit, RecordIdentity, SearchFilters, Vector
 
 import mcp_markdown_ragdocs.indexing.reindex as reindex_module
@@ -476,7 +478,7 @@ def _router_dependencies(ctx: object, runtime_root: Path) -> DaemonRequestRouter
         ctx=ctx,
         coordinator=SimpleNamespace(),
         runtime_root=runtime_root,
-        queue_db_path=runtime_root / "queue.db",
+        queue_runtime=build_queue_runtime(runtime_root / "queue.db"),
         socket_path=runtime_root / "daemon.sock",
         index_db_path=runtime_root / "index.db",
         get_worker_running=lambda: True,

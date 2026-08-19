@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from huey import SqliteHuey
 from searchkernel.domain import Record
 
 from searchkernel.api import TaskSubmissionResult
@@ -125,7 +126,14 @@ def _build_dependencies(
         ctx=ctx,
         coordinator=coordinator,
         runtime_root=Path("/runtime"),
-        queue_runtime=QueueRuntime(huey=object(), db_path=Path("/runtime/queue.db")),
+        queue_runtime=QueueRuntime(
+            huey=SqliteHuey(
+                name="router-test",
+                filename=":memory:",
+                immediate=False,
+            ),
+            db_path=Path("/runtime/queue.db"),
+        ),
         socket_path=Path("/runtime/daemon.sock"),
         index_db_path=Path("/runtime/index.db"),
         get_worker_running=lambda: True,

@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.context import ApplicationContext
-from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
+from mcp_markdown_ragdocs.coordination.queue import QueueRuntime, build_queue_runtime
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.daemon import RuntimePaths, read_daemon_metadata
@@ -18,7 +18,7 @@ from mcp_markdown_ragdocs.daemon.request_router import (
 from mcp_markdown_ragdocs.indexing.tasks import register_tasks, submit_record_batch
 from mcp_markdown_ragdocs.worker.process import HueyWorkerProcess
 
-BuildAdminOverviewPayload = Callable[[ApplicationContext, RuntimePaths, bool, int | None, str], dict[str, object]]
+BuildAdminOverviewPayload = Callable[[ApplicationContext, RuntimePaths, QueueRuntime, bool, int | None, str], dict[str, object]]
 BuildIndexStatsPayload = Callable[[Any], dict[str, object]]
 BuildQueueStatusPayload = Callable[..., dict[str, object]]
 

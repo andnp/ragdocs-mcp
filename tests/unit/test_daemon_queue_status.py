@@ -7,6 +7,7 @@ from huey import SqliteHuey
 from huey.utils import Error
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
+from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
 from mcp_markdown_ragdocs.daemon.admin_payloads import _build_queue_status_payload
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats, purge_queue_state
 from mcp_markdown_ragdocs.indexing.git_refresh_state import save_progress
@@ -163,7 +164,7 @@ def test_queue_status_payload_includes_git_refresh_progress(tmp_path: Path) -> N
     )
 
     payload = _build_queue_status_payload(
-        queue_path=db_path,
+        queue_runtime=build_queue_runtime(db_path),
         worker_running=True,
     )
 

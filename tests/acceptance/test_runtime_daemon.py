@@ -17,6 +17,7 @@ from mcp_markdown_ragdocs.config import (
     ProjectConfig,
     SearchConfig,
 )
+from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
 from mcp_markdown_ragdocs.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
@@ -112,7 +113,7 @@ def _runtime(
         ctx=context,
         coordinator=_Coordinator(),
         runtime_root=tmp_path / "runtime",
-        queue_db_path=tmp_path / "runtime" / "queue.db",
+        queue_runtime=build_queue_runtime(tmp_path / "runtime" / "queue.db"),
         socket_path=tmp_path / "runtime" / "daemon.sock",
         index_db_path=index_path / "index.db",
         get_worker_running=lambda: True,
