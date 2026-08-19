@@ -14,7 +14,7 @@ from searchkernel.api import (
     save_manifest,
 )
 
-from mcp_markdown_ragdocs.config import Config
+from mcp_markdown_ragdocs.config import Config, StoreConfig
 from mcp_markdown_ragdocs.indexing.reindex import (
     ManifestModelLifecycleStore,
     _DeferredEmbeddingProvider,
@@ -87,10 +87,18 @@ def test_status_defaults_are_explicit_and_durable(tmp_path: Path):
     assert reindex_status_payload(tmp_path, tmp_path)["status"] == "running"
 
 
-def test_legacy_chunk_backend_rejects_durable_migration(tmp_path: Path):
+@pytest.mark.parametrize("backend", ["local", "faiss+sqlite"])
+def test_legacy_chunk_backend_rejects_durable_migration(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    """Legacy backends remain unavailable for model-scoped migration.
+
+    Both supported local spellings retain the existing rejection category.
+    """
     with pytest.raises(ReindexError, match="legacy faiss\\+sqlite"):
         run_reindex_operation(
-            config=Config(),
+            config=Config(store=StoreConfig(backend=backend)),
             index_path=tmp_path,
             runtime_root=tmp_path,
             operation="start",

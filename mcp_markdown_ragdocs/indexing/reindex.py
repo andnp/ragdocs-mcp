@@ -43,7 +43,7 @@ from searchkernel.api import (
     save_manifest,
 )
 
-from mcp_markdown_ragdocs.config import Config, resolve_embedding_model
+from mcp_markdown_ragdocs.config import Config, resolve_embedding_model, supports_durable_reindex
 from mcp_markdown_ragdocs.coordination.file_lock import IndexLock
 
 REINDEX_ACTIVE_STATUSES = {"queued", "running"}
@@ -706,7 +706,7 @@ def run_reindex_operation(
     truncate_dim: int | None,
     old_model: str | None,
 ) -> MigrationState:
-    if config.store.backend != "pgvector":
+    if not supports_durable_reindex(config.store.backend):
         raise ReindexError(
             "durable model migration is unavailable for the legacy "
             "faiss+sqlite chunk index; configure store.backend = 'pgvector'"
