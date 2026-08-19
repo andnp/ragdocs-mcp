@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from searchkernel.api import atomic_write_json
+from mcp_markdown_ragdocs.gdrive.json_record_store import JsonEnvelopeStore
 
 GIT_REFRESH_STATE_FILENAME = "git-refresh-state.json"
 GIT_REFRESH_HEADS_FILENAME = "git-refresh-heads.json"
 GIT_REFRESH_PROGRESS_FILENAME = "git-refresh-progress.json"
+_STATE_SCHEMA_VERSION = 1
 _PROGRESS_LOCK = Lock()
 
 
@@ -21,17 +21,18 @@ def state_path(index_root: Path) -> Path:
     return index_root / GIT_REFRESH_STATE_FILENAME
 
 
+def _cursors_store(index_root: Path) -> JsonEnvelopeStore:
+    return JsonEnvelopeStore(
+        path=state_path(index_root),
+        schema_version=_STATE_SCHEMA_VERSION,
+        key="cursors",
+    )
+
+
 def load_cursors(index_root: Path) -> dict[str, int]:
     """Load valid repository cursors, treating missing/corrupt state as empty."""
 
-    path = state_path(index_root)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return {}
-
-    if not isinstance(raw, dict):
-        return {}
+    raw = _cursors_store(index_root).read(dict) or {}
 
     cursors: dict[str, int] = {}
     for repo, cursor in raw.items():
@@ -53,24 +54,25 @@ def save_cursor(index_root: Path, git_dir: Path, cursor: int) -> None:
 
     cursors = load_cursors(index_root)
     cursors[str(git_dir.resolve())] = int(cursor)
-    atomic_write_json(state_path(index_root), cursors)
+    _cursors_store(index_root).write(cursors)
 
 
 def _heads_path(index_root: Path) -> Path:
     return index_root / GIT_REFRESH_HEADS_FILENAME
 
 
+def _heads_store(index_root: Path) -> JsonEnvelopeStore:
+    return JsonEnvelopeStore(
+        path=_heads_path(index_root),
+        schema_version=_STATE_SCHEMA_VERSION,
+        key="heads",
+    )
+
+
 def load_heads(index_root: Path) -> dict[str, str]:
     """Load successfully refreshed repository ref signatures."""
 
-    path = _heads_path(index_root)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return {}
-
-    if not isinstance(raw, dict):
-        return {}
+    raw = _heads_store(index_root).read(dict) or {}
     return {
         repo: head
         for repo, head in raw.items()
@@ -87,23 +89,25 @@ def save_head(index_root: Path, git_dir: Path, head: str) -> None:
 
     heads = load_heads(index_root)
     heads[str(git_dir.resolve())] = head
-    atomic_write_json(_heads_path(index_root), heads)
+    _heads_store(index_root).write(heads)
 
 
 def _progress_path(index_root: Path) -> Path:
     return index_root / GIT_REFRESH_PROGRESS_FILENAME
 
 
+def _progress_store(index_root: Path) -> JsonEnvelopeStore:
+    return JsonEnvelopeStore(
+        path=_progress_path(index_root),
+        schema_version=_STATE_SCHEMA_VERSION,
+        key="progress",
+    )
+
+
 def load_progress(index_root: Path) -> dict[str, dict[str, Any]]:
     """Load durable per-repository refresh telemetry."""
 
-    try:
-        raw = json.loads(_progress_path(index_root).read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return {}
-
-    if not isinstance(raw, dict):
-        return {}
+    raw = _progress_store(index_root).read(dict) or {}
     return {
         repo: dict(values)
         for repo, values in raw.items()
@@ -141,4 +145,4 @@ def save_progress(
             "repository_path": repo_path,
             **progress,
         }
-        atomic_write_json(_progress_path(index_root), all_progress)
+        _progress_store(index_root).write(all_progress)
