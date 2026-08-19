@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import overload
 
@@ -35,7 +36,7 @@ def read_json_envelope(
 
 
 def write_json_envelope(
-    path: Path, *, schema_version: int, key: str, value: dict[str, object] | list[object]
+    path: Path, *, schema_version: int, key: str, value: Mapping[str, object] | Sequence[object]
 ) -> None:
     """Atomically persist one schema-versioned JSON envelope."""
 

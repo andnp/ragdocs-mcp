@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from searchkernel.api import atomic_write_json
-
+from mcp_markdown_ragdocs.gdrive.json_record_store import (
+    read_json_envelope,
+    write_json_envelope,
+)
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
 
 HEALTH_SCHEMA_VERSION = 1
@@ -189,9 +190,11 @@ class GDriveHealthStore:
     def save(self, health: DriveSourceHealth) -> None:
         states = self._read()
         states[health.workspace_id] = health.to_payload()
-        atomic_write_json(
+        write_json_envelope(
             self.path,
-            {"schema_version": HEALTH_SCHEMA_VERSION, "states": states},
+            schema_version=HEALTH_SCHEMA_VERSION,
+            key="states",
+            value=states,
         )
 
     def scopes_for(
@@ -309,14 +312,13 @@ class GDriveHealthStore:
         return self._read().get(workspace_id)
 
     def _read(self) -> dict[str, dict[str, object]]:
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(payload, dict) or payload.get("schema_version") != HEALTH_SCHEMA_VERSION:
-            return {}
-        states = payload.get("states")
-        if not isinstance(states, dict):
+        states = read_json_envelope(
+            self.path,
+            schema_version=HEALTH_SCHEMA_VERSION,
+            key="states",
+            expected_type=dict,
+        )
+        if states is None:
             return {}
         return {
             str(workspace_id): state
