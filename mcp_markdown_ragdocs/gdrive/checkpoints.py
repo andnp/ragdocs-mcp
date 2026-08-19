@@ -251,6 +251,7 @@ class GDriveMaterializationCache:
 
     def __init__(self, index_root: Path) -> None:
         self.path = Path(index_root) / GDRIVE_MATERIALIZATION_CACHE_FILENAME
+        self._envelope = JsonEnvelopeStore(self.path, GDRIVE_MATERIALIZATION_CACHE_SCHEMA_VERSION, "cache")
 
     def load(self, namespace: str) -> dict[str, tuple[str, str]]:
         """Return the durable change keys known for one namespace."""
@@ -281,26 +282,10 @@ class GDriveMaterializationCache:
         for source_id, key in updates.items():
             namespace_entries[source_id] = list(key)
         payload[namespace] = namespace_entries
-        atomic_write_json(
-            self.path,
-            {
-                "schema_version": GDRIVE_MATERIALIZATION_CACHE_SCHEMA_VERSION,
-                "cache": payload,
-            },
-        )
+        self._envelope.write(payload)
 
     def _read(self) -> dict[str, object]:
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return {}
-        if (
-            not isinstance(raw, dict)
-            or raw.get("schema_version") != GDRIVE_MATERIALIZATION_CACHE_SCHEMA_VERSION
-        ):
-            return {}
-        cache = raw.get("cache")
-        return cache if isinstance(cache, dict) else {}
+        return self._envelope.read(dict) or {}
 
 
 __all__ = [

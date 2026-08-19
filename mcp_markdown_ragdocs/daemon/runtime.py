@@ -15,7 +15,10 @@ from mcp_markdown_ragdocs.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
 )
-from mcp_markdown_ragdocs.indexing.tasks import register_tasks
+from mcp_markdown_ragdocs.indexing.tasks import (
+    index_document_retry_policy,
+    register_tasks,
+)
 from mcp_markdown_ragdocs.worker.process import HueyWorkerProcess
 
 BuildAdminOverviewPayload = Callable[[ApplicationContext, RuntimePaths, QueueRuntime, bool, int | None, str], dict[str, object]]
@@ -49,7 +52,9 @@ def create_daemon_runtime(
     queue_runtime = build_queue_runtime(runtime_paths.queue_db_path)
     huey = queue_runtime.huey
     task_lease_store = TaskLeaseStore(runtime_paths.queue_db_path)
-    work_intent_store = WorkIntentStore(runtime_paths.queue_db_path)
+    work_intent_store = WorkIntentStore(
+        runtime_paths.queue_db_path, retry_policy=index_document_retry_policy
+    )
 
     def schedule_vocabulary_catch_up() -> bool:
         return False

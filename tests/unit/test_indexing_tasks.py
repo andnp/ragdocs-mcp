@@ -37,6 +37,7 @@ from mcp_markdown_ragdocs.indexing.git_refresh_state import (
 )
 from mcp_markdown_ragdocs.indexing.tasks import (
     GIT_REFRESH_TASK_PRIORITY,
+    INDEX_WRITER_RESOURCE,
     RECORD_BATCH_TASK_PRIORITY,
     enqueue_index as _enqueue_index,
     enqueue_index_batch as _enqueue_index_batch,
@@ -235,14 +236,14 @@ class TestTaskRegistration:
     ) -> None:
         _register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
-        assert store.acquire_writer("startup-indexing")
+        assert store.acquire_writer(INDEX_WRITER_RESOURCE, "startup-indexing")
 
         blocked = submit_rebuild_request(None, request_id="rebuild-blocked")
 
         assert blocked.status == "backpressured"
         assert huey_instance.pending_count() == 0
 
-        assert store.release_writer("startup-indexing")
+        assert store.release_writer(INDEX_WRITER_RESOURCE, "startup-indexing")
         accepted = submit_rebuild_request(None, request_id="rebuild-accepted")
 
         assert accepted.status == "enqueued"
@@ -274,7 +275,7 @@ class TestTaskRegistration:
             assert task is not None
             huey_instance.execute(task)
             store = TaskLeaseStore(_queue_path(huey_instance))
-            assert store.writer_owner() is None
+            assert store.writer_owner(INDEX_WRITER_RESOURCE) is None
             intent_store = WorkIntentStore(_queue_path(huey_instance))
             intent = intent_store.find(
                 "rebuild_index",
@@ -290,7 +291,7 @@ class TestTaskRegistration:
     ) -> None:
         runtime = _register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
-        assert store.acquire_writer("rebuild-active")
+        assert store.acquire_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
 
         runtime.task_handles["index_document"]("/docs/blocked.md")
         runtime.task_handles["refresh_git_repository"]("/repo/.git")
@@ -304,7 +305,7 @@ class TestTaskRegistration:
         assert fake_manager.indexed_records == []
         assert "Writer lease busy; deferring index_document" in caplog.text
         assert "argument='/docs/blocked.md'" in caplog.text
-        assert store.release_writer("rebuild-active") is True
+        assert store.release_writer(INDEX_WRITER_RESOURCE, "rebuild-active") is True
 
     def test_register_tasks_returns_runtime_with_stable_task_names(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -489,13 +490,13 @@ class TestTaskRegistration:
     ) -> None:
         _register_tasks(huey_instance, fake_manager)
         store = TaskLeaseStore(_queue_path(huey_instance))
-        assert store.acquire_writer("rebuild-active")
+        assert store.acquire_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
 
         submission = submit_refresh_git_request("/repo/.git")
         assert submission.status == "already_pending"
         assert huey_instance.pending_count() == 0
 
-        assert store.release_writer("rebuild-active")
+        assert store.release_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
         tasks_mod._run_as_writer(
             lambda: None,
             owner_token="rebuild-finished",
@@ -523,7 +524,7 @@ class TestTaskRegistration:
         runtime_two = _register_tasks(second_huey, FakeIndexManager())
 
         first_store = TaskLeaseStore(_queue_path(huey_instance))
-        assert first_store.acquire_writer("rebuild-active")
+        assert first_store.acquire_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
 
         assert (
             runtime_one.submission.submit_refresh_git_request("/repo/.git").status
@@ -535,7 +536,7 @@ class TestTaskRegistration:
             runtime_two.submission.submit_refresh_git_request("/repo/.git").status
             == "enqueued"
         )
-        assert first_store.release_writer("rebuild-active")
+        assert first_store.release_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
 
     def test_startup_batch_skips_files_already_pending_in_queue(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager

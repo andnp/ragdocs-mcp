@@ -190,7 +190,10 @@ async def _run_worker_forever_async(
     from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
     from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
     from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
-    from mcp_markdown_ragdocs.indexing.tasks import register_tasks
+    from mcp_markdown_ragdocs.indexing.tasks import (
+        index_document_retry_policy,
+        register_tasks,
+    )
     from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 
     config = load_config()
@@ -219,7 +222,7 @@ async def _run_worker_forever_async(
     queue_runtime = build_queue_runtime(queue_db)
     huey = queue_runtime.huey
     task_lease_store = TaskLeaseStore(queue_db)
-    work_intent_store = WorkIntentStore(queue_db)
+    work_intent_store = WorkIntentStore(queue_db, retry_policy=index_document_retry_policy)
     task_runtime = register_tasks(
         huey,
         task_target,

@@ -34,7 +34,11 @@ from mcp_markdown_ragdocs.coordination.task_submission import (
 from mcp_markdown_ragdocs.coordination.task_submission import (
     get_pending_task_count as get_shared_pending_task_count,
 )
-from mcp_markdown_ragdocs.coordination.work_intents import WorkIntent, WorkIntentPort
+from mcp_markdown_ragdocs.coordination.work_intents import (
+    MAX_AUTOMATIC_FAILURES,
+    WorkIntent,
+    WorkIntentPort,
+)
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
@@ -59,6 +63,7 @@ from mcp_markdown_ragdocs.indexing import task_intents
 from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
 from mcp_markdown_ragdocs.indexing.task_runtime import TaskRuntime
 from mcp_markdown_ragdocs.indexing.task_writer import (
+    INDEX_WRITER_RESOURCE,
     WRITER_HEARTBEAT_INTERVAL_SECONDS,  # noqa: F401 - compatibility export
     WRITER_LEASE_TIMEOUT_SECONDS,  # noqa: F401 - compatibility export
     run_as_writer,
@@ -200,6 +205,11 @@ class _RuntimeTaskSubmission:
         self, git_dirs: list[str]
     ) -> TaskBatchSubmissionResult:
         return submit_refresh_git_batch(git_dirs, runtime=self.runtime)
+
+
+def index_document_retry_policy(operation: str, failure_count: int) -> bool:
+    """Cap automatic reopen of failed index_document intents; other operations retry freely."""
+    return operation != "index_document" or failure_count < MAX_AUTOMATIC_FAILURES
 
 
 def _writer_lease_store(runtime: TaskRuntime) -> TaskLeasePort | None:
@@ -2174,7 +2184,7 @@ def submit_rebuild_request(
     writer_store = _writer_lease_store(runtime)
     if writer_store is None:
         return TaskSubmissionResult(status="unavailable")
-    if not writer_store.acquire_writer(request_id):
+    if not writer_store.acquire_writer(INDEX_WRITER_RESOURCE, request_id):
         return TaskSubmissionResult(status="backpressured")
 
     queue_item = project_override or "__global__"
@@ -2184,7 +2194,7 @@ def submit_rebuild_request(
         item=queue_item,
         warning_message="Skipping rebuild enqueue for %s due to task queue backpressure (%d pending >= %d limit)",
     ):
-        writer_store.release_writer(request_id)
+        writer_store.release_writer(INDEX_WRITER_RESOURCE, request_id)
         return TaskSubmissionResult(status="backpressured")
 
     claim = _intent_claim(
@@ -2194,7 +2204,7 @@ def submit_rebuild_request(
         runtime=runtime,
     )
     if claim is None:
-        writer_store.release_writer(request_id)
+        writer_store.release_writer(INDEX_WRITER_RESOURCE, request_id)
         return TaskSubmissionResult(status="already_pending")
     intent, claim_token = claim
     try:
@@ -2207,7 +2217,7 @@ def submit_rebuild_request(
     except Exception:
         if _intent_store(runtime) is not None:
             _release_intent(intent.intent_id, claim_token, runtime=runtime)
-        writer_store.release_writer(request_id)
+        writer_store.release_writer(INDEX_WRITER_RESOURCE, request_id)
         raise
     return TaskSubmissionResult(status="enqueued")
 
