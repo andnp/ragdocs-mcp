@@ -40,6 +40,8 @@ from mcp_markdown_ragdocs.app.bootstrap import (
 )
 from mcp_markdown_ragdocs.app.bootstrap_manifest import ManifestCoordinator
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
+from mcp_markdown_ragdocs.indexing.task_runtime import TaskRuntime
+from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.indexing.record_manager import build_embedding_provider
 from mcp_markdown_ragdocs.indexing.record_ports import RecordStorage
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
@@ -129,6 +131,7 @@ class ApplicationContext:
     services: ApplicationServices | None = None
     record_ingestor: Any | None = None
     use_tasks: bool = False
+    task_submission: TaskSubmissionPort | None = field(default=None, repr=False)
     _watcher_lifecycle: WatcherLifecycle = field(
         default_factory=WatcherLifecycle, repr=False
     )
@@ -217,6 +220,11 @@ class ApplicationContext:
     @watcher.setter
     def watcher(self, value: FileWatcher | None) -> None:
         self._watcher_lifecycle = WatcherLifecycle(watcher=value)
+
+    def attach_task_runtime(self, task_runtime: TaskRuntime) -> None:
+        """Attach runtime-owned task submission to task-backed context services."""
+        self.task_submission = task_runtime.submission
+        self._watcher_lifecycle.set_task_submission(task_runtime.submission)
 
     def _get_bootstrap_coordinator(self) -> BootstrapCoordinator:
         coordinator = getattr(self, "bootstrap_coordinator", None)
@@ -370,13 +378,18 @@ class ApplicationContext:
         if not self.git_indexing_enabled:
             return
 
-        from mcp_markdown_ragdocs.indexing.tasks import submit_refresh_git_batch
-
         repos = await asyncio.to_thread(self.discover_git_repositories)
         if not repos:
             logger.info("No git repositories found for task-driven startup refresh")
             return
 
+        from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
+
+        submit_refresh_git_batch = (
+            self.task_submission.submit_refresh_git_batch
+            if self.task_submission is not None
+            else indexing_tasks.submit_refresh_git_batch
+        )
         submission = submit_refresh_git_batch([str(repo) for repo in repos])
         logger.info(
             "Enqueued %d startup git refresh task(s) for %d repositories (%d already pending)",
@@ -443,6 +456,7 @@ class ApplicationContext:
             schedule_embedding_warmup=self.schedule_embedding_model_warmup,
             report_failure=self._report_bootstrap_failure,
             publish_availability=self._publish_bootstrap_availability,
+            task_submission=self.task_submission,
         )
 
     def _publish_bootstrap_public_state(
@@ -703,9 +717,17 @@ class ApplicationContext:
             logger.info("Task-backed reconciliation complete: no changes needed")
             return
 
-        from mcp_markdown_ragdocs.indexing.tasks import (
-            submit_index_batch,
-            submit_remove_request_batch,
+        from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
+
+        submit_index_batch = (
+            self.task_submission.submit_index_batch
+            if self.task_submission is not None
+            else indexing_tasks.submit_index_batch
+        )
+        submit_remove_request_batch = (
+            self.task_submission.submit_remove_request_batch
+            if self.task_submission is not None
+            else indexing_tasks.submit_remove_request_batch
         )
 
         index_submission, remove_submission = await asyncio.gather(

@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager as IndexManager
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 
@@ -78,6 +79,11 @@ class WatcherLifecycle:
         """Pick up newly created watchable directories, if enabled."""
         if self.watcher is not None:
             self.watcher.refresh_watches()
+
+    def set_task_submission(self, task_submission: TaskSubmissionPort) -> None:
+        """Attach the runtime-owned task submission boundary to the watcher."""
+        if self.watcher is not None:
+            self.watcher.set_task_submission(task_submission)
 
     async def stop(self) -> None:
         """Stop the watcher with a bounded timeout, if enabled."""

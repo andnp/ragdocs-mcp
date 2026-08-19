@@ -34,7 +34,10 @@ from searchkernel.indexing.manifest import (
 )
 
 from mcp_markdown_ragdocs.context import ApplicationContext, IndexState
+from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
+from mcp_markdown_ragdocs.indexing.task_runtime import TaskRuntime
 from mcp_markdown_ragdocs.indexing.tasks import TaskBatchSubmissionResult
+from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 
 
 def _setattr(obj: Any, name: str, value: Any):
@@ -1564,6 +1567,29 @@ async def test_task_backed_reconciliation_enqueues_changes_without_index_manager
     assert observed == {"added": [added], "removed": [removed]}
     manager.reconcile_indices.assert_not_called()
     manager.persist.assert_not_called()
+
+
+def test_attach_task_runtime_wires_submission_to_file_watcher() -> None:
+    """
+    Given a context with a file watcher and a composed task runtime.
+    When the runtime is attached.
+    Then the watcher receives that runtime's submission boundary.
+    """
+    ctx = object.__new__(ApplicationContext)
+    watcher = MagicMock()
+    _setattr(ctx, "_watcher_lifecycle", WatcherLifecycle(watcher=watcher))
+    submission = MagicMock(spec=TaskSubmissionPort)
+    runtime = TaskRuntime(
+        queue_runtime=MagicMock(),
+        submission=submission,
+        task_handles={},
+        gdrive_task_handles={},
+    )
+
+    ctx.attach_task_runtime(runtime)
+
+    assert ctx.task_submission is submission
+    watcher.set_task_submission.assert_called_once_with(submission)
 
 
 @pytest.mark.asyncio

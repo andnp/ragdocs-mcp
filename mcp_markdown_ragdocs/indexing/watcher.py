@@ -111,6 +111,10 @@ class FileWatcher:
         """Return whether the watcher was stopped cleanly without timeout."""
         return self._stopped_cleanly
 
+    def set_task_submission(self, task_submission: TaskSubmissionPort) -> None:
+        """Attach the runtime-owned task submission boundary."""
+        self._task_submission = task_submission
+
     def __del__(self) -> None:
         """Safety net to ensure observer is cleaned up on garbage collection."""
         try:
