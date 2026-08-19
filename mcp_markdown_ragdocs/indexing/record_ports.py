@@ -52,6 +52,16 @@ class DocumentWriter(Protocol):
     ) -> tuple[str, ...]: ...
 
 
+class CommitHistoryPort(Protocol):
+    """List commit hashes newer than a timestamp for git record repair."""
+
+    def __call__(
+        self,
+        git_dir: Path,
+        after_timestamp: int | None = None,
+    ) -> Iterator[str]: ...
+
+
 class SQLiteConnectionProvider(Protocol):
     """Expose the database connection needed by a local storage adapter."""
 
@@ -325,6 +335,7 @@ class JsonSourceMapStore:
 
 __all__ = [
     "JsonSourceMapStore",
+    "CommitHistoryPort",
     "EmbeddingProvider",
     "RecordIndexStorage",
     "LocalRecordDeletion",
