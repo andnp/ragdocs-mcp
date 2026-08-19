@@ -11,6 +11,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -635,7 +636,10 @@ class TestWorkerRuntimeStartup:
         )
 
         monkeypatch.setattr("mcp_markdown_ragdocs.cli.ApplicationContext.create", lambda **kwargs: fake_ctx)
-        monkeypatch.setattr("mcp_markdown_ragdocs.cli.get_huey", lambda _path: object())
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.cli.build_queue_runtime",
+            lambda path: SimpleNamespace(huey=object(), db_path=path),
+        )
         monkeypatch.setattr("mcp_markdown_ragdocs.cli.register_tasks", lambda *args, **kwargs: None)
         monkeypatch.setattr("mcp_markdown_ragdocs.cli.HueyWorker", lambda _huey: fake_worker)
         monkeypatch.setattr(
