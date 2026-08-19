@@ -35,14 +35,6 @@ from searchkernel.api import (
 )
 
 from mcp_markdown_ragdocs.config import Config
-from mcp_markdown_ragdocs.git.repository import iter_commit_hashes_after_timestamp
-from mcp_markdown_ragdocs.gdrive.replacement import (
-    GDriveReplacementJournal,
-    REPLACEMENT_JOURNAL_FILENAME,
-)
-from mcp_markdown_ragdocs.gdrive.replacement_policy import GDriveReplacementPolicy
-from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND as GDRIVE_SOURCE_KIND
-from mcp_markdown_ragdocs.gdrive.adapter import GDriveStateRepository
 from mcp_markdown_ragdocs.indexing.markdown_documents import (
     MarkdownDocumentPlanner,
     SemanticDocumentWriter,
@@ -51,8 +43,11 @@ from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_grap
 from mcp_markdown_ragdocs.indexing.graph_rebuild import DebouncedGraphRebuilder
 from mcp_markdown_ragdocs.indexing.record_ports import (
     JsonSourceMapStore,
+    CommitHistoryPort,
     DocumentPlanner,
     DocumentWriter,
+    GDriveIntegrationFactory,
+    GDriveIntegrationPort,
     GraphCapability,
     LocalRecordStorage,
     PreparedRecordDocument,
@@ -177,8 +172,17 @@ class RecordIndexManager:
         source_map_store: SourceMapStore | None = None,
         document_planner: DocumentPlanner | None = None,
         document_writer: DocumentWriter | None = None,
+        commit_history: CommitHistoryPort | None = None,
+        gdrive_integration_factory: GDriveIntegrationFactory | None = None,
     ) -> None:
         self._config = config
+        if commit_history is None:
+            from mcp_markdown_ragdocs.git.repository import (
+                iter_commit_hashes_after_timestamp,
+            )
+
+            commit_history = iter_commit_hashes_after_timestamp
+        self._commit_history: CommitHistoryPort = commit_history
         self.kernel = kernel
         self._async_bridge = _AsyncLoopBridge()
         self._index_storage = storage or LocalRecordStorage(kernel)
@@ -218,15 +222,6 @@ class RecordIndexManager:
         self._content_sources: dict[str, ContentSource] = {}
         for source in content_sources:
             self.register_content_source(source)
-        self._gdrive_state_repository = (
-            GDriveStateRepository(Path(config.indexing.index_path) / "gdrive-state.db")
-            if GDRIVE_SOURCE_KIND in self._content_sources
-            else None
-        )
-        self._gdrive_replacement_journal = GDriveReplacementJournal(
-            Path(config.indexing.index_path) / REPLACEMENT_JOURNAL_FILENAME,
-            self._gdrive_state_repository,
-        )
         self.ingestor = self._index_storage.create_ingestor(
             embedding_provider,
             cache_path=Path(config.indexing.index_path) / "embedding-cache.db",
@@ -236,15 +231,19 @@ class RecordIndexManager:
             self.ingestor,
             self.storage,
         )
-        self._gdrive_replacement_policy = GDriveReplacementPolicy(
+        if gdrive_integration_factory is None:
+            from mcp_markdown_ragdocs.gdrive.integration import build_gdrive_integration
+
+            gdrive_integration_factory = build_gdrive_integration
+        self._gdrive_integration: GDriveIntegrationPort = gdrive_integration_factory(
+            Path(config.indexing.index_path),
+            self._content_sources,
             self.ingestor,
             self.storage,
             self._source_records,
             self._source_map_store,
-            self._gdrive_replacement_journal,
-            self._gdrive_state_repository,
         )
-        self._gdrive_replacement_policy.recover()
+        self._gdrive_integration.recover()
 
     @property
     def index_path(self) -> Path:
@@ -437,7 +436,7 @@ class RecordIndexManager:
         )
 
     async def async_index_record(self, record: Record) -> bool:
-        if record.source_kind == GDRIVE_SOURCE_KIND:
+        if record.source_kind == self._gdrive_integration.source_kind:
             return await self._async_index_gdrive_records((record,))
         try:
             receipt = await self.ingestor.index_records([record])
@@ -468,11 +467,12 @@ class RecordIndexManager:
             except Exception:
                 logger.exception("Failed to index record batch")
                 return False
+        gdrive_source_kind = self._gdrive_integration.source_kind
         gdrive_records = tuple(
-            record for record in records if record.source_kind == GDRIVE_SOURCE_KIND
+            record for record in records if record.source_kind == gdrive_source_kind
         )
         generic_records = tuple(
-            record for record in records if record.source_kind != GDRIVE_SOURCE_KIND
+            record for record in records if record.source_kind != gdrive_source_kind
         )
         if generic_records:
             try:
@@ -497,7 +497,7 @@ class RecordIndexManager:
 
     async def _async_index_gdrive_records(self, records: Sequence[Record]) -> bool:
         try:
-            await self._gdrive_replacement_policy.replace(records)
+            await self._gdrive_integration.replace(records)
             with self._graph_lock:
                 self._graph_full_rebuild_pending = True
             self._rebuild_graph()
@@ -522,7 +522,7 @@ class RecordIndexManager:
 
         commit_ids = {
             f"git:{commit_hash}"
-            for commit_hash in iter_commit_hashes_after_timestamp(git_dir)
+            for commit_hash in self._commit_history(git_dir)
         }
         updates: list[Record] = []
         replacements: dict[str, str] = {}

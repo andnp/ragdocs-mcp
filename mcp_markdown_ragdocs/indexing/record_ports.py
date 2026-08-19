@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
@@ -50,6 +50,40 @@ class DocumentWriter(Protocol):
         prepared: PreparedRecordDocument,
         old_keys: Sequence[str],
     ) -> tuple[str, ...]: ...
+
+
+class CommitHistoryPort(Protocol):
+    """List commit hashes newer than a timestamp for git record repair."""
+
+    def __call__(
+        self,
+        git_dir: Path,
+        after_timestamp: int | None = None,
+    ) -> Iterator[str]: ...
+
+
+class GDriveIntegrationPort(Protocol):
+    """Route Google Drive-sourced records through provider-aware replacement."""
+
+    @property
+    def source_kind(self) -> str: ...
+
+    async def replace(self, records: Sequence[Record]) -> None: ...
+
+    def recover(self) -> bool: ...
+
+
+GDriveIntegrationFactory = Callable[
+    [
+        Path,
+        Mapping[str, ContentSource],
+        SemanticRecordIngestor,
+        "RecordStorage",
+        dict[str, list[str]],
+        "SourceMapStore",
+    ],
+    GDriveIntegrationPort,
+]
 
 
 class SQLiteConnectionProvider(Protocol):
@@ -325,7 +359,10 @@ class JsonSourceMapStore:
 
 __all__ = [
     "JsonSourceMapStore",
+    "CommitHistoryPort",
     "EmbeddingProvider",
+    "GDriveIntegrationFactory",
+    "GDriveIntegrationPort",
     "RecordIndexStorage",
     "LocalRecordDeletion",
     "LocalRecordIdentityCatalog",
