@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import islice
@@ -49,6 +50,32 @@ class DocumentWriter(Protocol):
         prepared: PreparedRecordDocument,
         old_keys: Sequence[str],
     ) -> tuple[str, ...]: ...
+
+
+class SQLiteConnectionProvider(Protocol):
+    """Expose the database connection needed by a local storage adapter."""
+
+    def get_connection(self) -> sqlite3.Connection: ...
+
+
+class RecordIdentityCatalog(Protocol):
+    """Enumerate canonical record identities without exposing provider rows."""
+
+    def iter_identities(self) -> Iterator[RecordIdentity]: ...
+
+
+class LocalRecordIdentityCatalog:
+    """Temporarily adapt SearchKernel's local identity storage to this port."""
+
+    def __init__(self, database_manager: SQLiteConnectionProvider) -> None:
+        self._database_manager = database_manager
+
+    def iter_identities(self) -> Iterator[RecordIdentity]:
+        """Stream identities from the provider until SearchKernel exposes this port."""
+        connection = self._database_manager.get_connection()
+        rows = connection.execute("SELECT storage_key FROM local_records")
+        for row in rows:
+            yield RecordIdentity.from_storage_key(str(row[0]))
 
 
 class RecordStorage(Protocol):
@@ -157,18 +184,18 @@ class LocalRecordStorage:
         self,
         kernel: LocalRecordKernel,
         deletion: RecordDeletion | None = None,
+        identity_catalog: RecordIdentityCatalog | None = None,
     ) -> None:
         self._kernel = kernel
         self._deletion = deletion or LocalRecordDeletion(kernel)
+        self._identity_catalog = identity_catalog or LocalRecordIdentityCatalog(
+            kernel.backend.db_manager
+        )
         from mcp_markdown_ragdocs.indexing.local_graph import (
-            LocalBidirectionalGraphStore,
+            install_bidirectional_graph_store,
         )
 
-        self._graph = LocalBidirectionalGraphStore(
-            kernel,
-            self.iter_identities,
-        )
-        self._graph.install()
+        self._graph = install_bidirectional_graph_store(kernel, self.iter_identities)
 
     @property
     def graph(self) -> GraphCapability:
@@ -241,11 +268,8 @@ class LocalRecordStorage:
                     yield record
 
     def iter_identities(self) -> Iterator[RecordIdentity]:
-        """Stream canonical identities without exposing database rows."""
-        connection = self._kernel.backend.db_manager.get_connection()
-        rows = connection.execute("SELECT storage_key FROM local_records")
-        for row in rows:
-            yield RecordIdentity.from_storage_key(str(row[0]))
+        """Stream canonical identities through the application-owned catalog."""
+        yield from self._identity_catalog.iter_identities()
 
     def tune_backend(self) -> None:
         """Apply the application's local SQLite performance settings."""
@@ -304,8 +328,11 @@ __all__ = [
     "EmbeddingProvider",
     "RecordIndexStorage",
     "LocalRecordDeletion",
+    "LocalRecordIdentityCatalog",
     "LocalRecordStorage",
     "RecordDeletion",
+    "RecordIdentityCatalog",
     "RecordStorage",
+    "SQLiteConnectionProvider",
     "SourceMapStore",
 ]

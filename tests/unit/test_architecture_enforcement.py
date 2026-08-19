@@ -6,6 +6,10 @@ from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).parents[2] / "mcp_markdown_ragdocs"
 PORTS = {
+    PACKAGE_ROOT / "indexing" / "record_ports.py": {
+        "RecordIdentityCatalog",
+        "SQLiteConnectionProvider",
+    },
     PACKAGE_ROOT / "context.py": {"ContextIndexingPort"},
     PACKAGE_ROOT / "lifecycle.py": {"LifecycleContextPort", "GitIndexingContextPort"},
     PACKAGE_ROOT / "coordination" / "task_leases.py": {"TaskLeasePort"},

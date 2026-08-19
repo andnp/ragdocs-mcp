@@ -1,7 +1,9 @@
 import types
 from datetime import UTC, datetime
 
-from searchkernel.domain import Record, RecordStatus
+from searchkernel.domain import Record, RecordIdentity, RecordStatus
+
+from mcp_markdown_ragdocs.indexing.record_ports import LocalRecordStorage
 
 
 def _make_commit_record(source_id: str, body: str) -> Record:
@@ -35,6 +37,10 @@ def test_iter_records_yields_every_stored_record(record_manager) -> None:
 
 
 def test_iter_records_hydrates_in_bounded_batches(record_manager, monkeypatch) -> None:
+    """Record hydration consumes identities in fixed-size batches.
+
+    This keeps large local indexes from being materialized during iteration.
+    """
     records = [_make_commit_record(f"commit-{i}", f"message {i}") for i in range(5)]
     for record in records:
         assert record_manager.index_record(record) is True
@@ -54,3 +60,22 @@ def test_iter_records_hydrates_in_bounded_batches(record_manager, monkeypatch) -
 
     assert len(consumed) == len(records)
     assert batch_sizes == [2, 2, 1]
+
+
+def test_storage_delegates_identity_enumeration_to_catalog(local_record_kernel) -> None:
+    """Storage delegates identity enumeration to the injected application port.
+
+    The storage adapter must not need to know how the catalog persists keys.
+    """
+    expected = [
+        RecordIdentity(None, "git_commit", "one"),
+        RecordIdentity(None, "git_commit", "two"),
+    ]
+
+    class Catalog:
+        def iter_identities(self):
+            return iter(expected)
+
+    storage = LocalRecordStorage(local_record_kernel, identity_catalog=Catalog())
+
+    assert list(storage.iter_identities()) == expected
