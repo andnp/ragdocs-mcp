@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from typing import Any, Protocol, TYPE_CHECKING
+from typing import Any, Protocol, TYPE_CHECKING, runtime_checkable
+
+from searchkernel.api import TaskBatchSubmissionResult, TaskSubmissionResult
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
@@ -15,6 +17,56 @@ logger = logging.getLogger(__name__)
 type TaskSubmitter = Callable[..., object]
 type TaskValueExtractor = Callable[[Any], set[str]]
 type BatchTaskSubmitter = Callable[..., object]
+
+
+@runtime_checkable
+class TaskSubmissionPort(Protocol):
+    """Application-facing submission capabilities for one task runtime."""
+
+    def submit_index_request(
+        self, file_path: str, force: bool = False
+    ) -> TaskSubmissionResult: ...
+
+    def submit_index_batch(
+        self,
+        file_paths: list[str],
+        force: bool = False,
+        progressive: bool = False,
+    ) -> TaskBatchSubmissionResult: ...
+
+    def submit_index_request_batch(
+        self, file_paths: list[str], force: bool = False
+    ) -> TaskBatchSubmissionResult: ...
+
+    def submit_record_batch(
+        self, record_payloads: list[dict[str, object]]
+    ) -> object | None: ...
+
+    def submit_remove_request(self, doc_id: str) -> TaskSubmissionResult: ...
+
+    def submit_remove_request_batch(
+        self, doc_ids: list[str]
+    ) -> TaskBatchSubmissionResult: ...
+
+    def submit_refresh_git_request(self, git_dir: str) -> TaskSubmissionResult: ...
+
+    def submit_refresh_git_batch(
+        self, git_dirs: list[str]
+    ) -> TaskBatchSubmissionResult: ...
+
+    def submit_rebuild_request(
+        self, project_override: str | None, *, request_id: str
+    ) -> TaskSubmissionResult: ...
+
+    def submit_reindex_request(
+        self,
+        operation: str,
+        *,
+        model: str | None,
+        truncate_dim: int | None,
+        old_model: str | None,
+        request_id: str,
+    ) -> TaskSubmissionResult: ...
 
 
 class TaskQueuePort(Protocol):
