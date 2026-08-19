@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-import json
 from pathlib import Path
 
-from searchkernel.api import atomic_write_json
+from mcp_markdown_ragdocs.gdrive.json_record_store import (
+    read_json_envelope,
+    write_json_envelope,
+)
 
 CHECKPOINT_SCHEMA_VERSION = 1
 GDRIVE_CHECKPOINT_NAMESPACE_PREFIX = "gdrive-v1"
@@ -157,12 +159,11 @@ class GDriveSyncCheckpointStore:
         _validate_namespace(namespace)
         payload = self._read_payload()
         payload[namespace] = checkpoint.to_payload()
-        atomic_write_json(
+        write_json_envelope(
             self.path,
-            {
-                "schema_version": CHECKPOINT_SCHEMA_VERSION,
-                "checkpoints": payload,
-            },
+            schema_version=CHECKPOINT_SCHEMA_VERSION,
+            key="checkpoints",
+            value=payload,
         )
 
     def begin_inventory(
@@ -214,18 +215,15 @@ class GDriveSyncCheckpointStore:
         return checkpoint
 
     def _read_payload(self) -> dict[str, object]:
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(raw, dict):
-            return {}
-        if raw.get("schema_version") != CHECKPOINT_SCHEMA_VERSION:
-            return {}
-        checkpoints = raw.get("checkpoints")
-        if not isinstance(checkpoints, dict):
-            return {}
-        return dict(checkpoints)
+        return (
+            read_json_envelope(
+                self.path,
+                schema_version=CHECKPOINT_SCHEMA_VERSION,
+                key="checkpoints",
+                expected_type=dict,
+            )
+            or {}
+        )
 
 
 def _validate_namespace(namespace: str) -> None:
