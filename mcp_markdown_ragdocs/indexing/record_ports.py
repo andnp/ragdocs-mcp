@@ -17,7 +17,6 @@ from searchkernel.api import (
     KeywordStore,
     Record,
     RecordIdentity,
-    RecordIngestor,
     SQLiteEmbeddingCache,
     SemanticRecordIngestor,
     Vector,
@@ -70,6 +69,10 @@ class RecordStorage(Protocol):
 
     def delete(self, storage_keys: Sequence[str]) -> None: ...
 
+
+class RecordIndexStorage(RecordStorage, Protocol):
+    """Additional local capabilities needed to construct the index writer."""
+
     @property
     def database_manager(self) -> object: ...
 
@@ -85,7 +88,7 @@ class RecordStorage(Protocol):
         *,
         cache_path: Path,
         batch_size: int,
-    ) -> RecordIngestor: ...
+    ) -> SemanticRecordIngestor: ...
 
 
 class EmbeddingProvider(Protocol):
@@ -189,7 +192,7 @@ class LocalRecordStorage:
         *,
         cache_path: Path,
         batch_size: int,
-    ) -> RecordIngestor:
+    ) -> SemanticRecordIngestor:
         embedding_cache = SQLiteEmbeddingCache(
             cache_path,
             encoder_namespace=embedding_provider.model_name,
@@ -299,6 +302,7 @@ class JsonSourceMapStore:
 __all__ = [
     "JsonSourceMapStore",
     "EmbeddingProvider",
+    "RecordIndexStorage",
     "LocalRecordDeletion",
     "LocalRecordStorage",
     "RecordDeletion",

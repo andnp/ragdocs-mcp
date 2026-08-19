@@ -56,6 +56,7 @@ from mcp_markdown_ragdocs.indexing.record_ports import (
     GraphCapability,
     LocalRecordStorage,
     PreparedRecordDocument,
+    RecordIndexStorage,
     RecordStorage,
     SourceMapStore,
 )
@@ -170,7 +171,7 @@ class RecordIndexManager:
         *,
         documents_roots: list[Path] | None = None,
         content_sources: Iterable[ContentSource] = (),
-        storage: RecordStorage | None = None,
+        storage: RecordIndexStorage | None = None,
         graph: GraphCapability | None = None,
         source_map_store: SourceMapStore | None = None,
         document_planner: DocumentPlanner | None = None,
@@ -178,7 +179,8 @@ class RecordIndexManager:
     ) -> None:
         self._config = config
         self.kernel = kernel
-        self.storage = storage or LocalRecordStorage(kernel)
+        self._index_storage = storage or LocalRecordStorage(kernel)
+        self.storage: RecordStorage = self._index_storage
         self._graph: GraphCapability = graph or (
             self.storage.graph
             if isinstance(self.storage, LocalRecordStorage)
@@ -223,7 +225,7 @@ class RecordIndexManager:
             Path(config.indexing.index_path) / REPLACEMENT_JOURNAL_FILENAME,
             self._gdrive_state_repository,
         )
-        self.ingestor = self.storage.create_ingestor(
+        self.ingestor = self._index_storage.create_ingestor(
             embedding_provider,
             cache_path=Path(config.indexing.index_path) / "embedding-cache.db",
             batch_size=config.embedding.batch_size,
@@ -247,13 +249,17 @@ class RecordIndexManager:
         return Path(self._config.indexing.index_path)
 
     @property
+    def database_manager(self) -> object:
+        return self._index_storage.database_manager
+
+    @property
     def vector(self):
         """Compatibility view for callers that only need semantic operations."""
-        return self.storage.vector_store
+        return self._index_storage.vector_store
 
     @property
     def keyword(self):
-        return self.storage.keyword_store
+        return self._index_storage.keyword_store
 
     @property
     def graph(self) -> GraphCapability:

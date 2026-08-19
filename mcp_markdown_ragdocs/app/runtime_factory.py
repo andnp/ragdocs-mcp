@@ -234,7 +234,7 @@ def assemble_runtime(
         search_use_case=orchestrator.search_use_case,
         record_ingestor=manager.ingestor,
         watcher_lifecycle=watcher_lifecycle,
-        db_manager=manager.storage.database_manager,
+        db_manager=manager.database_manager,
         git_indexing_enabled=git_indexing_enabled,
         active_model_identity=active_model_identity,
     )
