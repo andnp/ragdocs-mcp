@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
 from searchkernel.api import (
     ContentSource,
@@ -26,7 +26,7 @@ from mcp_markdown_ragdocs.indexing.record_manager import (
     RecordIndexManager,
     build_embedding_provider,
 )
-from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_graph_store
+from mcp_markdown_ragdocs.indexing.record_ports import LocalRecordStorage
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
@@ -38,32 +38,6 @@ class EmbeddingProvider(Protocol):
 
     model_name: str
     dim: int
-
-
-@runtime_checkable
-class _DirectionalGraphStore(Protocol):
-    def set_direction(self, incoming: str | bool) -> None: ...
-
-
-def _set_graph_direction(
-    kernel: LocalRecordKernel,
-    incoming: str | bool,
-) -> None:
-    graph_store = kernel.pipeline._graph_store
-    if not isinstance(graph_store, _DirectionalGraphStore):
-        raise RuntimeError("record kernel graph store does not support direction")
-    graph_store.set_direction(incoming)
-
-
-def _tune_sqlite_backend(kernel: LocalRecordKernel) -> None:
-    backend_db = getattr(getattr(kernel, "backend", None), "_db", None)
-    if backend_db is not None:
-        try:
-            conn = backend_db.get_connection()
-            conn.execute("PRAGMA cache_size = -64000")
-            conn.execute("PRAGMA mmap_size = 1073741824")
-        except Exception:
-            pass
 
 
 @dataclass(frozen=True)
@@ -163,11 +137,11 @@ def assemble_runtime(
             )
         )
 
-    kernel_holder: dict[str, LocalRecordKernel] = {}
+    storage_holder: dict[str, LocalRecordStorage] = {}
     search_policy = build_record_search_policy(
-        lambda: kernel_holder["kernel"].keyword_store,
-        lambda identity: kernel_holder["kernel"].backend.hydrate_record(identity),
-        lambda incoming: _set_graph_direction(kernel_holder["kernel"], incoming),
+        lambda: storage_holder["storage"].keyword_store,
+        lambda identity: storage_holder["storage"].hydrate_record(identity),
+        lambda incoming: storage_holder["storage"].graph.set_direction(incoming),
         project_uplift_multiplier=config.search.project_uplift_multiplier,
     )
     local_kernel = build_local_record_kernel(
@@ -180,8 +154,9 @@ def assemble_runtime(
         search_policy=search_policy,
         search_config=to_record_search_config(config.search),
     )
-    _tune_sqlite_backend(local_kernel)
-    kernel_holder["kernel"] = local_kernel
+    storage = LocalRecordStorage(local_kernel)
+    storage_holder["storage"] = storage
+    storage.tune_backend()
     if not lazy_embeddings:
         logger.info("Embedding provider is daemon-backed; no in-process warmup needed")
 
@@ -191,10 +166,7 @@ def assemble_runtime(
         embedding_provider,
         documents_roots=list(paths.documents_roots),
         content_sources=content_sources,
-    )
-    install_bidirectional_graph_store(
-        local_kernel,
-        lambda: manager.storage.iter_identities(),
+        storage=storage,
     )
     orchestrator = CanonicalSearchAdapter(
         manager,
