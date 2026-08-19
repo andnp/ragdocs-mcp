@@ -15,9 +15,9 @@ from searchkernel.api import (
 from mcp_markdown_ragdocs.app.search import (
     ApplicationSearchUseCase,
     PipelineSearchBoundary,
-    SearchExecutionPort,
     SearchQuery,
 )
+from mcp_markdown_ragdocs.app.contracts import SearchExecutionPort
 from mcp_markdown_ragdocs.models import ChunkResult
 
 

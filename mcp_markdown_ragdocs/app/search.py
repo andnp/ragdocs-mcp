@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 from searchkernel.api import (
     CompressionStats,
@@ -26,72 +26,19 @@ except ImportError:
     parse_relationship_intent = None
 
 from mcp_markdown_ragdocs.config import SearchConfig
+from mcp_markdown_ragdocs.app.contracts import (
+    Reranker,
+    SearchDiagnosticsPort,
+    SearchExecutionPort,
+)
 from mcp_markdown_ragdocs.git.results import aggregate_commit_results
 from mcp_markdown_ragdocs.models import ChunkResult
-
-
-class SearchKernelBoundary(Protocol):
-    """Public application boundary for canonical record search."""
-
-    async def search(
-        self,
-        query: str,
-        *,
-        limit: int,
-        filters: Mapping[str, object],
-    ) -> RecordSearchOutcome: ...
-
-    async def async_search(
-        self,
-        query: str,
-        *,
-        limit: int,
-        filters: Mapping[str, object],
-    ) -> RecordSearchOutcome: ...
-
-
-class SearchExecutionPort(Protocol):
-    """Narrow execution capability consumed by the application use case."""
-
-    async def async_search(
-        self,
-        query: str,
-        *,
-        limit: int,
-        filters: Mapping[str, object],
-    ) -> RecordSearchOutcome: ...
-
-
-class SearchDiagnosticsPort(Protocol):
-    """Build transport-neutral diagnostics from a canonical outcome."""
-
-    def __call__(self, outcome: RecordSearchOutcome) -> dict[str, object]: ...
-
-
-class Reranker(Protocol):
-    """Score application documents for optional result reranking."""
-
-    model_name: str
-
-    def rerank(self, query: str, documents: list[str]) -> list[float]: ...
-
-
-class RecordSearchPipeline(Protocol):
-    """Installed pipeline capability consumed by the canonical adapter."""
-
-    async def async_search(
-        self,
-        query: str,
-        *,
-        limit: int,
-        filters: Mapping[str, object],
-    ) -> RecordSearchOutcome: ...
 
 
 class PipelineSearchBoundary:
     """Adapt the canonical pipeline to the application-owned boundary."""
 
-    def __init__(self, pipeline: RecordSearchPipeline) -> None:
+    def __init__(self, pipeline: SearchExecutionPort) -> None:
         self._pipeline = pipeline
 
     async def search(
@@ -830,9 +777,7 @@ def map_kernel_result(result: RecordSearchResult) -> ChunkResult:
 __all__ = [
     "ApplicationSearchUseCase",
     "PipelineSearchBoundary",
-    "RecordSearchPipeline",
     "SearchExecution",
-    "SearchKernelBoundary",
     "SearchDiagnosticsPort",
     "SearchExecutionPort",
     "SearchQuery",
