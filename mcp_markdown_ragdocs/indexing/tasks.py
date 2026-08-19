@@ -34,7 +34,11 @@ from mcp_markdown_ragdocs.coordination.task_submission import (
 from mcp_markdown_ragdocs.coordination.task_submission import (
     get_pending_task_count as get_shared_pending_task_count,
 )
-from mcp_markdown_ragdocs.coordination.work_intents import WorkIntent, WorkIntentPort
+from mcp_markdown_ragdocs.coordination.work_intents import (
+    MAX_AUTOMATIC_FAILURES,
+    WorkIntent,
+    WorkIntentPort,
+)
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
@@ -141,6 +145,11 @@ gdrive_backfill_task: Any = None
 gdrive_lease_task: Any = None
 gdrive_watch_task: Any = None
 gdrive_health_task: Any = None
+
+
+def index_document_retry_policy(operation: str, failure_count: int) -> bool:
+    """Cap automatic reopen of failed index_document intents; other operations retry freely."""
+    return operation != "index_document" or failure_count < MAX_AUTOMATIC_FAILURES
 
 
 def _writer_lease_store() -> TaskLeasePort | None:

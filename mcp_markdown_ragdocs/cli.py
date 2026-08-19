@@ -126,7 +126,10 @@ from mcp_markdown_ragdocs.daemon.status import (
     format_daemon_startup_result,
     request_daemon_overview,
 )
-from mcp_markdown_ragdocs.indexing.tasks import register_tasks
+from mcp_markdown_ragdocs.indexing.tasks import (
+    index_document_retry_policy,
+    register_tasks,
+)
 from mcp_markdown_ragdocs.lifecycle import LifecycleCoordinator, LifecycleState
 from mcp_markdown_ragdocs.runtime_logging import configure_file_logging
 from mcp_markdown_ragdocs.worker.consumer import HueyWorker
@@ -218,7 +221,7 @@ async def _run_worker_forever_async(
 
     huey = get_huey(queue_db)
     task_lease_store = TaskLeaseStore(queue_db)
-    work_intent_store = WorkIntentStore(queue_db)
+    work_intent_store = WorkIntentStore(queue_db, retry_policy=index_document_retry_policy)
     register_tasks(
         huey,
         task_target,

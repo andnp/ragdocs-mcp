@@ -235,7 +235,9 @@ def test_force_reopen_allows_stale_claim(tmp_path: Path) -> None:
 def test_index_document_automatic_retries_stop_at_three_and_force_reopens(
     tmp_path: Path,
 ) -> None:
-    store = WorkIntentStore(tmp_path / "queue.db")
+    store = WorkIntentStore(
+        tmp_path / "queue.db", retry_policy=tasks.index_document_retry_policy
+    )
     intent = store.submit("index_document", "doc.md", {"file_path": "doc.md"})
 
     for failure_number in range(1, 4):

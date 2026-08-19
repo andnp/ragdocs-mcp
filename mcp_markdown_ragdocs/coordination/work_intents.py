@@ -7,6 +7,7 @@ import logging
 import secrets
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -100,9 +101,11 @@ class WorkIntentStore(WorkIntentPort):
         db_path: Path,
         *,
         claim_timeout_seconds: float = DEFAULT_LEASE_TIMEOUT_SECONDS,
+        retry_policy: Callable[[str, int], bool] | None = None,
     ) -> None:
         self._db_path = Path(db_path)
         self._claim_timeout_seconds = claim_timeout_seconds
+        self._retry_policy = retry_policy or (lambda operation, failure_count: True)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
@@ -152,8 +155,7 @@ class WorkIntentStore(WorkIntentPort):
             elif (
                 row["state"] == FAILED
                 and (
-                    operation != "index_document"
-                    or int(row["failure_count"]) < MAX_AUTOMATIC_FAILURES
+                    self._retry_policy(operation, int(row["failure_count"]))
                     or force_reopen
                 )
             ) or row["state"] == SUCCEEDED or (
@@ -275,14 +277,13 @@ class WorkIntentStore(WorkIntentPort):
                     """,
                     (intent_id,),
                 ).fetchone()
-                if (
-                    row is not None
-                    and row["operation"] == "index_document"
-                    and int(row["failure_count"]) >= MAX_AUTOMATIC_FAILURES
+                if row is not None and not self._retry_policy(
+                    str(row["operation"]), int(row["failure_count"])
                 ):
                     logger.error(
-                        "Automatic indexing retry ceiling reached for work intent %s",
+                        "Automatic retry ceiling reached for work intent %s (operation=%s)",
                         intent_id,
+                        row["operation"],
                     )
             return failed
 

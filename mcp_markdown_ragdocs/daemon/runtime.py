@@ -15,7 +15,11 @@ from mcp_markdown_ragdocs.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
 )
-from mcp_markdown_ragdocs.indexing.tasks import register_tasks, submit_record_batch
+from mcp_markdown_ragdocs.indexing.tasks import (
+    index_document_retry_policy,
+    register_tasks,
+    submit_record_batch,
+)
 from mcp_markdown_ragdocs.worker.process import HueyWorkerProcess
 
 BuildAdminOverviewPayload = Callable[[ApplicationContext, RuntimePaths, bool, int | None, str], dict[str, object]]
@@ -48,7 +52,9 @@ def create_daemon_runtime(
     )
     huey = get_huey(runtime_paths.queue_db_path)
     task_lease_store = TaskLeaseStore(runtime_paths.queue_db_path)
-    work_intent_store = WorkIntentStore(runtime_paths.queue_db_path)
+    work_intent_store = WorkIntentStore(
+        runtime_paths.queue_db_path, retry_policy=index_document_retry_policy
+    )
     register_tasks(
         huey,
         ctx.index_manager,
