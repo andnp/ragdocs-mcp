@@ -230,7 +230,7 @@ class GDriveSyncCheckpointStore:
         return checkpoint
 
     def _read_payload(self) -> dict[str, object]:
-        return self._envelope.read(dict) or {}
+        return self._envelope.read_dict()
 
 
 def _validate_namespace(namespace: str) -> None:
@@ -285,7 +285,7 @@ class GDriveMaterializationCache:
         self._envelope.write(payload)
 
     def _read(self) -> dict[str, object]:
-        return self._envelope.read(dict) or {}
+        return self._envelope.read_dict()
 
 
 __all__ = [

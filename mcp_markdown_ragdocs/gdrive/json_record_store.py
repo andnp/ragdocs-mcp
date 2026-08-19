@@ -35,6 +35,11 @@ class JsonEnvelopeStore:
         value = raw.get(self.key)
         return value if isinstance(value, expected_type) else None
 
+    def read_dict(self) -> dict[str, object]:
+        """Load the envelope's dict value, treating missing/invalid state as empty."""
+
+        return self.read(dict) or {}
+
     def write(self, value: Mapping[str, object] | Sequence[object]) -> None:
         """Atomically persist the envelope's value."""
 
