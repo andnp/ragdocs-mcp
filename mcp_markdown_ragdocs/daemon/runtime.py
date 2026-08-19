@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
 from mcp_markdown_ragdocs.context import ApplicationContext
-from mcp_markdown_ragdocs.coordination.queue import get_huey
+from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.daemon import RuntimePaths, read_daemon_metadata
@@ -46,7 +46,8 @@ def create_daemon_runtime(
         index_path_override=runtime_paths.root,
         global_runtime=True,
     )
-    huey = get_huey(runtime_paths.queue_db_path)
+    queue_runtime = build_queue_runtime(runtime_paths.queue_db_path)
+    huey = queue_runtime.huey
     task_lease_store = TaskLeaseStore(runtime_paths.queue_db_path)
     work_intent_store = WorkIntentStore(runtime_paths.queue_db_path)
     register_tasks(
@@ -68,7 +69,7 @@ def create_daemon_runtime(
                 ctx=ctx,
                 coordinator=coordinator,
                 runtime_root=runtime_paths.root,
-                queue_db_path=runtime_paths.queue_db_path,
+                queue_runtime=queue_runtime,
                 socket_path=runtime_paths.socket_path,
                 index_db_path=runtime_paths.index_db_path,
                 get_worker_running=lambda: worker.is_running,
@@ -83,6 +84,7 @@ def create_daemon_runtime(
                         lock_path=runtime_paths.lock_path,
                         socket_path=runtime_paths.socket_path,
                     ),
+                    queue_runtime,
                     worker_running,
                     worker_pid,
                     lifecycle,

@@ -12,6 +12,7 @@ from searchkernel.domain import Record
 
 from searchkernel.api import TaskSubmissionResult
 
+from mcp_markdown_ragdocs.coordination.queue import QueueRuntime
 from mcp_markdown_ragdocs.daemon.request_router import (
     DaemonRequestRouterDependencies,
     build_daemon_request_handler,
@@ -124,7 +125,7 @@ def _build_dependencies(
         ctx=ctx,
         coordinator=coordinator,
         runtime_root=Path("/runtime"),
-        queue_db_path=Path("/runtime/queue.db"),
+        queue_runtime=QueueRuntime(huey=object(), db_path=Path("/runtime/queue.db")),
         socket_path=Path("/runtime/daemon.sock"),
         index_db_path=Path("/runtime/index.db"),
         get_worker_running=lambda: True,
@@ -539,17 +540,10 @@ async def test_admin_tasks_purge_route_uses_huey_storage_helpers(
     coordinator = _FakeCoordinator()
     handler = build_daemon_request_handler(_build_dependencies(ctx, coordinator))
 
-    sentinel_huey = object()
     observed: dict[str, object] = {}
-
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.daemon.request_router.get_huey",
-        lambda queue_db_path: observed.setdefault("queue_db_path", queue_db_path)
-        or sentinel_huey,
-    )
-    monkeypatch.setattr(
-        "mcp_markdown_ragdocs.daemon.request_router.purge_queue_state",
-        lambda huey, *, state, worker_running, backpressure_limit: SimpleNamespace(
+    def _purge(huey, *, state, worker_running, backpressure_limit):
+        observed["huey"] = huey
+        return SimpleNamespace(
             to_dict=lambda: {
                 "purged_state": state,
                 "purged_counts": {
@@ -569,7 +563,11 @@ async def test_admin_tasks_purge_route_uses_huey_storage_helpers(
                 "pending_tasks": [],
                 "scheduled_tasks": [],
             }
-        ),
+        )
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.request_router.purge_queue_state",
+        _purge,
     )
 
     payload = await handler(
@@ -577,7 +575,7 @@ async def test_admin_tasks_purge_route_uses_huey_storage_helpers(
         {"state": "scheduled", "confirm": True},
     )
 
-    assert observed["queue_db_path"] == Path("/runtime/queue.db")
+    assert observed["huey"] is not None
     assert payload == {
         "status": "ok",
         "queue_db_path": "/runtime/queue.db",

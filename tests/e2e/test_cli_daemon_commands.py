@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar, cast
 
 import pytest
@@ -475,9 +476,9 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
         observed["create_kwargs"] = kwargs
         return fake_ctx
 
-    def _fake_get_huey(path):
+    def _fake_build_queue_runtime(path):
         observed["queue_path"] = path
-        return fake_huey
+        return SimpleNamespace(huey=fake_huey, db_path=path)
 
     def _fake_register_tasks(
         huey,
@@ -501,7 +502,7 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
         )
 
     monkeypatch.setattr("mcp_markdown_ragdocs.daemon.runtime.ApplicationContext.create", _fake_create)
-    monkeypatch.setattr("mcp_markdown_ragdocs.daemon.runtime.get_huey", _fake_get_huey)
+    monkeypatch.setattr("mcp_markdown_ragdocs.daemon.runtime.build_queue_runtime", _fake_build_queue_runtime)
     monkeypatch.setattr("mcp_markdown_ragdocs.daemon.runtime.register_tasks", _fake_register_tasks)
     monkeypatch.setattr("mcp_markdown_ragdocs.daemon.runtime.HueyWorkerProcess", _FakeWorker)
     monkeypatch.setattr("mcp_markdown_ragdocs.daemon.runtime.DaemonHealthServer", _FakeHealthServer)

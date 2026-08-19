@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from mcp_markdown_ragdocs.coordination.queue import get_huey
+from mcp_markdown_ragdocs.coordination.queue import QueueRuntime
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
 from mcp_markdown_ragdocs.daemon.producer import (
     producer_diagnostics,
@@ -187,32 +187,32 @@ def _build_index_stats_payload(ctx: Any) -> dict[str, object]:
 
 def _build_queue_status_payload(
     *,
-    queue_path: Path,
+    queue_runtime: QueueRuntime,
     worker_running: bool,
     backpressure_limit: int | None = None,
 ) -> dict[str, object]:
-    huey = get_huey(queue_path)
     stats = get_queue_stats(
-        huey,
+        queue_runtime.huey,
         worker_running=worker_running,
         backpressure_limit=backpressure_limit,
     )
     payload = stats.to_dict()
-    payload["queue_db_path"] = str(queue_path)
-    payload["git_refresh_progress"] = list_progress(queue_path.parent)
+    payload["queue_db_path"] = str(queue_runtime.db_path)
+    payload["git_refresh_progress"] = list_progress(queue_runtime.db_path.parent)
     return payload
 
 
 def _build_admin_overview_payload(
     ctx: ApplicationContext,
     runtime_paths: RuntimePaths,
+    queue_runtime: QueueRuntime,
     worker_running: bool,
     worker_pid: int | None,
     lifecycle: str,
 ) -> dict[str, object]:
     index_payload = _build_index_stats_payload(ctx)
     task_payload = _build_queue_status_payload(
-        queue_path=runtime_paths.queue_db_path,
+        queue_runtime=queue_runtime,
         worker_running=worker_running,
         backpressure_limit=ctx.config.indexing.task_backpressure_limit,
     )

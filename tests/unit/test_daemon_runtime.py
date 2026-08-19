@@ -35,7 +35,10 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
         "mcp_markdown_ragdocs.daemon.runtime.ApplicationContext.create",
         lambda **kwargs: calls.update({"create_kwargs": kwargs}) or fake_ctx,
     )
-    monkeypatch.setattr("mcp_markdown_ragdocs.daemon.runtime.get_huey", lambda queue_db_path: "huey")
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.runtime.build_queue_runtime",
+        lambda queue_db_path: SimpleNamespace(huey="huey", db_path=queue_db_path),
+    )
     monkeypatch.setattr(
         "mcp_markdown_ragdocs.daemon.runtime.register_tasks",
         lambda huey, index_manager, task_lease_store, work_intent_store, **kwargs: calls.setdefault(

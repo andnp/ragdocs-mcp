@@ -94,7 +94,7 @@ from mcp_markdown_ragdocs.cli_utils.validators import (
 )
 from mcp_markdown_ragdocs.config import load_config
 from mcp_markdown_ragdocs.context import ApplicationContext
-from mcp_markdown_ragdocs.coordination.queue import get_huey
+from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.daemon import RuntimePaths
@@ -216,7 +216,8 @@ async def _run_worker_forever_async(
     except Exception:
         logger.info("Worker runtime starting with fresh indices", exc_info=True)
 
-    huey = get_huey(queue_db)
+    queue_runtime = build_queue_runtime(queue_db)
+    huey = queue_runtime.huey
     task_lease_store = TaskLeaseStore(queue_db)
     work_intent_store = WorkIntentStore(queue_db)
     register_tasks(

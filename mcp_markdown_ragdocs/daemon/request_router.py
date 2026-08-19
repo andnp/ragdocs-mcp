@@ -11,7 +11,7 @@ from uuid import uuid4
 from searchkernel.api import Record
 
 from mcp_markdown_ragdocs.app.search_request import build_search_query, search_top_k
-from mcp_markdown_ragdocs.coordination.queue import get_huey
+from mcp_markdown_ragdocs.coordination.queue import QueueRuntime
 from mcp_markdown_ragdocs.daemon.mcp_requests import (
     build_mcp_tools_payload,
     handle_mcp_tool_call,
@@ -146,7 +146,7 @@ class DaemonRequestRouterDependencies:
     ctx: object
     coordinator: object
     runtime_root: Path
-    queue_db_path: Path
+    queue_runtime: QueueRuntime
     socket_path: Path
     index_db_path: Path
     get_worker_running: Callable[[], bool]
@@ -363,7 +363,7 @@ async def _handle_admin_request(
         await ctx.ensure_fresh_indices()
         index_payload = dependencies.build_index_stats_payload(ctx)
         queue_payload = dependencies.build_queue_status_payload(
-            queue_path=dependencies.queue_db_path,
+            queue_runtime=dependencies.queue_runtime,
             worker_running=dependencies.get_worker_running(),
             backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         )
@@ -389,7 +389,7 @@ async def _handle_admin_request(
         return index_payload
     if path in {"/api/admin/tasks", "/api/admin/queue-status"}:
         return dependencies.build_queue_status_payload(
-            queue_path=dependencies.queue_db_path,
+            queue_runtime=dependencies.queue_runtime,
             worker_running=dependencies.get_worker_running(),
             backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         )
@@ -410,14 +410,14 @@ async def _handle_admin_request(
             }
 
         purge_result = purge_queue_state(
-            get_huey(dependencies.queue_db_path),
+            dependencies.queue_runtime.huey,
             state=state,
             worker_running=dependencies.get_worker_running(),
             backpressure_limit=ctx.config.indexing.task_backpressure_limit,
         )
         response = purge_result.to_dict()
         response["status"] = "ok"
-        response["queue_db_path"] = str(dependencies.queue_db_path)
+        response["queue_db_path"] = str(dependencies.queue_runtime.db_path)
         return response
     if path == "/api/admin/rebuild/status":
         return read_rebuild_status(dependencies.runtime_root)
