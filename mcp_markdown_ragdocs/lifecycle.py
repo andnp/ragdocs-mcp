@@ -468,7 +468,7 @@ class LifecycleCoordinator:
             return
 
         while True:
-            await asyncio.sleep(leader_election._heartbeat_interval)
+            await asyncio.sleep(getattr(leader_election, "_heartbeat_interval", 5.0))
 
             if self._state in (
                 LifecycleState.SHUTTING_DOWN,
