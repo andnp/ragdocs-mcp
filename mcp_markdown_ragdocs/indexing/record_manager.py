@@ -433,11 +433,11 @@ class RecordIndexManager:
             )
         )
 
-    def index_record(self, record: Record) -> bool:
+    async def async_index_record(self, record: Record) -> bool:
         if record.source_kind == GDRIVE_SOURCE_KIND:
-            return self._index_gdrive_records((record,))
+            return await self._async_index_gdrive_records((record,))
         try:
-            receipt = _run_async(self.ingestor.index_records([record]))
+            receipt = await self.ingestor.index_records([record])
             if receipt.failed:
                 return False
             self._source_records.setdefault(record.source_id, []).append(
@@ -450,10 +450,13 @@ class RecordIndexManager:
             logger.exception("Failed to index record %s", record.storage_key)
             return False
 
-    def index_records(self, records: Sequence[Record]) -> bool:
+    def index_record(self, record: Record) -> bool:
+        return _run_async(self.async_index_record(record))
+
+    async def async_index_records(self, records: Sequence[Record]) -> bool:
         if not records:
             try:
-                receipt = _run_async(self.ingestor.index_records(records))
+                receipt = await self.ingestor.index_records(records)
                 if receipt.failed:
                     return False
                 self._save_source_map()
@@ -470,7 +473,7 @@ class RecordIndexManager:
         )
         if generic_records:
             try:
-                receipt = _run_async(self.ingestor.index_records(generic_records))
+                receipt = await self.ingestor.index_records(generic_records)
                 if receipt.failed:
                     return False
                 for record in generic_records:
@@ -483,12 +486,15 @@ class RecordIndexManager:
                 logger.exception("Failed to index record batch")
                 return False
         if gdrive_records:
-            return self._index_gdrive_records(gdrive_records)
+            return await self._async_index_gdrive_records(gdrive_records)
         return bool(generic_records)
 
-    def _index_gdrive_records(self, records: Sequence[Record]) -> bool:
+    def index_records(self, records: Sequence[Record]) -> bool:
+        return _run_async(self.async_index_records(records))
+
+    async def _async_index_gdrive_records(self, records: Sequence[Record]) -> bool:
         try:
-            _run_async(self._gdrive_replacement_policy.replace(records))
+            await self._gdrive_replacement_policy.replace(records)
             with self._graph_lock:
                 self._graph_full_rebuild_pending = True
             self._rebuild_graph()
@@ -498,6 +504,9 @@ class RecordIndexManager:
             logger.exception("Failed to index Google Drive record batch")
             self._failed_files.append({"path": "gdrive", "error": str(error)})
             return False
+
+    def _index_gdrive_records(self, records: Sequence[Record]) -> bool:
+        return _run_async(self._async_index_gdrive_records(records))
 
     def reconcile_git_project_attribution(
         self,
