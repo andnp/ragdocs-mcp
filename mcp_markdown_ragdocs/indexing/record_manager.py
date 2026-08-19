@@ -35,7 +35,6 @@ from searchkernel.api import (
 )
 
 from mcp_markdown_ragdocs.config import Config
-from mcp_markdown_ragdocs.git.repository import iter_commit_hashes_after_timestamp
 from mcp_markdown_ragdocs.gdrive.replacement import (
     GDriveReplacementJournal,
     REPLACEMENT_JOURNAL_FILENAME,
@@ -51,6 +50,7 @@ from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_grap
 from mcp_markdown_ragdocs.indexing.graph_rebuild import DebouncedGraphRebuilder
 from mcp_markdown_ragdocs.indexing.record_ports import (
     JsonSourceMapStore,
+    CommitHistoryPort,
     DocumentPlanner,
     DocumentWriter,
     GraphCapability,
@@ -177,8 +177,16 @@ class RecordIndexManager:
         source_map_store: SourceMapStore | None = None,
         document_planner: DocumentPlanner | None = None,
         document_writer: DocumentWriter | None = None,
+        commit_history: CommitHistoryPort | None = None,
     ) -> None:
         self._config = config
+        if commit_history is None:
+            from mcp_markdown_ragdocs.git.repository import (
+                iter_commit_hashes_after_timestamp,
+            )
+
+            commit_history = iter_commit_hashes_after_timestamp
+        self._commit_history: CommitHistoryPort = commit_history
         self.kernel = kernel
         self._async_bridge = _AsyncLoopBridge()
         self._index_storage = storage or LocalRecordStorage(kernel)
@@ -522,7 +530,7 @@ class RecordIndexManager:
 
         commit_ids = {
             f"git:{commit_hash}"
-            for commit_hash in iter_commit_hashes_after_timestamp(git_dir)
+            for commit_hash in self._commit_history(git_dir)
         }
         updates: list[Record] = []
         replacements: dict[str, str] = {}
