@@ -135,7 +135,7 @@ class TestCompositionRootNoGlobalMutation:
 
         assert context.index_manager.content_sources == (source,)
         assert context.index_manager.get_content_source("gdrive") is source
-        assert context.index_manager.kernel.backend.db_manager is context.db_manager
+        assert context.index_manager.storage.database_manager is context.db_manager
 
     def test_runtime_factory_returns_one_shared_record_runtime(self, monkeypatch, tmp_path):
         """
@@ -153,7 +153,7 @@ class TestCompositionRootNoGlobalMutation:
         )
 
         assert components.index_manager.kernel is components.kernel
-        assert components.db_manager is components.kernel.backend.db_manager
+        assert components.db_manager is components.index_manager.storage.database_manager
         assert components.paths.index_path == index_path
 
     def test_context_index_manager_uses_application_port(self, monkeypatch, tmp_path):

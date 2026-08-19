@@ -51,7 +51,7 @@ def manager(config):
 
 def _search_records(manager, query):
     return [
-        manager.kernel.backend.hydrate_record(hit.storage_key)
+        manager.storage.hydrate_record(hit.storage_key)
         for hit in manager.keyword.search(query, 5)
     ]
 

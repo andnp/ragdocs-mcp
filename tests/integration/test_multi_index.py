@@ -448,7 +448,7 @@ def test_index_document_preserves_heading_retrieval_fields(tmp_path):
     assert manager.index_document(str(document))
 
     records = [
-        manager.kernel.backend.hydrate_record(key)
+        manager.storage.hydrate_record(key)
         for key in manager._source_records[manager.prepare_document(str(document)).document.id]
     ]
     authentication = next(

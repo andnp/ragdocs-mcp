@@ -65,8 +65,8 @@ def test_drive_replacement_deletes_stale_chunks_and_deduplicates_source_map(
     assert record_manager.index_records(first) is True
     assert record_manager.index_records(replacement) is True
 
-    assert record_manager.kernel.backend.hydrate_record(first[1].storage_key) is None
-    assert record_manager.kernel.backend.hydrate_record(replacement[0].storage_key) is not None
+    assert record_manager.storage.hydrate_record(first[1].storage_key) is None
+    assert record_manager.storage.hydrate_record(replacement[0].storage_key) is not None
     source_key = canonical_gdrive_source_key(replacement[0])
     source_map = json.loads(
         (Path(record_manager.index_path) / "record-sources.json").read_text()
@@ -104,7 +104,7 @@ def test_drive_replacement_removes_stale_records_from_every_search_surface(
         for neighbor in record_manager.graph.neighbors(stale.identity)
     )
 
-    monkeypatch.setattr(record_manager.kernel.vector_store, "delete", lambda _keys: None)
+    monkeypatch.setattr(record_manager.vector, "delete", lambda _keys: None)
     assert record_manager.index_records((replacement,)) is True
 
     assert record_manager.storage.hydrate_record(stale.storage_key) is None
@@ -176,7 +176,7 @@ def test_drive_tombstone_removes_the_source_from_search(record_manager) -> None:
     assert record_manager.index_record(active) is True
     assert record_manager.index_record(tombstone) is True
 
-    assert record_manager.kernel.backend.hydrate_record(active.storage_key) is None
+    assert record_manager.storage.hydrate_record(active.storage_key) is None
     assert record_manager.count_records("gdrive") == 0
 
 
@@ -190,7 +190,7 @@ def test_drive_tombstone_keeps_a_source_visible_in_remaining_scope(record_manage
     assert record_manager.index_record(active) is True
     assert record_manager.index_record(tombstone) is True
 
-    hydrated = record_manager.kernel.backend.hydrate_record(active.storage_key)
+    hydrated = record_manager.storage.hydrate_record(active.storage_key)
     assert hydrated is not None
     assert hydrated.metadata["scope_memberships"] == ["drive-b"]
 
@@ -230,8 +230,8 @@ def test_indexed_drive_replacement_recovers_after_manager_restart(
         deterministic_embedding_provider,
     )
 
-    assert restarted.kernel.backend.hydrate_record(old.storage_key) is None
-    assert restarted.kernel.backend.hydrate_record(new.storage_key) is not None
+    assert restarted.storage.hydrate_record(old.storage_key) is None
+    assert restarted.storage.hydrate_record(new.storage_key) is not None
     assert GDriveReplacementJournal(
         Path(record_manager.index_path) / "gdrive-replacements.json"
     ).load() == ()
@@ -271,8 +271,8 @@ def test_prepared_drive_replacement_discards_partial_index_write_after_restart(
         deterministic_embedding_provider,
     )
 
-    assert restarted.kernel.backend.hydrate_record(old.storage_key) is not None
-    assert restarted.kernel.backend.hydrate_record(new.storage_key) is None
+    assert restarted.storage.hydrate_record(old.storage_key) is not None
+    assert restarted.storage.hydrate_record(new.storage_key) is None
     assert journal.load() == ()
 
 

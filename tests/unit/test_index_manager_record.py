@@ -22,7 +22,7 @@ def test_index_record_adds_record_to_canonical_stores(record_manager) -> None:
 
     assert record_manager.index_record(record) is True
 
-    hydrated = record_manager.kernel.backend.hydrate_record(record.storage_key)
+    hydrated = record_manager.storage.hydrate_record(record.storage_key)
     assert hydrated is not None
     assert hydrated.source_kind == "git_commit"
     assert record_manager.keyword.search("login", 5)
@@ -41,6 +41,6 @@ def test_index_record_replaces_changed_record_content(record_manager) -> None:
     assert record_manager.index_record(first) is True
     assert record_manager.index_record(updated) is True
 
-    hydrated = record_manager.kernel.backend.hydrate_record(updated.storage_key)
+    hydrated = record_manager.storage.hydrate_record(updated.storage_key)
     assert hydrated is not None
     assert hydrated.body == "Updated message."

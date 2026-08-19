@@ -16,7 +16,7 @@ def test_reindexing_changed_markdown_replaces_stale_records(record_manager) -> N
 
     new_keys = set(record_manager._source_records[old_id])
     assert new_keys == old_keys
-    hydrated = [record_manager.kernel.backend.hydrate_record(key) for key in new_keys]
+    hydrated = [record_manager.storage.hydrate_record(key) for key in new_keys]
     assert [record.body for record in hydrated if record is not None] == [
         "Guide\n\nUpdated body"
     ]

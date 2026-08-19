@@ -29,7 +29,7 @@ def test_record_manager_indexes_and_hydrates_canonical_records(record_manager) -
 
     assert record_manager.index_record(record) is True
 
-    hydrated = record_manager.kernel.backend.hydrate_record(record.storage_key)
+    hydrated = record_manager.storage.hydrate_record(record.storage_key)
     assert hydrated is not None
     assert hydrated.body == record.body
     assert record_manager.keyword.search("canonical", 5)
