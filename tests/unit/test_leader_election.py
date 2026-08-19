@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -79,6 +80,18 @@ def _fake_ctx() -> Any:
 
 
 class TestLeaderElection:
+    def test_concurrent_acquisition_has_one_winner(self, db: DatabaseManager) -> None:
+        """Concurrent acquisition permits exactly one active leader."""
+        elections = [
+            LeaderElection(db, instance_id="instance-1"),
+            LeaderElection(db, instance_id="instance-2"),
+        ]
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda election: election.try_acquire(), elections))
+
+        assert sorted(results) == [False, True]
+
     def test_first_instance_becomes_leader(self, db: DatabaseManager) -> None:
         """First instance to try_acquire becomes leader."""
         election = LeaderElection(db, instance_id="instance-1")
@@ -142,6 +155,37 @@ class TestLeaderElection:
         second = LeaderElection(db, instance_id="instance-2")
         assert second.try_acquire() is True
         assert second.is_leader is True
+
+    def test_release_does_not_delete_replacement_leader(
+        self,
+        db: DatabaseManager,
+    ) -> None:
+        """A stale release cannot remove a replacement leader's lease."""
+        first = LeaderElection(db, instance_id="instance-1")
+        second = LeaderElection(db, instance_id="instance-2")
+        assert first.try_acquire() is True
+
+        conn = db.get_connection()
+        replacement = json.dumps(
+            {
+                "instance_id": second.instance_id,
+                "heartbeat": time.time(),
+                "acquired_at": time.time(),
+            }
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
+            ("leader_id", replacement),
+        )
+        conn.commit()
+
+        first.release()
+
+        row = conn.execute(
+            "SELECT value FROM system_state WHERE key = 'leader_id'"
+        ).fetchone()
+        assert row is not None
+        assert json.loads(row[0])["instance_id"] == second.instance_id
 
     def test_leader_release_is_idempotent(self, db: DatabaseManager) -> None:
         """Releasing when not leader is a no-op."""
