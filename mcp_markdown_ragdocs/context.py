@@ -161,6 +161,9 @@ class ApplicationContext:
     _active_model_identity: tuple[str, int] | None = field(
         default=None, repr=False
     )
+    bootstrap_coordinator: BootstrapCoordinator | None = field(
+        default=None, repr=False
+    )
 
     @classmethod
     def create(
@@ -209,6 +212,7 @@ class ApplicationContext:
             manager=components.index_manager,
             search=components.search_use_case,
         )
+        context.bootstrap_coordinator = BootstrapCoordinator(context)
         return context
 
     @property
@@ -221,11 +225,10 @@ class ApplicationContext:
         self._watcher_lifecycle = WatcherLifecycle(watcher=value)
 
     def _get_bootstrap_coordinator(self) -> BootstrapCoordinator:
-        coordinator = self.__dict__.get("_bootstrap_coordinator")
-        if isinstance(coordinator, BootstrapCoordinator):
-            return coordinator
-        coordinator = BootstrapCoordinator(self)
-        self.__dict__["_bootstrap_coordinator"] = coordinator
+        coordinator = getattr(self, "bootstrap_coordinator", None)
+        if coordinator is None:
+            coordinator = BootstrapCoordinator(self)
+            self.bootstrap_coordinator = coordinator
         return coordinator
 
     def _get_manifest_coordinator(self) -> ManifestCoordinator:
