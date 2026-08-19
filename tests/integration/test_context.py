@@ -65,6 +65,17 @@ async def test_ensure_ready_times_out_before_bootstrap(context_with_config):
         await context_with_config.ensure_ready(timeout=0)
 
 
+@pytest.mark.asyncio
+async def test_start_and_ensure_ready_preserve_context_facade(context_with_config):
+    """The context façade still owns startup and public readiness behavior."""
+    await context_with_config.start(background_index=False)
+
+    await context_with_config.ensure_ready(timeout=1)
+
+    assert context_with_config.is_ready()
+    await context_with_config.stop()
+
+
 def test_create_with_watcher_enabled(test_config, monkeypatch):
     monkeypatch.setattr("mcp_markdown_ragdocs.context.load_config", lambda: test_config)
     ctx = ApplicationContext.create(
