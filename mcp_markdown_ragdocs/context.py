@@ -15,16 +15,12 @@ from searchkernel.api import (
     SearchAvailability,
     build_file_stamps,
     build_indexed_files_map,
-    can_refresh_loaded_indices,
-    can_serve_queries,
     derive_loaded_index_state_snapshot,
     discover_files,
     discover_files_multi_root,
     load_manifest,
     save_manifest,
     reconcile_indices,
-    semantic_tier_from_progress,
-    is_fully_ready as runtime_is_fully_ready,
 )
 
 from mcp_markdown_ragdocs.config import (
@@ -843,57 +839,12 @@ class ApplicationContext:
         return None
 
     def is_ready(self) -> bool:
-        """Check if initialization is complete and indices are ready.
-
-        Returns True when the active indices are queryable.
-
-        On first-ever startup, queries stay blocked until initialization
-        finishes. On later background rebuilds, queries are allowed once the
-        underlying indices are queryable, even if indexing is still ongoing.
-        """
-        # Derive semantic tier from actual indexing progress
-        # In main's synchronous architecture, indexed_count reflects documents
-        # that have completed the full pipeline including embeddings
-        semantic_tier = semantic_tier_from_progress(
-            self._index_state.indexed_count, self._index_state.total_count
-        )
-        availability = getattr(self, "_availability", None) or SearchAvailability(
-            lexical="available" if self.index_manager.is_ready() else "unavailable",
-            graph="available" if self.index_manager.is_ready() else "unavailable",
-            semantic_coarse=semantic_tier,
-            semantic_fine=semantic_tier,
-        )
-        return can_serve_queries(
-            init_error=self._init_error,
-            ready_event_set=self._ready_event.is_set(),
-            is_virgin_startup=self._is_virgin_startup,
-            indices_queryable=self.index_manager.is_ready(),
-            availability=availability,
-        )
+        """Check whether the active indices can serve queries."""
+        return self._get_bootstrap_coordinator().is_ready()
 
     def is_fully_ready(self) -> bool:
-        """Check if initialization succeeded completely.
-
-        Returns True only when all documents were indexed successfully.
-        Use is_ready() if partial results are acceptable.
-        """
-        # Derive semantic tier from actual indexing progress
-        semantic_tier = semantic_tier_from_progress(
-            self._index_state.indexed_count, self._index_state.total_count
-        )
-        availability = getattr(self, "_availability", None) or SearchAvailability(
-            lexical="available" if self.index_manager.is_ready() else "unavailable",
-            graph="available" if self.index_manager.is_ready() else "unavailable",
-            semantic_coarse=semantic_tier,
-            semantic_fine=semantic_tier,
-        )
-        return runtime_is_fully_ready(
-            init_error=self._init_error,
-            ready_event_set=self._ready_event.is_set(),
-            index_status=self._index_state.status,
-            indices_queryable=self.index_manager.is_ready(),
-            availability=availability,
-        )
+        """Check whether initialization completed successfully."""
+        return self._get_bootstrap_coordinator().is_fully_ready()
 
     def get_index_state(self) -> IndexState:
         """Get current index state for health checks."""
@@ -917,89 +868,13 @@ class ApplicationContext:
 
     async def ensure_ready(self, timeout: float = 60.0) -> None:
         """Wait for initialization to complete. Call before first query."""
-        try:
-            await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
-        except TimeoutError:
-            raise RuntimeError(
-                f"Index initialization timed out after {timeout}s"
-            ) from None
-
-        if self._init_error is not None:
-            raise RuntimeError(
-                f"Index initialization failed: {self._init_error}"
-            ) from self._init_error
+        await self._get_bootstrap_coordinator().ensure_ready(timeout=timeout)
 
     async def ensure_fresh_indices(self) -> None:
-        if not can_refresh_loaded_indices(
-            ready_event_set=self._ready_event.is_set(),
-            init_error=self._init_error,
-        ):
-            return
-
-        current_version = await asyncio.to_thread(self._compute_index_state_version)
-        if current_version <= self._loaded_index_state_version:
-            return
-
-        async with self._freshness_lock:
-            await self._refresh_active_model_from_manifest()
-            current_version = await asyncio.to_thread(self._compute_index_state_version)
-            if current_version <= self._loaded_index_state_version:
-                return
-
-            try:
-                await asyncio.to_thread(self.index_manager.load)
-            except TimeoutError:
-                logger.warning(
-                    "Freshness reload timed out acquiring shared index lock; "
-                    "continuing to serve existing in-memory indices"
-                )
-                return
-            self._loaded_index_state_version = current_version
-            self._refresh_index_state_from_loaded_indices()
-
-    async def _refresh_active_model_from_manifest(self) -> None:
-        # Model identity is fixed at composition time for the daemon-backed
-        # provider; a model migration requires rebuilding this kernel.
-        if hasattr(self.index_manager, "kernel"):
-            return
-        manifest = await asyncio.to_thread(load_manifest, self.index_path)
-        if manifest is None or manifest.active_model is None:
-            return
-
-        namespace = manifest.active_model.namespace
-        if namespace.identity == self._active_model_identity:
-            return
-        if self.config.store.backend != "pgvector":
-            raise RuntimeError(
-                "active model metadata changed for an unsupported legacy index"
-            )
-
-        self.config.llm.embedding_model = namespace.model_name
-        self.config.embedding.truncate_dim = namespace.dim
-        vector = await asyncio.to_thread(
-            self._build_vector_store,
-            self.config,
-            namespace.model_name,
-        )
-        self.index_manager.replace_vector_store(vector)
-        self._active_model_identity = namespace.identity
-        self._loaded_index_state_version = self._compute_index_state_version()
+        await self._get_bootstrap_coordinator().ensure_fresh_indices()
 
     def schedule_freshness_refresh(self) -> bool:
-        if not can_refresh_loaded_indices(
-            ready_event_set=self._ready_event.is_set(),
-            init_error=self._init_error,
-        ):
-            return False
-
-        current_task = getattr(self, "_freshness_task", None)
-        if current_task is not None and not current_task.done():
-            return False
-
-        task = asyncio.create_task(self._run_freshness_refresh())
-        self._freshness_task = task
-        task.add_done_callback(self._clear_freshness_task)
-        return True
+        return self._get_bootstrap_coordinator().schedule_freshness_refresh()
 
     async def _run_freshness_refresh(self) -> None:
         try:

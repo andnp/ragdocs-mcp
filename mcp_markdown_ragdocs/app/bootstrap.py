@@ -201,7 +201,7 @@ class BootstrapCoordinator:
             host._index_state.indexed_count,
             host._index_state.total_count,
         )
-        availability = host._availability or SearchAvailability(
+        availability = getattr(host, "_availability", None) or SearchAvailability(
             lexical="available" if host.index_manager.is_ready() else "unavailable",
             graph="available" if host.index_manager.is_ready() else "unavailable",
             semantic_coarse=semantic_tier,
@@ -221,7 +221,7 @@ class BootstrapCoordinator:
             host._index_state.indexed_count,
             host._index_state.total_count,
         )
-        availability = host._availability or SearchAvailability(
+        availability = getattr(host, "_availability", None) or SearchAvailability(
             lexical="available" if host.index_manager.is_ready() else "unavailable",
             graph="available" if host.index_manager.is_ready() else "unavailable",
             semantic_coarse=semantic_tier,
