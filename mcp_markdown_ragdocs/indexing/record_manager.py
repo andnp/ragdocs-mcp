@@ -28,8 +28,6 @@ from searchkernel.api import (
     OllamaEmbeddingProvider,
     Record,
     RecordIdentity,
-    SemanticRecordIngestor,
-    SQLiteEmbeddingCache,
     Vector,
     compute_doc_id,
     compute_doc_id_multi_root,
@@ -225,17 +223,10 @@ class RecordIndexManager:
             Path(config.indexing.index_path) / REPLACEMENT_JOURNAL_FILENAME,
             self._gdrive_state_repository,
         )
-        self._embedding_cache = SQLiteEmbeddingCache(
-            Path(config.indexing.index_path) / "embedding-cache.db",
-            encoder_namespace=embedding_provider.model_name,
-            dimension=embedding_provider.dim,
-        )
-        self.ingestor = SemanticRecordIngestor(
-            embedding_provider=embedding_provider,
-            keyword_store=kernel.keyword_store,
-            vector_store=kernel.vector_store,
-            embedding_cache=self._embedding_cache,
-            embedding_batch_size=max(1, config.embedding.batch_size),
+        self.ingestor = self.storage.create_ingestor(
+            embedding_provider,
+            cache_path=Path(config.indexing.index_path) / "embedding-cache.db",
+            batch_size=config.embedding.batch_size,
         )
         self._document_writer = document_writer or SemanticDocumentWriter(
             self.ingestor,
@@ -258,11 +249,11 @@ class RecordIndexManager:
     @property
     def vector(self):
         """Compatibility view for callers that only need semantic operations."""
-        return self.kernel.vector_store
+        return self.storage.vector_store
 
     @property
     def keyword(self):
-        return self.kernel.keyword_store
+        return self.storage.keyword_store
 
     @property
     def graph(self) -> GraphCapability:
