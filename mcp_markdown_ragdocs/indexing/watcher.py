@@ -21,6 +21,9 @@ from searchkernel.api import (
     walk_dirs_with_files,
 )
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager as IndexManager
+from mcp_markdown_ragdocs.coordination.task_submission import (
+    TaskSubmissionPort,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +73,7 @@ class FileWatcher:
         use_tasks: bool = False,
         task_backpressure_limit: int | None = None,
         on_overflow_detected: Callable[[], Awaitable[None]] | None = None,
+        task_submission: TaskSubmissionPort | None = None,
     ):
         self._documents_path = Path(documents_path)
         self._documents_paths = (
@@ -94,6 +98,7 @@ class FileWatcher:
         self._watched_dirs: set[str] = set()
         self._use_tasks = use_tasks
         self._task_backpressure_limit = task_backpressure_limit
+        self._task_submission = task_submission
         self._events_received = 0
         self._events_processed = 0
         self._debounce_overwrites = 0
@@ -391,13 +396,20 @@ class FileWatcher:
                 logger.error(f"Failed to process {file_path}: {e}")
 
         if self._use_tasks:
-            from mcp_markdown_ragdocs.indexing.tasks import (
-                submit_index_request_batch,
-                submit_remove_request_batch,
-            )
+            if self._task_submission is None:
+                from mcp_markdown_ragdocs.indexing.tasks import (
+                    submit_index_request_batch,
+                    submit_remove_request_batch,
+                )
+
+                submit_index = submit_index_request_batch
+                submit_remove = submit_remove_request_batch
+            else:
+                submit_index = self._task_submission.submit_index_request_batch
+                submit_remove = self._task_submission.submit_remove_request_batch
 
             if task_index_paths:
-                submission = submit_index_request_batch(task_index_paths)
+                submission = submit_index(task_index_paths)
                 if not submission.queue_available:
                     direct_index_paths.extend(list(dict.fromkeys(task_index_paths)))
                 else:
@@ -410,7 +422,7 @@ class FileWatcher:
                         deferred_events[file_path] = events[file_path]
 
             if task_remove_doc_ids:
-                submission = submit_remove_request_batch(task_remove_doc_ids)
+                submission = submit_remove(task_remove_doc_ids)
                 if not submission.queue_available:
                     direct_remove_doc_ids.extend(list(dict.fromkeys(task_remove_doc_ids)))
                 else:

@@ -10,6 +10,7 @@ import pytest
 from searchkernel.indexing.discovery import is_excluded_dir, walk_included_dirs
 
 import mcp_markdown_ragdocs.indexing.tasks as tasks_mod
+from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.indexing.watcher import (
     MAX_QUEUE_SIZE,
     FileWatcher,
@@ -694,23 +695,24 @@ class TestFileWatcherTaskMode:
     ):
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
+        submission = MagicMock(spec=TaskSubmissionPort)
         watcher = FileWatcher(
             documents_path=str(docs_path),
             index_manager=mock_index_manager,
             use_tasks=True,
+            task_submission=submission,
         )
 
-        with patch(
-            "mcp_markdown_ragdocs.indexing.tasks.submit_index_request_batch",
-            return_value=tasks_mod.TaskBatchSubmissionResult(
-                queue_available=True,
-                requested_unique_count=1,
-                enqueued_count=1,
-            ),
-        ) as enqueue:
-            await watcher._batch_process({str(docs_path / "note.md"): "created"})
+        submission.submit_index_request_batch.return_value = tasks_mod.TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=1,
+            enqueued_count=1,
+        )
+        await watcher._batch_process({str(docs_path / "note.md"): "created"})
 
-        enqueue.assert_called_once_with([str(docs_path / "note.md")])
+        submission.submit_index_request_batch.assert_called_once_with(
+            [str(docs_path / "note.md")]
+        )
         mock_index_manager.index_document.assert_not_called()
 
     @pytest.mark.asyncio
@@ -719,25 +721,24 @@ class TestFileWatcherTaskMode:
     ):
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
+        submission = MagicMock(spec=TaskSubmissionPort)
         watcher = FileWatcher(
             documents_path=str(docs_path),
             index_manager=mock_index_manager,
             use_tasks=True,
+            task_submission=submission,
         )
         deleted_file = docs_path / "nested" / "note.md"
         deleted_file.parent.mkdir()
 
-        with patch(
-            "mcp_markdown_ragdocs.indexing.tasks.submit_remove_request_batch",
-            return_value=tasks_mod.TaskBatchSubmissionResult(
-                queue_available=True,
-                requested_unique_count=1,
-                enqueued_count=1,
-            ),
-        ) as enqueue:
-            await watcher._batch_process({str(deleted_file): "deleted"})
+        submission.submit_remove_request_batch.return_value = tasks_mod.TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=1,
+            enqueued_count=1,
+        )
+        await watcher._batch_process({str(deleted_file): "deleted"})
 
-        enqueue.assert_called_once_with(["nested/note"])
+        submission.submit_remove_request_batch.assert_called_once_with(["nested/note"])
         mock_index_manager.remove_document.assert_not_called()
 
     @pytest.mark.asyncio
@@ -746,29 +747,28 @@ class TestFileWatcherTaskMode:
     ):
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
+        submission = MagicMock(spec=TaskSubmissionPort)
         watcher = FileWatcher(
             documents_path=str(docs_path),
             index_manager=mock_index_manager,
             use_tasks=True,
+            task_submission=submission,
         )
 
-        with patch(
-            "mcp_markdown_ragdocs.indexing.tasks.submit_index_request_batch",
-            return_value=tasks_mod.TaskBatchSubmissionResult(
-                queue_available=True,
-                requested_unique_count=3,
-                enqueued_count=1,
-                already_pending_count=1,
-                backpressured_items=(str(docs_path / "retry.md"),),
-            ),
-        ):
-            await watcher._batch_process(
-                {
-                    str(docs_path / "queued.md"): "created",
-                    str(docs_path / "pending.md"): "created",
-                    str(docs_path / "retry.md"): "created",
-                }
-            )
+        submission.submit_index_request_batch.return_value = tasks_mod.TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=3,
+            enqueued_count=1,
+            already_pending_count=1,
+            backpressured_items=(str(docs_path / "retry.md"),),
+        )
+        await watcher._batch_process(
+            {
+                str(docs_path / "queued.md"): "created",
+                str(docs_path / "pending.md"): "created",
+                str(docs_path / "retry.md"): "created",
+            }
+        )
 
         assert watcher._event_queue.get_nowait() == (
             "created",
@@ -782,21 +782,20 @@ class TestFileWatcherTaskMode:
     ):
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
+        submission = MagicMock(spec=TaskSubmissionPort)
         watcher = FileWatcher(
             documents_path=str(docs_path),
             index_manager=mock_index_manager,
             use_tasks=True,
+            task_submission=submission,
         )
 
-        with patch(
-            "mcp_markdown_ragdocs.indexing.tasks.submit_index_request_batch",
-            return_value=tasks_mod.TaskBatchSubmissionResult(
-                queue_available=False,
-                requested_unique_count=1,
-                enqueued_count=0,
-            ),
-        ):
-            await watcher._batch_process({str(docs_path / "note.md"): "created"})
+        submission.submit_index_request_batch.return_value = tasks_mod.TaskBatchSubmissionResult(
+            queue_available=False,
+            requested_unique_count=1,
+            enqueued_count=0,
+        )
+        await watcher._batch_process({str(docs_path / "note.md"): "created"})
 
         mock_index_manager.index_documents.assert_called_once_with(
             [str(docs_path / "note.md")],
@@ -810,44 +809,38 @@ class TestFileWatcherTaskMode:
     ):
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
+        submission = MagicMock(spec=TaskSubmissionPort)
         watcher = FileWatcher(
             documents_path=str(docs_path),
             index_manager=mock_index_manager,
             use_tasks=True,
+            task_submission=submission,
         )
         deleted_file = docs_path / "nested" / "old.md"
         deleted_file.parent.mkdir()
 
-        with (
-            patch(
-                "mcp_markdown_ragdocs.indexing.tasks.submit_index_request_batch",
-                return_value=tasks_mod.TaskBatchSubmissionResult(
-                    queue_available=True,
-                    requested_unique_count=2,
-                    enqueued_count=2,
-                ),
-            ) as submit_index_batch,
-            patch(
-                "mcp_markdown_ragdocs.indexing.tasks.submit_remove_request_batch",
-                return_value=tasks_mod.TaskBatchSubmissionResult(
-                    queue_available=True,
-                    requested_unique_count=1,
-                    enqueued_count=1,
-                ),
-            ) as submit_remove_batch,
-        ):
-            await watcher._batch_process(
-                {
-                    str(docs_path / "a.md"): "created",
-                    str(docs_path / "b.md"): "modified",
-                    str(deleted_file): "deleted",
-                }
-            )
+        submission.submit_index_request_batch.return_value = tasks_mod.TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=2,
+            enqueued_count=2,
+        )
+        submission.submit_remove_request_batch.return_value = tasks_mod.TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=1,
+            enqueued_count=1,
+        )
+        await watcher._batch_process(
+            {
+                str(docs_path / "a.md"): "created",
+                str(docs_path / "b.md"): "modified",
+                str(deleted_file): "deleted",
+            }
+        )
 
-        submit_index_batch.assert_called_once_with(
+        submission.submit_index_request_batch.assert_called_once_with(
             [str(docs_path / "a.md"), str(docs_path / "b.md")]
         )
-        submit_remove_batch.assert_called_once_with(["nested/old"])
+        submission.submit_remove_request_batch.assert_called_once_with(["nested/old"])
         mock_index_manager.index_documents.assert_not_called()
         mock_index_manager.remove_documents.assert_not_called()
 
@@ -857,30 +850,29 @@ class TestFileWatcherTaskMode:
     ):
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
+        submission = MagicMock(spec=TaskSubmissionPort)
         watcher = FileWatcher(
             documents_path=str(docs_path),
             index_manager=mock_index_manager,
             use_tasks=True,
+            task_submission=submission,
         )
         kept = docs_path / "nested" / "kept.md"
         retry = docs_path / "nested" / "retry.md"
         kept.parent.mkdir()
 
-        with patch(
-            "mcp_markdown_ragdocs.indexing.tasks.submit_remove_request_batch",
-            return_value=tasks_mod.TaskBatchSubmissionResult(
-                queue_available=True,
-                requested_unique_count=2,
-                enqueued_count=1,
-                backpressured_items=("nested/retry",),
-            ),
-        ):
-            await watcher._batch_process(
-                {
-                    str(kept): "deleted",
-                    str(retry): "deleted",
-                }
-            )
+        submission.submit_remove_request_batch.return_value = tasks_mod.TaskBatchSubmissionResult(
+            queue_available=True,
+            requested_unique_count=2,
+            enqueued_count=1,
+            backpressured_items=("nested/retry",),
+        )
+        await watcher._batch_process(
+            {
+                str(kept): "deleted",
+                str(retry): "deleted",
+            }
+        )
 
         assert watcher._event_queue.get_nowait() == ("deleted", str(retry))
         mock_index_manager.remove_document.assert_not_called()
