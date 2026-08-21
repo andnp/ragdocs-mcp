@@ -989,6 +989,69 @@ def queue_purge(
         sys.exit(1)
 
 
+@cli.group("records")
+def records_group():
+    """Maintain indexed records directly (bypassing normal ingestion)."""
+
+
+@records_group.command("purge")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+@click.option("--workspace", required=True, help="Workspace/project id to match.")
+@click.option(
+    "--source-kind", required=True, help="Record source_kind to match (e.g. git_commit)."
+)
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Actually delete. Without this, only a matching-record count is shown.",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output result as JSON")
+def records_purge(
+    project: str | None,
+    workspace: str,
+    source_kind: str,
+    yes: bool,
+    output_json: bool,
+):
+    """Delete records matching a workspace and source_kind.
+
+    Without --yes, reports how many records would be deleted and deletes
+    nothing.
+    """
+    try:
+        payload = _request_daemon_json(
+            "/api/admin/records/purge",
+            {
+                "workspace_id": workspace,
+                "source_kind": source_kind,
+                "confirm": yes,
+            },
+            project_override=project,
+            auto_start=False,
+            allow_error=True,
+        )
+        payload = _require_daemon_payload(payload)
+
+        if output_json:
+            click.echo(json.dumps(payload, indent=2))
+            return
+
+        if yes:
+            click.echo(f"Deleted {payload['deleted']} record(s).")
+        else:
+            click.echo(
+                f"Would delete {payload['would_delete']} record(s) "
+                f"(workspace={workspace}, source_kind={source_kind}). "
+                "Pass --yes to delete."
+            )
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
+        logger.error(f"Failed to purge records: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 @cli.command()
 @click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind to")
 @click.option(
