@@ -788,6 +788,16 @@ class ApplicationContext:
             try:
                 await asyncio.sleep(interval)
                 logger.info("Starting periodic reconciliation")
+
+                vacuum_page_limit = self.config.indexing.vacuum_page_limit
+                if vacuum_page_limit > 0:
+                    freed = await asyncio.to_thread(
+                        self.index_manager.storage.run_incremental_vacuum,
+                        vacuum_page_limit,
+                    )
+                    if freed > 0:
+                        logger.info("Periodic reconciliation: reclaimed %d page(s)", freed)
+
                 if self.use_tasks:
                     await self._enqueue_reconciliation_tasks()
                     continue
