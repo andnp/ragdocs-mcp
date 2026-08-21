@@ -99,10 +99,14 @@ class _Storage:
         del identities
         return {}
 
-    def iter_records(self) -> Iterable[Record]:
+    def iter_records(
+        self, *, source_kind: str | None = None, status: str | None = None
+    ) -> Iterable[Record]:
         return ()
 
-    def iter_identities(self) -> Iterator[RecordIdentity]:
+    def iter_identities(
+        self, *, source_kind: str | None = None, status: str | None = None
+    ) -> Iterator[RecordIdentity]:
         return iter(())
 
     def delete(self, storage_keys: Sequence[str]) -> None:

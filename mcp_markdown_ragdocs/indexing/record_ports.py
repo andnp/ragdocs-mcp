@@ -155,9 +155,19 @@ class RecordStorage(Protocol):
         identities: Sequence[RecordIdentity],
     ) -> Mapping[str, Record | None]: ...
 
-    def iter_records(self) -> Iterable[Record]: ...
+    def iter_records(
+        self,
+        *,
+        source_kind: str | None = None,
+        status: str | None = None,
+    ) -> Iterable[Record]: ...
 
-    def iter_identities(self) -> Iterator[RecordIdentity]: ...
+    def iter_identities(
+        self,
+        *,
+        source_kind: str | None = None,
+        status: str | None = None,
+    ) -> Iterator[RecordIdentity]: ...
 
     def delete(self, storage_keys: Sequence[str]) -> None: ...
 
@@ -316,14 +326,19 @@ class LocalRecordStorage:
 
     _ITER_RECORDS_BATCH_SIZE = 500
 
-    def iter_records(self) -> Iterable[Record]:
+    def iter_records(
+        self,
+        *,
+        source_kind: str | None = None,
+        status: str | None = None,
+    ) -> Iterable[Record]:
         """Stream records through the local database manager boundary.
 
         Hydrates in fixed-size batches rather than materialising the whole
         table at once, so callers can process records without holding the
         entire index (tens of thousands of rows) in memory simultaneously.
         """
-        identities = iter(self.iter_identities())
+        identities = iter(self.iter_identities(source_kind=source_kind, status=status))
         batch_size = self._ITER_RECORDS_BATCH_SIZE
         while chunk := list(islice(identities, batch_size)):
             hydrated = self.hydrate_records(chunk)
@@ -332,9 +347,16 @@ class LocalRecordStorage:
                 if record is not None:
                     yield record
 
-    def iter_identities(self) -> Iterator[RecordIdentity]:
+    def iter_identities(
+        self,
+        *,
+        source_kind: str | None = None,
+        status: str | None = None,
+    ) -> Iterator[RecordIdentity]:
         """Stream canonical identities through the application-owned catalog."""
-        yield from self._identity_catalog.iter_identities()
+        yield from self._identity_catalog.iter_identities(
+            source_kind=source_kind, status=status
+        )
 
     def tune_backend(self) -> None:
         """Apply the application's local SQLite performance settings."""
