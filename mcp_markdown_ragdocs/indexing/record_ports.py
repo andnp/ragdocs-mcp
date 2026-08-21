@@ -436,7 +436,13 @@ class SqliteSourceMapStore:
     update.
     """
 
-    def __init__(self, connection_provider: SQLiteConnectionProvider) -> None:
+    _MIGRATION_MARKER_KEY = "migrated_from_json"
+
+    def __init__(
+        self,
+        connection_provider: SQLiteConnectionProvider,
+        legacy_json_path: Path | None = None,
+    ) -> None:
         self._connection_provider = connection_provider
         connection = self._connection_provider.get_connection()
         connection.execute(
@@ -446,6 +452,56 @@ class SqliteSourceMapStore:
                 keys_json TEXT NOT NULL
             )
             """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_map_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        connection.commit()
+        if legacy_json_path is not None:
+            self._migrate_legacy_json(connection, legacy_json_path)
+
+    def _migrate_legacy_json(
+        self, connection: sqlite3.Connection, legacy_json_path: Path
+    ) -> None:
+        """Import a pre-existing record-sources.json exactly once.
+
+        Gated by a one-row marker rather than table emptiness, so a table a
+        caller has legitimately emptied (e.g. via clear_documents) is never
+        mistaken for un-migrated, and a manually restored JSON file is never
+        re-imported. The legacy file itself is left in place untouched.
+        """
+        marker = connection.execute(
+            "SELECT 1 FROM source_map_meta WHERE key = ?",
+            (self._MIGRATION_MARKER_KEY,),
+        ).fetchone()
+        if marker is not None:
+            return
+        try:
+            raw = json.loads(legacy_json_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        rows = [
+            (
+                str(doc_id),
+                json.dumps([str(key) for key in keys if isinstance(key, str)]),
+            )
+            for doc_id, keys in raw.items()
+            if isinstance(keys, list)
+        ]
+        connection.executemany(
+            "INSERT OR REPLACE INTO source_map (doc_id, keys_json) VALUES (?, ?)",
+            rows,
+        )
+        connection.execute(
+            "INSERT OR REPLACE INTO source_map_meta (key, value) VALUES (?, ?)",
+            (self._MIGRATION_MARKER_KEY, "1"),
         )
         connection.commit()
 
