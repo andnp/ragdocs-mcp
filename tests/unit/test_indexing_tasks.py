@@ -16,7 +16,13 @@ from typing import Any, cast
 
 import pytest
 from huey import SqliteHuey
-from searchkernel.api import IndexManifest, load_manifest, save_manifest
+from searchkernel.api import (
+    IndexManifest,
+    SQLiteEmbeddingCache,
+    load_manifest,
+    save_manifest,
+    semantic_input_for_record,
+)
 from searchkernel.domain import Record
 from searchkernel.indexing.bootstrap_checkpoint import (
     BootstrapCheckpoint,
@@ -127,6 +133,7 @@ class FakeIndexManager:
     """Lightweight stub that records calls."""
 
     ingestor = object()
+    storage = object()
 
     def __init__(self) -> None:
         self.indexed: list[tuple[str, bool]] = []
@@ -162,6 +169,13 @@ class FakeIndexManager:
 
     def index_record(self, record: Record) -> None:
         self.indexed_records.append(record)
+
+
+class FailingEmbeddingCache:
+    """Cache fake that exposes a failed public prune operation."""
+
+    def prune_to(self, content_hashes: object) -> int:
+        raise RuntimeError("cache unavailable")
 
 
 @pytest.fixture()
@@ -1278,6 +1292,192 @@ class TestTaskExecution:
         manifest = load_manifest(tmp_path)
         assert manifest is not None
         assert manifest.indexed_files == {"guide": "guide.md"}
+
+    def test_embedding_cache_prunes_only_after_bootstrap_completes(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        """
+        A partial task batch leaves stale vectors available for later work.
+
+        Once the authoritative bootstrap checkpoint completes, only vectors
+        for active records remain in the public embedding-cache API.
+        """
+        docs_root = tmp_path / "docs"
+        docs_root.mkdir()
+        file_path = docs_root / "guide.md"
+        file_path.write_text("# Guide")
+        save_bootstrap_checkpoint(
+            tmp_path,
+            BootstrapCheckpoint(
+                schema_version="1.0.0",
+                generation="current",
+                complete=False,
+                targets={
+                    "guide.md": BootstrapFileStamp("guide.md", mtime_ns=0, size=0),
+                    "later.md": BootstrapFileStamp("later.md", mtime_ns=0, size=0),
+                },
+                completed={},
+            ),
+        )
+        record = Record(
+            source_kind="note",
+            source_id=str(file_path),
+            title="",
+            body="live",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        cache = SQLiteEmbeddingCache(tmp_path / "embedding-cache.db", "test-model", 2)
+        live_hash = semantic_input_for_record(record, "test-model").content_hash
+        cache.put_many({live_hash: [1.0, 0.0], "stale": [0.0, 1.0]})
+        fake_manager.ingestor = SimpleNamespace(
+            embedding_cache=cache,
+            encoder_namespace="test-model",
+        )
+        fake_manager.storage = SimpleNamespace(iter_records=lambda **_: [record])
+
+        _register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=tmp_path,
+            bootstrap_documents_roots=[docs_root],
+        )
+        assert enqueue_index_batch([str(file_path)]) == 1
+        task = huey_instance.dequeue()
+        assert task is not None
+        huey_instance.execute(task)
+        assert set(cache.get_many([live_hash, "stale"])) == {live_hash, "stale"}
+
+        later = docs_root / "later.md"
+        later.write_text("# Later")
+        assert enqueue_index_batch([str(later)]) == 1
+        task = huey_instance.dequeue()
+        assert task is not None
+        huey_instance.execute(task)
+        assert set(cache.get_many([live_hash, "stale"])) == {live_hash}
+
+        cache.put_many({"stale": [0.0, 1.0]})
+        ordinary = docs_root / "ordinary.md"
+        ordinary.write_text("# Ordinary")
+        assert enqueue_index_batch([str(ordinary)]) == 1
+        task = huey_instance.dequeue()
+        assert task is not None
+        huey_instance.execute(task)
+        assert set(cache.get_many([live_hash, "stale"])) == {live_hash, "stale"}
+
+    def test_single_index_task_prunes_on_bootstrap_completion(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        """
+        A single-document task completes bootstrap and prunes stale vectors.
+
+        The assertion follows the persisted checkpoint and cache contents,
+        rather than the task's internal helper calls.
+        """
+        docs_root = tmp_path / "docs"
+        docs_root.mkdir()
+        file_path = docs_root / "guide.md"
+        file_path.write_text("# Guide")
+        save_bootstrap_checkpoint(
+            tmp_path,
+            BootstrapCheckpoint(
+                schema_version="1.0.0",
+                generation="current",
+                complete=False,
+                targets={
+                    "guide.md": BootstrapFileStamp("guide.md", mtime_ns=0, size=0)
+                },
+                completed={},
+            ),
+        )
+        record = Record(
+            source_kind="note",
+            source_id=str(file_path),
+            title="",
+            body="live",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        cache = SQLiteEmbeddingCache(tmp_path / "embedding-cache.db", "test-model", 2)
+        live_hash = semantic_input_for_record(record, "").content_hash
+        cache.put_many({live_hash: [1.0, 0.0], "stale": [0.0, 1.0]})
+        fake_manager.ingestor = SimpleNamespace(
+            embedding_cache=cache,
+            encoder_namespace=None,
+        )
+        fake_manager.storage = SimpleNamespace(iter_records=lambda **_: [record])
+
+        _register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=tmp_path,
+            bootstrap_documents_roots=[docs_root],
+        )
+        assert enqueue_index(str(file_path)) is True
+        task = huey_instance.dequeue()
+        assert task is not None
+        huey_instance.execute(task)
+
+        checkpoint = load_bootstrap_checkpoint(tmp_path)
+        assert checkpoint is not None
+        assert checkpoint.complete is True
+        assert set(cache.get_many([live_hash, "stale"])) == {live_hash}
+
+    def test_pruning_failure_does_not_fail_single_index_task(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        """
+        A cache cleanup failure leaves successful indexing durable.
+
+        Cache maintenance is best-effort after the authoritative checkpoint;
+        the indexing task still reports success and completes its checkpoint.
+        """
+        docs_root = tmp_path / "docs"
+        docs_root.mkdir()
+        file_path = docs_root / "guide.md"
+        file_path.write_text("# Guide")
+        save_bootstrap_checkpoint(
+            tmp_path,
+            BootstrapCheckpoint(
+                schema_version="1.0.0",
+                generation="current",
+                complete=False,
+                targets={
+                    "guide.md": BootstrapFileStamp("guide.md", mtime_ns=0, size=0)
+                },
+                completed={},
+            ),
+        )
+        fake_manager.ingestor = SimpleNamespace(
+            embedding_cache=FailingEmbeddingCache(),
+            encoder_namespace="test-model",
+        )
+        fake_manager.storage = SimpleNamespace(iter_records=lambda **_: [])
+
+        _register_tasks(
+            huey_instance,
+            fake_manager,
+            bootstrap_index_path=tmp_path,
+            bootstrap_documents_roots=[docs_root],
+        )
+        assert enqueue_index(str(file_path)) is True
+        task = huey_instance.dequeue()
+        assert task is not None
+        assert huey_instance.execute(task) is True
+
+        checkpoint = load_bootstrap_checkpoint(tmp_path)
+        assert checkpoint is not None
+        assert checkpoint.complete is True
+        assert fake_manager.persist_calls == 1
 
     def test_remove_batch_task_persists_manifest_removal(
         self,

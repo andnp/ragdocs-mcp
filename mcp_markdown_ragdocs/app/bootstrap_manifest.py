@@ -11,6 +11,7 @@ from searchkernel.api import (
     CURRENT_MANIFEST_SPEC_VERSION,
     IndexManifest,
     load_manifest,
+    save_manifest,
     should_rebuild,
 )
 
@@ -57,6 +58,8 @@ class ManifestCoordinator:
         host.current_manifest = self.build_manifest()
         saved_manifest = load_manifest(host.index_path)
         host._is_virgin_startup = saved_manifest is None
+        if saved_manifest is None:
+            save_manifest(host.index_path, host.current_manifest)
         return should_rebuild(host.current_manifest, saved_manifest)
 
 

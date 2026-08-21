@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -16,10 +16,12 @@ from searchkernel.api import (
     TaskSubmissionResult,
     build_indexed_files_map,
     has_incomplete_bootstrap_checkpoint,
+    load_bootstrap_checkpoint,
     load_manifest,
     mark_bootstrap_file_completed,
     mark_bootstrap_files_completed,
     save_manifest,
+    semantic_input_for_record,
 )
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeasePort
@@ -340,6 +342,49 @@ def _persist_document_manifest(
     save_manifest(bootstrap_index_path, manifest)
 
 
+def _prune_embedding_cache_after_bootstrap(
+    runtime: TaskRuntime,
+    *,
+    bootstrap_was_incomplete: bool,
+) -> None:
+    """Prune cached vectors only after the bootstrap checkpoint is complete."""
+    if not bootstrap_was_incomplete:
+        return
+    bootstrap_index_path = runtime.bootstrap_index_path
+    manager = runtime.index_manager
+    if bootstrap_index_path is None or manager is None:
+        return
+    checkpoint = load_bootstrap_checkpoint(bootstrap_index_path)
+    if checkpoint is None or not checkpoint.complete:
+        return
+
+    ingestor = getattr(manager, "ingestor", None)
+    storage = getattr(manager, "storage", None)
+    cache = getattr(ingestor, "embedding_cache", None)
+    prune_to = getattr(cache, "prune_to", None)
+    iter_records = getattr(storage, "iter_records", None)
+    if not callable(prune_to) or not callable(iter_records):
+        logger.debug("Embedding-cache pruning deferred: public cache API unavailable")
+        return
+
+    namespace = getattr(ingestor, "encoder_namespace", "") or ""
+    try:
+        active_records = iter_records(status="active")
+        if not isinstance(active_records, Iterable):
+            logger.debug("Embedding-cache pruning deferred: records unavailable")
+            return
+        live_hashes = (
+            semantic_input_for_record(record, namespace).content_hash
+            for record in active_records
+        )
+        pruned = prune_to(live_hashes)
+    except Exception:
+        logger.warning("Embedding-cache pruning deferred after bootstrap", exc_info=True)
+        return
+    if pruned:
+        logger.info("Pruned %d stale embedding-cache vector(s)", pruned)
+
+
 def _writer_is_active(runtime: TaskRuntime) -> bool:
     return writer_is_active(lambda: _writer_lease_store(runtime))
 
@@ -555,6 +600,10 @@ def _index_document(
     if manager is None:
         logger.error("IndexManager not available for task execution")
         return False
+    bootstrap_was_incomplete = (
+        runtime.bootstrap_index_path is not None
+        and has_incomplete_bootstrap_checkpoint(runtime.bootstrap_index_path)
+    )
     logger.info("Index task started: path=%s force=%s", file_path, force)
 
     def _operation() -> bool:
@@ -577,6 +626,10 @@ def _index_document(
                     bootstrap_index_path,
                     bootstrap_documents_roots,
                     file_path,
+                )
+                _prune_embedding_cache_after_bootstrap(
+                    runtime,
+                    bootstrap_was_incomplete=bootstrap_was_incomplete,
                 )
             logger.info("Task completed: indexed %s", file_path)
             return True
@@ -606,6 +659,10 @@ def _index_documents_batch(
         return False
     bootstrap_index_path = runtime.bootstrap_index_path
     bootstrap_documents_roots = runtime.bootstrap_documents_roots
+    bootstrap_was_incomplete = (
+        bootstrap_index_path is not None
+        and has_incomplete_bootstrap_checkpoint(bootstrap_index_path)
+    )
 
     unique_file_paths = list(dict.fromkeys(file_paths))
     if not unique_file_paths:
@@ -646,6 +703,10 @@ def _index_documents_batch(
                 _persist_document_manifest(
                     indexed_paths=unique_file_paths,
                     runtime=runtime,
+                )
+                _prune_embedding_cache_after_bootstrap(
+                    runtime,
+                    bootstrap_was_incomplete=bootstrap_was_incomplete,
                 )
             records = getattr(getattr(receipt, "ingestion", None), "records", ())
             outcomes = [
@@ -729,6 +790,10 @@ def _index_documents_batch(
                 bootstrap_index_path,
                 bootstrap_documents_roots,
                 completed_paths,
+            )
+            _prune_embedding_cache_after_bootstrap(
+                runtime,
+                bootstrap_was_incomplete=bootstrap_was_incomplete,
             )
 
         logger.info(
