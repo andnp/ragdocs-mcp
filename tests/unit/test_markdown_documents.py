@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from mcp_markdown_ragdocs.indexing.markdown_documents import (
 )
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
 from mcp_markdown_ragdocs.indexing.record_ports import PreparedRecordDocument
+from mcp_markdown_ragdocs.models import Document
 from tests.conftest import create_test_document
 
 
@@ -158,6 +160,38 @@ class _RecordingWriter:
         if self.error is not None:
             raise RuntimeError(self.error)
         return tuple(record.storage_key for record in prepared.records)
+
+
+def _chunk_record(chunk_id: str, body: str) -> Record:
+    when = datetime(2024, 1, 1, tzinfo=UTC)
+    return Record(
+        source_kind="note",
+        source_id=chunk_id,
+        title=f"Guide / {chunk_id}",
+        body=body,
+        created_at=when,
+        updated_at=when,
+        metadata={"chunk_id": chunk_id, "doc_id": "guide"},
+        workspace_id="default",
+        indexed_text=body,
+    )
+
+
+def _prepared_document(*records: Record) -> PreparedRecordDocument:
+    when = datetime(2024, 1, 1, tzinfo=UTC)
+    return PreparedRecordDocument(
+        "guide.md",
+        Document(
+            id="guide",
+            content="irrelevant",
+            metadata={},
+            links=[],
+            tags=[],
+            file_path="guide.md",
+            modified_time=when,
+        ),
+        tuple(records),
+    )
 
 
 def test_markdown_planner_preserves_identity_and_chunk_metadata(record_manager) -> None:
@@ -305,3 +339,75 @@ def test_manager_preserves_writer_failure_payload(record_manager) -> None:
     assert manager.get_failed_files() == [{"path": file_path, "error": "writer failed"}]
     assert manager.get_state_version() == 0
     assert source_map.saved == []
+
+
+def test_writer_reindexes_only_the_forced_first_chunk_when_others_are_unchanged() -> None:
+    """
+    Skip re-embedding unchanged chunks, but always refresh keys[0].
+    """
+    first = _chunk_record("guide::0", "First chunk body")
+    second = _chunk_record("guide::1", "Second chunk body")
+    prepared = _prepared_document(first, second)
+    events: list[str] = []
+    ingestor = _Ingestor(events, _success_receipt())
+    storage = _Storage(
+        events,
+        existing_records={first.storage_key: first, second.storage_key: second},
+    )
+    writer = SemanticDocumentWriter(ingestor, storage)
+
+    new_keys = asyncio.run(writer.write(prepared, (first.storage_key, second.storage_key)))
+
+    assert new_keys == (first.storage_key, second.storage_key)
+    assert ingestor.calls == [(first,)]
+    assert storage.deleted == []
+
+
+def test_writer_reindexes_a_genuinely_changed_chunk_plus_the_forced_first_chunk() -> None:
+    """
+    Reindex a chunk whose content changed, alongside the always-forced first chunk.
+    """
+    first = _chunk_record("guide::0", "First chunk body")
+    old_second = _chunk_record("guide::1", "Second chunk body")
+    new_second = _chunk_record("guide::1", "Second chunk body, edited")
+    prepared = _prepared_document(first, new_second)
+    events: list[str] = []
+    ingestor = _Ingestor(events, _success_receipt())
+    storage = _Storage(
+        events,
+        existing_records={first.storage_key: first, old_second.storage_key: old_second},
+    )
+    writer = SemanticDocumentWriter(ingestor, storage)
+
+    new_keys = asyncio.run(
+        writer.write(prepared, (first.storage_key, old_second.storage_key))
+    )
+
+    assert new_keys == (first.storage_key, new_second.storage_key)
+    assert ingestor.calls == [(first, new_second)]
+    assert storage.deleted == []
+
+
+def test_writer_deletes_stale_keys_even_when_no_chunk_content_changed() -> None:
+    """
+    Delete a stale key for a removed chunk even though remaining chunks are unchanged.
+
+    Stale-key deletion must stay unconditional on old_keys/new_keys, independent
+    of whether any chunk content changed and thus whether index_records ran with
+    more than the forced first chunk.
+    """
+    first = _chunk_record("guide::0", "First chunk body")
+    removed = _chunk_record("guide::removed", "Chunk that no longer exists")
+    prepared = _prepared_document(first)
+    events: list[str] = []
+    ingestor = _Ingestor(events, _success_receipt())
+    storage = _Storage(events, existing_records={first.storage_key: first})
+    writer = SemanticDocumentWriter(ingestor, storage)
+
+    new_keys = asyncio.run(
+        writer.write(prepared, (first.storage_key, removed.storage_key))
+    )
+
+    assert new_keys == (first.storage_key,)
+    assert ingestor.calls == [(first,)]
+    assert storage.deleted == [(removed.storage_key,)]

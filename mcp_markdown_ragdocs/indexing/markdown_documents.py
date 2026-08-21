@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from searchkernel.api import (
@@ -25,6 +25,24 @@ from mcp_markdown_ragdocs.parsers.dispatcher import dispatch_parser
 
 _FILE_MTIME_METADATA_KEY = "_file_mtime_ns"
 _FILE_SIZE_METADATA_KEY = "_file_size"
+_VOLATILE_METADATA_KEYS = frozenset({_FILE_MTIME_METADATA_KEY, _FILE_SIZE_METADATA_KEY})
+
+
+def _stable_metadata(metadata: Mapping[str, object]) -> dict[str, object]:
+    """Drop file-stat metadata that changes on every save regardless of content."""
+    return {key: value for key, value in metadata.items() if key not in _VOLATILE_METADATA_KEYS}
+
+
+def _record_unchanged(candidate: Record, existing: Record | None) -> bool:
+    """Compare a planned chunk record against its previously stored version."""
+    if existing is None:
+        return False
+    return (
+        candidate.body == existing.body
+        and candidate.indexed_text == existing.indexed_text
+        and candidate.title == existing.title
+        and _stable_metadata(candidate.metadata) == _stable_metadata(existing.metadata)
+    )
 
 
 class MarkdownDocumentPlanner:
@@ -141,17 +159,45 @@ class SemanticDocumentWriter:
         prepared: PreparedRecordDocument,
         old_keys: Sequence[str],
     ) -> tuple[str, ...]:
-        receipt = await self._ingestor.index_records(prepared.records)
-        if receipt.failed:
-            errors = "; ".join(
-                item.error or "unknown error" for item in receipt.failures
-            )
-            raise RuntimeError(errors)
-        new_keys = tuple(record.storage_key for record in prepared.records)
+        records = prepared.records
+        new_keys = tuple(record.storage_key for record in records)
+        reindex_records = self._select_reindex_records(records)
+        if reindex_records:
+            receipt = await self._ingestor.index_records(reindex_records)
+            if receipt.failed:
+                errors = "; ".join(
+                    item.error or "unknown error" for item in receipt.failures
+                )
+                raise RuntimeError(errors)
         stale_keys = sorted(set(old_keys) - set(new_keys))
         if stale_keys:
             self._storage.delete(stale_keys)
         return new_keys
+
+    def _select_reindex_records(
+        self,
+        records: Sequence[Record],
+    ) -> tuple[Record, ...]:
+        """Skip re-embedding chunks unchanged since the last save.
+
+        keys[0] always stays reindexed: record_manager freshness checks only
+        inspect the first chunk's stored file-stat metadata, so it must never
+        go stale even when its own content is unchanged.
+        """
+        if not records:
+            return ()
+        existing = self._storage.hydrate_records(
+            tuple(
+                RecordIdentity.from_storage_key(record.storage_key)
+                for record in records
+            )
+        )
+        return tuple(
+            record
+            for index, record in enumerate(records)
+            if index == 0
+            or not _record_unchanged(record, existing.get(record.storage_key))
+        )
 
 
 __all__ = [
