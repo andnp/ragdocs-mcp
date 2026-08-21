@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from searchkernel.api import (
     ContentSource,
+    FAISSConfiguration,
     LocalRecordKernel,
     build_local_record_kernel,
     get_parser_suffixes,
@@ -150,6 +151,9 @@ def assemble_runtime(
         embedding_model_name=embedding_provider.model_name,
         embedding_dim=embedding_provider.dim,
         vector_engine="auto",
+        faiss_configuration=FAISSConfiguration(
+            search_strategy="approximate", hnsw_ef_search=64
+        ),
         reranker=build_reranker(config.search),
         search_policy=search_policy,
         search_config=to_record_search_config(config.search),
