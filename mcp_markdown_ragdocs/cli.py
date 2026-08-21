@@ -468,6 +468,11 @@ def queue_group():
     """Inspect task queue state."""
 
 
+@cli.group("records")
+def records_group():
+    """Maintain indexed records directly (bypassing normal ingestion)."""
+
+
 @daemon_group.command("run")
 @click.option(
     "--project",
@@ -990,11 +995,6 @@ def queue_purge(
         sys.exit(1)
 
 
-@cli.group("records")
-def records_group():
-    """Maintain indexed records directly (bypassing normal ingestion)."""
-
-
 @records_group.command("purge")
 @click.option(
     "--project", default=None, help="Override project detection (name or path)"
@@ -1094,6 +1094,61 @@ def records_vacuum_enable(yes: bool):
 
     click.echo(f"auto_vacuum: {current_mode} -> 2 (incremental)")
     click.echo(f"Database size: {before_size:,} -> {after_size:,} bytes")
+
+
+@records_group.command("prune-old-git-diffs")
+@click.option(
+    "--project", default=None, help="Override project detection (name or path)"
+)
+@click.option("--workspace", required=True, help="Workspace/project id to match.")
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Actually delete. Without this, only a matching-record count is shown.",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output result as JSON")
+def records_prune_old_git_diffs(
+    project: str | None,
+    workspace: str,
+    yes: bool,
+    output_json: bool,
+):
+    """Delete diff chunks from commits older than the configured age window.
+
+    This is recurring maintenance, not a one-time migration: commits keep
+    aging past git_indexing.git_diff_embedding_days continuously, so old
+    diffs keep accumulating again. Without --yes, reports how many chunks
+    would be deleted and deletes nothing.
+    """
+    try:
+        payload = _request_daemon_json(
+            "/api/admin/records/prune-old-git-diffs",
+            {
+                "workspace_id": workspace,
+                "confirm": yes,
+            },
+            project_override=project,
+            auto_start=False,
+            allow_error=True,
+        )
+        payload = _require_daemon_payload(payload)
+
+        if output_json:
+            click.echo(json.dumps(payload, indent=2))
+            return
+
+        if yes:
+            click.echo(f"Deleted {payload['deleted']} old diff chunk(s).")
+        else:
+            click.echo(
+                f"Would delete {payload['would_delete']} old diff chunk(s) "
+                f"(workspace={workspace}, max_age_days={payload['max_age_days']}). "
+                "Pass --yes to delete."
+            )
+    except Exception as e:  # noqa: BLE001 -- CLI command boundary; must catch anything and report cleanly
+        logger.error(f"Failed to prune old git diffs: {e}")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 @cli.command()
