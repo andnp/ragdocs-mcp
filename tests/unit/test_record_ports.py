@@ -3,7 +3,9 @@ from datetime import UTC, datetime
 
 from searchkernel.domain import Record, RecordIdentity, RecordStatus
 
+from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
 from mcp_markdown_ragdocs.indexing.record_ports import LocalRecordStorage
+from tests.conftest import make_test_config
 
 
 def _make_commit_record(source_id: str, body: str) -> Record:
@@ -100,6 +102,52 @@ def test_iter_identities_filters_by_status(record_manager) -> None:
     identities = list(record_manager.storage.iter_identities(status="active"))
 
     assert [identity.source_id for identity in identities] == ["commit-active"]
+
+
+def test_reconcile_git_project_attribution_only_hydrates_matches(
+    local_record_kernel, deterministic_embedding_provider, tmp_path, monkeypatch
+) -> None:
+    """Reconciliation must not hydrate records outside the matched commit set.
+
+    Regression guard: this used to hydrate every record in the index to
+    find the handful belonging to one repository's commits.
+    """
+    config = make_test_config(tmp_path)
+    manager = RecordIndexManager(
+        config,
+        local_record_kernel,
+        deterministic_embedding_provider,
+        commit_history=lambda git_dir, after_timestamp=None: iter(["abc"]),
+    )
+
+    target_commit = _make_commit_record("git:abc:summary:0", "target commit")
+    other_repo_commit = _make_commit_record("git:def:summary:0", "other repo commit")
+    note = Record(
+        source_kind="note",
+        source_id="note-1",
+        title="Note",
+        body="body",
+        created_at=target_commit.created_at,
+        updated_at=target_commit.updated_at,
+        metadata={},
+        status=RecordStatus.ACTIVE,
+    )
+    for record in (target_commit, other_repo_commit, note):
+        assert manager.index_record(record) is True
+
+    original_hydrate_records = manager.storage.hydrate_records
+    hydrated_batch_sizes: list[int] = []
+
+    def _tracking_hydrate_records(identities):
+        hydrated_batch_sizes.append(len(identities))
+        return original_hydrate_records(identities)
+
+    monkeypatch.setattr(manager.storage, "hydrate_records", _tracking_hydrate_records)
+
+    repaired = manager.reconcile_git_project_attribution(tmp_path / ".git", "target-project")
+
+    assert repaired == 1
+    assert hydrated_batch_sizes == [1]
 
 
 def test_storage_delegates_identity_enumeration_to_catalog(local_record_kernel) -> None:
