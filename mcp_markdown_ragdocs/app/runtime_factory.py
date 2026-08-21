@@ -151,6 +151,7 @@ def assemble_runtime(
         embedding_model_name=embedding_provider.model_name,
         embedding_dim=embedding_provider.dim,
         vector_engine="auto",
+        faiss_path=paths.index_path / "faiss",
         faiss_configuration=FAISSConfiguration(
             search_strategy="approximate", hnsw_ef_search=64
         ),

@@ -2,6 +2,7 @@
 
 import os
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -150,6 +151,16 @@ class TestCompositionRootNoGlobalMutation:
         """
         index_path = tmp_path / "index"
         monkeypatch.setenv("SEARCHKERNEL_INDEX_PATH", str(index_path))
+        from mcp_markdown_ragdocs.app import runtime_factory
+
+        build_local_record_kernel = MagicMock(
+            wraps=runtime_factory.build_local_record_kernel
+        )
+        monkeypatch.setattr(
+            runtime_factory,
+            "build_local_record_kernel",
+            build_local_record_kernel,
+        )
 
         components = build_runtime_components(
             load_config(),
@@ -162,6 +173,9 @@ class TestCompositionRootNoGlobalMutation:
         assert components.index_manager.kernel is components.kernel
         assert components.db_manager is components.index_manager.database_manager
         assert components.paths.index_path == index_path
+        assert build_local_record_kernel.call_args.kwargs["faiss_path"] == (
+            index_path / "faiss"
+        )
 
     def test_runtime_composition_does_not_mutate_supplied_config(
         self,
