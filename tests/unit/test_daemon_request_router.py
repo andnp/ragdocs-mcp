@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from huey import SqliteHuey
-from searchkernel.domain import Record
+from searchkernel.domain import Record, RecordIdentity
 
 from searchkernel.api import TaskSubmissionResult
 
@@ -678,3 +678,87 @@ async def test_rebuild_submit_still_blocks_concurrent_live_rebuild(
 
     assert payload["accepted"] is False
     assert payload["retry_later"] is True
+
+
+class _FakeRecordStorage:
+    def __init__(self, identities: list[RecordIdentity]) -> None:
+        self._identities = identities
+        self.deleted_keys: list[str] | None = None
+
+    def iter_identities(self, *, source_kind=None, status=None):
+        return iter(
+            identity for identity in self._identities if identity.source_kind == source_kind
+        )
+
+    def delete(self, storage_keys) -> None:
+        self.deleted_keys = list(storage_keys)
+
+
+def _attach_record_storage(
+    ctx: _FakeContext, storage: _FakeRecordStorage, persist_calls: list[int]
+) -> None:
+    ctx.index_manager.storage = storage
+    ctx.index_manager.persist = lambda: persist_calls.append(1)
+
+
+@pytest.mark.asyncio
+async def test_admin_records_purge_route_requires_workspace_and_source_kind() -> None:
+    ctx = _FakeContext(ready=True)
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    payload = await handler("/api/admin/records/purge", {"source_kind": "git_commit"})
+
+    assert payload == {"status": "error", "error": "workspace_id_required"}
+
+
+@pytest.mark.asyncio
+async def test_admin_records_purge_route_previews_without_deleting() -> None:
+    ctx = _FakeContext(ready=True)
+    storage = _FakeRecordStorage(
+        [
+            RecordIdentity("target-project", "git_commit", "git:abc:summary:0"),
+            RecordIdentity("other-project", "git_commit", "git:def:summary:0"),
+            RecordIdentity("target-project", "note", "note-1"),
+        ]
+    )
+    _attach_record_storage(ctx, storage, [])
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    payload = await handler(
+        "/api/admin/records/purge",
+        {"workspace_id": "target-project", "source_kind": "git_commit"},
+    )
+
+    assert payload == {
+        "status": "ok",
+        "would_delete": 1,
+        "workspace_id": "target-project",
+        "source_kind": "git_commit",
+    }
+    assert storage.deleted_keys is None
+
+
+@pytest.mark.asyncio
+async def test_admin_records_purge_route_deletes_and_persists_when_confirmed() -> None:
+    ctx = _FakeContext(ready=True)
+    target = RecordIdentity("target-project", "git_commit", "git:abc:summary:0")
+    storage = _FakeRecordStorage(
+        [target, RecordIdentity("other-project", "git_commit", "git:def:summary:0")]
+    )
+    persist_calls: list[int] = []
+    _attach_record_storage(ctx, storage, persist_calls)
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    payload = await handler(
+        "/api/admin/records/purge",
+        {"workspace_id": "target-project", "source_kind": "git_commit", "confirm": True},
+    )
+
+    assert payload == {
+        "status": "ok",
+        "deleted": 1,
+        "workspace_id": "target-project",
+        "source_kind": "git_commit",
+    }
+    assert storage.deleted_keys == [target.storage_key]
+    assert persist_calls == [1]
