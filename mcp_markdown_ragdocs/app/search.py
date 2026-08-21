@@ -701,6 +701,11 @@ class ApplicationSearchUseCase:
                 if strategy_name in strategy_counts:
                     strategy_counts[strategy_name] += 1
         count = len(results)
+        # Precursor to a future searchkernel keyword_only retrieval mode
+        # (tracked separately upstream): measurement only for now, it does
+        # not yet skip the vector call.
+        query_execution_stats = dict(self._diagnostics(outcome))
+        query_execution_stats["lexical_query"] = _is_lexical_query(request.query)
         return SearchExecution(
             results=results,
             compression_stats=CompressionStats(
@@ -718,7 +723,7 @@ class ApplicationSearchUseCase:
                 graph_count=strategy_counts["graph"],
                 tag_expansion_count=strategy_counts["tag_expansion"],
             ),
-            query_execution_stats=self._diagnostics(outcome),
+            query_execution_stats=query_execution_stats,
         )
 
     def _is_excluded(

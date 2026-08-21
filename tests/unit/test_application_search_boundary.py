@@ -71,7 +71,10 @@ async def test_use_case_accepts_injected_diagnostics_port() -> None:
 
     execution = await use_case.execute(SearchRequest(query="boundary", top_n=1))
 
-    assert execution.query_execution_stats == {"source": "test"}
+    assert execution.query_execution_stats == {
+        "source": "test",
+        "lexical_query": False,
+    }
     assert execution.results == []
 
 

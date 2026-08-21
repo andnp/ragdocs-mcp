@@ -57,6 +57,7 @@ async def test_search_preserves_canonical_outcome_diagnostics(adapter, monkeypat
         "candidate_count": 4,
         "candidate_counts": {"keyword": 3, "vector": 2},
         "stage_timings_ms": {"fusion": 1.5},
+        "lexical_query": False,
     }
 
 
