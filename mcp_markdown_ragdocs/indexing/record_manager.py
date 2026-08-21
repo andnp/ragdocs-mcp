@@ -524,14 +524,17 @@ class RecordIndexManager:
             f"git:{commit_hash}"
             for commit_hash in self._commit_history(git_dir)
         }
+        matched_identities = [
+            identity
+            for identity in self.storage.iter_identities(source_kind="git_commit")
+            if ":".join(identity.source_id.split(":")[:2]) in commit_ids
+        ]
+        hydrated = self.storage.hydrate_records(matched_identities)
+
         updates: list[Record] = []
         replacements: dict[str, str] = {}
-        for record in self.storage.iter_records():
-            if record.source_kind != "git_commit":
-                continue
-            source_id = record.source_id
-            commit_id = ":".join(source_id.split(":")[:2])
-            if commit_id not in commit_ids:
+        for record in hydrated.values():
+            if record is None:
                 continue
             metadata = dict(record.metadata)
             if (
