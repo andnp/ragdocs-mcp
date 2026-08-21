@@ -2,7 +2,7 @@
 
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -524,3 +524,72 @@ class TestGitContentSourceEdgeCases:
 
             # Should return empty list, not crash
             assert len(records) == 0
+
+
+class TestGitContentSourceDiffAgeGate:
+    """Tests for the git_diff_embedding_days age gate on diff chunking."""
+
+    def _commit_data(self, timestamp: int) -> CommitData:
+        return CommitData(
+            hash="abc123",
+            timestamp=timestamp,
+            author="Author <author@example.com>",
+            committer="Committer <committer@example.com>",
+            title="Change",
+            message="Body",
+            files_changed=["file.txt"],
+            delta_truncated="diff --git a/file.txt b/file.txt\n+line",
+            files_changed_total=1,
+        )
+
+    def test_recent_commit_keeps_diff_chunks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir) / "repo"
+            repo_path.mkdir()
+            _init_git_repo(repo_path)
+            reference_time = datetime(2026, 1, 10, tzinfo=UTC)
+            source = GitContentSource(
+                repo_path / ".git",
+                git_diff_embedding_days=30,
+                reference_time=reference_time,
+            )
+            recent_timestamp = int(datetime(2026, 1, 9, tzinfo=UTC).timestamp())
+
+            records = source._commit_data_to_records(self._commit_data(recent_timestamp))
+
+            assert any(record.metadata["chunk_section"] == "diff" for record in records)
+
+    def test_old_commit_drops_diff_chunks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir) / "repo"
+            repo_path.mkdir()
+            _init_git_repo(repo_path)
+            reference_time = datetime(2026, 1, 10, tzinfo=UTC)
+            source = GitContentSource(
+                repo_path / ".git",
+                git_diff_embedding_days=30,
+                reference_time=reference_time,
+            )
+            old_timestamp = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp())
+
+            records = source._commit_data_to_records(self._commit_data(old_timestamp))
+
+            assert not any(record.metadata["chunk_section"] == "diff" for record in records)
+            assert any(record.metadata["chunk_section"] == "summary" for record in records)
+
+    def test_zero_days_always_keeps_diff_chunks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir) / "repo"
+            repo_path.mkdir()
+            _init_git_repo(repo_path)
+            reference_time = datetime(2026, 1, 10, tzinfo=UTC)
+            source = GitContentSource(
+                repo_path / ".git",
+                git_diff_embedding_days=0,
+                reference_time=reference_time,
+            )
+            old_timestamp = int(datetime(2020, 1, 1, tzinfo=UTC).timestamp())
+
+            records = source._commit_data_to_records(self._commit_data(old_timestamp))
+
+            assert any(record.metadata["chunk_section"] == "diff" for record in records)

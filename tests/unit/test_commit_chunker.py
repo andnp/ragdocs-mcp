@@ -1,7 +1,10 @@
+from datetime import UTC, datetime
+
 from mcp_markdown_ragdocs.git.commit_chunker import (
     DEFAULT_MAX_TOKENS,
     CommitChunk,
     chunk_commit,
+    is_diff_chunk_eligible,
 )
 from mcp_markdown_ragdocs.git.commit_parser import CommitData
 
@@ -111,3 +114,43 @@ def test_chunk_commit_keeps_empty_sections_out() -> None:
     assert isinstance(chunks[0], CommitChunk)
     assert chunks[0].section == "summary"
     assert chunks[0].estimated_tokens <= DEFAULT_MAX_TOKENS
+
+
+def test_chunk_commit_include_diff_false_drops_diff_chunks() -> None:
+    chunks = chunk_commit(_commit(), include_diff=False)
+
+    assert [chunk.section for chunk in chunks] == ["summary", "body"]
+
+
+def test_chunk_commit_include_diff_true_keeps_diff_chunks() -> None:
+    chunks = chunk_commit(_commit(), include_diff=True)
+
+    assert "diff" in [chunk.section for chunk in chunks]
+
+
+def test_is_diff_chunk_eligible_recent_commit_is_eligible() -> None:
+    reference_time = datetime(2026, 1, 10, tzinfo=UTC)
+    recent_timestamp = int(datetime(2026, 1, 9, tzinfo=UTC).timestamp())
+
+    assert is_diff_chunk_eligible(recent_timestamp, 30, reference_time) is True
+
+
+def test_is_diff_chunk_eligible_old_commit_is_ineligible() -> None:
+    reference_time = datetime(2026, 1, 10, tzinfo=UTC)
+    old_timestamp = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp())
+
+    assert is_diff_chunk_eligible(old_timestamp, 30, reference_time) is False
+
+
+def test_is_diff_chunk_eligible_zero_days_always_eligible() -> None:
+    reference_time = datetime(2026, 1, 10, tzinfo=UTC)
+    old_timestamp = int(datetime(2020, 1, 1, tzinfo=UTC).timestamp())
+
+    assert is_diff_chunk_eligible(old_timestamp, 0, reference_time) is True
+
+
+def test_is_diff_chunk_eligible_at_exact_boundary_is_eligible() -> None:
+    reference_time = datetime(2026, 1, 31, tzinfo=UTC)
+    boundary_timestamp = int(datetime(2026, 1, 1, tzinfo=UTC).timestamp())
+
+    assert is_diff_chunk_eligible(boundary_timestamp, 30, reference_time) is True
