@@ -202,9 +202,8 @@ class GDriveReplacementPolicy:
         for keys in self._source_records.values():
             candidates.update(keys)
         candidates.update(
-            record.storage_key
-            for record in self._storage.iter_records()
-            if record.source_kind == SOURCE_KIND
+            identity.storage_key
+            for identity in self._storage.iter_identities(source_kind=SOURCE_KIND)
         )
         matching: list[str] = []
         for key in sorted(candidates):
