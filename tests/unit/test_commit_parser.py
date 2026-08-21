@@ -410,6 +410,45 @@ def test_delta_no_truncation():
         assert "lines omitted" not in commit_data.delta_truncated
 
 
+def test_cap_delta_bytes_bounds_a_few_very_long_lines():
+    """A diff with few lines but huge line length is still capped by bytes.
+
+    Regression guard: truncate_delta's line-count cap lets a generated or
+    minified asset (very few, very long lines) through untouched.
+    """
+    long_line = "x" * 500_000
+    delta = f"@@ -1 +1 @@\n-old\n+{long_line}\n"
+
+    capped = commit_parser._cap_delta_bytes(delta, max_bytes=1_000)
+
+    assert len(capped.encode("utf-8")) <= 1_000 + len("\n\n... (diff exceeded 1000 bytes, truncated)")
+    assert "truncated" in capped
+
+
+def test_delta_truncation_bounds_a_commit_with_one_huge_line():
+    """A commit replacing a file with one huge line stays byte-bounded.
+
+    Without a byte cap this passes the 200-line check untouched and the
+    delta balloons to the full file size.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo_path = Path(tmpdir) / "repo"
+        repo_path.mkdir()
+        _init_git_repo(repo_path)
+
+        commit_hash = _create_commit(
+            repo_path,
+            "bundle.min.js",
+            "x" * 500_000,
+            "Add generated bundle",
+        )
+
+        git_dir = repo_path / ".git"
+        commit_data = parse_commit(git_dir, commit_hash, max_delta_lines=200)
+
+        assert len(commit_data.delta_truncated.encode("utf-8")) < 200_000
+
+
 def test_build_commit_document():
     """Test building searchable document from commit data."""
     commit = CommitData(
