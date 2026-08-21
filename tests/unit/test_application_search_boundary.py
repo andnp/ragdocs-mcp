@@ -79,6 +79,40 @@ async def test_use_case_accepts_injected_diagnostics_port() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "expected_lexical_query"),
+    [
+        ("app/search.py", True),
+        ("get_user_id", True),
+        ("FOO-123", True),
+        ("how do I search for boundaries", False),
+    ],
+)
+async def test_use_case_reports_lexical_classification_in_diagnostics(
+    query: str, expected_lexical_query: bool
+) -> None:
+    """Carry the lexical classifier's verdict into query diagnostics.
+
+    Downstream consumers of query_execution_stats need to see whether a
+    query was recognized as an exact identifier/path/ticket-ID shape.
+    """
+    async def execute(*_args, **_kwargs):
+        return RecordSearchOutcome()
+
+    class SearchKernel:
+        async def async_search(
+            self, query: str, *, limit: int, filters: Mapping[str, object]
+        ) -> RecordSearchOutcome:
+            return await execute(query, limit=limit, filters=filters)
+
+    use_case = ApplicationSearchUseCase(SearchKernel(), documents_roots=())
+
+    execution = await use_case.execute(SearchRequest(query=query, top_n=1))
+
+    assert execution.query_execution_stats["lexical_query"] is expected_lexical_query
+
+
+@pytest.mark.asyncio
 async def test_use_case_keeps_exact_single_token_matches() -> None:
     """Return a document when one meaningful query token matches its body.
 
