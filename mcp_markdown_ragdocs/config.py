@@ -82,6 +82,7 @@ class IndexingConfig:
     )
     exclude_hidden_dirs: bool = True
     reconciliation_interval_seconds: int = 3600  # 1 hour, 0 to disable
+    vacuum_page_limit: int = 1000  # pages reclaimed per periodic incremental vacuum, 0 to disable
     torch_num_threads: int = 4
     debounce_window_seconds: float = 0.5
     task_backpressure_limit: int = 100
