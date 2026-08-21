@@ -427,6 +427,57 @@ class LocalRecordDeletion:
         self._kernel.backend.delete(list(storage_keys))
 
 
+class SqliteSourceMapStore:
+    """Store source-map membership in a table on the shared local index database.
+
+    save() replaces every row from the passed mapping in a single
+    transaction, matching JsonSourceMapStore's whole-snapshot-overwrite
+    contract: callers always pass the complete membership, never a partial
+    update.
+    """
+
+    def __init__(self, connection_provider: SQLiteConnectionProvider) -> None:
+        self._connection_provider = connection_provider
+        connection = self._connection_provider.get_connection()
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_map (
+                doc_id TEXT PRIMARY KEY,
+                keys_json TEXT NOT NULL
+            )
+            """
+        )
+        connection.commit()
+
+    def load(self) -> dict[str, list[str]]:
+        try:
+            connection = self._connection_provider.get_connection()
+            rows = connection.execute(
+                "SELECT doc_id, keys_json FROM source_map"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        result: dict[str, list[str]] = {}
+        for doc_id, keys_json in rows:
+            try:
+                value = json.loads(keys_json)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(value, list):
+                continue
+            result[str(doc_id)] = [str(key) for key in value if isinstance(key, str)]
+        return result
+
+    def save(self, records: Mapping[str, Sequence[str]]) -> None:
+        connection = self._connection_provider.get_connection()
+        connection.execute("DELETE FROM source_map")
+        connection.executemany(
+            "INSERT INTO source_map (doc_id, keys_json) VALUES (?, ?)",
+            [(doc_id, json.dumps(list(keys))) for doc_id, keys in records.items()],
+        )
+        connection.commit()
+
+
 class JsonSourceMapStore:
     """Store source-map membership using the legacy JSON representation."""
 
@@ -458,6 +509,7 @@ class JsonSourceMapStore:
 
 __all__ = [
     "JsonSourceMapStore",
+    "SqliteSourceMapStore",
     "CommitHistoryPort",
     "EmbeddingProvider",
     "GDriveIntegrationFactory",
