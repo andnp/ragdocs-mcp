@@ -4,6 +4,8 @@ import asyncio
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from itertools import islice
 from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import uuid4
@@ -21,6 +23,7 @@ from mcp_markdown_ragdocs.daemon.record_rpc import (
     RecordSerializationError,
     deserialize_record,
 )
+from mcp_markdown_ragdocs.git.commit_chunker import is_diff_chunk_eligible
 from mcp_markdown_ragdocs.indexing.record_ports import RecordStorage
 from mcp_markdown_ragdocs.indexing.rebuild_service import (
     read_rebuild_status,
@@ -169,6 +172,72 @@ def _purge_records(
         "deleted": len(storage_keys),
         "workspace_id": workspace_id,
         "source_kind": source_kind,
+    }
+
+
+_PRUNE_OLD_GIT_DIFFS_BATCH_SIZE = 500
+
+
+def _is_diff_git_source_id(source_id: str) -> bool:
+    """Match a diff-chunk source_id by exact token, not substring.
+
+    source_id has the shape "git:<hash>:<section>:<chunk_position>"; only
+    the third token identifies the chunk section.
+    """
+    tokens = source_id.split(":")
+    return len(tokens) == 4 and tokens[0] == "git" and tokens[2] == "diff"
+
+
+def _prune_old_git_diffs(
+    manager: _RecordIndexManager,
+    max_age_days: int,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    """Delete diff chunks from commits older than the configured window.
+
+    Preview-only unless confirm=true. Hydrates only diff-chunk candidates,
+    in batches, to read metadata['timestamp'] without a full-index hydrate;
+    eligibility uses the same predicate the ingestion-time gate applies.
+    """
+    workspace_id = payload.get("workspace_id")
+    if not isinstance(workspace_id, str) or not workspace_id:
+        return {"status": "error", "error": "workspace_id_required"}
+
+    candidates = (
+        identity
+        for identity in manager.storage.iter_identities(source_kind="git_commit")
+        if identity.workspace_id == workspace_id
+        and _is_diff_git_source_id(identity.source_id)
+    )
+    reference_time = datetime.now(UTC)
+    stale_keys: list[str] = []
+    while batch := list(islice(candidates, _PRUNE_OLD_GIT_DIFFS_BATCH_SIZE)):
+        hydrated = manager.storage.hydrate_records(batch)
+        for identity in batch:
+            record = hydrated.get(identity.storage_key)
+            if record is None:
+                continue
+            timestamp = record.metadata.get("timestamp")
+            if isinstance(timestamp, int) and not is_diff_chunk_eligible(
+                timestamp, max_age_days, reference_time
+            ):
+                stale_keys.append(identity.storage_key)
+
+    if payload.get("confirm") is not True:
+        return {
+            "status": "ok",
+            "would_delete": len(stale_keys),
+            "workspace_id": workspace_id,
+            "max_age_days": max_age_days,
+        }
+
+    manager.storage.delete(stale_keys)
+    manager.persist()
+    return {
+        "status": "ok",
+        "deleted": len(stale_keys),
+        "workspace_id": workspace_id,
+        "max_age_days": max_age_days,
     }
 
 
@@ -482,6 +551,12 @@ async def _handle_admin_request(
         return response
     if path == "/api/admin/records/purge":
         return _purge_records(ctx.index_manager, payload)
+    if path == "/api/admin/records/prune-old-git-diffs":
+        return _prune_old_git_diffs(
+            ctx.index_manager,
+            ctx.config.git_indexing.git_diff_embedding_days,
+            payload,
+        )
     if path == "/api/admin/rebuild/status":
         return read_rebuild_status(dependencies.runtime_root)
     if path == "/api/admin/reindex/status":
