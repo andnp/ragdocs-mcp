@@ -410,7 +410,8 @@ async def _handle_admin_request(
 ) -> dict[str, object] | None:
     if path == "/api/admin/overview":
         await ctx.ensure_fresh_indices()
-        return dependencies.build_admin_overview_payload(
+        return await asyncio.to_thread(
+            dependencies.build_admin_overview_payload,
             ctx,
             dependencies.get_worker_running(),
             dependencies.get_worker_pid(),
@@ -418,11 +419,14 @@ async def _handle_admin_request(
         )
     if path in {"/api/admin/index", "/api/admin/index-stats"}:
         await ctx.ensure_fresh_indices()
-        index_payload = dependencies.build_index_stats_payload(ctx)
-        queue_payload = dependencies.build_queue_status_payload(
-            queue_runtime=dependencies.queue_runtime,
-            worker_running=dependencies.get_worker_running(),
-            backpressure_limit=ctx.config.indexing.task_backpressure_limit,
+        index_payload, queue_payload = await asyncio.gather(
+            asyncio.to_thread(dependencies.build_index_stats_payload, ctx),
+            asyncio.to_thread(
+                dependencies.build_queue_status_payload,
+                queue_runtime=dependencies.queue_runtime,
+                worker_running=dependencies.get_worker_running(),
+                backpressure_limit=ctx.config.indexing.task_backpressure_limit,
+            ),
         )
         index_state = index_payload.get("index_state")
         remaining_estimate = index_payload.get("remaining_estimate")

@@ -177,6 +177,7 @@ def _record_payload(source_id: str = "note:1") -> dict[str, object]:
 
 @pytest.mark.asyncio
 async def test_admin_overview_route_refreshes_indices_before_building_payload() -> None:
+    """Build the expensive admin overview without blocking the event loop."""
     ctx = _FakeContext(ready=True)
     coordinator = _FakeCoordinator()
     handler = build_daemon_request_handler(_build_dependencies(ctx, coordinator))
@@ -190,6 +191,35 @@ async def test_admin_overview_route_refreshes_indices_before_building_payload() 
         "worker_running": True,
         "worker_pid": 123,
     }
+
+
+@pytest.mark.asyncio
+async def test_admin_overview_route_runs_builder_off_event_loop() -> None:
+    """A blocked overview builder must not prevent other async work."""
+    ctx = _FakeContext(ready=True)
+    coordinator = _FakeCoordinator()
+    started = threading.Event()
+    release = threading.Event()
+
+    def build_overview(*_args: object) -> dict[str, object]:
+        started.set()
+        assert release.wait(timeout=2)
+        return {"status": "ok"}
+
+    dependencies = replace(
+        _build_dependencies(ctx, coordinator),
+        build_admin_overview_payload=build_overview,
+    )
+    handler = build_daemon_request_handler(dependencies)
+    task = asyncio.create_task(handler("/api/admin/overview", {}))
+
+    try:
+        await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
+        assert not task.done()
+    finally:
+        release.set()
+
+    assert await task == {"status": "ok"}
 
 
 @pytest.mark.asyncio
