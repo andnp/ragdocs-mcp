@@ -238,6 +238,7 @@ class GitIndexingConfig:
     enabled: bool = True
     watch_enabled: bool = True
     poll_interval_seconds: float = 300.0
+    git_diff_embedding_days: int = 0  # 0 disables the age gate; keeps all diff chunks
 
 
 @dataclass
