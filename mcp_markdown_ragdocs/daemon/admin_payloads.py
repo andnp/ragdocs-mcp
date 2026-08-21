@@ -63,6 +63,7 @@ def _build_per_root_index_rows(
     discovered_files: list[str],
     common_root: Path,
     include_indexed_estimates: bool,
+    indexed_descriptions: list[dict[str, object]] | None = None,
 ) -> tuple[list[dict[str, object]], int, int]:
     documents_roots = [root.resolve() for root in ctx.documents_roots]
     rows = [
@@ -86,7 +87,12 @@ def _build_per_root_index_rows(
     unattributed_indexed_documents = 0
     unattributed_indexed_chunks = 0
     if include_indexed_estimates:
-        for description in ctx.index_manager.describe_documents():
+        descriptions = (
+            indexed_descriptions
+            if indexed_descriptions is not None
+            else ctx.index_manager.describe_documents()
+        )
+        for description in descriptions:
             raw_file_path = description.get("file_path")
             resolved_path = _resolve_stats_file_path(
                 raw_file_path if isinstance(raw_file_path, str) else None,
@@ -156,6 +162,7 @@ def _build_index_stats_payload(ctx: Any) -> dict[str, object]:
             discovered_files=discovered_files,
             common_root=docs_root,
             include_indexed_estimates=persisted_index_exists,
+            indexed_descriptions=indexed_descriptions,
         )
     )
     remaining_estimate = max(len(discovered_files) - indexed_documents, 0)

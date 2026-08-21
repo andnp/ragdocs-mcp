@@ -312,8 +312,11 @@ class RecordIndexManager:
     def describe_documents(self) -> list[dict[str, object]]:
         descriptions: list[dict[str, object]] = []
         for doc_id, keys in sorted(self._source_records.items()):
-            records = [self.storage.hydrate_record(key) for key in keys]
-            record = next((item for item in records if item is not None), None)
+            record = None
+            for key in keys:
+                record = self.storage.hydrate_record(key)
+                if record is not None:
+                    break
             if record is None:
                 continue
             descriptions.append(

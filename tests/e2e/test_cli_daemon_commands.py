@@ -639,6 +639,7 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
         def __init__(self):
             self.vector = _FakeVector()
             self.loaded = False
+            self.describe_calls = 0
 
         def load(self):
             self.loaded = True
@@ -647,6 +648,7 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
             return 7
 
         def describe_documents(self):
+            self.describe_calls += 1
             return self.vector.describe_documents()
 
     class _FakeIndexingConfig:
@@ -711,6 +713,7 @@ def test_index_stats_reports_index_counts(monkeypatch, tmp_path):
             "remaining_estimate": 0,
         }
     ]
+    assert fake_ctx.index_manager.describe_calls == 1
 
 
 def test_index_stats_reports_per_root_breakdown(tmp_path):
