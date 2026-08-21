@@ -1846,3 +1846,82 @@ def test_git_total_counts_distinct_active_commits_in_canonical_index():
     )
 
     assert ctx.get_total_git_commits_indexed() == 2
+
+
+@pytest.mark.asyncio
+async def test_periodic_reconciliation_runs_bounded_incremental_vacuum() -> None:
+    """Each reconciliation cycle also runs a vacuum bounded by vacuum_page_limit."""
+    vacuum_calls: list[int] = []
+
+    def run_incremental_vacuum(page_limit: int) -> int:
+        vacuum_calls.append(page_limit)
+        return 0
+
+    ctx = object.__new__(ApplicationContext)
+    ctx.use_tasks = False
+    ctx.documents_roots = []
+    ctx.current_manifest = None
+    ctx._watcher_lifecycle = WatcherLifecycle()
+    cast(Any, ctx).config = SimpleNamespace(
+        indexing=SimpleNamespace(
+            reconciliation_interval_seconds=0.01,
+            vacuum_page_limit=500,
+            documents_path="/docs",
+        )
+    )
+    cast(Any, ctx).discover_files = lambda: []
+    cast(Any, ctx).index_manager = SimpleNamespace(
+        reconcile_indices=lambda *a, **k: SimpleNamespace(
+            added_count=0, removed_count=0, moved_count=0, failed_count=0
+        ),
+        storage=SimpleNamespace(run_incremental_vacuum=run_incremental_vacuum),
+    )
+
+    task = asyncio.create_task(ctx._periodic_reconciliation())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert vacuum_calls
+    assert vacuum_calls[0] == 500
+
+
+@pytest.mark.asyncio
+async def test_periodic_reconciliation_skips_vacuum_when_disabled() -> None:
+    """vacuum_page_limit=0 disables the periodic vacuum call."""
+    vacuum_calls: list[int] = []
+
+    ctx = object.__new__(ApplicationContext)
+    ctx.use_tasks = False
+    ctx.documents_roots = []
+    ctx.current_manifest = None
+    ctx._watcher_lifecycle = WatcherLifecycle()
+    cast(Any, ctx).config = SimpleNamespace(
+        indexing=SimpleNamespace(
+            reconciliation_interval_seconds=0.01,
+            vacuum_page_limit=0,
+            documents_path="/docs",
+        )
+    )
+    cast(Any, ctx).discover_files = lambda: []
+    cast(Any, ctx).index_manager = SimpleNamespace(
+        reconcile_indices=lambda *a, **k: SimpleNamespace(
+            added_count=0, removed_count=0, moved_count=0, failed_count=0
+        ),
+        storage=SimpleNamespace(
+            run_incremental_vacuum=lambda page_limit: vacuum_calls.append(page_limit)
+        ),
+    )
+
+    task = asyncio.create_task(ctx._periodic_reconciliation())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert vacuum_calls == []
