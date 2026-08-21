@@ -69,6 +69,11 @@ class BootstrapSession:
     report_failure: ReportFailureFn
     publish_availability: PublishAvailabilityFn | None = None
     task_submission: TaskSubmissionPort | None = None
+    warmup_semantic_search: AsyncActionFn | None = None
+
+    async def _warmup_before_ready(self) -> None:
+        if self.warmup_semantic_search is not None:
+            await self.warmup_semantic_search()
 
     async def preload_persisted_state(self, *, rebuild_pending: bool) -> bool:
         try:
@@ -108,6 +113,7 @@ class BootstrapSession:
             self.publish_availability(availability)
         self.publish_public_state(preloaded_snapshot.public_state)
         if preloaded_snapshot.queryable:
+            await self._warmup_before_ready()
             self.mark_ready()
         self.schedule_embedding_warmup()
         return True
@@ -176,6 +182,7 @@ class BootstrapSession:
                     loaded_indexed_count=self.get_loaded_document_count(),
                 )
             )
+            await self._warmup_before_ready()
             self.mark_ready()
             self.schedule_embedding_warmup()
             return
@@ -272,6 +279,7 @@ class BootstrapSession:
                     semantic_fine="complete",
                 )
             )
+        await self._warmup_before_ready()
         self.mark_ready()
         self.schedule_embedding_warmup()
 
@@ -332,6 +340,7 @@ class BootstrapSession:
                         durably_completed_targets=len(completed_paths),
                     )
                     if self.is_queryable():
+                        await self._warmup_before_ready()
                         self.mark_ready()
                         self.schedule_embedding_warmup()
                     if len(completed_paths) >= total_targets:

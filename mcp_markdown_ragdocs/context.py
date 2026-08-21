@@ -153,6 +153,7 @@ class ApplicationContext:
     _freshness_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _freshness_task: asyncio.Task | None = field(default=None, repr=False)
     _embedding_warmup_task: asyncio.Task | None = field(default=None, repr=False)
+    _semantic_search_warmed: bool = field(default=False, repr=False)
     _loaded_index_state_version: float = field(default=0.0, repr=False)
     _is_virgin_startup: bool = field(default=False, repr=False)
     _bootstrap_session: BootstrapSession | None = field(default=None, repr=False)
@@ -369,7 +370,7 @@ class ApplicationContext:
 
     async def warmup_semantic_search(self) -> None:
         """Load the semantic search state before the daemon becomes ready."""
-        if not self.use_tasks:
+        if not self.use_tasks or self._semantic_search_warmed:
             return
 
         try:
@@ -399,6 +400,7 @@ class ApplicationContext:
             embedding_provider.model_name,
             embedding_provider.dim,
         )
+        self._semantic_search_warmed = True
 
     async def _preload_existing_indices_for_background_bootstrap(
         self,
@@ -489,6 +491,7 @@ class ApplicationContext:
             report_failure=self._report_bootstrap_failure,
             publish_availability=self._publish_bootstrap_availability,
             task_submission=self.task_submission,
+            warmup_semantic_search=self.warmup_semantic_search,
         )
 
     def _publish_bootstrap_public_state(
