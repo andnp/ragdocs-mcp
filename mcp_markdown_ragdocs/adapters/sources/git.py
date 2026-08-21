@@ -11,7 +11,7 @@ from pathlib import Path
 
 from searchkernel.domain import ChangeSignal, Cursor, Record, RecordStatus
 
-from mcp_markdown_ragdocs.git.commit_chunker import chunk_commit
+from mcp_markdown_ragdocs.git.commit_chunker import chunk_commit, is_diff_chunk_eligible
 from mcp_markdown_ragdocs.git.commit_parser import (
     CommitData,
     MAX_FILES_CHANGED,
@@ -32,12 +32,24 @@ class GitContentSource:
 
     source_kind: str = "git_commit"
 
-    def __init__(self, git_dir: Path, workspace_id: str | None = None):
+    def __init__(
+        self,
+        git_dir: Path,
+        workspace_id: str | None = None,
+        *,
+        git_diff_embedding_days: int = 0,
+        reference_time: datetime | None = None,
+    ):
         """
         Initialize a git content source.
 
         Args:
             git_dir: Path to the .git directory of the repository.
+            git_diff_embedding_days: Skip diff-section chunking for commits
+                older than this many days; 0 disables the gate.
+            reference_time: "Now" used to evaluate commit age; defaults to
+                the current time, computed once per instance so tests can
+                pin it instead of depending on wall-clock timing.
 
         Raises:
             ValueError: If git_dir does not exist or is not a .git directory.
@@ -55,6 +67,8 @@ class GitContentSource:
 
         self.repo_path = self.git_dir.parent
         self.workspace_id = workspace_id
+        self.git_diff_embedding_days = git_diff_embedding_days
+        self.reference_time = reference_time or datetime.now(UTC)
 
     def iter_records(self, since: Cursor | None = None) -> Iterable[Record]:
         """
@@ -127,12 +141,18 @@ class GitContentSource:
             return ()
 
         commit_id = f"git:{commit_data.hash}"
-        chunks = chunk_commit(commit_data)
-        files_changed = commit_data.files_changed[:MAX_FILES_CHANGED]
-        files_changed_total = max(commit_data.files_changed_total, len(commit_data.files_changed))
 
         # Convert unix timestamp to datetime
         commit_dt = datetime.fromtimestamp(commit_data.timestamp, tz=UTC)
+
+        include_diff = is_diff_chunk_eligible(
+            commit_data.timestamp,
+            self.git_diff_embedding_days,
+            self.reference_time,
+        )
+        chunks = chunk_commit(commit_data, include_diff=include_diff)
+        files_changed = commit_data.files_changed[:MAX_FILES_CHANGED]
+        files_changed_total = max(commit_data.files_changed_total, len(commit_data.files_changed))
 
         # Build metadata dict
         metadata = {
