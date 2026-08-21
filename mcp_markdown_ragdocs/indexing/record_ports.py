@@ -95,7 +95,12 @@ class SQLiteConnectionProvider(Protocol):
 class RecordIdentityCatalog(Protocol):
     """Enumerate canonical record identities without exposing provider rows."""
 
-    def iter_identities(self) -> Iterator[RecordIdentity]: ...
+    def iter_identities(
+        self,
+        *,
+        source_kind: str | None = None,
+        status: str | None = None,
+    ) -> Iterator[RecordIdentity]: ...
 
 
 class LocalRecordIdentityCatalog:
@@ -104,12 +109,38 @@ class LocalRecordIdentityCatalog:
     def __init__(self, database_manager: SQLiteConnectionProvider) -> None:
         self._database_manager = database_manager
 
-    def iter_identities(self) -> Iterator[RecordIdentity]:
-        """Stream identities from the provider until SearchKernel exposes this port."""
+    def iter_identities(
+        self,
+        *,
+        source_kind: str | None = None,
+        status: str | None = None,
+    ) -> Iterator[RecordIdentity]:
+        """Stream identities directly from indexed columns, filtered in SQL.
+
+        Bypasses storage-key JSON decoding and full record hydration so
+        callers that only need identity fields (not body/metadata) can skip
+        both.
+        """
+        query = "SELECT workspace_id, source_kind, source_id FROM local_records"
+        clauses: list[str] = []
+        parameters: list[str] = []
+        if source_kind is not None:
+            clauses.append("source_kind = ?")
+            parameters.append(source_kind)
+        if status is not None:
+            clauses.append("status = ?")
+            parameters.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+
         connection = self._database_manager.get_connection()
-        rows = connection.execute("SELECT storage_key FROM local_records")
+        rows = connection.execute(query, parameters)
         for row in rows:
-            yield RecordIdentity.from_storage_key(str(row[0]))
+            yield RecordIdentity(
+                workspace_id=row[0],
+                source_kind=row[1],
+                source_id=row[2],
+            )
 
 
 class RecordStorage(Protocol):

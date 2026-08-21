@@ -73,7 +73,7 @@ def test_storage_delegates_identity_enumeration_to_catalog(local_record_kernel) 
     ]
 
     class Catalog:
-        def iter_identities(self):
+        def iter_identities(self, *, source_kind=None, status=None):
             return iter(expected)
 
     storage = LocalRecordStorage(local_record_kernel, identity_catalog=Catalog())
