@@ -91,17 +91,19 @@ class HueyWorker:
     def __init__(self, huey: SqliteHuey, workers: int = 2) -> None:
         self._huey = huey
         self._workers = workers
-        self._consumer: _HueyConsumerThread | None = None
+        self._consumers: list[_HueyConsumerThread] = []
         self._started = False
 
     @property
     def is_running(self) -> bool:
         return (
-            self._started and self._consumer is not None and self._consumer.is_alive()
+            self._started
+            and bool(self._consumers)
+            and any(consumer.is_alive() for consumer in self._consumers)
         )
 
     def start(self) -> None:
-        """Start the consumer thread."""
+        """Start the consumer thread pool."""
         if self._started:
             logger.warning("HueyWorker already started")
             return
@@ -112,29 +114,40 @@ class HueyWorker:
         )
         _requeue_expired_leases(self._huey, lease_store)
 
-        self._consumer = _HueyConsumerThread(
-            self._huey,
-            self._workers,
-            lease_store=lease_store,
-        )
-        self._consumer.start()
+        self._consumers = [
+            _HueyConsumerThread(
+                self._huey,
+                lease_store=lease_store,
+                is_reclaimer=(index == 0),
+            )
+            for index in range(self._workers)
+        ]
+        for consumer in self._consumers:
+            consumer.start()
         self._started = True
         logger.info("Huey worker started with %d workers", self._workers)
 
     def stop(self, timeout: float = 5.0) -> None:
-        """Stop the consumer thread."""
-        if not self._started or self._consumer is None:
+        """Stop the consumer thread pool."""
+        if not self._started or not self._consumers:
             return
 
-        self._consumer.request_stop()
-        self._consumer.join(timeout=timeout)
+        for consumer in self._consumers:
+            consumer.request_stop()
+        for consumer in self._consumers:
+            consumer.join(timeout=timeout)
 
-        if self._consumer.is_alive():
-            logger.warning("Huey consumer thread did not stop within %.1fs", timeout)
+        still_alive = [consumer for consumer in self._consumers if consumer.is_alive()]
+        if still_alive:
+            logger.warning(
+                "%d Huey consumer thread(s) did not stop within %.1fs",
+                len(still_alive),
+                timeout,
+            )
         else:
             logger.info("Huey worker stopped")
 
-        self._consumer = None
+        self._consumers = []
         self._started = False
 
 
@@ -144,14 +157,14 @@ class _HueyConsumerThread(threading.Thread):
     def __init__(
         self,
         huey: SqliteHuey,
-        workers: int,
         *,
         lease_store: TaskLeaseStore,
+        is_reclaimer: bool = True,
     ) -> None:
         super().__init__(name="huey-consumer", daemon=True)
         self._huey = huey
-        self._workers = workers
         self._lease_store = lease_store
+        self._is_reclaimer = is_reclaimer
         self._owner_token = uuid.uuid4().hex
         self._stop_event = threading.Event()
 
@@ -165,7 +178,7 @@ class _HueyConsumerThread(threading.Thread):
             next_reclaim_at = 0.0
             while not self._stop_event.is_set():
                 now = time.monotonic()
-                if now >= next_reclaim_at:
+                if self._is_reclaimer and now >= next_reclaim_at:
                     _requeue_expired_leases(self._huey, self._lease_store)
                     next_reclaim_at = now + LEASE_RECLAIM_INTERVAL_SECONDS
                 # Dequeue and execute one task at a time
