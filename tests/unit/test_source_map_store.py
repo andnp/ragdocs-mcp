@@ -1,10 +1,8 @@
+import json
 import sqlite3
 from pathlib import Path
 
-from mcp_markdown_ragdocs.indexing.record_ports import (
-    JsonSourceMapStore,
-    SqliteSourceMapStore,
-)
+from mcp_markdown_ragdocs.indexing.record_ports import SqliteSourceMapStore
 
 
 class _SingleConnectionProvider:
@@ -17,25 +15,8 @@ class _SingleConnectionProvider:
         return self._connection
 
 
-def test_json_source_map_store_round_trips_membership(tmp_path: Path) -> None:
-    """Preserve source membership across the application storage boundary.
-
-    The JSON representation remains the durable contract used by indexing.
-    """
-    store = JsonSourceMapStore(tmp_path / "record-sources.json")
-    records = {"source-1": ("key-a", "key-b")}
-
-    store.save(records)
-
-    assert store.load() == {"source-1": ["key-a", "key-b"]}
-
-
-def test_json_source_map_store_recovers_from_invalid_content(tmp_path: Path) -> None:
-    """Treat missing or malformed source maps as empty membership."""
-    path = tmp_path / "record-sources.json"
-    path.write_text("not-json", encoding="utf-8")
-
-    assert JsonSourceMapStore(path).load() == {}
+def _write_legacy_json(path: Path, records: dict[str, list[str]]) -> None:
+    path.write_text(json.dumps(records), encoding="utf-8")
 
 
 def test_sqlite_source_map_store_round_trips_membership(tmp_path: Path) -> None:
@@ -92,7 +73,7 @@ def test_sqlite_source_map_store_degrades_gracefully_when_table_unavailable(
 def test_sqlite_source_map_store_migrates_legacy_json_once(tmp_path: Path) -> None:
     """Import an existing record-sources.json into the table on first use."""
     legacy_path = tmp_path / "record-sources.json"
-    JsonSourceMapStore(legacy_path).save({"source-1": ["key-a"]})
+    _write_legacy_json(legacy_path, {"source-1": ["key-a"]})
     provider = _SingleConnectionProvider(tmp_path / "index.db")
 
     store = SqliteSourceMapStore(provider, legacy_path)
@@ -103,11 +84,11 @@ def test_sqlite_source_map_store_migrates_legacy_json_once(tmp_path: Path) -> No
 def test_sqlite_source_map_store_migration_runs_only_once(tmp_path: Path) -> None:
     """Never re-import the legacy file on a later construction, even if edited."""
     legacy_path = tmp_path / "record-sources.json"
-    JsonSourceMapStore(legacy_path).save({"source-1": ["key-a"]})
+    _write_legacy_json(legacy_path, {"source-1": ["key-a"]})
     provider = _SingleConnectionProvider(tmp_path / "index.db")
     SqliteSourceMapStore(provider, legacy_path)
 
-    JsonSourceMapStore(legacy_path).save({"source-1": ["key-z"]})
+    _write_legacy_json(legacy_path, {"source-1": ["key-z"]})
     second_store = SqliteSourceMapStore(provider, legacy_path)
 
     assert second_store.load() == {"source-1": ["key-a"]}
@@ -118,7 +99,7 @@ def test_sqlite_source_map_store_does_not_remigrate_an_emptied_table(
 ) -> None:
     """A table legitimately emptied afterward (e.g. clear_documents) stays empty."""
     legacy_path = tmp_path / "record-sources.json"
-    JsonSourceMapStore(legacy_path).save({"source-1": ["key-a"]})
+    _write_legacy_json(legacy_path, {"source-1": ["key-a"]})
     provider = _SingleConnectionProvider(tmp_path / "index.db")
     store = SqliteSourceMapStore(provider, legacy_path)
     store.save({})

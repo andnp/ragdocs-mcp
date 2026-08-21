@@ -1,7 +1,7 @@
 """Tests for idempotent Google Drive record replacement."""
 
 import asyncio
-import json
+import sqlite3
 from datetime import UTC, datetime
 from dataclasses import replace
 from pathlib import Path
@@ -22,8 +22,18 @@ from mcp_markdown_ragdocs.gdrive.state import (
     GDriveStateRepository,
 )
 from mcp_markdown_ragdocs.gdrive.replacement_policy import GDriveReplacementPolicy
-from mcp_markdown_ragdocs.indexing.record_ports import JsonSourceMapStore
+from mcp_markdown_ragdocs.indexing.record_ports import SqliteSourceMapStore
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
+
+
+class _SingleConnectionProvider:
+    """Minimal real-connection SQLiteConnectionProvider for tests."""
+
+    def __init__(self, path: Path) -> None:
+        self._connection = sqlite3.connect(str(path))
+
+    def get_connection(self) -> sqlite3.Connection:
+        return self._connection
 
 
 def _record(
@@ -307,7 +317,7 @@ def test_drive_policy_groups_replacements_before_saving_source_membership(
         second,
         metadata={**second.metadata, "gdrive_source_id": "file-2"},
     )
-    source_map = JsonSourceMapStore(tmp_path / "record-sources.json")
+    source_map = SqliteSourceMapStore(_SingleConnectionProvider(tmp_path / "index.db"))
     source_records = source_map.load()
     policy = GDriveReplacementPolicy(
         record_manager.ingestor,
@@ -319,7 +329,7 @@ def test_drive_policy_groups_replacements_before_saving_source_membership(
 
     asyncio.run(policy.replace((first, second)))
 
-    saved = json.loads((tmp_path / "record-sources.json").read_text())
+    saved = source_map.load()
     assert set(saved) == {
         canonical_gdrive_source_key(first),
         canonical_gdrive_source_key(second),
@@ -337,7 +347,7 @@ def test_drive_policy_applies_tombstone_membership_update(
     """
     active = _record("file-1:chunk-a", "shared body", scopes=("drive-a", "drive-b"))
     tombstone = _record("file-1", "ignored", deleted=True, scopes=("drive-a",))
-    source_map = JsonSourceMapStore(tmp_path / "record-sources.json")
+    source_map = SqliteSourceMapStore(_SingleConnectionProvider(tmp_path / "index.db"))
     repository = GDriveStateRepository(tmp_path / "gdrive-state.db")
     policy = GDriveReplacementPolicy(
         record_manager.ingestor,
@@ -366,7 +376,7 @@ def test_drive_policy_recovers_indexed_journal_entry(tmp_path: Path, record_mana
     old = _record("file-1:chunk-a", "old body")
     new = _record("file-1:chunk-b", "new body")
     asyncio.run(record_manager.ingestor.index_records((old, new)))
-    source_map = JsonSourceMapStore(tmp_path / "record-sources.json")
+    source_map = SqliteSourceMapStore(_SingleConnectionProvider(tmp_path / "index.db"))
     source_records = {canonical_gdrive_source_key(old): [old.storage_key]}
     journal = GDriveReplacementJournal(tmp_path / "gdrive-replacements.json")
     entry = journal.prepare(
@@ -387,7 +397,7 @@ def test_drive_policy_recovers_indexed_journal_entry(tmp_path: Path, record_mana
 
     assert record_manager.storage.hydrate_record(old.storage_key) is None
     assert record_manager.storage.hydrate_record(new.storage_key) is not None
-    assert json.loads((tmp_path / "record-sources.json").read_text()) == {
+    assert source_map.load() == {
         canonical_gdrive_source_key(new): [new.storage_key]
     }
     assert journal.load() == ()

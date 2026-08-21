@@ -431,9 +431,8 @@ class SqliteSourceMapStore:
     """Store source-map membership in a table on the shared local index database.
 
     save() replaces every row from the passed mapping in a single
-    transaction, matching JsonSourceMapStore's whole-snapshot-overwrite
-    contract: callers always pass the complete membership, never a partial
-    update.
+    transaction: callers always pass the complete membership, never a
+    partial update.
     """
 
     _MIGRATION_MARKER_KEY = "migrated_from_json"
@@ -534,37 +533,7 @@ class SqliteSourceMapStore:
         connection.commit()
 
 
-class JsonSourceMapStore:
-    """Store source-map membership using the legacy JSON representation."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = path
-
-    def load(self) -> dict[str, list[str]]:
-        try:
-            value = json.loads(self._path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(value, dict):
-            return {}
-        return {
-            str(doc_id): [str(key) for key in keys if isinstance(key, str)]
-            for doc_id, keys in value.items()
-            if isinstance(keys, list)
-        }
-
-    def save(self, records: Mapping[str, Sequence[str]]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._path.with_suffix(".tmp")
-        temporary.write_text(
-            json.dumps({doc_id: list(keys) for doc_id, keys in records.items()}),
-            encoding="utf-8",
-        )
-        temporary.replace(self._path)
-
-
 __all__ = [
-    "JsonSourceMapStore",
     "SqliteSourceMapStore",
     "CommitHistoryPort",
     "EmbeddingProvider",
