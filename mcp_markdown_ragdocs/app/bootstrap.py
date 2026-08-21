@@ -96,6 +96,7 @@ class BootstrapHost(Protocol):
     def _refresh_index_state_from_loaded_indices(self) -> None: ...
     def _compute_index_state_version(self) -> float: ...
     def _build_vector_store(self, config: Config, embedding_model_name: str) -> Any: ...
+    async def warmup_semantic_search(self) -> None: ...
     def schedule_embedding_model_warmup(self) -> bool: ...
     async def _run_freshness_refresh(self) -> None: ...
     def _clear_freshness_task(self, task: asyncio.Task) -> None: ...
@@ -152,6 +153,7 @@ class BootstrapCoordinator:
                     await asyncio.to_thread(host.index_manager.load)
                     host._mark_index_state_loaded()
                     host._refresh_index_state_from_loaded_indices()
+                    await host.warmup_semantic_search()
                     host._publish_bootstrap_availability(_fully_available())
                     host._ready_event.set()
                     host.schedule_embedding_model_warmup()
@@ -167,6 +169,8 @@ class BootstrapCoordinator:
                 await asyncio.to_thread(host.index_manager.load)
                 host._mark_index_state_loaded()
                 host._index_state = IndexState(status="ready")
+                if host.use_tasks:
+                    await host.warmup_semantic_search()
                 host._publish_bootstrap_availability(_fully_available())
                 host._ready_event.set()
                 host.schedule_embedding_model_warmup()

@@ -59,6 +59,7 @@ class ContextIndexingPort(Protocol):
 
     kernel: Any
     ingestor: Any
+    embedding_provider: Any
     storage: RecordStorage
     @property
     def vector(self) -> Any: ...
@@ -365,6 +366,39 @@ class ApplicationContext:
             loaded_indexed_count=self.index_manager.get_document_count(),
         )
         self._index_state = self._index_state_from_snapshot(snapshot)
+
+    async def warmup_semantic_search(self) -> None:
+        """Load the semantic search state before the daemon becomes ready."""
+        if not self.use_tasks:
+            return
+
+        try:
+            embedding_provider = self.index_manager.embedding_provider
+            query_vector = await asyncio.to_thread(
+                embedding_provider.embed_query,
+                "__ragdocs_startup_warmup__",
+            )
+            await asyncio.to_thread(
+                self.index_manager.vector.search,
+                query_vector,
+                1,
+                model_name=embedding_provider.model_name,
+                dim=embedding_provider.dim,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Semantic search warmup failed; the first query may load state lazily",
+                exc_info=True,
+            )
+            return
+
+        logger.info(
+            "Semantic search state warmed for %s (%d dimensions)",
+            embedding_provider.model_name,
+            embedding_provider.dim,
+        )
 
     async def _preload_existing_indices_for_background_bootstrap(
         self,
