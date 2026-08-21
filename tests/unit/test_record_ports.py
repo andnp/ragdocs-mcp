@@ -62,6 +62,46 @@ def test_iter_records_hydrates_in_bounded_batches(record_manager, monkeypatch) -
     assert batch_sizes == [2, 2, 1]
 
 
+def test_iter_identities_filters_by_source_kind(record_manager) -> None:
+    commit = _make_commit_record("commit-1", "message")
+    note = Record(
+        source_kind="note",
+        source_id="note-1",
+        title="Note",
+        body="body",
+        created_at=commit.created_at,
+        updated_at=commit.updated_at,
+        metadata={},
+        status=RecordStatus.ACTIVE,
+    )
+    assert record_manager.index_record(commit) is True
+    assert record_manager.index_record(note) is True
+
+    identities = list(record_manager.storage.iter_identities(source_kind="git_commit"))
+
+    assert [identity.source_id for identity in identities] == ["commit-1"]
+
+
+def test_iter_identities_filters_by_status(record_manager) -> None:
+    active = _make_commit_record("commit-active", "message")
+    stale = Record(
+        source_kind="git_commit",
+        source_id="commit-stale",
+        title="Fix login bug",
+        body="message",
+        created_at=active.created_at,
+        updated_at=active.updated_at,
+        metadata={},
+        status=RecordStatus.STALE,
+    )
+    assert record_manager.index_record(active) is True
+    assert record_manager.index_record(stale) is True
+
+    identities = list(record_manager.storage.iter_identities(status="active"))
+
+    assert [identity.source_id for identity in identities] == ["commit-active"]
+
+
 def test_storage_delegates_identity_enumeration_to_catalog(local_record_kernel) -> None:
     """Storage delegates identity enumeration to the injected application port.
 
