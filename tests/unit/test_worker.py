@@ -434,6 +434,85 @@ class TestHueyWorker:
         assert intent is not None
         assert intent.state == "succeeded"
 
+    def test_pool_processes_tasks_concurrently(
+        self,
+        huey_instance: SqliteHuey,
+    ) -> None:
+        """Multiple worker threads dequeue and run tasks at the same time."""
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+        release = threading.Event()
+
+        @huey_instance.task()
+        def blocking_task(_: int) -> None:
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            release.wait(timeout=5.0)
+            with lock:
+                active -= 1
+
+        blocking_task(1)
+        blocking_task(2)
+
+        worker = HueyWorker(huey_instance, workers=2)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while max_active < 2 and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert max_active == 2
+        finally:
+            release.set()
+            worker.stop()
+
+    def test_only_one_pool_thread_reclaims_expired_leases(
+        self,
+        huey_instance: SqliteHuey,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Only the designated reclaimer thread runs periodic reclaim."""
+        thread_idents: set[int] = set()
+        lock = threading.Lock()
+
+        def fake_requeue(huey: object, lease_store: object) -> None:
+            del huey, lease_store
+            with lock:
+                thread_idents.add(threading.get_ident())
+
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer._requeue_expired_leases",
+            fake_requeue,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_RECLAIM_INTERVAL_SECONDS",
+            0.01,
+        )
+        main_ident = threading.get_ident()
+
+        worker = HueyWorker(huey_instance, workers=3)
+        worker.start()
+        try:
+            time.sleep(0.3)
+        finally:
+            worker.stop()
+
+        non_main_idents = thread_idents - {main_ident}
+        assert len(non_main_idents) == 1
+
+    def test_stop_joins_pool_and_clears_running_state(
+        self,
+        huey_instance: SqliteHuey,
+    ) -> None:
+        """stop() joins every spawned thread and leaves is_running False."""
+        worker = HueyWorker(huey_instance, workers=3)
+        worker.start()
+        assert worker.is_running
+        worker.stop(timeout=2.0)
+        assert not worker.is_running
+
     def test_double_start_is_safe(self, huey_instance: SqliteHuey) -> None:
         """Starting twice doesn't create duplicate threads."""
         worker = HueyWorker(huey_instance)
