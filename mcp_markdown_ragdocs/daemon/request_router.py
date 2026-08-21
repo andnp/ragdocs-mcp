@@ -21,6 +21,7 @@ from mcp_markdown_ragdocs.daemon.record_rpc import (
     RecordSerializationError,
     deserialize_record,
 )
+from mcp_markdown_ragdocs.indexing.record_ports import RecordStorage
 from mcp_markdown_ragdocs.indexing.rebuild_service import (
     read_rebuild_status,
     resolve_rebuild_scope,
@@ -65,7 +66,11 @@ class DaemonAdminTaskSubmissionPort(Protocol):
 
 
 class _RecordIndexManager(Protocol):
+    storage: RecordStorage
+
     def index_record(self, record: Record) -> None: ...
+
+    def persist(self) -> None: ...
 
 
 class _RecordIndexContext(Protocol):
@@ -126,6 +131,45 @@ def _index_records(ctx: _RecordIndexContext, payload: dict[str, object]) -> dict
             }
 
     return {"status": "ok", "indexed_count": len(records)}
+
+
+def _purge_records(
+    manager: _RecordIndexManager, payload: dict[str, object]
+) -> dict[str, object]:
+    """Delete records matching workspace_id + source_kind, or preview the count.
+
+    Requires confirm=true to actually delete; otherwise returns a dry-run
+    count so a large deletion can be reviewed before it runs.
+    """
+    workspace_id = payload.get("workspace_id")
+    source_kind = payload.get("source_kind")
+    if not isinstance(workspace_id, str) or not workspace_id:
+        return {"status": "error", "error": "workspace_id_required"}
+    if not isinstance(source_kind, str) or not source_kind:
+        return {"status": "error", "error": "source_kind_required"}
+
+    storage_keys = [
+        identity.storage_key
+        for identity in manager.storage.iter_identities(source_kind=source_kind)
+        if identity.workspace_id == workspace_id
+    ]
+
+    if payload.get("confirm") is not True:
+        return {
+            "status": "ok",
+            "would_delete": len(storage_keys),
+            "workspace_id": workspace_id,
+            "source_kind": source_kind,
+        }
+
+    manager.storage.delete(storage_keys)
+    manager.persist()
+    return {
+        "status": "ok",
+        "deleted": len(storage_keys),
+        "workspace_id": workspace_id,
+        "source_kind": source_kind,
+    }
 
 
 def _deserialize_records(
@@ -432,6 +476,8 @@ async def _handle_admin_request(
         response["status"] = "ok"
         response["queue_db_path"] = str(dependencies.queue_runtime.db_path)
         return response
+    if path == "/api/admin/records/purge":
+        return _purge_records(ctx.index_manager, payload)
     if path == "/api/admin/rebuild/status":
         return read_rebuild_status(dependencies.runtime_root)
     if path == "/api/admin/reindex/status":
