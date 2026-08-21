@@ -197,6 +197,8 @@ class RecordStorage(Protocol):
 
     def count_distinct_git_commits(self, *, status: str | None = None) -> int: ...
 
+    def run_incremental_vacuum(self, page_limit: int) -> int: ...
+
     def delete(self, storage_keys: Sequence[str]) -> None: ...
 
 
@@ -397,6 +399,19 @@ class LocalRecordStorage:
             connection.execute("PRAGMA mmap_size = 1073741824")
         except Exception:
             return
+
+    def run_incremental_vacuum(self, page_limit: int) -> int:
+        """Reclaim up to page_limit freed pages, returning the pages reclaimed.
+
+        A no-op (returns 0) unless the database has been migrated to
+        auto_vacuum=INCREMENTAL; incremental_vacuum otherwise has no freed
+        pages to reclaim regardless of the requested limit.
+        """
+        connection = self._kernel.backend.db_manager.get_connection()
+        before = connection.execute("PRAGMA freelist_count").fetchone()[0]
+        connection.execute(f"PRAGMA incremental_vacuum({int(page_limit)})")
+        after = connection.execute("PRAGMA freelist_count").fetchone()[0]
+        return max(0, before - after)
 
     def delete(self, storage_keys: Sequence[str]) -> None:
         self._deletion.delete(storage_keys)

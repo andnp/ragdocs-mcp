@@ -113,6 +113,10 @@ class _Storage:
         del status
         return 0
 
+    def run_incremental_vacuum(self, page_limit: int) -> int:
+        del page_limit
+        return 0
+
     def delete(self, storage_keys: Sequence[str]) -> None:
         self.events.append("delete")
         self.deleted.append(tuple(storage_keys))
