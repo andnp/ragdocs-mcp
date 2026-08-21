@@ -63,6 +63,7 @@ class _Ingestor:
     def __init__(self, events: list[str], receipt: IngestionReceipt) -> None:
         self.events = events
         self.receipt = receipt
+        self.calls: list[tuple[Record, ...]] = []
 
     async def index_records(
         self,
@@ -71,15 +72,21 @@ class _Ingestor:
         checkpoint: Cursor | None = None,
         failure_mode: IngestionFailureMode = "strict",
     ) -> IngestionReceipt:
-        del records, checkpoint, failure_mode
+        del checkpoint, failure_mode
+        self.calls.append(tuple(records))
         self.events.append("index")
         return self.receipt
 
 
 class _Storage:
-    def __init__(self, events: list[str]) -> None:
+    def __init__(
+        self,
+        events: list[str],
+        existing_records: Mapping[str, Record] | None = None,
+    ) -> None:
         self.events = events
         self.deleted: list[tuple[str, ...]] = []
+        self._existing_records = dict(existing_records or {})
 
     @property
     def db_manager(self) -> object:
@@ -96,8 +103,10 @@ class _Storage:
         self,
         identities: Sequence[RecordIdentity],
     ) -> Mapping[str, Record | None]:
-        del identities
-        return {}
+        return {
+            identity.storage_key: self._existing_records.get(identity.storage_key)
+            for identity in identities
+        }
 
     def iter_records(
         self, *, source_kind: str | None = None, status: str | None = None
