@@ -68,9 +68,7 @@ def test_drive_replacement_deletes_stale_chunks_and_deduplicates_source_map(
     assert record_manager.storage.hydrate_record(first[1].storage_key) is None
     assert record_manager.storage.hydrate_record(replacement[0].storage_key) is not None
     source_key = canonical_gdrive_source_key(replacement[0])
-    source_map = json.loads(
-        (Path(record_manager.index_path) / "record-sources.json").read_text()
-    )
+    source_map = record_manager._source_map_store.load()
     assert source_map[source_key] == [replacement[0].storage_key]
 
 
@@ -133,9 +131,7 @@ def test_drive_replay_is_idempotent_for_records_and_memberships(record_manager) 
     assert record_manager.index_records((record, record)) is True
 
     source_key = canonical_gdrive_source_key(record)
-    source_map = json.loads(
-        (Path(record_manager.index_path) / "record-sources.json").read_text()
-    )
+    source_map = record_manager._source_map_store.load()
     assert source_map[source_key] == [record.storage_key]
     assert record_manager.count_records("gdrive") == 1
 

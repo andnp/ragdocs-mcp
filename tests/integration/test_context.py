@@ -327,7 +327,7 @@ async def test_shutdown_persists_indices(context_with_config):
     await ctx.stop()
 
     assert (ctx.index_path / "index.db").exists()
-    assert (ctx.index_path / "record-sources.json").exists()
+    assert ctx.index_manager._source_map_store.load()
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,7 @@ def test_index_documents_indexes_the_complete_batch(record_manager) -> None:
 
     assert record_manager.get_document_count() == 2
     assert len(record_manager.describe_documents()) == 2
-    assert (Path(record_manager.index_path) / "record-sources.json").exists()
+    assert record_manager._source_map_store.load()
 
 
 def test_index_documents_rebuilds_graph_once(record_manager, monkeypatch) -> None:

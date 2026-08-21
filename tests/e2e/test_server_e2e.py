@@ -6,6 +6,7 @@ file change detection, and graceful shutdown. Uses FastAPI TestClient for
 real HTTP request/response testing with full component integration.
 """
 
+import sqlite3
 import time
 from pathlib import Path
 
@@ -288,10 +289,15 @@ def test_server_shutdown_persists_indices(client, tmp_path, test_docs_dir):
     index_path = tmp_path / "indices"
     assert index_path.exists()
 
-    # Canonical record stores share one SQLite database and the application
-    # keeps the document-to-record mapping alongside it.
+    # Canonical record stores and the document-to-record mapping now share
+    # one SQLite database.
     assert (index_path / "index.db").exists()
-    assert (index_path / "record-sources.json").exists()
+    connection = sqlite3.connect(str(index_path / "index.db"))
+    try:
+        row_count = connection.execute("SELECT COUNT(*) FROM source_map").fetchone()[0]
+    finally:
+        connection.close()
+    assert row_count > 0
 
     # Check manifest file
     manifest_file = index_path / "index.manifest.json"

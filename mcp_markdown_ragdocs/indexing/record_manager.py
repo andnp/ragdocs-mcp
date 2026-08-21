@@ -42,7 +42,7 @@ from mcp_markdown_ragdocs.indexing.markdown_documents import (
 from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_graph_store
 from mcp_markdown_ragdocs.indexing.graph_rebuild import DebouncedGraphRebuilder
 from mcp_markdown_ragdocs.indexing.record_ports import (
-    JsonSourceMapStore,
+    SqliteSourceMapStore,
     CommitHistoryPort,
     DocumentPlanner,
     DocumentWriter,
@@ -206,8 +206,9 @@ class RecordIndexManager:
         self._failed_files: list[dict[str, str]] = []
         self._state_version = 0
         self._ready = True
-        self._source_map_store = source_map_store or JsonSourceMapStore(
-            Path(config.indexing.index_path) / "record-sources.json"
+        self._source_map_store = source_map_store or SqliteSourceMapStore(
+            kernel.backend.db_manager,
+            Path(config.indexing.index_path) / "record-sources.json",
         )
         self._source_records: dict[str, list[str]] = self._source_map_store.load()
         self._graph_lock = threading.Lock()
