@@ -177,6 +177,9 @@ def test_storage_delegates_identity_enumeration_to_catalog(local_record_kernel) 
         def iter_identities(self, *, source_kind=None, status=None):
             return iter(expected)
 
+        def count_distinct_git_commits(self, *, status=None):
+            return 0
+
     storage = LocalRecordStorage(local_record_kernel, identity_catalog=Catalog())
 
     assert list(storage.iter_identities()) == expected

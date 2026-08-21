@@ -109,6 +109,10 @@ class _Storage:
     ) -> Iterator[RecordIdentity]:
         return iter(())
 
+    def count_distinct_git_commits(self, *, status: str | None = None) -> int:
+        del status
+        return 0
+
     def delete(self, storage_keys: Sequence[str]) -> None:
         self.events.append("delete")
         self.deleted.append(tuple(storage_keys))

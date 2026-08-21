@@ -146,6 +146,7 @@ def _build_index_stats_payload(ctx: Any) -> dict[str, object]:
     repo_count = len(ctx.discover_git_repositories())
     git_commit_count = ctx.get_total_git_commits_indexed()
 
+    indexed_descriptions: list[dict[str, object]] = []
     indexed_documents = 0
     indexed_chunks = 0
     if persisted_index_exists:
