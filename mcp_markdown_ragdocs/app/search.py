@@ -195,6 +195,38 @@ _GRAPH_TARGET_SUFFIXES = (
 
 def _search_tokens(value: str) -> set[str]:
     return set(_SEARCH_TOKEN_PATTERN.findall(value.lower()))
+
+
+_LEXICAL_TOKEN_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_LEXICAL_CASING_HUMP_PATTERN = re.compile(r"[a-z0-9][A-Z]")
+_LEXICAL_FILE_PATH_PATTERN = re.compile(
+    r"(?:[\w.-]+[/\\])+[\w.-]+|[\w-]+\.[A-Za-z][A-Za-z0-9]{0,9}"
+)
+_LEXICAL_TICKET_ID_PATTERN = re.compile(r"[A-Z]{2,10}-\d{1,6}")
+
+
+def _is_lexical_query(query: str) -> bool:
+    """Detect an exact file path, coded identifier, or ticket ID query.
+
+    Matched via ``re.fullmatch`` on the trimmed query so this only fires for
+    a single-token-or-path shaped query, not for an identifier or ticket ID
+    embedded inside an ordinary prose question.
+    """
+    trimmed = query.strip()
+    if not trimmed:
+        return False
+    if _LEXICAL_FILE_PATH_PATTERN.fullmatch(trimmed):
+        return True
+    if _LEXICAL_TICKET_ID_PATTERN.fullmatch(trimmed):
+        return True
+    if _LEXICAL_TOKEN_PATTERN.fullmatch(trimmed):
+        if "_" in trimmed:
+            return True
+        if _LEXICAL_CASING_HUMP_PATTERN.search(trimmed):
+            return True
+    return False
+
+
 _GRAPH_INBOUND_PREFIXES = (
     re.compile(
         r"^(?:which|what)\s+(?:pages|documents|notes)\s+link to\s+",
