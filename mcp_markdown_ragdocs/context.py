@@ -957,14 +957,10 @@ class ApplicationContext:
         """
         if not self.git_indexing_enabled:
             return 0
-        records = self.index_manager.storage.iter_records()
-        return len(
-            {
-                _git_commit_id(record.source_id)
-                for record in records
-                if record.source_kind == "git_commit" and record.status == "active"
-            }
+        identities = self.index_manager.storage.iter_identities(
+            source_kind="git_commit", status="active"
         )
+        return len({_git_commit_id(identity.source_id) for identity in identities})
 
     def _ingest_git_records_into_kernel_index(self, repos: list[Path]) -> None:
         """Ingest discovered git commits into the live IndexManager as Records.

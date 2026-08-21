@@ -1827,17 +1827,21 @@ def test_git_total_counts_distinct_active_commits_in_canonical_index():
 
     Multiple chunks from one commit must contribute only one commit count.
     """
+    active_identities = [
+        SimpleNamespace(source_id="git:abc:summary:0"),
+        SimpleNamespace(source_id="git:abc:diff:0"),
+        SimpleNamespace(source_id="git:def:summary:0"),
+    ]
+
+    def iter_identities(*, source_kind: str, status: str) -> list[SimpleNamespace]:
+        assert source_kind == "git_commit"
+        assert status == "active"
+        return active_identities
+
     ctx = object.__new__(ApplicationContext)
     ctx.git_indexing_enabled = True
     cast(Any, ctx).index_manager = SimpleNamespace(
-        storage=SimpleNamespace(
-            iter_records=lambda: [
-                SimpleNamespace(source_kind="git_commit", source_id="git:abc:summary:0", status="active"),
-                SimpleNamespace(source_kind="git_commit", source_id="git:abc:diff:0", status="active"),
-                SimpleNamespace(source_kind="git_commit", source_id="git:def:summary:0", status="active"),
-                SimpleNamespace(source_kind="git_commit", source_id="git:stale:summary:0", status="deleted"),
-            ]
-        )
+        storage=SimpleNamespace(iter_identities=iter_identities)
     )
 
     assert ctx.get_total_git_commits_indexed() == 2
