@@ -4,7 +4,7 @@ import asyncio
 import os
 import threading
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -791,4 +791,146 @@ async def test_admin_records_purge_route_deletes_and_persists_when_confirmed() -
         "source_kind": "git_commit",
     }
     assert storage.deleted_keys == [target.storage_key]
+
+
+class _FakeGitDiffStorage:
+    def __init__(self, records: list[Record]) -> None:
+        self._by_key = {
+            RecordIdentity(
+                record.workspace_id, record.source_kind, record.source_id
+            ).storage_key: record
+            for record in records
+        }
+        self.deleted_keys: list[str] | None = None
+
+    def iter_identities(self, *, source_kind=None, status=None):
+        return iter(
+            RecordIdentity(record.workspace_id, record.source_kind, record.source_id)
+            for record in self._by_key.values()
+            if source_kind is None or record.source_kind == source_kind
+        )
+
+    def hydrate_records(self, identities):
+        return {
+            identity.storage_key: self._by_key.get(identity.storage_key)
+            for identity in identities
+        }
+
+    def delete(self, storage_keys) -> None:
+        self.deleted_keys = list(storage_keys)
+
+
+def _git_diff_record(
+    *, workspace_id: str, source_id: str, timestamp: int
+) -> Record:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    return Record(
+        source_kind="git_commit",
+        source_id=source_id,
+        workspace_id=workspace_id,
+        title="Commit",
+        body="Body",
+        created_at=now,
+        updated_at=now,
+        metadata={"timestamp": timestamp},
+    )
+
+
+def _attach_git_diff_storage(
+    ctx: _FakeContext,
+    storage: _FakeGitDiffStorage,
+    persist_calls: list[int],
+    *,
+    max_age_days: int = 30,
+) -> None:
+    ctx.index_manager.storage = storage
+    ctx.index_manager.persist = lambda: persist_calls.append(1)
+    ctx.config.git_indexing = SimpleNamespace(git_diff_embedding_days=max_age_days)
+
+
+@pytest.mark.asyncio
+async def test_prune_old_git_diffs_requires_workspace_id() -> None:
+    ctx = _FakeContext(ready=True)
+    _attach_git_diff_storage(ctx, _FakeGitDiffStorage([]), [])
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    payload = await handler("/api/admin/records/prune-old-git-diffs", {})
+
+    assert payload == {"status": "error", "error": "workspace_id_required"}
+
+
+@pytest.mark.asyncio
+async def test_prune_old_git_diffs_previews_stale_diffs_without_deleting() -> None:
+    now = datetime.now(UTC)
+    reference_recent = int((now - timedelta(days=1)).timestamp())
+    reference_old = int((now - timedelta(days=400)).timestamp())
+    old_diff = _git_diff_record(
+        workspace_id="ws", source_id="git:aaa:diff:0", timestamp=reference_old
+    )
+    old_summary = _git_diff_record(
+        workspace_id="ws", source_id="git:aaa:summary:0", timestamp=reference_old
+    )
+    recent_diff = _git_diff_record(
+        workspace_id="ws", source_id="git:bbb:diff:0", timestamp=reference_recent
+    )
+    other_workspace_diff = _git_diff_record(
+        workspace_id="other", source_id="git:ccc:diff:0", timestamp=reference_old
+    )
+    near_miss = _git_diff_record(
+        workspace_id="ws", source_id="git:ddd:diffs:0", timestamp=reference_old
+    )
+    non_git = Record(
+        source_kind="note",
+        source_id="note:1",
+        workspace_id="ws",
+        title="Note",
+        body="Body",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    storage = _FakeGitDiffStorage(
+        [old_diff, old_summary, recent_diff, other_workspace_diff, near_miss, non_git]
+    )
+    ctx = _FakeContext(ready=True)
+    _attach_git_diff_storage(ctx, storage, [], max_age_days=30)
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    payload = await handler(
+        "/api/admin/records/prune-old-git-diffs", {"workspace_id": "ws"}
+    )
+
+    assert payload == {
+        "status": "ok",
+        "would_delete": 1,
+        "workspace_id": "ws",
+        "max_age_days": 30,
+    }
+    assert storage.deleted_keys is None
+
+
+@pytest.mark.asyncio
+async def test_prune_old_git_diffs_deletes_and_persists_when_confirmed() -> None:
+    reference_old = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp())
+    old_diff = _git_diff_record(
+        workspace_id="ws", source_id="git:aaa:diff:0", timestamp=reference_old
+    )
+    storage = _FakeGitDiffStorage([old_diff])
+    ctx = _FakeContext(ready=True)
+    persist_calls: list[int] = []
+    _attach_git_diff_storage(ctx, storage, persist_calls, max_age_days=30)
+    handler = build_daemon_request_handler(_build_dependencies(ctx, _FakeCoordinator()))
+
+    payload = await handler(
+        "/api/admin/records/prune-old-git-diffs",
+        {"workspace_id": "ws", "confirm": True},
+    )
+
+    expected_key = RecordIdentity("ws", "git_commit", "git:aaa:diff:0").storage_key
+    assert payload == {
+        "status": "ok",
+        "deleted": 1,
+        "workspace_id": "ws",
+        "max_age_days": 30,
+    }
+    assert storage.deleted_keys == [expected_key]
     assert persist_calls == [1]
