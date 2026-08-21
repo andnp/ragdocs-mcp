@@ -312,7 +312,7 @@ def persistent_indices_module(
 ) -> Generator[LocalRecordKernel]:
     """Module-scoped canonical kernel backed by persistent SQLite records."""
     yield build_local_record_kernel(
-        Path(persistent_config.indexing.index_path) / "records.db",
+        Path(persistent_config.indexing.index_path) / "index.db",
         embedding_provider=deterministic_embedding_provider,
         embedding_model_name=deterministic_embedding_provider.model_name,
         embedding_dim=deterministic_embedding_provider.dim,
@@ -345,7 +345,7 @@ def persistent_indices_isolated(
 ) -> Generator[LocalRecordKernel]:
     """Fresh canonical kernel using the configured persistent database path."""
     yield build_local_record_kernel(
-        Path(persistent_config.indexing.index_path) / "records.db",
+        Path(persistent_config.indexing.index_path) / "index.db",
         embedding_provider=deterministic_embedding_provider,
         embedding_model_name=deterministic_embedding_provider.model_name,
         embedding_dim=deterministic_embedding_provider.dim,
@@ -407,7 +407,7 @@ def persistent_manager_with_module_config(
     deterministic_embedding_provider: DeterministicEmbeddingProvider,
 ) -> RecordIndexManager:
     kernel = build_local_record_kernel(
-        Path(persistent_config_module.indexing.index_path) / "records.db",
+        Path(persistent_config_module.indexing.index_path) / "index.db",
         embedding_provider=deterministic_embedding_provider,
         embedding_model_name=deterministic_embedding_provider.model_name,
         embedding_dim=deterministic_embedding_provider.dim,
