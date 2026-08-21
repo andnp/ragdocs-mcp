@@ -16,8 +16,7 @@ from mcp_markdown_ragdocs.config import (
     ProjectConfig,
     SearchConfig,
 )
-from mcp_markdown_ragdocs.context import ApplicationContext
-from mcp_markdown_ragdocs.context import IndexState, _git_commit_id
+from mcp_markdown_ragdocs.context import ApplicationContext, IndexState, _git_commit_id
 
 
 @pytest.fixture

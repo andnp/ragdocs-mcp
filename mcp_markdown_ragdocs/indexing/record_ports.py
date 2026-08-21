@@ -14,12 +14,12 @@ from searchkernel.api import (
     ContentSource,
     GraphEdge,
     GraphNeighbor,
-    LocalRecordKernel,
     KeywordStore,
+    LocalRecordKernel,
     Record,
     RecordIdentity,
-    SQLiteEmbeddingCache,
     SemanticRecordIngestor,
+    SQLiteEmbeddingCache,
     Vector,
     VectorStore,
 )
@@ -216,7 +216,7 @@ class RecordIndexStorage(RecordStorage, Protocol):
 
     def create_ingestor(
         self,
-        embedding_provider: "EmbeddingProvider",
+        embedding_provider: EmbeddingProvider,
         *,
         cache_path: Path,
         batch_size: int,
@@ -534,18 +534,18 @@ class SqliteSourceMapStore:
 
 
 __all__ = [
-    "SqliteSourceMapStore",
     "CommitHistoryPort",
     "EmbeddingProvider",
     "GDriveIntegrationFactory",
     "GDriveIntegrationPort",
-    "RecordIndexStorage",
     "LocalRecordDeletion",
     "LocalRecordIdentityCatalog",
     "LocalRecordStorage",
     "RecordDeletion",
     "RecordIdentityCatalog",
+    "RecordIndexStorage",
     "RecordStorage",
     "SQLiteConnectionProvider",
     "SourceMapStore",
+    "SqliteSourceMapStore",
 ]

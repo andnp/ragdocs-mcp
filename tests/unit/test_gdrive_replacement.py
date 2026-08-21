@@ -2,8 +2,8 @@
 
 import asyncio
 import sqlite3
-from datetime import UTC, datetime
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from searchkernel.api import (
@@ -17,13 +17,13 @@ from mcp_markdown_ragdocs.gdrive.replacement import (
     GDriveReplacementJournal,
     canonical_gdrive_source_key,
 )
+from mcp_markdown_ragdocs.gdrive.replacement_policy import GDriveReplacementPolicy
 from mcp_markdown_ragdocs.gdrive.state import (
     GDriveScopeIdentity,
     GDriveStateRepository,
 )
-from mcp_markdown_ragdocs.gdrive.replacement_policy import GDriveReplacementPolicy
-from mcp_markdown_ragdocs.indexing.record_ports import SqliteSourceMapStore
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
+from mcp_markdown_ragdocs.indexing.record_ports import SqliteSourceMapStore
 
 
 class _SingleConnectionProvider:

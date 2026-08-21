@@ -35,14 +35,13 @@ from searchkernel.api import (
 )
 
 from mcp_markdown_ragdocs.config import Config
+from mcp_markdown_ragdocs.indexing.graph_rebuild import DebouncedGraphRebuilder
+from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_graph_store
 from mcp_markdown_ragdocs.indexing.markdown_documents import (
     MarkdownDocumentPlanner,
     SemanticDocumentWriter,
 )
-from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_graph_store
-from mcp_markdown_ragdocs.indexing.graph_rebuild import DebouncedGraphRebuilder
 from mcp_markdown_ragdocs.indexing.record_ports import (
-    SqliteSourceMapStore,
     CommitHistoryPort,
     DocumentPlanner,
     DocumentWriter,
@@ -54,6 +53,7 @@ from mcp_markdown_ragdocs.indexing.record_ports import (
     RecordIndexStorage,
     RecordStorage,
     SourceMapStore,
+    SqliteSourceMapStore,
 )
 
 logger = logging.getLogger(__name__)

@@ -57,6 +57,10 @@ from typing import Any
 import pytest
 from searchkernel.api import build_local_record_kernel
 from searchkernel.domain import Vector
+from searchkernel.embeddings import (
+    TEST_FAKE_EMBEDDINGS_ENV_VAR,
+    DeterministicFakeEmbeddingModel,
+)
 from searchkernel.local import LocalRecordKernel
 
 from mcp_markdown_ragdocs.config import (
@@ -68,10 +72,6 @@ from mcp_markdown_ragdocs.config import (
 )
 from mcp_markdown_ragdocs.daemon.management import inspect_daemon, stop_daemon
 from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
-from searchkernel.embeddings import (
-    TEST_FAKE_EMBEDDINGS_ENV_VAR,
-    DeterministicFakeEmbeddingModel,
-)
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
 
 
