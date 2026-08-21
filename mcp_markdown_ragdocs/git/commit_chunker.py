@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
 
 from mcp_markdown_ragdocs.git.commit_parser import CommitData
@@ -31,8 +32,13 @@ def chunk_commit(
     *,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     overlap_tokens: int = DEFAULT_OVERLAP_TOKENS,
+    include_diff: bool = True,
 ) -> tuple[CommitChunk, ...]:
-    """Split a commit by semantic section within a conservative token budget."""
+    """Split a commit by semantic section within a conservative token budget.
+
+    include_diff controls whether diff-section chunks are produced at all;
+    summary and body chunking are unaffected.
+    """
 
     if max_tokens < 1:
         raise ValueError("max_tokens must be >= 1")
@@ -56,16 +62,36 @@ def chunk_commit(
             overlap_tokens=0,
         )
     )
-    for diff_file in _split_diff_files(commit.delta_truncated):
-        chunks.extend(
-            _build_chunks(
-                "diff",
-                diff_file,
-                max_tokens=max_tokens,
-                overlap_tokens=overlap_tokens,
+    if include_diff:
+        for diff_file in _split_diff_files(commit.delta_truncated):
+            chunks.extend(
+                _build_chunks(
+                    "diff",
+                    diff_file,
+                    max_tokens=max_tokens,
+                    overlap_tokens=overlap_tokens,
+                )
             )
-        )
     return tuple(chunks)
+
+
+def is_diff_chunk_eligible(
+    commit_timestamp: int,
+    max_age_days: int,
+    reference_time: datetime,
+) -> bool:
+    """Return whether a commit is recent enough to keep diff chunks.
+
+    max_age_days <= 0 disables the gate (always eligible). Shared by the
+    ingestion-time gate and the prune-time filter so both compute the
+    age-vs-window boundary identically.
+    """
+    if max_age_days <= 0:
+        return True
+
+    commit_dt = datetime.fromtimestamp(commit_timestamp, tz=UTC)
+    age_days = (reference_time - commit_dt).total_seconds() / 86400
+    return age_days <= max_age_days
 
 
 def _summary_text(commit: CommitData) -> str:
@@ -129,4 +155,5 @@ __all__ = [
     "DEFAULT_OVERLAP_TOKENS",
     "chunk_commit",
     "estimate_tokens",
+    "is_diff_chunk_eligible",
 ]
