@@ -1833,15 +1833,16 @@ def test_git_total_counts_distinct_active_commits_in_canonical_index():
         SimpleNamespace(source_id="git:def:summary:0"),
     ]
 
-    def iter_identities(*, source_kind: str, status: str) -> list[SimpleNamespace]:
-        assert source_kind == "git_commit"
+    def count_distinct_git_commits(*, status: str) -> int:
         assert status == "active"
-        return active_identities
+        return len({identity.source_id.split(":")[1] for identity in active_identities})
 
     ctx = object.__new__(ApplicationContext)
     ctx.git_indexing_enabled = True
     cast(Any, ctx).index_manager = SimpleNamespace(
-        storage=SimpleNamespace(iter_identities=iter_identities)
+        storage=SimpleNamespace(
+            count_distinct_git_commits=count_distinct_git_commits,
+        )
     )
 
     assert ctx.get_total_git_commits_indexed() == 2

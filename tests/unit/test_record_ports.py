@@ -104,6 +104,19 @@ def test_iter_identities_filters_by_status(record_manager) -> None:
     assert [identity.source_id for identity in identities] == ["commit-active"]
 
 
+def test_count_distinct_git_commits_aggregates_in_storage(record_manager) -> None:
+    """Count one active commit despite multiple chunk identities."""
+    records = [
+        _make_commit_record("git:abc:summary:0", "summary"),
+        _make_commit_record("git:abc:diff:0", "diff"),
+        _make_commit_record("git:def:summary:0", "other"),
+    ]
+    for record in records:
+        assert record_manager.index_record(record) is True
+
+    assert record_manager.storage.count_distinct_git_commits(status="active") == 2
+
+
 def test_reconcile_git_project_attribution_only_hydrates_matches(
     local_record_kernel, deterministic_embedding_provider, tmp_path, monkeypatch
 ) -> None:

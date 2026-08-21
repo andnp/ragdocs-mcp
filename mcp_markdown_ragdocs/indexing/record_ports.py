@@ -102,6 +102,8 @@ class RecordIdentityCatalog(Protocol):
         status: str | None = None,
     ) -> Iterator[RecordIdentity]: ...
 
+    def count_distinct_git_commits(self, *, status: str | None = None) -> int: ...
+
 
 class LocalRecordIdentityCatalog:
     """Temporarily adapt SearchKernel's local identity storage to this port."""
@@ -142,6 +144,30 @@ class LocalRecordIdentityCatalog:
                 source_id=row[2],
             )
 
+    def count_distinct_git_commits(self, *, status: str | None = None) -> int:
+        """Count commit identities with SQL-side aggregation."""
+        commit_id = """
+            CASE
+                WHEN source_id LIKE 'git:%'
+                    AND instr(substr(source_id, 5), ':') > 0
+                THEN substr(source_id, 1, 3 + instr(substr(source_id, 5), ':'))
+                ELSE source_id
+            END
+        """
+        query = f"""
+            SELECT COUNT(DISTINCT {commit_id})
+            FROM local_records
+            WHERE source_kind = ?
+        """
+        parameters: list[str] = ["git_commit"]
+        if status is not None:
+            query += " AND status = ?"
+            parameters.append(status)
+
+        connection = self._database_manager.get_connection()
+        row = connection.execute(query, parameters).fetchone()
+        return int(row[0]) if row is not None else 0
+
 
 class RecordStorage(Protocol):
     """Read and mutate canonical records without exposing a kernel backend."""
@@ -168,6 +194,8 @@ class RecordStorage(Protocol):
         source_kind: str | None = None,
         status: str | None = None,
     ) -> Iterator[RecordIdentity]: ...
+
+    def count_distinct_git_commits(self, *, status: str | None = None) -> int: ...
 
     def delete(self, storage_keys: Sequence[str]) -> None: ...
 
@@ -357,6 +385,9 @@ class LocalRecordStorage:
         yield from self._identity_catalog.iter_identities(
             source_kind=source_kind, status=status
         )
+
+    def count_distinct_git_commits(self, *, status: str | None = None) -> int:
+        return self._identity_catalog.count_distinct_git_commits(status=status)
 
     def tune_backend(self) -> None:
         """Apply the application's local SQLite performance settings."""
