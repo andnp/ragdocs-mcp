@@ -13,9 +13,24 @@ from searchkernel.api import truncate_delta
 logger = logging.getLogger(__name__)
 COMMIT_BATCH_SIZE = 32
 MAX_FILES_CHANGED = 50
+MAX_DELTA_BYTES = 100_000
 _BULK_RECORD_SEPARATOR = "\x1e"
 _BULK_FIELD_SEPARATOR = "\x1f"
 _BULK_METADATA_SEPARATOR = "\x00"
+
+
+def _cap_delta_bytes(delta: str, max_bytes: int) -> str:
+    """Bound delta size in bytes before line-based truncation.
+
+    truncate_delta caps by line count only, so a diff with very few but
+    extremely long lines (e.g. a minified or generated asset) can still be
+    megabytes. Capping by byte length first keeps that input bounded.
+    """
+    encoded = delta.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return delta
+    truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
+    return f"{truncated}\n\n... (diff exceeded {max_bytes} bytes, truncated)"
 
 
 @dataclass
@@ -147,7 +162,9 @@ def _parse_commit_batch(
             title=title.strip(),
             message=_clean_message(message_text),
             files_changed=capped_files,
-            delta_truncated=truncate_delta(delta, max_delta_lines),
+            delta_truncated=truncate_delta(
+                _cap_delta_bytes(delta, MAX_DELTA_BYTES), max_delta_lines
+            ),
             files_changed_total=files_total,
         )
 
@@ -235,7 +252,9 @@ def parse_commit(
 
     # Get delta
     delta = _get_delta(repo_path, commit_hash)
-    delta_truncated = truncate_delta(delta, max_delta_lines)
+    delta_truncated = truncate_delta(
+        _cap_delta_bytes(delta, MAX_DELTA_BYTES), max_delta_lines
+    )
 
     return CommitData(
         hash=hash_val,
