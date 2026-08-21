@@ -163,6 +163,36 @@ def test_reconcile_git_project_attribution_only_hydrates_matches(
     assert hydrated_batch_sizes == [1]
 
 
+def test_run_incremental_vacuum_is_noop_without_auto_vacuum_migration(
+    record_manager,
+) -> None:
+    records = [_make_commit_record(f"commit-{i}", "x" * 5000) for i in range(50)]
+    for record in records:
+        assert record_manager.index_record(record) is True
+    record_manager.storage.delete([record.storage_key for record in records])
+
+    freed = record_manager.storage.run_incremental_vacuum(100_000)
+
+    assert freed == 0
+
+
+def test_run_incremental_vacuum_reclaims_freed_pages_after_migration(
+    record_manager,
+) -> None:
+    connection = record_manager.storage.database_manager.get_connection()
+    connection.execute("PRAGMA auto_vacuum = INCREMENTAL")
+    connection.execute("VACUUM")
+
+    records = [_make_commit_record(f"commit-{i}", "x" * 5000) for i in range(200)]
+    for record in records:
+        assert record_manager.index_record(record) is True
+    record_manager.storage.delete([record.storage_key for record in records])
+
+    freed = record_manager.storage.run_incremental_vacuum(100_000)
+
+    assert freed > 0
+
+
 def test_storage_delegates_identity_enumeration_to_catalog(local_record_kernel) -> None:
     """Storage delegates identity enumeration to the injected application port.
 
