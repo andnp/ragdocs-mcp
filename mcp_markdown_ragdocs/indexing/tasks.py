@@ -1046,6 +1046,7 @@ def _refresh_git_repository_core(
         source = GitContentSource(
             git_dir_path,
             workspace_id=resolve_project_id_for_path(git_dir_path.parent, config),
+            git_diff_embedding_days=config.git_indexing.git_diff_embedding_days,
         )
         if (
             bootstrap_index_path is not None

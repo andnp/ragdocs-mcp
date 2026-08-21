@@ -253,10 +253,13 @@ def _ingest_git_repository(
     repo_path: Path,
     git_commits_indexed: int,
     workspace_id: str | None = None,
+    git_diff_embedding_days: int = 0,
     checkpoint: dict[str, object] | None = None,
     save_checkpoint: Callable[[], None] | None = None,
 ) -> int:
-    source = GitContentSource(repo_path)
+    source = GitContentSource(
+        repo_path, git_diff_embedding_days=git_diff_embedding_days
+    )
     source.workspace_id = workspace_id
     batch: list[Record] = []
     total_indexed = git_commits_indexed
@@ -1051,6 +1054,7 @@ def _index_rebuild_git(
                         repo_path.parent,
                         config,
                     ),
+                    git_diff_embedding_days=config.git_indexing.git_diff_embedding_days,
                     checkpoint=checkpoint,
                     save_checkpoint=lambda: _save_rebuild_checkpoint(
                         runtime_root,

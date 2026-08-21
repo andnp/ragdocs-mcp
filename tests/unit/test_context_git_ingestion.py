@@ -23,7 +23,13 @@ def test_startup_git_ingestion_assigns_project_workspace(
     observed: dict[str, object] = {}
 
     class _Source:
-        def __init__(self, _git_dir: Path, *, workspace_id: str | None) -> None:
+        def __init__(
+            self,
+            _git_dir: Path,
+            *,
+            workspace_id: str | None,
+            git_diff_embedding_days: int = 0,
+        ) -> None:
             observed["workspace_id"] = workspace_id
 
         def iter_records(self):

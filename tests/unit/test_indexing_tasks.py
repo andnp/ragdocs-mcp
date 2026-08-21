@@ -1670,6 +1670,7 @@ class TestTaskExecution:
             projects=[],
             detected_project="repo-project",
             indexing=SimpleNamespace(documents_path=str(tmp_path)),
+            git_indexing=SimpleNamespace(git_diff_embedding_days=0),
         )
 
         observed: dict[str, object] = {}

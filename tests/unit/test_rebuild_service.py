@@ -11,7 +11,13 @@ import mcp_markdown_ragdocs.indexing.rebuild_service as rebuild_service
 
 
 class _FakeSource:
-    def __init__(self, _repo_path: Path, workspace_id: str | None = None) -> None:
+    def __init__(
+        self,
+        _repo_path: Path,
+        workspace_id: str | None = None,
+        *,
+        git_diff_embedding_days: int = 0,
+    ) -> None:
         timestamp = datetime(2026, 1, 1, tzinfo=UTC)
         self._records = [
             Record(
@@ -446,7 +452,9 @@ def test_run_rebuild_resumes_interrupted_git_batch(
     ]
 
     class _Source:
-        def __init__(self, _repo_path: Path) -> None:
+        def __init__(
+            self, _repo_path: Path, *, git_diff_embedding_days: int = 0
+        ) -> None:
             self._repo_path = _repo_path
 
         def iter_records(self):

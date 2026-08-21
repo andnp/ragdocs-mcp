@@ -1039,6 +1039,7 @@ class ApplicationContext:
                 source = GitContentSource(
                     repo_path,
                     workspace_id=workspace_id,
+                    git_diff_embedding_days=self.config.git_indexing.git_diff_embedding_days,
                 )
                 for record in source.iter_records():
                     self.index_manager.index_record(record)

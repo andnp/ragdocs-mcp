@@ -161,6 +161,7 @@ class GitWatcher:
                         git_dir.parent,
                         self._config,
                     ),
+                    git_diff_embedding_days=self._config.git_indexing.git_diff_embedding_days,
                 )
                 indexed = 0
                 async for receipt in iter_git_ingestion_receipts(
