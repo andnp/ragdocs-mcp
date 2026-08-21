@@ -15,7 +15,7 @@ from pathlib import Path
 from mcp_markdown_ragdocs.config import Config, resolve_project_id_for_path
 from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
 from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
-from mcp_markdown_ragdocs.indexing.git_refresh_state import get_head
+from mcp_markdown_ragdocs.indexing.git_refresh_state import get_head, get_progress
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager as IndexManager
 
 logger = logging.getLogger(__name__)
@@ -105,10 +105,17 @@ class GitWatcher:
             )
             direct_refresh_dirs: set[Path] = set()
             for git_dir, signature in zip(git_dirs, signatures, strict=True):
-                if signature is not None and get_head(
-                    self._refresh_state_root, git_dir
-                ) == signature:
-                    continue
+                if signature is not None:
+                    stored_head = get_head(self._refresh_state_root, git_dir)
+                    progress = get_progress(self._refresh_state_root, git_dir)
+                    completed_head = (
+                        progress.get("observed_head")
+                        if progress is not None
+                        and progress.get("state") in {"completed", "skipped"}
+                        else None
+                    )
+                    if stored_head == signature or completed_head == signature:
+                        continue
 
                 submission = submit_refresh(str(git_dir))
                 if submission.enqueued:

@@ -230,6 +230,43 @@ async def test_git_watcher_skips_unchanged_repository_after_refresh(
 
 
 @pytest.mark.asyncio
+async def test_git_watcher_skips_completed_signature_when_head_marker_is_stale(
+    test_config, index_manager, tmp_path, monkeypatch
+):
+    """Completed progress telemetry must suppress duplicate refreshes."""
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    submission = MagicMock(spec=TaskSubmissionPort)
+    watcher = GitWatcher(
+        git_repos=[git_dir],
+        index_manager=index_manager,
+        config=test_config,
+        use_tasks=True,
+        task_submission=submission,
+    )
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_git_ref_signature",
+        lambda _git_dir: "completed-head",
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_head",
+        lambda _root, _git_dir: "stale-head",
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_progress",
+        lambda _root, _git_dir: {
+            "state": "completed",
+            "observed_head": "completed-head",
+        },
+    )
+
+    await watcher._batch_process({git_dir})
+
+    submission.submit_refresh_git_request.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_git_watcher_direct_refresh_accumulates_batches(
     test_config, index_manager, tmp_path, monkeypatch, caplog
 ):
