@@ -1888,6 +1888,92 @@ async def test_periodic_reconciliation_runs_bounded_incremental_vacuum() -> None
 
 
 @pytest.mark.asyncio
+async def test_reconciliation_requests_coalesce_into_one_follow_up_pass() -> None:
+    """Concurrent reconciliation requests share one pass and one follow-up.
+
+    A request arriving while the pass is active must not run concurrently.
+    """
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "_reconciliation_running", False)
+    _setattr(ctx, "_reconciliation_pending", False)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def reconcile_once() -> None:
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+
+    _setattr(ctx, "_reconcile_once", reconcile_once)
+    first = asyncio.create_task(ctx._request_reconciliation())
+    await started.wait()
+    await ctx._request_reconciliation()
+    release.set()
+    await first
+
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_failure_clears_single_flight_state() -> None:
+    """A failed reconciliation permits the next request to retry normally.
+
+    Failure must not leave the gate permanently marked as active.
+    """
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "_reconciliation_running", False)
+    _setattr(ctx, "_reconciliation_pending", False)
+    attempts = 0
+
+    async def reconcile_once() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("reconciliation failed")
+
+    _setattr(ctx, "_reconcile_once", reconcile_once)
+
+    with pytest.raises(RuntimeError, match="reconciliation failed"):
+        await ctx._request_reconciliation()
+    await ctx._request_reconciliation()
+
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_cancellation_clears_single_flight_state() -> None:
+    """A cancelled reconciliation permits a later request to start fresh.
+
+    Shutdown cancellation must not strand the gate in its active state.
+    """
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "_reconciliation_running", False)
+    _setattr(ctx, "_reconciliation_pending", False)
+    started = asyncio.Event()
+    attempts = 0
+
+    async def reconcile_once() -> None:
+        nonlocal attempts
+        attempts += 1
+        started.set()
+        await asyncio.Event().wait()
+
+    _setattr(ctx, "_reconcile_once", reconcile_once)
+    task = asyncio.create_task(ctx._request_reconciliation())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    _setattr(ctx, "_reconcile_once", lambda: asyncio.sleep(0))
+    await ctx._request_reconciliation()
+
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
 async def test_periodic_reconciliation_skips_vacuum_when_disabled() -> None:
     """vacuum_page_limit=0 disables the periodic vacuum call."""
     vacuum_calls: list[int] = []

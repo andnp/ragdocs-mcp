@@ -151,6 +151,8 @@ class ApplicationContext:
     )
     _availability: SearchAvailability | None = field(default=None, repr=False)
     _freshness_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _reconciliation_running: bool = field(default=False, repr=False)
+    _reconciliation_pending: bool = field(default=False, repr=False)
     _freshness_task: asyncio.Task | None = field(default=None, repr=False)
     _embedding_warmup_task: asyncio.Task | None = field(default=None, repr=False)
     _semantic_search_warmed: bool = field(default=False, repr=False)
@@ -675,6 +677,26 @@ class ApplicationContext:
             )
 
     async def _startup_reconciliation(self) -> None:
+        await self._request_reconciliation()
+
+    async def _request_reconciliation(self) -> None:
+        """Run one reconciliation at a time, coalescing overlapping requests."""
+        if getattr(self, "_reconciliation_running", False):
+            self._reconciliation_pending = True
+            return
+
+        self._reconciliation_running = True
+        try:
+            while True:
+                self._reconciliation_pending = False
+                await self._reconcile_once()
+                if not self._reconciliation_pending:
+                    return
+        finally:
+            self._reconciliation_running = False
+            self._reconciliation_pending = False
+
+    async def _reconcile_once(self) -> None:
         if self.use_tasks:
             await self._enqueue_reconciliation_tasks()
             return
@@ -788,33 +810,7 @@ class ApplicationContext:
         is consistent after dropped file-change events.
         """
         logger.info("File watcher detected inotify queue overflow, triggering reconciliation")
-        if self.use_tasks:
-            await self._enqueue_reconciliation_tasks()
-            return
-
-        docs_path = Path(self.config.indexing.documents_path)
-        discovered_files = await asyncio.to_thread(self.discover_files)
-        result = await asyncio.to_thread(
-            self.index_manager.reconcile_indices,
-            discovered_files,
-            docs_path,
-            self.documents_roots,
-        )
-
-        if result.added_count > 0 or result.removed_count > 0 or result.moved_count > 0:
-            await asyncio.to_thread(
-                self._persist_reconciliation_state,
-                discovered_files,
-                docs_path,
-            )
-            logger.info(
-                f"Overflow reconciliation complete: "
-                f"added={result.added_count}, "
-                f"removed={result.removed_count}, "
-                f"moved={result.moved_count}"
-            )
-        else:
-            logger.debug("Overflow reconciliation: no changes needed")
+        await self._request_reconciliation()
 
         self._watcher_lifecycle.refresh_watches()
 
@@ -835,38 +831,7 @@ class ApplicationContext:
                     if freed > 0:
                         logger.info("Periodic reconciliation: reclaimed %d page(s)", freed)
 
-                if self.use_tasks:
-                    await self._enqueue_reconciliation_tasks()
-                    continue
-
-                docs_path = Path(self.config.indexing.documents_path)
-                discovered_files = await asyncio.to_thread(self.discover_files)
-                result = await asyncio.to_thread(
-                    self.index_manager.reconcile_indices,
-                    discovered_files,
-                    docs_path,
-                    self.documents_roots,
-                )
-
-                if (
-                    result.added_count > 0
-                    or result.removed_count > 0
-                    or result.moved_count > 0
-                ):
-                    await asyncio.to_thread(
-                        self._persist_reconciliation_state,
-                        discovered_files,
-                        docs_path,
-                    )
-                    logger.info(
-                        f"Periodic reconciliation: "
-                        f"added={result.added_count}, "
-                        f"removed={result.removed_count}, "
-                        f"moved={result.moved_count}, "
-                        f"failed={result.failed_count}"
-                    )
-                else:
-                    logger.debug("Periodic reconciliation: no changes needed")
+                await self._request_reconciliation()
 
                 # Register inotify watches for any directories that appeared since startup
                 self._watcher_lifecycle.refresh_watches()
