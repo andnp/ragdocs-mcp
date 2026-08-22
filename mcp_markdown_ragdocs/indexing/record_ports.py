@@ -282,6 +282,16 @@ class SourceMapStore(Protocol):
     def save(self, records: Mapping[str, Sequence[str]]) -> None: ...
 
 
+class DeltaSourceMapStore(SourceMapStore, Protocol):
+    """Extend source-map persistence with targeted membership mutations."""
+
+    def apply_delta(
+        self,
+        upserts: Mapping[str, Sequence[str]],
+        removals: Iterable[str],
+    ) -> None: ...
+
+
 class LocalRecordStorage:
     """Adapt the public local kernel stores to the record manager port."""
 
@@ -532,9 +542,33 @@ class SqliteSourceMapStore:
         )
         connection.commit()
 
+    def apply_delta(
+        self,
+        upserts: Mapping[str, Sequence[str]],
+        removals: Iterable[str],
+    ) -> None:
+        connection = self._connection_provider.get_connection()
+        try:
+            connection.executemany(
+                "DELETE FROM source_map WHERE doc_id = ?",
+                [(doc_id,) for doc_id in removals],
+            )
+            connection.executemany(
+                """
+                INSERT INTO source_map (doc_id, keys_json) VALUES (?, ?)
+                ON CONFLICT(doc_id) DO UPDATE SET keys_json = excluded.keys_json
+                """,
+                [(doc_id, json.dumps(list(keys))) for doc_id, keys in upserts.items()],
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+
 
 __all__ = [
     "CommitHistoryPort",
+    "DeltaSourceMapStore",
     "EmbeddingProvider",
     "GDriveIntegrationFactory",
     "GDriveIntegrationPort",

@@ -41,6 +41,47 @@ def test_sqlite_source_map_store_save_replaces_prior_snapshot(tmp_path: Path) ->
     assert store.load() == {"source-1": ["key-a"]}
 
 
+def test_sqlite_source_map_store_applies_targeted_delta(tmp_path: Path) -> None:
+    """
+    Update selected sources while preserving unrelated membership rows.
+    """
+    provider = _SingleConnectionProvider(tmp_path / "index.db")
+    store = SqliteSourceMapStore(provider)
+    store.save({"source-1": ["key-a"], "source-2": ["key-b"]})
+
+    store.apply_delta({"source-1": ["key-c"]}, ["source-2"])
+
+    assert store.load() == {"source-1": ["key-c"]}
+
+
+def test_sqlite_source_map_store_applies_delta_as_one_transaction(
+    tmp_path: Path,
+) -> None:
+    """
+    Leave prior membership intact when a delta cannot be committed.
+    """
+    provider = _SingleConnectionProvider(tmp_path / "index.db")
+    store = SqliteSourceMapStore(provider)
+    store.save({"source-1": ["key-a"]})
+    connection = provider.get_connection()
+    connection.execute(
+        """
+        CREATE TRIGGER reject_source_2 BEFORE INSERT ON source_map
+        WHEN NEW.doc_id = 'source-2'
+        BEGIN SELECT RAISE(ABORT, 'reject'); END
+        """
+    )
+
+    try:
+        store.apply_delta({"source-1": ["key-c"], "source-2": ["key-b"]}, [])
+    except sqlite3.IntegrityError:
+        pass
+    else:
+        raise AssertionError("expected the delta transaction to fail")
+
+    assert store.load() == {"source-1": ["key-a"]}
+
+
 def test_sqlite_source_map_store_skips_a_malformed_row(tmp_path: Path) -> None:
     """Skip a row with malformed keys_json rather than failing the whole load."""
     provider = _SingleConnectionProvider(tmp_path / "index.db")
