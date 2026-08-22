@@ -20,6 +20,9 @@ from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager as I
 
 logger = logging.getLogger(__name__)
 
+POLL_BACKOFF_MULTIPLIER = 2.0
+POLL_BACKOFF_MAX_MULTIPLIER = 8.0
+
 
 class GitWatcher:
     """Polls .git directories on a fixed interval and triggers incremental commit indexing."""
@@ -37,6 +40,8 @@ class GitWatcher:
         self._index_manager = index_manager
         self._config = config
         self._poll_interval = poll_interval
+        self._current_poll_interval = poll_interval
+        self._max_poll_interval = poll_interval * POLL_BACKOFF_MAX_MULTIPLIER
         self._use_tasks = use_tasks
         self._task_submission = task_submission
         self._running = False
@@ -81,15 +86,27 @@ class GitWatcher:
         """Poll loop: sleep for the configured interval, then check all repos."""
         while self._running:
             try:
-                await asyncio.sleep(self._poll_interval)
+                await asyncio.sleep(self._current_poll_interval)
             except asyncio.CancelledError:
                 break
 
             if self._running:
                 await self._batch_process(set(self._git_repos))
 
+    def _reset_poll_backoff(self) -> None:
+        self._current_poll_interval = self._poll_interval
+
+    def _increase_poll_backoff(self) -> None:
+        self._current_poll_interval = min(
+            self._current_poll_interval * POLL_BACKOFF_MULTIPLIER,
+            self._max_poll_interval,
+        )
+
     async def _batch_process(self, git_dirs: set[Path]) -> None:
         """Incrementally index any commits added since the last poll."""
+        had_error = False
+        had_activity = False
+        had_backpressure = False
         if self._use_tasks:
             if self._task_submission is None:
                 raise RuntimeError(
@@ -101,10 +118,19 @@ class GitWatcher:
                 *(
                     asyncio.to_thread(get_git_ref_signature, git_dir)
                     for git_dir in git_dirs
-                )
+                ),
+                return_exceptions=True,
             )
             direct_refresh_dirs: set[Path] = set()
             for git_dir, signature in zip(git_dirs, signatures, strict=True):
+                if isinstance(signature, Exception):
+                    had_error = True
+                    logger.warning(
+                        "Failed to check Git refs for %s: %s",
+                        git_dir.parent,
+                        signature,
+                    )
+                    continue
                 if signature is not None:
                     stored_head = get_head(self._refresh_state_root, git_dir)
                     progress = get_progress(self._refresh_state_root, git_dir)
@@ -117,8 +143,12 @@ class GitWatcher:
                     if stored_head == signature or completed_head == signature:
                         continue
 
+                    had_activity = True
+                    self._reset_poll_backoff()
+
                 submission = submit_refresh(str(git_dir))
                 if submission.enqueued:
+                    self._reset_poll_backoff()
                     logger.info("Enqueued git refresh task for %s", git_dir.parent)
                     continue
                 if submission.status == "already_pending":
@@ -128,6 +158,7 @@ class GitWatcher:
                     )
                     continue
                 if submission.should_retry_later:
+                    had_backpressure = True
                     logger.warning(
                         "Skipping git refresh enqueue for %s due to task queue backpressure",
                         git_dir.parent,
@@ -141,6 +172,8 @@ class GitWatcher:
                 direct_refresh_dirs.add(git_dir)
 
             if not direct_refresh_dirs:
+                if not had_activity and not had_backpressure:
+                    self._increase_poll_backoff()
                 return
             git_dirs = direct_refresh_dirs
 
@@ -175,6 +208,8 @@ class GitWatcher:
                 self._last_indexed[git_dir] = poll_started_at
 
                 if indexed:
+                    had_activity = True
+                    self._reset_poll_backoff()
                     logger.info(
                         "Updated commit index for %s: %d commits",
                         git_dir.parent.name,
@@ -182,4 +217,10 @@ class GitWatcher:
                     )
 
             except Exception:
+                had_error = True
                 logger.exception("Failed to update commits for %s", git_dir)
+
+        if had_error:
+            self._increase_poll_backoff()
+        elif not had_activity and not had_backpressure:
+            self._increase_poll_backoff()

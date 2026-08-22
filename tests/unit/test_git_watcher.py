@@ -200,6 +200,154 @@ async def test_git_watcher_enqueues_refresh_tasks_when_enabled(
 
 
 @pytest.mark.asyncio
+async def test_git_watcher_backs_off_idle_task_polls(
+    test_config, index_manager, tmp_path, monkeypatch
+):
+    """Idle task polls increase their interval.
+
+    The interval stops at the configured maximum.
+    """
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    watcher = GitWatcher(
+        git_repos=[git_dir],
+        index_manager=index_manager,
+        config=test_config,
+        poll_interval=10.0,
+        use_tasks=True,
+        task_submission=MagicMock(spec=TaskSubmissionPort),
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_git_ref_signature",
+        lambda _git_dir: "same-head",
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_head",
+        lambda _root, _git_dir: "same-head",
+    )
+
+    await watcher._batch_process({git_dir})
+    await watcher._batch_process({git_dir})
+
+    assert watcher._current_poll_interval == 40.0
+    assert watcher._max_poll_interval == 80.0
+
+
+@pytest.mark.asyncio
+async def test_git_watcher_backs_off_repository_errors(
+    test_config, index_manager, tmp_path, monkeypatch
+):
+    """Repository refresh failures increase the polling interval.
+
+    The watcher remains available for a later recovery attempt.
+    """
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    watcher = GitWatcher(
+        git_repos=[git_dir],
+        index_manager=index_manager,
+        config=test_config,
+        poll_interval=10.0,
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.resolve_project_id_for_path",
+        lambda _path, _config: "repo-project",
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_git_ref_signature",
+        lambda _git_dir: None,
+    )
+
+    async def _failed_refresh(*_args, **_kwargs):
+        if False:
+            yield None
+        raise RuntimeError("refresh failed")
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.indexing.git_ingestion.iter_git_ingestion_receipts",
+        _failed_refresh,
+    )
+
+    await watcher._batch_process({git_dir})
+
+    assert watcher._current_poll_interval == 20.0
+
+
+@pytest.mark.asyncio
+async def test_git_watcher_resets_backoff_after_task_submission(
+    test_config, index_manager, tmp_path, monkeypatch
+):
+    """Accepted refresh work restores the base polling interval.
+
+    A changed ref is treated as prompt activity.
+    """
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    submission = MagicMock(spec=TaskSubmissionPort)
+    submission.submit_refresh_git_request.return_value = TaskSubmissionResult(
+        status="enqueued"
+    )
+    watcher = GitWatcher(
+        git_repos=[git_dir],
+        index_manager=index_manager,
+        config=test_config,
+        poll_interval=10.0,
+        use_tasks=True,
+        task_submission=submission,
+    )
+    watcher._current_poll_interval = 80.0
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_git_ref_signature",
+        lambda _git_dir: "new-head",
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_head",
+        lambda _root, _git_dir: "old-head",
+    )
+
+    await watcher._batch_process({git_dir})
+
+    assert watcher._current_poll_interval == 10.0
+
+
+@pytest.mark.asyncio
+async def test_git_watcher_does_not_back_off_task_backpressure(
+    test_config, index_manager, tmp_path, monkeypatch
+):
+    """Queue backpressure does not add polling backoff.
+
+    Changed refs still restore the base interval promptly.
+    """
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    submission = MagicMock(spec=TaskSubmissionPort)
+    submission.submit_refresh_git_request.return_value = TaskSubmissionResult(
+        status="backpressured"
+    )
+    watcher = GitWatcher(
+        git_repos=[git_dir],
+        index_manager=index_manager,
+        config=test_config,
+        poll_interval=10.0,
+        use_tasks=True,
+        task_submission=submission,
+    )
+    watcher._current_poll_interval = 40.0
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_git_ref_signature",
+        lambda _git_dir: "new-head",
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.git.watcher.get_head",
+        lambda _root, _git_dir: "old-head",
+    )
+
+    await watcher._batch_process({git_dir})
+
+    assert watcher._current_poll_interval == 10.0
+
+
+@pytest.mark.asyncio
 async def test_git_watcher_skips_unchanged_repository_after_refresh(
     test_config, index_manager, tmp_path, monkeypatch
 ):
