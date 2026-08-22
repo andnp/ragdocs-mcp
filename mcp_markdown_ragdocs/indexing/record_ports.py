@@ -144,6 +144,36 @@ class LocalRecordIdentityCatalog:
                 source_id=row[2],
             )
 
+    def iter_git_commit_identities(
+        self, git_commit_ids: Iterable[str]
+    ) -> Iterator[RecordIdentity]:
+        """Stream only chunk identities belonging to selected Git commits."""
+        commit_ranges = []
+        parameters: list[str] = ["git_commit"]
+        for commit_id in sorted(set(git_commit_ids)):
+            if not commit_id.startswith("git:"):
+                raise ValueError("git_commit_ids must use the git: prefix")
+            lower_bound = f"{commit_id}:"
+            upper_bound = f"{commit_id};"
+            commit_ranges.append("(source_id >= ? AND source_id < ?)")
+            parameters.extend((lower_bound, upper_bound))
+        if not commit_ranges:
+            return
+
+        query = (
+            "SELECT workspace_id, source_kind, source_id FROM local_records "
+            "WHERE source_kind = ? AND ("
+            + " OR ".join(commit_ranges)
+            + ")"
+        )
+        connection = self._database_manager.get_connection()
+        for row in connection.execute(query, parameters):
+            yield RecordIdentity(
+                workspace_id=row[0],
+                source_kind=row[1],
+                source_id=row[2],
+            )
+
     def count_distinct_git_commits(self, *, status: str | None = None) -> int:
         """Count commit identities with SQL-side aggregation."""
         commit_id = """
@@ -395,8 +425,17 @@ class LocalRecordStorage:
     ) -> Iterator[RecordIdentity]:
         """Stream canonical identities through the application-owned catalog."""
         yield from self._identity_catalog.iter_identities(
-            source_kind=source_kind, status=status
+            source_kind=source_kind,
+            status=status,
         )
+
+    def iter_git_commit_identities(
+        self, git_commit_ids: Iterable[str]
+    ) -> Iterator[RecordIdentity]:
+        """Stream selected Git identities without enumerating other records."""
+        if not isinstance(self._identity_catalog, LocalRecordIdentityCatalog):
+            raise RuntimeError("Filtered Git identity lookup is unavailable")
+        yield from self._identity_catalog.iter_git_commit_identities(git_commit_ids)
 
     def count_distinct_git_commits(self, *, status: str | None = None) -> int:
         return self._identity_catalog.count_distinct_git_commits(status=status)

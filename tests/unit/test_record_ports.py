@@ -84,6 +84,27 @@ def test_iter_identities_filters_by_source_kind(record_manager) -> None:
     assert [identity.source_id for identity in identities] == ["commit-1"]
 
 
+def test_iter_identities_filters_by_git_commit_ids(record_manager) -> None:
+    """Identity lookup restricts rows to requested Git commit IDs.
+
+    Unrelated Git identities are excluded before hydration.
+    """
+    records = [
+        _make_commit_record("git:abc:summary:0", "target"),
+        _make_commit_record("git:def:summary:0", "unrelated"),
+    ]
+    for record in records:
+        assert record_manager.index_record(record) is True
+
+    identities = list(
+        record_manager.storage.iter_git_commit_identities({"git:abc"})
+    )
+
+    assert [identity.source_id for identity in identities] == [
+        "git:abc:summary:0"
+    ]
+
+
 def test_iter_identities_filters_by_status(record_manager) -> None:
     active = _make_commit_record("commit-active", "message")
     stale = Record(

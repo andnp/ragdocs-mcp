@@ -542,15 +542,12 @@ class RecordIndexManager:
         if workspace_id is None:
             return 0
 
-        commit_ids = {
-            f"git:{commit_hash}"
-            for commit_hash in self._commit_history(git_dir)
-        }
-        matched_identities = [
-            identity
-            for identity in self.storage.iter_identities(source_kind="git_commit")
-            if ":".join(identity.source_id.split(":")[:2]) in commit_ids
-        ]
+        commit_ids = {f"git:{commit_hash}" for commit_hash in self._commit_history(git_dir)}
+        if not isinstance(self.storage, LocalRecordStorage):
+            raise RuntimeError("Filtered Git identity lookup is unavailable")
+        matched_identities = list(
+            self.storage.iter_git_commit_identities(commit_ids)
+        )
         hydrated = self.storage.hydrate_records(matched_identities)
 
         updates: list[Record] = []
