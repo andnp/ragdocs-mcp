@@ -382,6 +382,24 @@ class RecordIndexManager:
     def _save_source_map(self) -> None:
         self._source_map_store.save(self._source_records)
 
+    def _save_source_map_delta(
+        self,
+        upsert_ids: Iterable[str] = (),
+        removal_ids: Iterable[str] = (),
+    ) -> None:
+        upserts = {
+            doc_id: self._source_records[doc_id]
+            for doc_id in upsert_ids
+            if doc_id in self._source_records
+        }
+        removals = list(dict.fromkeys(removal_ids))
+        if not upserts and not removals:
+            return
+        if isinstance(self._source_map_store, SqliteSourceMapStore):
+            self._source_map_store.apply_delta(upserts, removals)
+            return
+        self._save_source_map()
+
     def prepare_document(self, file_path: str) -> PreparedRecordDocument:
         return self._document_planner.plan(file_path)
 
@@ -446,10 +464,10 @@ class RecordIndexManager:
             receipt = await self.ingestor.index_records([record])
             if receipt.failed:
                 return False
-            self._source_records.setdefault(record.source_id, []).append(
-                record.storage_key
-            )
-            self._save_source_map()
+            keys = self._source_records.setdefault(record.source_id, [])
+            if record.storage_key not in keys:
+                keys.append(record.storage_key)
+            self._save_source_map_delta(upsert_ids=(record.source_id,))
             self._state_version += 1
             return True
         except Exception:
@@ -465,7 +483,6 @@ class RecordIndexManager:
                 receipt = await self.ingestor.index_records(records)
                 if receipt.failed:
                     return False
-                self._save_source_map()
                 self._state_version += 1
                 return True
             except Exception:
@@ -483,11 +500,12 @@ class RecordIndexManager:
                 receipt = await self.ingestor.index_records(generic_records)
                 if receipt.failed:
                     return False
+                source_ids = {record.source_id for record in generic_records}
                 for record in generic_records:
-                    self._source_records.setdefault(record.source_id, []).append(
-                        record.storage_key
-                    )
-                self._save_source_map()
+                    keys = self._source_records.setdefault(record.source_id, [])
+                    if record.storage_key not in keys:
+                        keys.append(record.storage_key)
+                self._save_source_map_delta(upsert_ids=source_ids)
                 self._state_version += 1
             except Exception:
                 logger.exception("Failed to index record batch")
@@ -554,13 +572,17 @@ class RecordIndexManager:
         if not updates or not self.index_records(updates):
             return 0
 
+        changed_doc_ids: set[str] = set()
         for doc_id, keys in self._source_records.items():
             replaced = [replacements.get(key, key) for key in keys]
-            self._source_records[doc_id] = list(dict.fromkeys(replaced))
+            updated_keys = list(dict.fromkeys(replaced))
+            if updated_keys != keys:
+                self._source_records[doc_id] = updated_keys
+                changed_doc_ids.add(doc_id)
         stale_keys = [key for key, replacement in replacements.items() if key != replacement]
         if stale_keys:
             self.storage.delete(stale_keys)
-        self._save_source_map()
+        self._save_source_map_delta(upsert_ids=changed_doc_ids)
         return len(updates)
 
     def rebuild_graph(self) -> None:
@@ -756,7 +778,7 @@ class RecordIndexManager:
             self.storage.delete(keys)
             self._mark_graph_dirty(doc_id)
             self._rebuild_graph()
-            self._save_source_map()
+            self._save_source_map_delta(removal_ids=(doc_id,))
             self._state_version += 1
 
     def persist(self) -> None:
@@ -767,6 +789,14 @@ class RecordIndexManager:
         self.persist()
 
     def clear_documents(self) -> None:
+        removed_doc_ids = [
+            doc_id
+            for doc_id, record_keys in self._source_records.items()
+            if not any(
+                RecordIdentity.from_storage_key(key).source_kind == "git_commit"
+                for key in record_keys
+            )
+        ]
         keys = [
             key
             for doc_id, record_keys in self._source_records.items()
@@ -789,7 +819,8 @@ class RecordIndexManager:
         with self._graph_lock:
             self._graph_full_rebuild_pending = True
         self._rebuild_graph()
-        self.persist()
+        self._graph_rebuilder.flush()
+        self._save_source_map_delta(removal_ids=removed_doc_ids)
 
     def finalize_derived_graph_state(self) -> None:
         """Wait for the latest asynchronous graph rebuild to finish."""
