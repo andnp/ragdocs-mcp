@@ -180,6 +180,27 @@ def test_claim_release_reopens_intent_but_active_claim_is_exclusive(
     assert reopened[0].attempt == 2
 
 
+def test_release_accepts_running_claim_without_incrementing_failures(
+    tmp_path: Path,
+) -> None:
+    """
+    Release a running intent back to pending without recording a failure.
+    This is the writer-contention deferral contract.
+    """
+    store = WorkIntentStore(tmp_path / "queue.db")
+    intent = store.submit("index_document", "doc.md", {"file_path": "doc.md"})
+    claim = store.claim(intent.intent_id)
+    assert claim is not None
+    assert store.start(intent.intent_id, claim[1]) is True
+
+    assert store.release(intent.intent_id, claim[1]) is True
+
+    released = store.get(intent.intent_id)
+    assert released is not None
+    assert released.state == "pending"
+    assert released.failure_count == 0
+
+
 def test_reclaim_stale_claim_replaces_token(tmp_path: Path) -> None:
     store = WorkIntentStore(tmp_path / "queue.db", claim_timeout_seconds=10)
     intent = store.submit("index_document", "doc.md", {"file_path": "doc.md"}, now=1)

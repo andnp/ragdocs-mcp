@@ -84,6 +84,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+WRITER_BUSY_RESULT = {"status": "deferred", "error": "index_writer_busy"}
+
 RECORD_BATCH_TASK_PRIORITY = 100
 GIT_REFRESH_TASK_PRIORITY = -10
 REINDEX_TASK_PRIORITY = 200
@@ -419,11 +421,7 @@ def _run_as_writer(
 
 class _RejectedRecordBatch:
     def get(self, *, blocking: bool, timeout: float) -> dict[str, object]:
-        return {
-            "status": "error",
-            "error": "index_writer_busy",
-            "details": "Index writer is owned by a rebuild. Retry shortly.",
-        }
+        return {**WRITER_BUSY_RESULT}
 
 
 def _bind_runtime_handler(
@@ -632,7 +630,7 @@ def _index_document(
                     bootstrap_was_incomplete=bootstrap_was_incomplete,
                 )
             logger.info("Task completed: indexed %s", file_path)
-            return True
+            return manager_result
         except Exception:
             logger.exception("Task failed: index %s", file_path)
             return False
@@ -641,7 +639,7 @@ def _index_document(
         _operation,
         operation_name="index_document",
         operation_args=(file_path,),
-        busy_result=False,
+        busy_result={**WRITER_BUSY_RESULT},
         runtime=runtime,
     )
 
@@ -725,7 +723,7 @@ def _index_documents_batch(
             _progressive_operation,
             operation_name="index_documents_batch",
             operation_args=(unique_file_paths,),
-            busy_result=False,
+            busy_result={**WRITER_BUSY_RESULT},
             runtime=runtime,
         )
 
@@ -812,7 +810,7 @@ def _index_documents_batch(
         _operation,
         operation_name="index_documents_batch",
         operation_args=(unique_file_paths,),
-        busy_result=False,
+        busy_result={**WRITER_BUSY_RESULT},
         runtime=runtime,
     )
 
@@ -1272,7 +1270,7 @@ def _rebuild_index_core(
     payload = _run_as_writer(
         _operation,
         owner_token=request_id,
-        busy_result={"status": "failed", "error": "index_writer_busy"},
+        busy_result={**WRITER_BUSY_RESULT},
         runtime=runtime,
     )
     if payload.get("error") != "index_writer_busy":
@@ -1446,11 +1444,7 @@ def register_tasks(
                     runtime,
                     _index_records_batch_core,
                     name="_index_records_batch",
-                    busy_result={
-                        "status": "error",
-                        "error": "index_writer_busy",
-                        "details": "Index writer is owned by a rebuild. Retry shortly.",
-                    },
+                    busy_result={**WRITER_BUSY_RESULT},
                 ),
             ),
             "remove_document": _runtime_intent_handler(
@@ -1460,7 +1454,7 @@ def register_tasks(
                     runtime,
                     _remove_document_core,
                     name="_remove_document",
-                    busy_result=False,
+                    busy_result={**WRITER_BUSY_RESULT},
                 ),
             ),
             "remove_documents_batch": _runtime_intent_handler(
@@ -1470,7 +1464,7 @@ def register_tasks(
                     runtime,
                     _remove_documents_batch_core,
                     name="_remove_documents_batch",
-                    busy_result=False,
+                    busy_result={**WRITER_BUSY_RESULT},
                 ),
             ),
             "refresh_git_repository": _runtime_intent_handler(
@@ -1480,7 +1474,7 @@ def register_tasks(
                     runtime,
                     _refresh_git_repository_core,
                     name="_refresh_git_repository",
-                    busy_result=False,
+                    busy_result={**WRITER_BUSY_RESULT},
                     on_busy=lambda git_dir: _defer_git_refresh(
                         git_dir,
                         runtime=runtime,
@@ -1500,11 +1494,7 @@ def register_tasks(
                     runtime,
                     _reindex_model_core,
                     name="_reindex_model",
-                    busy_result={
-                        "status": "error",
-                        "error": "index_writer_busy",
-                        "details": "Index writer is owned by a rebuild.",
-                    },
+                    busy_result={**WRITER_BUSY_RESULT},
                     on_released=lambda: _flush_deferred_git_refreshes(runtime),
                 ),
             ),

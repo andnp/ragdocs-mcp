@@ -45,6 +45,7 @@ from mcp_markdown_ragdocs.indexing.tasks import (
     GIT_REFRESH_TASK_PRIORITY,
     INDEX_WRITER_RESOURCE,
     RECORD_BATCH_TASK_PRIORITY,
+    WRITER_BUSY_RESULT,
     enqueue_index as _enqueue_index,
     enqueue_index_batch as _enqueue_index_batch,
     enqueue_refresh_git as _enqueue_refresh_git,
@@ -320,13 +321,62 @@ class TestTaskRegistration:
         second = huey_instance.dequeue()
         assert first is not None
         assert second is not None
-        assert huey_instance.execute(first) is False
-        assert huey_instance.execute(second) is False
+        assert huey_instance.execute(first) == WRITER_BUSY_RESULT
+        assert huey_instance.execute(second) == WRITER_BUSY_RESULT
         assert fake_manager.indexed == []
         assert fake_manager.indexed_records == []
         assert "Writer lease busy; deferring index_document" in caplog.text
         assert "argument='/docs/blocked.md'" in caplog.text
         assert store.release_writer(INDEX_WRITER_RESOURCE, "rebuild-active") is True
+
+    def test_writer_busy_releases_intent_without_retry_penalty(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager, tmp_path: Path
+    ) -> None:
+        """
+        Return a writer-busy task to pending without consuming retries.
+        A later producer can submit it again after writer release.
+        """
+        _register_tasks(huey_instance, fake_manager)
+        file_path = str(tmp_path / "blocked.md")
+        assert enqueue_index(file_path) is True
+        lease_store = TaskLeaseStore(_queue_path(huey_instance))
+        assert lease_store.acquire_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
+        task = huey_instance.dequeue()
+        assert task is not None
+        assert huey_instance.execute(task) == WRITER_BUSY_RESULT
+
+        intent = WorkIntentStore(_queue_path(huey_instance)).find(
+            "index_document", file_path
+        )
+        assert intent is not None
+        assert intent.state == "pending"
+        assert intent.failure_count == 0
+
+    def test_real_index_failure_consumes_retry_count(
+        self, huey_instance: SqliteHuey, tmp_path: Path
+    ) -> None:
+        """
+        Keep ordinary manager failures in the failed intent path.
+        A false task result increments the failure count normally.
+        """
+        class FailedManager(FakeIndexManager):
+            def index_document(self, file_path: str, force: bool = False) -> bool:
+                del file_path, force
+                return False
+
+        _register_tasks(huey_instance, FailedManager())
+        file_path = str(tmp_path / "failed.md")
+        assert enqueue_index(file_path) is True
+        task = huey_instance.dequeue()
+        assert task is not None
+
+        assert huey_instance.execute(task) is False
+        intent = WorkIntentStore(_queue_path(huey_instance)).find(
+            "index_document", file_path
+        )
+        assert intent is not None
+        assert intent.state == "failed"
+        assert intent.failure_count == 1
 
     def test_register_tasks_returns_runtime_with_stable_task_names(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
@@ -1223,7 +1273,7 @@ class TestTaskExecution:
         task = huey_instance.dequeue()
         assert task is not None
 
-        assert huey_instance.execute(task) is True
+        assert huey_instance.execute(task) is False
         assert "path=/docs/failed.md" in caplog.text
         assert "force=True" in caplog.text
         assert "result=False" in caplog.text

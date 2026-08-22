@@ -295,9 +295,9 @@ class WorkIntentStore(WorkIntentPort):
                 UPDATE work_intents
                 SET state = ?, claim_token = NULL, claim_observed_at = NULL,
                     observed_at = ?
-                WHERE intent_id = ? AND claim_token = ? AND state = ?
+                WHERE intent_id = ? AND claim_token = ? AND state IN (?, ?)
                 """,
-                (PENDING, timestamp, intent_id, claim_token, CLAIMED),
+                (PENDING, timestamp, intent_id, claim_token, CLAIMED, RUNNING),
             )
             return cursor.rowcount == 1
 

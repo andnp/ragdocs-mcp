@@ -16,7 +16,6 @@ from mcp_markdown_ragdocs.coordination.work_intents import (
 
 logger = logging.getLogger(__name__)
 
-
 class WorkIntentPortProvider(Protocol):
     def __call__(self) -> WorkIntentPort | None: ...
 
@@ -141,6 +140,15 @@ def _intent_task(store_provider: WorkIntentPortProvider, operation: str):
                 and result.get("status") in {"ok", "succeeded"}
             )
             if store is not None:
+                deferred = (
+                    isinstance(result, dict)
+                    and result.get("status") == "deferred"
+                    and result.get("error") == "index_writer_busy"
+                )
+                if deferred:
+                    for item in claim_pairs:
+                        store.release(str(item[0]), str(item[1]))
+                    return result
                 outcomes = _result_outcomes(result, len(claim_pairs))
                 if outcomes is None:
                     outcomes = [success] * len(claim_pairs)
