@@ -18,7 +18,6 @@ from searchkernel.api import (
     PARSER_SUFFIXES,
     compute_doc_id_multi_root,
     should_include_file,
-    walk_dirs_with_files,
 )
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager as IndexManager
 from mcp_markdown_ragdocs.coordination.task_submission import (
@@ -31,15 +30,6 @@ type EventType = Literal["created", "modified", "deleted"]
 
 # Maximum queue size to prevent memory exhaustion under load
 MAX_QUEUE_SIZE = 1000
-
-# Recursive root watches register one kernel inotify watch per directory
-# under the root regardless of whether that directory has parseable files,
-# so they never reduce total watch-descriptor consumption relative to
-# watching only the directories that actually have parseable files. We
-# always watch candidate directories individually; if that exhausts the
-# kernel's inotify watch limit, scheduling fails per-directory in start()
-# and refresh_watches(), logging a warning rather than crashing the watcher.
-
 
 @dataclass(frozen=True)
 class WatcherStats:
@@ -132,21 +122,6 @@ class FileWatcher:
         if self._running:
             return
 
-        watched_dirs: list[Path] = []
-        seen_dirs: set[Path] = set()
-        for root in self._documents_paths:
-            if not root.exists():
-                continue
-            for dir_path in walk_dirs_with_files(
-                root,
-                self._exclude_patterns,
-                self._exclude_hidden_dirs,
-                self._parser_suffixes,
-            ):
-                if dir_path not in seen_dirs:
-                    seen_dirs.add(dir_path)
-                    watched_dirs.append(dir_path)
-
         self._running = True
         self._event_handler = _DocumentEventHandler(
             self._event_queue,
@@ -157,69 +132,34 @@ class FileWatcher:
         observer = Observer()
         self._watched_dirs = set()
         failed_dirs = 0
-        for path in watched_dirs:
+        for root in self._documents_paths:
+            if not root.exists():
+                continue
             try:
-                observer.schedule(self._event_handler, str(path), recursive=False)
-                self._watched_dirs.add(str(path))
+                observer.schedule(self._event_handler, str(root), recursive=True)
+                self._watched_dirs.add(str(root))
             except OSError as e:
                 failed_dirs += 1
-                logger.warning("Failed to schedule watch on %s: %s", path, e)
+                logger.warning("Failed to schedule watch on %s: %s", root, e)
         observer.start()
         self._observer = observer
         self._task = asyncio.create_task(self._process_events())
         logger.info(
-            "File watcher started for %d roots (%d directories with parseable files, %d watched)",
+            "File watcher started for %d roots (%d watched recursively)",
             len(self._documents_paths),
-            len(watched_dirs),
             len(self._watched_dirs),
         )
         if failed_dirs:
             logger.warning(
-                "File watcher failed to schedule %d of %d directories; the "
+                "File watcher failed to schedule %d of %d roots; the "
                 "inotify watch limit may be too low "
                 "(see /proc/sys/fs/inotify/max_user_watches)",
                 failed_dirs,
-                len(watched_dirs),
+                len(self._documents_paths),
             )
 
     def refresh_watches(self) -> None:
-        """Register inotify watches for any new directories that have appeared
-        since startup or the last refresh.  Called after each reconciliation
-        cycle so that newly-created directories are picked up without requiring
-        a restart."""
-        if not self._running or self._observer is None or self._event_handler is None:
-            return
-
-        current_dirs: list[Path] = []
-        seen_dirs: set[Path] = set()
-        for root in self._documents_paths:
-            if not root.exists():
-                continue
-            for dir_path in walk_dirs_with_files(
-                root,
-                self._exclude_patterns,
-                self._exclude_hidden_dirs,
-                self._parser_suffixes,
-            ):
-                if dir_path not in seen_dirs:
-                    seen_dirs.add(dir_path)
-                    current_dirs.append(dir_path)
-        new_dirs = [d for d in current_dirs if str(d) not in self._watched_dirs]
-        for dir_path in new_dirs:
-            try:
-                self._observer.schedule(
-                    self._event_handler, str(dir_path), recursive=False
-                )
-                self._watched_dirs.add(str(dir_path))
-            except OSError as e:
-                logger.warning("Failed to schedule watch on %s: %s", dir_path, e)
-
-        if new_dirs:
-            logger.info(
-                "File watcher: added %d new watched directories (total: %d)",
-                len(new_dirs),
-                len(self._watched_dirs),
-            )
+        """Retain the recursive root watches established during startup."""
 
     async def stop(self):
         """Stop file watcher and drain remaining events before shutdown.

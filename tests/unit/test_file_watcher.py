@@ -515,12 +515,41 @@ class TestFileWatcherParserSuffixes:
 
 class TestFileWatcherSchedulingMode:
     @pytest.mark.asyncio
-    async def test_start_uses_non_recursive_directory_watches_for_small_fanout(
+    async def test_start_watches_each_existing_root_recursively(
         self, tmp_path, mock_index_manager
     ):
+        """Each configured document root receives one recursive watch."""
         root = tmp_path / "docs"
         root.mkdir()
-        watched_dirs = [root, root / "guides"]
+        second_root = tmp_path / "other-docs"
+        second_root.mkdir()
+        observer = MagicMock()
+
+        watcher = FileWatcher(
+            documents_path=str(root),
+            documents_paths=[str(root), str(second_root)],
+            index_manager=mock_index_manager,
+        )
+
+        with (
+            patch("mcp_markdown_ragdocs.indexing.watcher.Observer", return_value=observer),
+        ):
+            watcher.start()
+
+        scheduled_paths = [call.args[1] for call in observer.schedule.call_args_list]
+        assert scheduled_paths == [str(root), str(second_root)]
+        assert all(call.kwargs["recursive"] is True for call in observer.schedule.call_args_list)
+        assert watcher.get_stats().watched_dirs_count == 2
+
+        await watcher.stop()
+
+    @pytest.mark.asyncio
+    async def test_recursive_root_watch_covers_new_nested_directories_without_refresh(
+        self, tmp_path, mock_index_manager
+    ):
+        """New nested directories remain covered without a tree rescan."""
+        root = tmp_path / "docs"
+        root.mkdir()
         observer = MagicMock()
 
         watcher = FileWatcher(
@@ -529,62 +558,12 @@ class TestFileWatcherSchedulingMode:
         )
 
         with (
-            patch("mcp_markdown_ragdocs.indexing.watcher.walk_dirs_with_files", return_value=watched_dirs),
             patch("mcp_markdown_ragdocs.indexing.watcher.Observer", return_value=observer),
         ):
             watcher.start()
 
         scheduled_paths = [call.args[1] for call in observer.schedule.call_args_list]
-        assert scheduled_paths == [str(path) for path in watched_dirs]
-        assert all(call.kwargs["recursive"] is False for call in observer.schedule.call_args_list)
-        assert watcher.get_stats().watched_dirs_count == len(watched_dirs)
-
-        await watcher.stop()
-
-    @pytest.mark.asyncio
-    async def test_start_watches_candidate_dirs_individually_despite_huge_irrelevant_subtree(
-        self, tmp_path, mock_index_manager
-    ):
-        """Regression test for the inverted heuristic: a corpus shaped like the
-        real one (few directories with parseable files, spread across roots
-        whose full trees are enormous with excluded content such as .venv/
-        node_modules) must schedule one non-recursive watch per candidate
-        directory, not a handful of recursive root watches. The old ratio
-        heuristic tripped into recursive mode here because candidate_dir_count
-        was large relative to root_count, even though candidates were a tiny
-        fraction of each root's real directory tree."""
-        root_a = tmp_path / "monorepo"
-        root_b = tmp_path / "docs-site"
-        root_a.mkdir()
-        root_b.mkdir()
-        observer = MagicMock()
-
-        # 300 real candidate directories under root_a, 44 under root_b: shaped
-        # like the measured 344-candidate / 15-root production corpus, where
-        # each root's actual directory tree (not modeled here) is orders of
-        # magnitude larger due to excluded venv/cache/node_modules content.
-        watched_a = [root_a] + [root_a / f"dir-{i}" for i in range(299)]
-        watched_b = [root_b] + [root_b / f"dir-{i}" for i in range(43)]
-
-        watcher = FileWatcher(
-            documents_path=str(root_a),
-            documents_paths=[str(root_a), str(root_b)],
-            index_manager=mock_index_manager,
-        )
-
-        with (
-            patch(
-                "mcp_markdown_ragdocs.indexing.watcher.walk_dirs_with_files",
-                side_effect=[watched_a, watched_b],
-            ),
-            patch("mcp_markdown_ragdocs.indexing.watcher.Observer", return_value=observer),
-        ):
-            watcher.start()
-
-        scheduled_paths = [call.args[1] for call in observer.schedule.call_args_list]
-        assert scheduled_paths == [str(p) for p in watched_a + watched_b]
-        assert all(call.kwargs["recursive"] is False for call in observer.schedule.call_args_list)
-        assert watcher.get_stats().watched_dirs_count == 344
+        assert scheduled_paths == [str(root)]
 
         await watcher.stop()
 
@@ -592,70 +571,29 @@ class TestFileWatcherSchedulingMode:
     async def test_start_logs_warning_and_continues_when_schedule_hits_watch_limit(
         self, tmp_path, mock_index_manager, caplog
     ):
-        """Boundary case for the new heuristic: there is no proactive size cap,
-        so the real inotify watch limit is only discovered when observer.schedule
-        raises OSError. That must be caught per-directory, logged, and must not
-        prevent already-successful watches or crash start()."""
+        """A failed root schedule does not prevent other roots from starting."""
         caplog.set_level("WARNING")
         root = tmp_path / "docs"
         root.mkdir()
-        watched_dirs = [root, root / "a", root / "b"]
+        second_root = tmp_path / "other-docs"
+        second_root.mkdir()
         observer = MagicMock()
-        observer.schedule.side_effect = [None, OSError("No space left on device"), None]
+        observer.schedule.side_effect = [OSError("No space left on device"), None]
 
         watcher = FileWatcher(
             documents_path=str(root),
+            documents_paths=[str(root), str(second_root)],
             index_manager=mock_index_manager,
         )
 
         with (
-            patch("mcp_markdown_ragdocs.indexing.watcher.walk_dirs_with_files", return_value=watched_dirs),
             patch("mcp_markdown_ragdocs.indexing.watcher.Observer", return_value=observer),
         ):
             watcher.start()
 
-        assert watcher.get_stats().watched_dirs_count == 2
-        assert "failed to schedule 1 of 3 directories" in caplog.text
+        assert watcher.get_stats().watched_dirs_count == 1
+        assert "failed to schedule 1 of 2 roots" in caplog.text
         assert "max_user_watches" in caplog.text
-
-        await watcher.stop()
-
-    @pytest.mark.asyncio
-    async def test_refresh_watches_registers_new_directory_watch_individually(
-        self, tmp_path, mock_index_manager
-    ):
-        """A directory created after start() that contains a parseable file
-        must get its own watch registered by the next refresh_watches() call.
-
-        Uses 130 real candidate directories under a single root: enough to
-        have tripped the OLD ratio-based recursive fallback (root_count=1,
-        candidate_dir_count > 128 and >= root_count * 8). Under that old
-        heuristic only the root itself was ever scheduled (recursively), so
-        refresh_watches()'s recursive branch saw the root as already watched
-        and never recorded the new subdirectory individually -- this
-        assertion fails against pre-change code for that reason, even though
-        the new subdirectory happened to receive events via the root's
-        recursive watch."""
-        root = tmp_path / "docs"
-        root.mkdir()
-        for i in range(130):
-            sub = root / f"dir-{i}"
-            sub.mkdir()
-            (sub / "note.md").write_text("# note")
-
-        watcher = FileWatcher(
-            documents_path=str(root),
-            index_manager=mock_index_manager,
-        )
-        watcher.start()
-
-        new_dir = root / "new-topic"
-        new_dir.mkdir()
-        (new_dir / "note.md").write_text("# new")
-
-        watcher.refresh_watches()
-
-        assert str(new_dir) in watcher._watched_dirs
 
         await watcher.stop()
 
