@@ -41,7 +41,10 @@ from mcp_markdown_ragdocs.coordination.work_intents import (
     WorkIntent,
     WorkIntentPort,
 )
-from mcp_markdown_ragdocs.git.repository import get_git_ref_signature
+from mcp_markdown_ragdocs.git.repository import (
+    get_git_ref_signature,
+    iter_commit_hashes_after_timestamp,
+)
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
     get_head,
@@ -1076,7 +1079,18 @@ def _refresh_git_repository_core(
             None,
         )
         repaired = (
-            repair_attribution(git_dir_path, source.workspace_id)
+            repair_attribution(
+                git_dir_path,
+                source.workspace_id,
+                (
+                    iter_commit_hashes_after_timestamp(
+                        git_dir_path,
+                        after_timestamp=max(0, cursor - 1),
+                    )
+                    if cursor is not None
+                    else None
+                ),
+            )
             if repair_attribution is not None
             else 0
         )

@@ -537,12 +537,18 @@ class RecordIndexManager:
         self,
         git_dir: Path,
         workspace_id: str | None,
+        commit_hashes: Iterable[str] | None = None,
     ) -> int:
         """Repair project identity on existing Git records without rebuilding them."""
         if workspace_id is None:
             return 0
 
-        commit_ids = {f"git:{commit_hash}" for commit_hash in self._commit_history(git_dir)}
+        history = (
+            self._commit_history(git_dir)
+            if commit_hashes is None
+            else commit_hashes
+        )
+        commit_ids = {f"git:{commit_hash}" for commit_hash in history}
         if not isinstance(self.storage, LocalRecordStorage):
             raise RuntimeError("Filtered Git identity lookup is unavailable")
         matched_identities = list(

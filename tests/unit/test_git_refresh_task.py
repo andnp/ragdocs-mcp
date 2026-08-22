@@ -30,7 +30,7 @@ class FakeIndexManager:
 
     def __init__(self) -> None:
         self.persist_calls = 0
-        self.reconcile_calls: list[tuple[Path, str | None]] = []
+        self.reconcile_calls: list[tuple[Path, str | None, list[str] | None]] = []
 
     def index_document(self, file_path: str, force: bool = False) -> bool:
         return True
@@ -56,9 +56,18 @@ class FakeIndexManager:
         return None
 
     def reconcile_git_project_attribution(
-        self, git_dir: Path, workspace_id: str | None
+        self,
+        git_dir: Path,
+        workspace_id: str | None,
+        commit_hashes=None,
     ) -> int:
-        self.reconcile_calls.append((git_dir, workspace_id))
+        self.reconcile_calls.append(
+            (
+                git_dir,
+                workspace_id,
+                None if commit_hashes is None else list(commit_hashes),
+            )
+        )
         return 1
 
 
@@ -145,6 +154,12 @@ def test_refresh_git_runs_reconciliation_when_repository_changed(
         "mcp_markdown_ragdocs.indexing.tasks.get_git_ref_signature",
         lambda _git_dir: "new-head",
     )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.indexing.tasks.iter_commit_hashes_after_timestamp",
+        lambda _git_dir, after_timestamp: iter(
+            [f"changed-after-{after_timestamp}"]
+        ),
+    )
 
     async def _receipts(_manager, _source, *, since, batch_size):
         yield SimpleNamespace(records=(), failed=0, checkpoint=None)
@@ -166,4 +181,5 @@ def test_refresh_git_runs_reconciliation_when_repository_changed(
     assert huey_instance.execute(task) is True
     assert len(fake_manager.reconcile_calls) == 1
     assert fake_manager.reconcile_calls[0][0] == git_dir.resolve()
+    assert fake_manager.reconcile_calls[0][2] == ["changed-after-122"]
     assert fake_manager.persist_calls >= 1
