@@ -1,10 +1,14 @@
+import sqlite3
 import types
 from datetime import UTC, datetime
 
 from searchkernel.domain import Record, RecordIdentity, RecordStatus
 
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
-from mcp_markdown_ragdocs.indexing.record_ports import LocalRecordStorage
+from mcp_markdown_ragdocs.indexing.record_ports import (
+    LocalRecordIdentityCatalog,
+    LocalRecordStorage,
+)
 from tests.conftest import make_test_config
 
 
@@ -103,6 +107,52 @@ def test_iter_identities_filters_by_git_commit_ids(record_manager) -> None:
     assert [identity.source_id for identity in identities] == [
         "git:abc:summary:0"
     ]
+
+
+def test_git_commit_identity_lookup_batches_sql_parameters() -> None:
+    """Large Git identity lookups stay below SQLite bind-variable limits.
+
+    Every selected identity is returned while unrelated rows remain excluded.
+    """
+    commit_ids = [f"git:{index:04d}" for index in range(600)]
+    rows = [
+        (None, "git_commit", f"{commit_id}:summary:0")
+        for commit_id in commit_ids
+    ]
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE local_records "
+        "(workspace_id TEXT, source_kind TEXT, source_id TEXT)"
+    )
+    connection.executemany("INSERT INTO local_records VALUES (?, ?, ?)", rows)
+    connection.execute(
+        "INSERT INTO local_records VALUES (?, ?, ?)",
+        (None, "git_commit", "git:unrelated:summary:0"),
+    )
+    executed_queries: list[str] = []
+
+    def trace_query(query: str) -> None:
+        executed_queries.append(query)
+
+    connection.set_trace_callback(trace_query)
+
+    class DatabaseManager:
+        def get_connection(self) -> sqlite3.Connection:
+            return connection
+
+    catalog = LocalRecordIdentityCatalog(DatabaseManager())
+
+    identities = list(catalog.iter_git_commit_identities(commit_ids))
+
+    assert {identity.source_id for identity in identities} == {
+        f"{commit_id}:summary:0" for commit_id in commit_ids
+    }
+    assert "git:unrelated:summary:0" not in {
+        identity.source_id for identity in identities
+    }
+    assert len(executed_queries) == 3
+    assert max(query.count("source_id >=") for query in executed_queries) <= 250
 
 
 def test_iter_identities_filters_by_status(record_manager) -> None:
