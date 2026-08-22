@@ -175,7 +175,30 @@ class FileWatcher:
             )
 
     def refresh_watches(self) -> None:
-        """Retain the recursive root watches established during startup."""
+        """Schedule configured roots that appeared after startup."""
+        if not self._running or self._observer is None or self._event_handler is None:
+            return
+
+        new_roots = [
+            root
+            for root in self._documents_paths
+            if root.exists() and str(root) not in self._watched_dirs
+        ]
+        added_roots = 0
+        for root in new_roots:
+            try:
+                self._observer.schedule(self._event_handler, str(root), recursive=True)
+                self._watched_dirs.add(str(root))
+                added_roots += 1
+            except OSError as e:
+                logger.warning("Failed to schedule watch on %s: %s", root, e)
+
+        if added_roots:
+            logger.info(
+                "File watcher: added %d late document root watch(es) (total: %d)",
+                added_roots,
+                len(self._watched_dirs),
+            )
 
     async def stop(self):
         """Stop file watcher and drain remaining events before shutdown.

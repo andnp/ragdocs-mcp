@@ -544,6 +544,70 @@ class TestFileWatcherSchedulingMode:
         await watcher.stop()
 
     @pytest.mark.asyncio
+    async def test_refresh_watches_late_root_recursively_once(
+        self, tmp_path, mock_index_manager
+    ):
+        """A root created after startup is scheduled on the next refresh.
+
+        Repeated refreshes must not add duplicate root watches.
+        """
+        existing_root = tmp_path / "docs"
+        existing_root.mkdir()
+        late_root = tmp_path / "late-docs"
+        observer = MagicMock()
+        watcher = FileWatcher(
+            documents_path=str(existing_root),
+            documents_paths=[str(existing_root), str(late_root)],
+            index_manager=mock_index_manager,
+        )
+
+        with patch(
+            "mcp_markdown_ragdocs.indexing.watcher.Observer",
+            return_value=observer,
+        ):
+            watcher.start()
+            late_root.mkdir()
+            watcher.refresh_watches()
+            watcher.refresh_watches()
+
+        scheduled = [call.args[1] for call in observer.schedule.call_args_list]
+        assert scheduled == [str(existing_root), str(late_root)]
+        assert observer.schedule.call_args_list[-1].kwargs["recursive"] is True
+        await watcher.stop()
+
+    @pytest.mark.asyncio
+    async def test_refresh_watches_schedules_multiple_late_roots_without_child_fanout(
+        self, tmp_path, mock_index_manager
+    ):
+        """Refreshing multiple late roots schedules roots, never child folders.
+
+        Recursive scheduling must remain one observer registration per root.
+        """
+        existing_root = tmp_path / "docs"
+        existing_root.mkdir()
+        late_roots = [tmp_path / "project-a", tmp_path / "project-b"]
+        for root in late_roots:
+            (root / "nested").mkdir(parents=True)
+        observer = MagicMock()
+        watcher = FileWatcher(
+            documents_path=str(existing_root),
+            documents_paths=[str(existing_root), *(str(root) for root in late_roots)],
+            index_manager=mock_index_manager,
+        )
+
+        with patch(
+            "mcp_markdown_ragdocs.indexing.watcher.Observer",
+            return_value=observer,
+        ):
+            watcher.start()
+            watcher.refresh_watches()
+
+        scheduled = [call.args[1] for call in observer.schedule.call_args_list]
+        assert scheduled == [str(existing_root), *(str(root) for root in late_roots)]
+        assert all(call.kwargs["recursive"] is True for call in observer.schedule.call_args_list)
+        await watcher.stop()
+
+    @pytest.mark.asyncio
     async def test_recursive_root_watch_covers_new_nested_directories_without_refresh(
         self, tmp_path, mock_index_manager
     ):
