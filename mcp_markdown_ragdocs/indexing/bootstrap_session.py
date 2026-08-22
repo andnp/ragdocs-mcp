@@ -343,6 +343,11 @@ class BootstrapSession:
                         await self._warmup_before_ready()
                         self.mark_ready()
                         self.schedule_embedding_warmup()
+                        # Queries are already served; periodic reconciliation
+                        # covers any remaining backfill, so stop polling here
+                        # rather than waiting for full completion, which may
+                        # never converge for a continuously-changing corpus.
+                        return
                     if len(completed_paths) >= total_targets:
                         return
 

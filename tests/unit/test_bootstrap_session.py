@@ -488,6 +488,77 @@ async def test_run_skips_completed_files_and_finishes_ready(
 
 
 @pytest.mark.asyncio
+async def test_run_stops_monitoring_once_queryable_even_if_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Given remaining startup work that never fully completes.
+    When the bootstrap session becomes queryable partway through.
+    Then it should stop monitoring instead of polling forever.
+    """
+
+    doc_one = tmp_path / "doc1.md"
+    doc_two = tmp_path / "doc2.md"
+    doc_one.write_text("# Doc 1")
+    doc_two.write_text("# Doc 2")
+
+    submission = MagicMock(spec=TaskSubmissionPort)
+    submission.submit_index_batch.side_effect = lambda file_paths, **kwargs: TaskBatchSubmissionResult(
+        queue_available=True,
+        requested_unique_count=len(set(file_paths)),
+        enqueued_count=0,
+        already_pending_count=len(set(file_paths)),
+    )
+
+    original_sleep = asyncio.sleep
+
+    async def fast_sleep(delay: float) -> None:
+        await original_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+    load_calls = 0
+
+    async def load_persisted_indices() -> None:
+        nonlocal load_calls
+        load_calls += 1
+
+    async def compute_index_state_version() -> float:
+        return 1.0
+
+    ready_calls: list[str] = []
+    warmup_calls: list[str] = []
+
+    session = BootstrapSession(
+        index_path=tmp_path,
+        documents_roots=[tmp_path],
+        git_refresh_enabled=False,
+        discover_files=lambda: [str(doc_one), str(doc_two)],
+        discover_git_repositories=list,
+        get_bootstrap_manifest=_manifest,
+        load_persisted_indices=load_persisted_indices,
+        persist_indices=lambda: asyncio.sleep(0),
+        compute_index_state_version=compute_index_state_version,
+        get_loaded_index_state_version=lambda: 0.0,
+        get_loaded_document_count=lambda: 0,
+        is_queryable=lambda: load_calls > 0,
+        publish_public_state=lambda snapshot: None,
+        mark_ready=lambda: ready_calls.append("called"),
+        schedule_embedding_warmup=lambda: warmup_calls.append("called") or True,
+        report_failure=lambda error, indexed_count, total_count: pytest.fail(
+            f"unexpected failure: {error}"
+        ),
+        task_submission=submission,
+    )
+
+    await asyncio.wait_for(session.run(), timeout=1.0)
+
+    assert ready_calls == ["called"]
+    assert warmup_calls == ["called"]
+
+
+@pytest.mark.asyncio
 async def test_run_enqueues_startup_git_refresh_batch_in_task_mode(
     tmp_path: Path,
 ) -> None:

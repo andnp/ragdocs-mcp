@@ -1103,9 +1103,7 @@ async def test_task_bootstrap_marks_context_ready_from_partial_persisted_state(
     assert ctx._index_state.total_count == 2
     assert ctx.is_ready() is True
 
-    bootstrap_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await bootstrap_task
+    await asyncio.wait_for(bootstrap_task, timeout=1.0)
 
 
 @pytest.mark.asyncio
