@@ -71,6 +71,8 @@ class _RebuildManager:
         self._failed_files: list[dict[str, str]] = []
         self.indexed_records: list[Record] = []
         self.ingestor = _FakeIngestor(self)
+        self.finalize_calls = 0
+        self.events: list[str] = []
 
     def clear_documents(self) -> None:
         self.clear_calls += 1
@@ -84,6 +86,7 @@ class _RebuildManager:
     ) -> None:
         _ = force, persist
         self.indexed_batches.append(list(file_paths))
+        self.events.append("documents")
         if self.fail_document_batch == len(self.indexed_batches):
             raise RuntimeError("interrupted document batch")
 
@@ -94,10 +97,12 @@ class _RebuildManager:
         self.persist_checkpoint_calls += 1
 
     def finalize_derived_graph_state(self) -> None:
-        return
+        self.finalize_calls += 1
+        self.events.append("finalize")
 
     def index_record(self, record: Record) -> bool:
         self.indexed_records.append(record)
+        self.events.append("git")
         return True
 
 def _rebuild_config(tmp_path: Path, *, git_enabled: bool = False) -> Config:
@@ -504,3 +509,82 @@ def test_run_rebuild_resumes_interrupted_git_batch(
     assert succeeded["status"] == "succeeded"
     assert len(resumed.indexed_records) == 2
     assert succeeded["git_commits_indexed"] == 27
+
+
+def test_run_rebuild_finalizes_graph_after_git_ingestion(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Graph finalization follows successful document and Git ingestion.
+
+    The derived graph must include records written by the Git phase.
+    """
+    config = _rebuild_config(tmp_path, git_enabled=True)
+    repo_path = Path(config.indexing.documents_path) / "repo" / ".git"
+    repo_path.mkdir(parents=True)
+    monkeypatch.setattr(
+        rebuild_service,
+        "_discover_scope_git_repositories",
+        lambda _config, _roots: [repo_path],
+    )
+    monkeypatch.setattr(rebuild_service, "is_git_available", lambda: True)
+    monkeypatch.setattr(rebuild_service, "get_git_ref_signature", lambda _path: "stable-ref")
+    monkeypatch.setattr(
+        rebuild_service,
+        "GitContentSource",
+        lambda _path, *, git_diff_embedding_days=0: _FakeSource(_path),
+    )
+
+    manager = _RebuildManager()
+    result = _run_rebuild(
+        tmp_path=tmp_path,
+        config=config,
+        manager=manager,
+        request_id="request-1",
+    )
+
+    assert result["status"] == "succeeded"
+    assert manager.events[-2:] == ["git", "finalize"]
+    assert manager.finalize_calls == 1
+
+
+def test_run_rebuild_does_not_finalize_after_git_ingestion_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A failed Git ingestion leaves derived graph finalization undone.
+
+    Failed source writes must not publish a finalized graph state.
+    """
+    config = _rebuild_config(tmp_path, git_enabled=True)
+    repo_path = Path(config.indexing.documents_path) / "repo" / ".git"
+    repo_path.mkdir(parents=True)
+    monkeypatch.setattr(
+        rebuild_service,
+        "_discover_scope_git_repositories",
+        lambda _config, _roots: [repo_path],
+    )
+    monkeypatch.setattr(rebuild_service, "is_git_available", lambda: True)
+    monkeypatch.setattr(rebuild_service, "get_git_ref_signature", lambda _path: "stable-ref")
+    monkeypatch.setattr(
+        rebuild_service,
+        "GitContentSource",
+        lambda _path, *, git_diff_embedding_days=0: _FakeSource(_path),
+    )
+
+    manager = _RebuildManager()
+
+    def fail_git_record(record: Record) -> bool:
+        del record
+        raise RuntimeError("git ingestion failed")
+
+    manager.index_record = fail_git_record
+    result = _run_rebuild(
+        tmp_path=tmp_path,
+        config=config,
+        manager=manager,
+        request_id="request-1",
+    )
+
+    assert result["status"] == "failed"
+    assert manager.finalize_calls == 0

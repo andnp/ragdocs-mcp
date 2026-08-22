@@ -1166,9 +1166,6 @@ def run_rebuild(
                 last_checkpoint_at=time.time(),
             )
 
-        _update_rebuild_progress(runtime_root, phase="finalizing")
-        index_manager.finalize_derived_graph_state()
-
         git_repositories, git_commits_indexed = _index_rebuild_git(
             runtime_root=runtime_root,
             config=config,
@@ -1176,6 +1173,9 @@ def run_rebuild(
             repos=repos,
             checkpoint=checkpoint,
         )
+
+        _update_rebuild_progress(runtime_root, phase="finalizing")
+        index_manager.finalize_derived_graph_state()
 
         vocabulary_scheduled = False
         if schedule_vocabulary_catch_up is not None:
