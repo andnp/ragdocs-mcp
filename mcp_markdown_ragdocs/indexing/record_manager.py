@@ -205,6 +205,7 @@ class RecordIndexManager:
         )
         self._failed_files: list[dict[str, str]] = []
         self._state_version = 0
+        self._source_map_dirty = True
         self._ready = True
         self._source_map_store = source_map_store or SqliteSourceMapStore(
             kernel.backend.db_manager,
@@ -381,6 +382,7 @@ class RecordIndexManager:
 
     def _save_source_map(self) -> None:
         self._source_map_store.save(self._source_records)
+        self._source_map_dirty = False
 
     def _save_source_map_delta(
         self,
@@ -397,6 +399,7 @@ class RecordIndexManager:
             return
         if isinstance(self._source_map_store, SqliteSourceMapStore):
             self._source_map_store.apply_delta(upserts, removals)
+            self._source_map_dirty = False
             return
         self._save_source_map()
 
@@ -412,6 +415,7 @@ class RecordIndexManager:
         old_keys = self._source_records.get(prepared.document.id, [])
         new_keys = await self._document_writer.write(prepared, old_keys)
         self._source_records[prepared.document.id] = list(new_keys)
+        self._save_source_map_delta(upsert_ids=(prepared.document.id,))
         self._mark_graph_dirty(prepared.document.id)
         if update_graph:
             self._rebuild_graph()
@@ -786,7 +790,8 @@ class RecordIndexManager:
 
     def persist(self) -> None:
         self._graph_rebuilder.flush()
-        self._save_source_map()
+        if self._source_map_dirty:
+            self._save_source_map()
 
     def persist_checkpoint(self) -> None:
         self.persist()
@@ -836,6 +841,7 @@ class RecordIndexManager:
 
     def load(self) -> None:
         self._source_records = self._source_map_store.load()
+        self._source_map_dirty = False
 
     def replace_vector_store(self, _vector: Any) -> None:
         raise RuntimeError("canonical record manager uses one configured embedding provider")

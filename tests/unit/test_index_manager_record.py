@@ -98,3 +98,41 @@ def test_remove_document_persists_a_delta_removal(
     record_manager.remove_document("abc123")
 
     assert deltas == [({}, ["abc123"])]
+
+
+def test_index_document_persists_its_source_map_delta(
+    record_manager, tmp_path, monkeypatch
+) -> None:
+    """
+    Persist a document's source membership when its prepared records commit.
+    Limit the delta to the document being indexed.
+    """
+    file_path = tmp_path / "docs" / "guide.md"
+    file_path.parent.mkdir(exist_ok=True)
+    file_path.write_text("# Guide\n\nDocument body.")
+    deltas: list[tuple[dict[str, list[str]], list[str]]] = []
+    snapshots: list[dict[str, list[str]]] = []
+    source_map = record_manager._source_map_store
+
+    def record_delta(upserts, removals) -> None:
+        deltas.append(
+            ({doc_id: list(keys) for doc_id, keys in upserts.items()}, list(removals))
+        )
+
+    monkeypatch.setattr(source_map, "apply_delta", record_delta)
+    monkeypatch.setattr(
+        source_map,
+        "save",
+        lambda records: snapshots.append(
+            {doc_id: list(keys) for doc_id, keys in records.items()}
+        ),
+    )
+
+    assert record_manager.index_document(str(file_path)) is True
+    record_manager.persist()
+
+    assert len(deltas) == 1
+    assert len(deltas[0][0]) == 1
+    assert deltas[0][1] == []
+    assert all(deltas[0][0].values())
+    assert snapshots == []

@@ -309,6 +309,7 @@ def test_manager_writes_planned_document_through_ports(record_manager) -> None:
     assert source_map.saved[-1] == {
         prepared.document.id: [record.storage_key for record in prepared.records]
     }
+    assert len(source_map.saved) == 1
     assert manager.get_state_version() == 1
     assert manager.get_failed_files() == []
 
