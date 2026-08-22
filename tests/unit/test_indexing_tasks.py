@@ -1591,6 +1591,119 @@ class TestTaskExecution:
         assert checkpoint.complete is True
         assert fake_manager.persist_calls == 1
 
+    def test_completed_runtime_prunes_after_cooldown_once(
+        self,
+        tmp_path: Path,
+        fake_manager: FakeIndexManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Prune a completed runtime once the persisted cooldown has elapsed.
+        A second successful indexing window inside the cooldown is skipped.
+        """
+        save_bootstrap_checkpoint(
+            tmp_path,
+            BootstrapCheckpoint(
+                schema_version="1.0.0",
+                generation="current",
+                complete=True,
+                targets={},
+                completed={},
+            ),
+        )
+        record = Record(
+            source_kind="note",
+            source_id="note:live",
+            title="",
+            body="live",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        cache = SQLiteEmbeddingCache(tmp_path / "embedding-cache.db", "test-model", 2)
+        live_hash = semantic_input_for_record(record, "test-model").content_hash
+        cache.put_many({live_hash: [1.0, 0.0], "stale": [0.0, 1.0]})
+        fake_manager.ingestor = SimpleNamespace(
+            embedding_cache=cache,
+            encoder_namespace="test-model",
+        )
+        fake_manager.storage = SimpleNamespace(iter_records=lambda **_: [record])
+        clock = [100.0]
+        runtime = SimpleNamespace(
+            bootstrap_index_path=tmp_path,
+            index_manager=fake_manager,
+            embedding_cache_prune_cooldown_seconds=86400,
+            time_provider=lambda: clock[0],
+        )
+
+        tasks_mod._prune_embedding_cache_after_bootstrap(
+            cast(TaskRuntime, runtime),
+            bootstrap_was_incomplete=False,
+        )
+        assert set(cache.get_many([live_hash, "stale"])) == {live_hash}
+        assert (tmp_path / tasks_mod.EMBEDDING_CACHE_PRUNE_STATE).exists()
+
+        cache.put_many({"stale": [0.0, 1.0]})
+        clock[0] += 1
+        tasks_mod._prune_embedding_cache_after_bootstrap(
+            cast(TaskRuntime, runtime),
+            bootstrap_was_incomplete=False,
+        )
+        assert set(cache.get_many([live_hash, "stale"])) == {live_hash, "stale"}
+
+        marker = tmp_path / tasks_mod.EMBEDDING_CACHE_PRUNE_STATE
+        marker_before = marker.read_text(encoding="utf-8")
+        cache.put_many({"stale": [0.0, 1.0]})
+        clock[0] += 86400
+        def fail_write(*_args: object, **_kwargs: object) -> None:
+            raise OSError("state filesystem unavailable")
+
+        monkeypatch.setattr(tasks_mod, "atomic_write_json", fail_write)
+
+        tasks_mod._prune_embedding_cache_after_bootstrap(
+            cast(TaskRuntime, runtime),
+            bootstrap_was_incomplete=False,
+        )
+        assert set(cache.get_many([live_hash, "stale"])) == {live_hash}
+        assert marker.read_text(encoding="utf-8") == marker_before
+
+    def test_pruning_failure_does_not_advance_cooldown(
+        self,
+        tmp_path: Path,
+        fake_manager: FakeIndexManager,
+    ) -> None:
+        """
+        Leave cooldown state untouched when cache pruning fails.
+        A later successful batch may retry the maintenance operation.
+        """
+        save_bootstrap_checkpoint(
+            tmp_path,
+            BootstrapCheckpoint(
+                schema_version="1.0.0",
+                generation="current",
+                complete=True,
+                targets={},
+                completed={},
+            ),
+        )
+        fake_manager.ingestor = SimpleNamespace(
+            embedding_cache=FailingEmbeddingCache(),
+            encoder_namespace="test-model",
+        )
+        fake_manager.storage = SimpleNamespace(iter_records=lambda **_: [])
+        runtime = SimpleNamespace(
+            bootstrap_index_path=tmp_path,
+            index_manager=fake_manager,
+            embedding_cache_prune_cooldown_seconds=86400,
+            time_provider=lambda: 100.0,
+        )
+
+        tasks_mod._prune_embedding_cache_after_bootstrap(
+            cast(TaskRuntime, runtime),
+            bootstrap_was_incomplete=False,
+        )
+
+        assert not (tmp_path / tasks_mod.EMBEDDING_CACHE_PRUNE_STATE).exists()
+
     def test_remove_batch_task_persists_manifest_removal(
         self,
         huey_instance: SqliteHuey,

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
+import time
 from typing import Any, Callable, Protocol
 
 from mcp_markdown_ragdocs.coordination.queue import QueueRuntime
@@ -36,6 +37,8 @@ class TaskRuntime:
     gdrive_task_handles: Mapping[str, object] = field(default_factory=dict)
     index_manager: Any | None = field(default=None, repr=False)
     task_backpressure_limit: int = field(default=100, repr=False)
+    embedding_cache_prune_cooldown_seconds: int = field(default=86400, repr=False)
+    time_provider: Callable[[], float] = field(default=time.time, repr=False)
     bootstrap_index_path: Path | None = field(default=None, repr=False)
     bootstrap_documents_roots: list[Path] = field(default_factory=list, repr=False)
     schedule_vocabulary_catch_up: Callable[[], bool] | None = field(

@@ -451,7 +451,10 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
                     "indexing": type(
                         "_FakeIndexing",
                         (),
-                        {"task_backpressure_limit": 100},
+                        {
+                            "task_backpressure_limit": 100,
+                            "embedding_cache_prune_cooldown_seconds": 86400,
+                        },
                     )()
                 },
             )()
@@ -492,6 +495,7 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
         task_lease_store,
         work_intent_store,
         task_backpressure_limit=None,
+        embedding_cache_prune_cooldown_seconds=None,
         bootstrap_index_path=None,
         bootstrap_documents_roots=None,
         schedule_vocabulary_catch_up=None,
@@ -502,6 +506,7 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
             task_lease_store,
             work_intent_store,
             task_backpressure_limit,
+            embedding_cache_prune_cooldown_seconds,
             bootstrap_index_path,
             bootstrap_documents_roots,
             schedule_vocabulary_catch_up,
@@ -538,13 +543,14 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
     assert observed["queue_path"] == runtime_paths.queue_db_path
     register_args = cast(tuple[object, ...], observed["register"])
     assert register_args[:2] == (fake_huey, fake_ctx.index_manager)
-    assert register_args[4:7] == (
+    assert register_args[4:8] == (
         100,
+        86400,
         runtime_paths.root,
         [],
     )
-    assert callable(register_args[7])
-    assert register_args[7]() is False
+    assert callable(register_args[8])
+    assert register_args[8]() is False
     assert observed["worker_runtime_paths"] == runtime_paths
     assert runtime.worker is not None
     assert runtime.health_server is not None

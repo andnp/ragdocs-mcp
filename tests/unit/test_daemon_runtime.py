@@ -16,7 +16,12 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
     fake_ctx = SimpleNamespace(
         index_manager=object(),
         git_indexing_enabled=False,
-        config=SimpleNamespace(indexing=SimpleNamespace(task_backpressure_limit=7)),
+        config=SimpleNamespace(
+            indexing=SimpleNamespace(
+                task_backpressure_limit=7,
+                embedding_cache_prune_cooldown_seconds=86400,
+            )
+        ),
         index_path=tmp_path / "index",
         documents_roots=[Path("/docs")],
     )
@@ -111,6 +116,7 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
         "task_lease_store": register_tasks_call["task_lease_store"],
         "work_intent_store": register_tasks_call["work_intent_store"],
         "task_backpressure_limit": 7,
+        "embedding_cache_prune_cooldown_seconds": 86400,
         "bootstrap_index_path": fake_ctx.index_path,
         "bootstrap_documents_roots": fake_ctx.documents_roots,
     } == {

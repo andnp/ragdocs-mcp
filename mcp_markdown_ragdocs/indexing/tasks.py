@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from searchkernel.api import (
     TaskBatchSubmissionResult,
     TaskSubmissionResult,
+    atomic_write_json,
     build_indexed_files_map,
     has_incomplete_bootstrap_checkpoint,
     load_bootstrap_checkpoint,
@@ -86,6 +88,7 @@ if TYPE_CHECKING:
     from searchkernel.api import Record
 
 logger = logging.getLogger(__name__)
+EMBEDDING_CACHE_PRUNE_STATE = "embedding-cache-prune.json"
 
 WRITER_BUSY_RESULT = {"status": "deferred", "error": "index_writer_busy"}
 
@@ -353,14 +356,24 @@ def _prune_embedding_cache_after_bootstrap(
     bootstrap_was_incomplete: bool,
 ) -> None:
     """Prune cached vectors only after the bootstrap checkpoint is complete."""
-    if not bootstrap_was_incomplete:
-        return
     bootstrap_index_path = runtime.bootstrap_index_path
     manager = runtime.index_manager
     if bootstrap_index_path is None or manager is None:
         return
     checkpoint = load_bootstrap_checkpoint(bootstrap_index_path)
     if checkpoint is None or not checkpoint.complete:
+        return
+    cooldown = runtime.embedding_cache_prune_cooldown_seconds
+    if cooldown == 0:
+        return
+    now = runtime.time_provider()
+    state_path = bootstrap_index_path / EMBEDDING_CACHE_PRUNE_STATE
+    last_pruned_at = _load_embedding_cache_prune_time(state_path)
+    if (
+        not bootstrap_was_incomplete
+        and last_pruned_at is not None
+        and now - last_pruned_at < cooldown
+    ):
         return
 
     ingestor = getattr(manager, "ingestor", None)
@@ -386,8 +399,27 @@ def _prune_embedding_cache_after_bootstrap(
     except Exception:
         logger.warning("Embedding-cache pruning deferred after bootstrap", exc_info=True)
         return
-    if pruned:
-        logger.info("Pruned %d stale embedding-cache vector(s)", pruned)
+    try:
+        _save_embedding_cache_prune_time(state_path, now)
+    except (OSError, TypeError, ValueError):
+        logger.warning("Failed to persist embedding-cache prune state", exc_info=True)
+        return
+    logger.info("Pruned %d stale embedding-cache vector(s)", pruned)
+
+
+def _load_embedding_cache_prune_time(path: Path) -> float | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")).get("pruned_at")
+    except (FileNotFoundError, OSError, json.JSONDecodeError, AttributeError):
+        return None
+    try:
+        return float(value) if isinstance(value, (int, float, str)) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _save_embedding_cache_prune_time(path: Path, value: float) -> None:
+    atomic_write_json(path, {"pruned_at": value})
 
 
 def _writer_is_active(runtime: TaskRuntime) -> bool:
@@ -986,6 +1018,10 @@ def _refresh_git_repository_core(
         logger.error("IndexManager not available for git refresh task")
         return False
     bootstrap_index_path = runtime.bootstrap_index_path
+    bootstrap_was_incomplete = (
+        bootstrap_index_path is not None
+        and has_incomplete_bootstrap_checkpoint(bootstrap_index_path)
+    )
     refresh_lock = runtime.git_refresh_lock
     refresh_in_flight = runtime.git_refresh_in_flight
     refresh_deferred = runtime.git_refresh_deferred
@@ -1186,6 +1222,10 @@ def _refresh_git_repository_core(
                 )
 
         asyncio.run(_ingest())
+        _prune_embedding_cache_after_bootstrap(
+            runtime,
+            bootstrap_was_incomplete=bootstrap_was_incomplete,
+        )
         if bootstrap_index_path is not None and refresh_head is not None:
             # Persist the head observed before ingestion. A commit created
             # during the task must remain visible to the next poll.
@@ -1414,6 +1454,8 @@ def register_tasks(
     bootstrap_index_path: Path | None = None,
     bootstrap_documents_roots: list[Path] | None = None,
     schedule_vocabulary_catch_up: Callable[[], bool] | None = None,
+    embedding_cache_prune_cooldown_seconds: int = 86400,
+    time_provider: Callable[[], float] = time.time,
 ) -> TaskRuntime:
     """Register indexing tasks with the given Huey instance.
 
@@ -1427,6 +1469,8 @@ def register_tasks(
         submission=submission,
         index_manager=index_manager,
         task_backpressure_limit=max(1, task_backpressure_limit),
+        embedding_cache_prune_cooldown_seconds=embedding_cache_prune_cooldown_seconds,
+        time_provider=time_provider,
         bootstrap_index_path=bootstrap_index_path,
         bootstrap_documents_roots=list(bootstrap_documents_roots or []),
         schedule_vocabulary_catch_up=schedule_vocabulary_catch_up,

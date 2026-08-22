@@ -676,6 +676,7 @@ class TestWorkerRuntimeStartup:
 
         class _FakeIndexingConfig:
             task_backpressure_limit = 100
+            embedding_cache_prune_cooldown_seconds = 86400
 
         class _FakeConfig:
             git_indexing = _FakeGitConfig()

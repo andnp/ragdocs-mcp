@@ -230,6 +230,7 @@ async def _run_worker_forever_async(
         task_lease_store,
         work_intent_store,
         task_backpressure_limit=ctx.config.indexing.task_backpressure_limit,
+        embedding_cache_prune_cooldown_seconds=ctx.config.indexing.embedding_cache_prune_cooldown_seconds,
         bootstrap_index_path=ctx.index_path,
         bootstrap_documents_roots=ctx.documents_roots,
         schedule_vocabulary_catch_up=_schedule_worker_vocabulary_catch_up,
