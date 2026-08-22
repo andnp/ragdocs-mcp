@@ -31,6 +31,20 @@ type EventType = Literal["created", "modified", "deleted"]
 # Maximum queue size to prevent memory exhaustion under load
 MAX_QUEUE_SIZE = 1000
 
+
+class _WakeableEventQueue(queue.Queue):
+    def __init__(self, maxsize: int):
+        super().__init__(maxsize=maxsize)
+        self.wake_event = threading.Event()
+
+    def put(self, item, block=True, timeout=None):
+        super().put(item, block=block, timeout=timeout)
+        self.wake_event.set()
+
+    def put_nowait(self, item):
+        self.put(item, block=False)
+
+
 @dataclass(frozen=True)
 class WatcherStats:
     roots_count: int
@@ -79,7 +93,9 @@ class FileWatcher:
         self._parser_suffixes: set[str] = set(parser_suffixes) if parser_suffixes else set(PARSER_SUFFIXES)
         self._observer: Observer | None = None  # type: ignore[reportInvalidTypeForm]
         # Bounded queue prevents memory exhaustion during high file change rates
-        self._event_queue: queue.Queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)  # items: tuple[EventType, str]
+        self._event_queue: _WakeableEventQueue = _WakeableEventQueue(
+            maxsize=MAX_QUEUE_SIZE
+        )  # items: tuple[EventType, str]
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._last_sync_time: str | None = None
@@ -172,6 +188,7 @@ class FileWatcher:
 
         # Set flag to prevent new event acceptance
         self._running = False
+        self._event_queue.wake_event.set()
 
         # Stop the observer thread (no new events)
         if self._observer:
@@ -250,11 +267,25 @@ class FileWatcher:
 
         while self._running:
             try:
-                try:
-                    # Use timeout on queue.get to allow checking _running flag
-                    event_type, file_path = await asyncio.to_thread(
-                        self._event_queue.get, timeout=0.1
+                self._event_queue.wake_event.clear()
+                if self._event_queue.empty():
+                    timeout = None
+                    if pending_events:
+                        timeout = max(
+                            0.0,
+                            min(
+                                last_seen + self._cooldown - time.monotonic()
+                                for _, last_seen in pending_events.values()
+                            ),
+                        )
+                    await asyncio.to_thread(
+                        self._event_queue.wake_event.wait, timeout
                     )
+                while True:
+                    try:
+                        event_type, file_path = self._event_queue.get_nowait()
+                    except queue.Empty:
+                        break
                     if file_path:
                         self._events_received += 1
                         if file_path in pending_events:
@@ -264,8 +295,7 @@ class FileWatcher:
                             time.monotonic(),
                         )
                         self._pending_debounce_count = len(pending_events)
-                except queue.Empty:
-                    pass
+                self._event_queue.wake_event.clear()
 
                 if pending_events:
                     now = time.monotonic()

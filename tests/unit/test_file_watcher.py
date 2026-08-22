@@ -870,6 +870,7 @@ class TestFileWatcherDebounce:
     async def test_process_events_last_request_wins_per_file(
         self, tmp_path, mock_index_manager
     ):
+        """A queued burst wakes processing and preserves the latest event."""
         docs_path = tmp_path / "docs"
         docs_path.mkdir()
         watcher = FileWatcher(
@@ -879,9 +880,11 @@ class TestFileWatcherDebounce:
         )
 
         observed: list[dict[str, str]] = []
+        processed = asyncio.Event()
 
         async def _record(events):
             observed.append(events.copy())
+            processed.set()
 
         watcher._running = True
         watcher._batch_process = _record  # type: ignore[method-assign]
@@ -890,8 +893,9 @@ class TestFileWatcherDebounce:
         watcher._event_queue.put_nowait(("created", str(docs_path / "note.md")))
         watcher._event_queue.put_nowait(("modified", str(docs_path / "note.md")))
 
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(processed.wait(), timeout=1.0)
         watcher._running = False
+        watcher._event_queue.wake_event.set()
         await task
 
         assert observed == [{str(docs_path / "note.md"): "modified"}]
