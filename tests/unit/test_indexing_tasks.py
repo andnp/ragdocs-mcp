@@ -139,7 +139,9 @@ class FakeIndexManager:
         self.indexed: list[tuple[str, bool]] = []
         self.removed: list[str] = []
         self.indexed_records: list[Record] = []
+        self.indexed_record_batches: list[list[Record]] = []
         self.persist_calls = 0
+        self.record_batch_result = True
 
     def index_document(self, file_path: str, force: bool = False) -> bool:
         self.indexed.append((file_path, force))
@@ -169,6 +171,11 @@ class FakeIndexManager:
 
     def index_record(self, record: Record) -> None:
         self.indexed_records.append(record)
+
+    def index_records(self, records: list[Record]) -> bool:
+        self.indexed_record_batches.append(records)
+        self.indexed_records.extend(records)
+        return self.record_batch_result
 
 
 class FailingEmbeddingCache:
@@ -400,6 +407,10 @@ class TestTaskRegistration:
     def test_record_batch_task_indexes_and_persists_once(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
+        """
+        Route one queued record batch through the manager batch API.
+        Persist the resulting logical batch exactly once.
+        """
         _register_tasks(huey_instance, fake_manager)
         payload = Record(
             source_kind="note",
@@ -417,7 +428,58 @@ class TestTaskRegistration:
         assert task.priority == RECORD_BATCH_TASK_PRIORITY
         assert huey_instance.execute(task) == {"status": "ok", "indexed_count": 1}
         assert [record.source_id for record in fake_manager.indexed_records] == ["note:1"]
+        assert len(fake_manager.indexed_record_batches) == 1
         assert fake_manager.persist_calls == 1
+
+    def test_empty_record_batch_is_successful_without_persistence(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Treat an empty queued record batch as a successful no-op.
+        Avoid invoking indexing or persistence for absent records.
+        """
+        _register_tasks(huey_instance, fake_manager)
+
+        result = submit_record_batch([])
+        assert result is not None
+        task = huey_instance.dequeue()
+        assert task is not None
+
+        assert huey_instance.execute(task) == {"status": "ok", "indexed_count": 0}
+        assert fake_manager.indexed_record_batches == []
+        assert fake_manager.persist_calls == 0
+
+    def test_record_batch_manager_failure_skips_persistence(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Convert a false manager result into a bounded task error.
+        Do not persist a batch the manager did not commit.
+        """
+        fake_manager.record_batch_result = False
+        _register_tasks(huey_instance, fake_manager)
+        payload = Record(
+            source_kind="note",
+            source_id="note:false",
+            title="A note",
+            body="Body",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        ).to_dict()
+
+        result = submit_record_batch([payload])
+        assert result is not None
+        task = huey_instance.dequeue()
+        assert task is not None
+
+        assert huey_instance.execute(task) == {
+            "status": "error",
+            "error": "record_indexing_failed",
+            "record_index": 0,
+            "indexed_count": 0,
+            "details": "Index manager reported record batch failure.",
+        }
+        assert fake_manager.persist_calls == 0
 
     def test_enqueue_respects_backpressure_limit(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager

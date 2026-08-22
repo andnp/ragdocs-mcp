@@ -855,21 +855,25 @@ def _index_records_batch_core(
     if not records:
         return {"status": "ok", "indexed_count": 0}
 
-    for index, record in enumerate(records):
-        try:
-            manager.index_record(record)
-        except Exception as exc:
-            logger.exception(
-                "Task failed within record batch at index %d",
-                index,
-            )
-            return {
-                "status": "error",
-                "error": "record_indexing_failed",
-                "record_index": index,
-                "indexed_count": index,
-                "details": str(exc),
-            }
+    try:
+        manager_result = manager.index_records(records)
+    except Exception as exc:
+        logger.exception("Task failed to index record batch")
+        return {
+            "status": "error",
+            "error": "record_indexing_failed",
+            "record_index": 0,
+            "indexed_count": 0,
+            "details": str(exc),
+        }
+    if not manager_result:
+        return {
+            "status": "error",
+            "error": "record_indexing_failed",
+            "record_index": 0,
+            "indexed_count": 0,
+            "details": "Index manager reported record batch failure.",
+        }
 
     try:
         manager.persist()
