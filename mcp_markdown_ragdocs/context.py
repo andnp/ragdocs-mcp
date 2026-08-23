@@ -36,6 +36,7 @@ from mcp_markdown_ragdocs.app.composition import (
     build_runtime_components,
 )
 from mcp_markdown_ragdocs.app.bootstrap import (
+    BootstrapIndexPort,
     BootstrapCoordinator,
     IndexState,
     ReadinessSnapshot,
@@ -56,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
-class ContextIndexingPort(Protocol):
+class ContextIndexingPort(BootstrapIndexPort, Protocol):
     """Indexing capabilities required by the application context."""
 
     kernel: Any
@@ -77,8 +78,6 @@ class ContextIndexingPort(Protocol):
 
     @property
     def content_sources(self) -> tuple[Any, ...]: ...
-
-    def load(self) -> None: ...
 
     def persist(self) -> None: ...
 
@@ -109,8 +108,6 @@ class ContextIndexingPort(Protocol):
 
     def get_document_count(self) -> int: ...
 
-    def is_ready(self) -> bool: ...
-
     def describe_documents(self) -> list[dict[str, object]]: ...
 
     def get_content_source(self, source_kind: str) -> Any: ...
@@ -121,8 +118,6 @@ class ContextIndexingPort(Protocol):
         docs_path: Path,
         documents_roots: list[Path] | None = None,
     ) -> Any: ...
-
-    def replace_vector_store(self, _vector: Any) -> None: ...
 
 
 def _git_commit_id(source_id: str) -> str:

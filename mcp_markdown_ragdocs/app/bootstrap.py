@@ -7,7 +7,7 @@ import logging
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from searchkernel.api import (
     IndexManifest,
@@ -63,11 +63,28 @@ class ReadinessSnapshot:
     indices_queryable: bool
 
 
+@runtime_checkable
+class BootstrapIndexPort(Protocol):
+    """Index capabilities required by bootstrap coordination."""
+
+    def load(self) -> None: ...
+    def is_ready(self) -> bool: ...
+    def replace_vector_store(self, _vector: Any) -> None: ...
+
+
+@runtime_checkable
+class BootstrapRuntimeIndexPort(BootstrapIndexPort, Protocol):
+    """Marker for canonical runtime managers with model-owned indices."""
+
+    kernel: object
+
+
 class BootstrapHost(Protocol):
     """Context operations used by bootstrap coordination."""
 
     config: Config
-    index_manager: Any
+    @property
+    def index_manager(self) -> BootstrapIndexPort: ...
     index_path: Path
     current_manifest: IndexManifest | None
     use_tasks: bool
@@ -272,7 +289,7 @@ class BootstrapCoordinator:
 
     async def refresh_active_model_from_manifest(self) -> None:
         host = self.host
-        if hasattr(host.index_manager, "kernel"):
+        if isinstance(host.index_manager, BootstrapRuntimeIndexPort):
             return
         from searchkernel.api import load_manifest
 
@@ -343,8 +360,10 @@ def _fully_available() -> SearchAvailability:
 
 
 __all__ = [
+    "BootstrapIndexPort",
     "BootstrapCoordinator",
     "BootstrapHost",
+    "BootstrapRuntimeIndexPort",
     "IndexState",
     "ReadinessSnapshot",
 ]
