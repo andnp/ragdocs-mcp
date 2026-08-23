@@ -663,6 +663,33 @@ class TestTaskRegistration:
 
         assert huey_instance.pending_count() == 1
 
+    def test_writer_release_callback_failure_preserves_success_and_deferred_state(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Preserve a successful indexing operation when deferred refresh submission fails.
+        """
+        runtime = _register_tasks(huey_instance, fake_manager)
+        repo_key = str(Path("/repo/.git").resolve())
+        runtime.git_refresh_pending.add(repo_key)
+        runtime.git_refresh_deferred.add(repo_key)
+
+        def fail_submission(git_dir: str) -> Any:
+            del git_dir
+            raise RuntimeError("queue unavailable")
+
+        runtime.submission.submit_refresh_git_request = fail_submission
+        result = task_writer_mod.run_as_writer(
+            lambda: runtime.task_lease_store,
+            lambda: "success",
+            busy_result=False,
+            on_released=lambda: tasks_mod._flush_deferred_git_refreshes(runtime),
+        )
+
+        assert result == "success"
+        assert runtime.git_refresh_pending == {repo_key}
+        assert runtime.git_refresh_deferred == {repo_key}
+
     def test_writer_release_callback_preserves_cancellation(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
