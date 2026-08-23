@@ -71,6 +71,7 @@ class BootstrapHost(Protocol):
     _is_virgin_startup: bool
     _active_model_identity: tuple[str, int] | None
 
+    def mark_ready(self) -> None: ...
     def _check_and_rebuild_if_needed(self) -> bool: ...
     def _create_background_index_task(
         self, coroutine: Coroutine[object, object, None]
@@ -147,7 +148,7 @@ class BootstrapCoordinator:
                 host._full_index()
                 host._mark_index_state_loaded()
                 host._publish_bootstrap_availability(_fully_available())
-                host._ready_event.set()
+                host.mark_ready()
                 host.schedule_embedding_model_warmup()
         else:
             self._logger.info("Loading existing indices")
@@ -158,7 +159,7 @@ class BootstrapCoordinator:
                     host._refresh_index_state_from_loaded_indices()
                     await host.warmup_semantic_search()
                     host._publish_bootstrap_availability(_fully_available())
-                    host._ready_event.set()
+                    host.mark_ready()
                     host.schedule_embedding_model_warmup()
                     host._create_background_index_task(
                         host._reconcile_existing_indices_background()
@@ -175,7 +176,7 @@ class BootstrapCoordinator:
                 if host.use_tasks:
                     await host.warmup_semantic_search()
                 host._publish_bootstrap_availability(_fully_available())
-                host._ready_event.set()
+                host.mark_ready()
                 host.schedule_embedding_model_warmup()
                 await host._startup_reconciliation()
 

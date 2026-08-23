@@ -498,13 +498,16 @@ class ApplicationContext:
             get_loaded_document_count=self.index_manager.get_document_count,
             is_queryable=self.index_manager.is_ready,
             publish_public_state=self._publish_bootstrap_public_state,
-            mark_ready=self._ready_event.set,
+            mark_ready=self.mark_ready,
             schedule_embedding_warmup=self.schedule_embedding_model_warmup,
             report_failure=self._report_bootstrap_failure,
             publish_availability=self._publish_bootstrap_availability,
             task_submission=self.task_submission,
             warmup_semantic_search=self.warmup_semantic_search,
         )
+
+    def mark_ready(self) -> None:
+        self._ready_event.set()
 
     def _publish_bootstrap_public_state(
         self,
