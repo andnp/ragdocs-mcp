@@ -6,10 +6,11 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from searchkernel.api import (
     ContentSource,
+    EmbeddingProvider,
     FAISSConfiguration,
     LocalRecordKernel,
     build_local_record_kernel,
@@ -32,13 +33,6 @@ from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 
 logger = logging.getLogger(__name__)
-
-
-class EmbeddingProvider(Protocol):
-    """The provider attributes required by the application runtime."""
-
-    model_name: str
-    dim: int
 
 
 @dataclass(frozen=True)

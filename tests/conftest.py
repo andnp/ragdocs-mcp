@@ -186,8 +186,8 @@ class DeterministicEmbeddingProvider:
     def embed(self, texts: list[str]) -> list[Vector]:
         return [self._model.get_text_embedding(text) for text in texts]
 
-    def embed_query(self, query: str) -> Vector:
-        return self._model.get_query_embedding(query)
+    def embed_query(self, text: str) -> Vector:
+        return self._model.get_query_embedding(text)
 
 
 @pytest.fixture(scope="session")

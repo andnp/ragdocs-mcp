@@ -12,6 +12,7 @@ from typing import Protocol
 
 from searchkernel.api import (
     ContentSource,
+    EmbeddingProvider,
     GraphEdge,
     GraphNeighbor,
     KeywordStore,
@@ -20,7 +21,6 @@ from searchkernel.api import (
     RecordIdentity,
     SemanticRecordIngestor,
     SQLiteEmbeddingCache,
-    Vector,
     VectorStore,
 )
 
@@ -261,27 +261,6 @@ class RecordIndexStorage(RecordStorage, Protocol):
         cache_path: Path,
         batch_size: int,
     ) -> SemanticRecordIngestor: ...
-
-
-class EmbeddingCapability(Protocol):
-    """Embedding operations required by the local indexing adapter."""
-
-    def embed(self, texts: list[str]) -> list[Vector]: ...
-
-    def embed_query(self, text: str, /) -> Vector: ...
-
-
-class EmbeddingModelMetadata(Protocol):
-    """Metadata required to identify and dimension an embedding model."""
-
-    @property
-    def model_name(self) -> str: ...
-
-    dim: int
-
-
-class EmbeddingProvider(EmbeddingCapability, EmbeddingModelMetadata, Protocol):
-    """Embedding capability plus model metadata for local indexing."""
 
 
 class GraphCapability(Protocol):
@@ -628,9 +607,7 @@ class SqliteSourceMapStore:
 __all__ = [
     "CommitHistoryPort",
     "DeltaSourceMapStore",
-    "EmbeddingCapability",
     "EmbeddingProvider",
-    "EmbeddingModelMetadata",
     "GDriveIntegrationFactory",
     "GDriveIntegrationPort",
     "LocalRecordDeletion",
