@@ -263,15 +263,25 @@ class RecordIndexStorage(RecordStorage, Protocol):
     ) -> SemanticRecordIngestor: ...
 
 
-class EmbeddingProvider(Protocol):
-    """Embedding capability required by the local ingestion adapter."""
-
-    model_name: str
-    dim: int
+class EmbeddingCapability(Protocol):
+    """Embedding operations required by the local indexing adapter."""
 
     def embed(self, texts: list[str]) -> list[Vector]: ...
 
-    def embed_query(self, text: str) -> Vector: ...
+    def embed_query(self, text: str, /) -> Vector: ...
+
+
+class EmbeddingModelMetadata(Protocol):
+    """Metadata required to identify and dimension an embedding model."""
+
+    @property
+    def model_name(self) -> str: ...
+
+    dim: int
+
+
+class EmbeddingProvider(EmbeddingCapability, EmbeddingModelMetadata, Protocol):
+    """Embedding capability plus model metadata for local indexing."""
 
 
 class GraphCapability(Protocol):
@@ -618,7 +628,9 @@ class SqliteSourceMapStore:
 __all__ = [
     "CommitHistoryPort",
     "DeltaSourceMapStore",
+    "EmbeddingCapability",
     "EmbeddingProvider",
+    "EmbeddingModelMetadata",
     "GDriveIntegrationFactory",
     "GDriveIntegrationPort",
     "LocalRecordDeletion",
