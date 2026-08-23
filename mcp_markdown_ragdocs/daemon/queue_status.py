@@ -47,6 +47,7 @@ class QueueStats:
     scheduled_count: int
     running_count: int = 0
     failed_count: int = 0
+    historical_failure_count: int = 0
     worker_running: bool = False
     backpressure_limit: int | None = None
     backpressure_utilization: float | None = None
@@ -61,6 +62,7 @@ class QueueStats:
             "scheduled_count": self.scheduled_count,
             "running_count": self.running_count,
             "failed_count": self.failed_count,
+            "historical_failure_count": self.historical_failure_count,
             "worker_running": self.worker_running,
             "backpressure_limit": self.backpressure_limit,
             "backpressure_utilization": self.backpressure_utilization,
@@ -117,6 +119,7 @@ def get_queue_stats(
         scheduled_count=huey.scheduled_count(),
         running_count=lease_store.active_count(),
         failed_count=len(failures),
+        historical_failure_count=len(failures),
         worker_running=worker_running,
         backpressure_limit=backpressure_limit,
         backpressure_utilization=utilization,
