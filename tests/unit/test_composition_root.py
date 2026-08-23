@@ -177,6 +177,40 @@ class TestCompositionRootNoGlobalMutation:
             index_path / "faiss"
         )
 
+    def test_runtime_factory_composes_search_use_case_beside_adapter(
+        self, monkeypatch, tmp_path
+    ):
+        """Compose the application search boundary from the runtime pipeline.
+
+        Existing transports continue to find the same use case through the
+        temporary adapter attribute while the runtime owns its construction.
+        """
+        index_path = tmp_path / "index"
+        config = load_config()
+        config.search.abstention_threshold = 0.07
+        config.search.project_uplift_multiplier = 1.4
+        from mcp_markdown_ragdocs.app import runtime_factory
+
+        use_case = MagicMock(side_effect=runtime_factory.ApplicationSearchUseCase)
+        monkeypatch.setattr(runtime_factory, "ApplicationSearchUseCase", use_case)
+
+        components = build_runtime_components(
+            config,
+            enable_watcher=False,
+            lazy_embeddings=True,
+            index_path_override=index_path,
+            documents_path_override=tmp_path / "docs",
+            global_runtime=True,
+        )
+
+        assert use_case.call_args.args == (components.kernel.pipeline,)
+        assert use_case.call_args.kwargs == {
+            "documents_roots": components.paths.documents_roots,
+            "default_min_score": 0.07,
+            "project_uplift_multiplier": 1.4,
+        }
+        assert components.orchestrator.search_use_case is components.search_use_case
+
     def test_runtime_composition_does_not_mutate_supplied_config(
         self,
         monkeypatch,

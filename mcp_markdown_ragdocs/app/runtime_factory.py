@@ -166,6 +166,13 @@ def assemble_runtime(
         abstention_threshold=config.search.abstention_threshold,
         project_uplift_multiplier=config.search.project_uplift_multiplier,
     )
+    search_use_case = ApplicationSearchUseCase(
+        local_kernel.pipeline,
+        documents_roots=paths.documents_roots,
+        default_min_score=config.search.abstention_threshold,
+        project_uplift_multiplier=config.search.project_uplift_multiplier,
+    )
+    orchestrator.search_use_case = search_use_case
 
     manager = RecordIndexManager(
         config,
@@ -206,7 +213,7 @@ def assemble_runtime(
         embedding_provider=embedding_provider,
         index_manager=manager,
         orchestrator=orchestrator,
-        search_use_case=orchestrator.search_use_case,
+        search_use_case=search_use_case,
         record_ingestor=manager.ingestor,
         watcher_lifecycle=watcher_lifecycle,
         db_manager=manager.database_manager,
