@@ -19,6 +19,7 @@ from typing import Any, cast
 import pytest
 from huey import SqliteHuey
 from huey.storage import SqliteStorage
+from searchkernel.domain import Record
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
@@ -767,6 +768,21 @@ class TestWorkerRuntimeStartup:
             def load(self) -> None:
                 return None
 
+            def persist(self) -> None:
+                return None
+
+            def index_document(self, file_path: str) -> bool:
+                return True
+
+            def index_record(self, record: Record) -> bool:
+                return True
+
+            def get_document_count(self) -> int:
+                return 0
+
+            def is_ready(self) -> bool:
+                return True
+
             ingestor = SimpleNamespace(
                 embedding_cache=SimpleNamespace(
                     metrics=SimpleNamespace(
@@ -810,6 +826,9 @@ class TestWorkerRuntimeStartup:
                 self.config = _FakeConfig()
                 self.index_path = tmp_path / "index_data"
                 self.documents_roots: list[Path] = []
+                self.services = SimpleNamespace(
+                    indexing=ManagerIndexingService(self.index_manager)
+                )
 
             def attach_task_runtime(self, task_runtime: object) -> None:
                 self.task_runtime = task_runtime
@@ -828,9 +847,6 @@ class TestWorkerRuntimeStartup:
                 self.is_running = False
 
         fake_ctx = _FakeContext()
-        fake_ctx.services = SimpleNamespace(
-            indexing=ManagerIndexingService(fake_ctx.index_manager)
-        )
         fake_worker = _FakeHueyWorker(object())
         runtime_paths = RuntimePaths(
             root=tmp_path,
