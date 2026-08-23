@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -127,3 +128,64 @@ def test_gate_extends_cooldown_after_a_429(tmp_path: Path) -> None:
     gate.run(lambda: claimed_at.append(clock.time()))
 
     assert claimed_at[0] >= 5.0
+
+
+def test_gate_migrates_legacy_in_flight_schema(tmp_path: Path) -> None:
+    """A pre-slot gate database remains usable after the schema upgrade."""
+    path = tmp_path / "gate.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE drive_request_gate (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                next_allowed_at REAL NOT NULL,
+                in_flight_until REAL NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO drive_request_gate VALUES (1, 2.0, 0.0)"
+        )
+
+    gate = DriveRequestGate(path, min_interval_seconds=0)
+    gate.run(lambda: None)
+
+    with sqlite3.connect(path) as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(drive_request_gate)"
+            ).fetchall()
+        }
+    assert columns == {"id", "next_allowed_at"}
+
+
+def test_gate_preserves_unexpired_legacy_claim(tmp_path: Path) -> None:
+    """An unexpired legacy claim becomes a durable slot during migration."""
+    path = tmp_path / "gate.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE drive_request_gate (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                next_allowed_at REAL NOT NULL,
+                in_flight_until REAL NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO drive_request_gate VALUES (1, 0.0, 100.0)"
+        )
+
+    DriveRequestGate(
+        path,
+        min_interval_seconds=0,
+        max_concurrent=1,
+        time_source=lambda: 50.0,
+        sleep=lambda seconds: None,
+    )
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute(
+            "SELECT expires_at FROM drive_request_gate_slots"
+        ).fetchone() == (100.0,)

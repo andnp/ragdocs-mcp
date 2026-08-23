@@ -117,6 +117,7 @@ class DriveRequestGate:
 
     def _initialize(self) -> None:
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS drive_request_gate (
@@ -125,6 +126,12 @@ class DriveRequestGate:
                 )
                 """
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(drive_request_gate)"
+                ).fetchall()
+            }
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS drive_request_gate_slots (
@@ -132,6 +139,37 @@ class DriveRequestGate:
                     expires_at REAL NOT NULL
                 )
                 """
+            )
+            if "in_flight_until" not in columns:
+                return
+
+            legacy_row = connection.execute(
+                "SELECT next_allowed_at, in_flight_until "
+                "FROM drive_request_gate WHERE id = 1"
+            ).fetchone()
+            if legacy_row is not None and float(legacy_row[1]) > self._time():
+                connection.execute(
+                    "INSERT INTO drive_request_gate_slots (expires_at) VALUES (?)",
+                    (float(legacy_row[1]),),
+                )
+
+            connection.execute(
+                """
+                CREATE TABLE drive_request_gate_current (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    next_allowed_at REAL NOT NULL
+                )
+                """
+            )
+            if legacy_row is not None:
+                connection.execute(
+                    "INSERT INTO drive_request_gate_current (id, next_allowed_at) "
+                    "VALUES (1, ?)",
+                    (float(legacy_row[0]),),
+                )
+            connection.execute("DROP TABLE drive_request_gate")
+            connection.execute(
+                "ALTER TABLE drive_request_gate_current RENAME TO drive_request_gate"
             )
 
     def _connect(self) -> sqlite3.Connection:
