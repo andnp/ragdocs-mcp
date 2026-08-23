@@ -34,6 +34,7 @@ from searchkernel.indexing.manifest import (
 )
 
 from mcp_markdown_ragdocs.context import ApplicationContext, IndexState
+from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.indexing.task_runtime import TaskRuntime
 from mcp_markdown_ragdocs.indexing.tasks import TaskBatchSubmissionResult
@@ -1590,6 +1591,7 @@ def test_attach_task_runtime_wires_submission_to_file_watcher() -> None:
         submission=submission,
         task_handles={},
         gdrive_task_handles={},
+        config=Config(),
     )
 
     ctx.attach_task_runtime(runtime)

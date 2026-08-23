@@ -43,6 +43,7 @@ from mcp_markdown_ragdocs.coordination.work_intents import (
     WorkIntent,
     WorkIntentPort,
 )
+from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.git.repository import (
     get_git_ref_signature,
     iter_commit_hashes_after_timestamp,
@@ -1031,10 +1032,7 @@ def _refresh_git_repository_core(
         save_progress_for_runtime(*args, runtime=runtime, **kwargs)
 
     from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
-    from mcp_markdown_ragdocs.config import (
-        load_config,
-        resolve_project_id_for_path,
-    )
+    from mcp_markdown_ragdocs.config import resolve_project_id_for_path
     from mcp_markdown_ragdocs.indexing.git_ingestion import (
         iter_git_ingestion_receipts,
     )
@@ -1083,7 +1081,7 @@ def _refresh_git_repository_core(
             else None
         )
         since = str(max(0, cursor - 1)) if cursor is not None else None
-        config = getattr(manager, "_config", None) or load_config()
+        config = runtime.config
         source = GitContentSource(
             git_dir_path,
             workspace_id=resolve_project_id_for_path(git_dir_path.parent, config),
@@ -1372,8 +1370,6 @@ def _reindex_model_core(
         return {"status": "error", "error": "reindex_queue_unavailable"}
     if runtime_root is None:
         return {"status": "error", "error": "reindex_runtime_unavailable"}
-    from mcp_markdown_ragdocs.config import load_config
-
     write_reindex_status(
         runtime_root,
         {
@@ -1389,7 +1385,7 @@ def _reindex_model_core(
         },
     )
     try:
-        config = getattr(manager, "_config", None) or load_config()
+        config = runtime.config
         state = run_reindex_operation(
             config=config,
             index_path=runtime_root,
@@ -1456,6 +1452,8 @@ def register_tasks(
     schedule_vocabulary_catch_up: Callable[[], bool] | None = None,
     embedding_cache_prune_cooldown_seconds: int = 86400,
     time_provider: Callable[[], float] = time.time,
+    *,
+    config: Config,
 ) -> TaskRuntime:
     """Register indexing tasks with the given Huey instance.
 
@@ -1467,6 +1465,7 @@ def register_tasks(
     runtime = TaskRuntime(
         queue_runtime=QueueRuntime(huey=huey, db_path=Path(storage_filename)),
         submission=submission,
+        config=config,
         index_manager=index_manager,
         task_backpressure_limit=max(1, task_backpressure_limit),
         embedding_cache_prune_cooldown_seconds=embedding_cache_prune_cooldown_seconds,

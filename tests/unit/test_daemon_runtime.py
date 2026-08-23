@@ -113,6 +113,7 @@ def test_create_daemon_runtime_builds_worker_health_server_and_registers_tasks(
     assert {
         "huey": "huey",
         "index_manager": fake_ctx.index_manager,
+        "config": fake_ctx.config,
         "task_lease_store": register_tasks_call["task_lease_store"],
         "work_intent_store": register_tasks_call["work_intent_store"],
         "task_backpressure_limit": 7,

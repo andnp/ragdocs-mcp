@@ -17,6 +17,7 @@ from huey import SqliteHuey
 
 from searchkernel.domain import Record
 
+from mcp_markdown_ragdocs.config import Config, IndexingConfig
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.indexing.git_refresh_state import save_cursor, save_head
@@ -81,15 +82,8 @@ def huey_instance(tmp_path: Path) -> SqliteHuey:
 
 
 @pytest.fixture()
-def fake_manager(tmp_path: Path) -> FakeIndexManager:
-    manager = FakeIndexManager()
-    cast(Any, manager)._config = SimpleNamespace(
-        projects=[],
-        detected_project="repo-project",
-        indexing=SimpleNamespace(documents_path=str(tmp_path)),
-        git_indexing=SimpleNamespace(git_diff_embedding_days=0),
-    )
-    return manager
+def fake_manager() -> FakeIndexManager:
+    return FakeIndexManager()
 
 
 def _register_tasks(
@@ -101,6 +95,9 @@ def _register_tasks(
         manager,
         TaskLeaseStore(queue_path),
         WorkIntentStore(queue_path),
+        config=kwargs.pop(
+            "config", Config(indexing=IndexingConfig(documents_path=str(queue_path.parent)))
+        ),
         **kwargs,
     )
 
@@ -126,6 +123,7 @@ def test_refresh_git_skips_reconciliation_when_repository_unchanged(
     runtime = _register_tasks(
         huey_instance,
         fake_manager,
+        config=Config(indexing=IndexingConfig(documents_path=str(tmp_path))),
         bootstrap_index_path=state_root,
     )
     enqueue_refresh_git(str(git_dir), runtime=runtime)
@@ -172,6 +170,7 @@ def test_refresh_git_runs_reconciliation_when_repository_changed(
     runtime = _register_tasks(
         huey_instance,
         fake_manager,
+        config=Config(indexing=IndexingConfig(documents_path=str(tmp_path))),
         bootstrap_index_path=state_root,
     )
     enqueue_refresh_git(str(git_dir), runtime=runtime)

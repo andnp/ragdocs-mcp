@@ -19,6 +19,7 @@ from huey import SqliteHuey
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
+from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
 from mcp_markdown_ragdocs.worker.consumer import HueyWorker
 
@@ -35,6 +36,7 @@ def _register_tasks(huey: SqliteHuey, index_manager: object) -> Any:
         cast(Any, index_manager),
         TaskLeaseStore(queue_path),
         WorkIntentStore(queue_path),
+        config=Config(),
     )
 
 

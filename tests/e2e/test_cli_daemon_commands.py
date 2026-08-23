@@ -494,6 +494,7 @@ def test_create_daemon_runtime_builds_global_runtime_without_project_context(
         index_manager,
         task_lease_store,
         work_intent_store,
+        config=None,
         task_backpressure_limit=None,
         embedding_cache_prune_cooldown_seconds=None,
         bootstrap_index_path=None,

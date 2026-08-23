@@ -34,6 +34,7 @@ from searchkernel.indexing.bootstrap_checkpoint import (
 import mcp_markdown_ragdocs.indexing.tasks as tasks_mod
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
+from mcp_markdown_ragdocs.config import Config, IndexingConfig
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
 from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     get_cursor,
@@ -204,6 +205,7 @@ def _register_tasks(huey: SqliteHuey, index_manager: object, **kwargs: Any):
         cast(Any, index_manager),
         TaskLeaseStore(_queue_path(huey)),
         WorkIntentStore(_queue_path(huey)),
+        config=kwargs.pop("config", Config()),
         **kwargs,
     )
     return _active_runtime
@@ -1890,12 +1892,13 @@ class TestTaskExecution:
         monkeypatch,
         tmp_path: Path,
     ) -> None:
-        _register_tasks(huey_instance, fake_manager)
-        cast(Any, fake_manager)._config = SimpleNamespace(
-            projects=[],
-            detected_project="repo-project",
-            indexing=SimpleNamespace(documents_path=str(tmp_path)),
-            git_indexing=SimpleNamespace(git_diff_embedding_days=0),
+        _register_tasks(
+            huey_instance,
+            fake_manager,
+            config=Config(
+                indexing=IndexingConfig(documents_path=str(tmp_path)),
+                detected_project="repo-project",
+            ),
         )
 
         observed: dict[str, object] = {}

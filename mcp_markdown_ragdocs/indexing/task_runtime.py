@@ -13,6 +13,7 @@ from mcp_markdown_ragdocs.coordination.queue import QueueRuntime
 from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeasePort
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentPort
+from mcp_markdown_ragdocs.config import Config
 
 
 class RegisteredTaskFunction(Protocol):
@@ -35,6 +36,7 @@ class TaskRuntime:
     submission: TaskSubmissionPort
     task_handles: Mapping[str, RegisteredTaskHandle] = field(default_factory=dict)
     gdrive_task_handles: Mapping[str, object] = field(default_factory=dict)
+    config: Config = field(kw_only=True)
     index_manager: Any | None = field(default=None, repr=False)
     task_backpressure_limit: int = field(default=100, repr=False)
     embedding_cache_prune_cooldown_seconds: int = field(default=86400, repr=False)

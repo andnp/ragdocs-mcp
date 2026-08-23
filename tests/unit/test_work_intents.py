@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from huey import SqliteHuey
 
+from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import (
     FAILED,
@@ -70,6 +71,7 @@ def _register(
         manager,
         TaskLeaseStore(queue_path),
         WorkIntentStore(queue_path),
+        config=Config(),
     )
     return huey, runtime
 

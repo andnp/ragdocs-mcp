@@ -599,6 +599,7 @@ def test_worker_returns_reindex_failure_and_persists_status(
         manager,
         TaskLeaseStore(tmp_path / "queue.db"),
         WorkIntentStore(tmp_path / "queue.db"),
+        config=config,
         bootstrap_index_path=runtime_root,
     )
 

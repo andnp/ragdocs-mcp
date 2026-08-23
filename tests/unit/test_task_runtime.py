@@ -6,6 +6,7 @@ from pathlib import Path
 
 from searchkernel.api import TaskBatchSubmissionResult, TaskSubmissionResult
 
+from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
 from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.indexing.task_runtime import (
@@ -102,7 +103,7 @@ def test_task_runtime_keeps_queue_submission_and_handles_together(
         "index_document": _RegisteredHandle(_index_document)
     }
 
-    runtime = TaskRuntime(queue_runtime, submission, handles)
+    runtime = TaskRuntime(queue_runtime, submission, handles, config=Config())
 
     assert runtime.queue_runtime is queue_runtime
     assert runtime.submission is submission
@@ -120,10 +121,14 @@ def test_task_runtime_instances_do_not_share_submission_or_queue(tmp_path: Path)
     first_submission = _Submission()
     second_submission = _Submission()
     first = TaskRuntime(
-        build_queue_runtime(tmp_path / "first" / "queue.db"), first_submission
+        build_queue_runtime(tmp_path / "first" / "queue.db"),
+        first_submission,
+        config=Config(),
     )
     second = TaskRuntime(
-        build_queue_runtime(tmp_path / "second" / "queue.db"), second_submission
+        build_queue_runtime(tmp_path / "second" / "queue.db"),
+        second_submission,
+        config=Config(),
     )
 
     assert first.queue_runtime is not second.queue_runtime
