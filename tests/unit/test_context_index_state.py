@@ -192,6 +192,101 @@ class WarmupIndexManager:
         return 0
 
 
+class EpochVectorStub:
+    def __init__(self, epochs: list[int]) -> None:
+        self._epochs = iter(epochs)
+        self.search_calls = 0
+
+    def epoch(self) -> int:
+        return next(self._epochs)
+
+    def search(self, *_args: object, **_kwargs: object) -> None:
+        self.search_calls += 1
+
+
+class EpochIndexManager:
+    embedding_provider = type(
+        "EmbeddingProviderStub",
+        (),
+        {"model_name": "test", "dim": 2, "embed_query": lambda self, _: [0.0, 1.0]},
+    )()
+
+    def __init__(self, epochs: list[int]) -> None:
+        self.vector = EpochVectorStub(epochs)
+
+
+@pytest.mark.asyncio
+async def test_semantic_warmup_stays_unready_when_vector_epoch_changes() -> None:
+    """A rebuild during warmup must not make the stale sidecar queryable."""
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "index_manager", EpochIndexManager([11514, 11515]))
+    _setattr(ctx, "_semantic_warmup_lock", asyncio.Lock())
+    _setattr(ctx, "_semantic_search_warmed", False)
+    _setattr(ctx, "_semantic_search_warmed_epoch", None)
+
+    await ctx.warmup_semantic_search()
+
+    assert ctx.is_semantic_search_ready() is False
+
+
+@pytest.mark.asyncio
+async def test_semantic_warmup_serves_stable_vector_epoch() -> None:
+    """A warmup that observes one epoch makes semantic search queryable."""
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "index_manager", EpochIndexManager([11514, 11514, 11514]))
+    _setattr(ctx, "_semantic_warmup_lock", asyncio.Lock())
+    _setattr(ctx, "_semantic_search_warmed", False)
+    _setattr(ctx, "_semantic_search_warmed_epoch", None)
+
+    await ctx.warmup_semantic_search()
+
+    assert ctx.is_semantic_search_ready() is True
+
+
+@pytest.mark.asyncio
+async def test_semantic_warmup_uses_vector_lane_epoch() -> None:
+    """Record changes must not invalidate a stable semantic vector state."""
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(
+        ctx,
+        "index_manager",
+        type(
+            "LaneEpochIndexManager",
+            (),
+            {
+                "embedding_provider": EpochIndexManager([]).embedding_provider,
+                "kernel": type(
+                    "Kernel",
+                    (),
+                    {"backend": type("Backend", (), {"vector_epoch": lambda self: 11514})()},
+                )(),
+                "vector": EpochVectorStub([19076, 19077]),
+            },
+        )(),
+    )
+    _setattr(ctx, "_semantic_search_warmed", False)
+    _setattr(ctx, "_semantic_search_warmed_epoch", None)
+
+    await ctx.warmup_semantic_search()
+
+    assert ctx.is_semantic_search_ready() is True
+
+
+def test_semantic_warmup_backoff_suppresses_immediate_retry() -> None:
+    """A failed warmup must not launch another full rebuild immediately."""
+    ctx = object.__new__(ApplicationContext)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "_semantic_search_warmed", False)
+    _setattr(ctx, "_semantic_search_warmed_epoch", None)
+    _setattr(ctx, "_semantic_warmup_retry_after", time.monotonic() + 60.0)
+    _setattr(ctx, "_embedding_warmup_task", None)
+
+    assert ctx.schedule_embedding_model_warmup() is False
+
+
 class TestBackgroundIndexRetry:
     """Tests for _background_index() retry behavior."""
 

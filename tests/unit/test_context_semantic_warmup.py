@@ -24,6 +24,9 @@ async def test_warmup_semantic_search_loads_vector_state_for_daemon() -> None:
     index_manager = MagicMock(spec=ContextIndexingPort)
     index_manager.embedding_provider = provider
     index_manager.vector = vector_store
+    index_manager.kernel = SimpleNamespace(
+        backend=SimpleNamespace(vector_epoch=MagicMock(return_value=1))
+    )
     context = ApplicationContext(
         config=MagicMock(),
         index_manager=index_manager,

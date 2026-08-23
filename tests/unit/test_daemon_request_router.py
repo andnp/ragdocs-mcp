@@ -43,8 +43,10 @@ class _FakeIndexState:
 @dataclass
 class _FakeContext:
     ready: bool = False
+    semantic_ready: bool = True
     ensure_fresh_indices_calls: int = 0
     schedule_freshness_refresh_calls: int = 0
+    schedule_embedding_warmup_calls: int = 0
     documents_roots: list[Path] = field(default_factory=lambda: [Path("/docs")])
     index_state: _FakeIndexState = field(default_factory=_FakeIndexState)
     search_use_case: object | None = None
@@ -71,6 +73,9 @@ class _FakeContext:
     def is_ready(self) -> bool:
         return self.ready
 
+    def is_semantic_search_ready(self) -> bool:
+        return self.semantic_ready
+
     def get_index_state(self) -> _FakeIndexState:
         return self.index_state
 
@@ -79,6 +84,10 @@ class _FakeContext:
 
     def schedule_freshness_refresh(self) -> bool:
         self.schedule_freshness_refresh_calls += 1
+        return True
+
+    def schedule_embedding_model_warmup(self) -> bool:
+        self.schedule_embedding_warmup_calls += 1
         return True
 
     async def _query(
@@ -312,6 +321,21 @@ async def test_search_query_route_returns_initializing_payload_while_cold() -> N
     assert payload["query"] == "startup"
     assert payload["lifecycle"] == "initializing"
     assert ctx.schedule_freshness_refresh_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_search_query_route_does_not_query_stale_semantic_state() -> None:
+    """Stale semantic state returns initialization while warmup runs in background."""
+    ctx = _FakeContext(ready=True, semantic_ready=False)
+    coordinator = _FakeCoordinator()
+    handler = build_daemon_request_handler(_build_dependencies(ctx, coordinator))
+
+    payload = await handler("/api/search/query", {"query": "stale"})
+
+    assert payload["status"] == "initializing"
+    assert ctx.query_calls == []
+    assert ctx.schedule_freshness_refresh_calls == 1
+    assert ctx.schedule_embedding_warmup_calls == 1
 
 
 @pytest.mark.asyncio

@@ -102,9 +102,11 @@ class _RouterContext(Protocol):
     git_indexing_enabled: bool
 
     def is_ready(self) -> bool: ...
+    def is_semantic_search_ready(self) -> bool: ...
     def get_index_state(self) -> Any: ...
     async def ensure_fresh_indices(self) -> None: ...
     def schedule_freshness_refresh(self) -> bool: ...
+    def schedule_embedding_model_warmup(self) -> bool: ...
     def get_total_git_commits_indexed(self) -> int: ...
 
 
@@ -437,7 +439,16 @@ def _get_cold_start_search_response(
 ) -> dict[str, object] | None:
     search_ctx = cast(_RouterContext, ctx)
     if search_ctx.is_ready():
-        return None
+        if search_ctx.is_semantic_search_ready():
+            return None
+        search_ctx.schedule_freshness_refresh()
+        search_ctx.schedule_embedding_model_warmup()
+        return _build_initializing_search_payload(
+            search_ctx,
+            coordinator,
+            query=query,
+            include_git_metadata=include_git_metadata,
+        )
 
     index_state = search_ctx.get_index_state()
     if index_state.status in {"failed", "partial"}:

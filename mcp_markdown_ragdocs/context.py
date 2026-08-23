@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,6 +55,8 @@ from mcp_markdown_ragdocs.app.search import ApplicationSearchUseCase
 from mcp_markdown_ragdocs.app.services import ApplicationServices, compose_services
 
 logger = logging.getLogger(__name__)
+
+_SEMANTIC_WARMUP_RETRY_COOLDOWN_SECONDS = 15.0
 
 
 @runtime_checkable
@@ -158,6 +161,9 @@ class ApplicationContext:
     _freshness_task: asyncio.Task | None = field(default=None, repr=False)
     _embedding_warmup_task: asyncio.Task | None = field(default=None, repr=False)
     _semantic_search_warmed: bool = field(default=False, repr=False)
+    _semantic_search_warmed_epoch: int | None = field(default=None, repr=False)
+    _semantic_warmup_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _semantic_warmup_retry_after: float = field(default=0.0, repr=False)
     _loaded_index_state_version: float = field(default=0.0, repr=False)
     _is_virgin_startup: bool = field(default=False, repr=False)
     _bootstrap_session: BootstrapSession | None = field(default=None, repr=False)
@@ -374,37 +380,107 @@ class ApplicationContext:
 
     async def warmup_semantic_search(self) -> None:
         """Load the semantic search state before the daemon becomes ready."""
-        if not self.use_tasks or self._semantic_search_warmed:
+        if not getattr(self, "use_tasks", False):
             return
 
+        warmup_lock = getattr(self, "_semantic_warmup_lock", None)
+        if warmup_lock is None:
+            warmup_lock = asyncio.Lock()
+            self._semantic_warmup_lock = warmup_lock
+
+        async with warmup_lock:
+            try:
+                current_epoch = await asyncio.to_thread(self._current_vector_epoch)
+            except (AttributeError, TypeError):
+                current_epoch = None
+            if (
+                self._semantic_search_warmed
+                and self._semantic_search_warmed_epoch == current_epoch
+            ):
+                self._semantic_search_warmed = True
+                return
+
+            try:
+                embedding_provider = self.index_manager.embedding_provider
+                query_vector = await asyncio.to_thread(
+                    embedding_provider.embed_query,
+                    "__ragdocs_startup_warmup__",
+                )
+                await asyncio.to_thread(
+                    self.index_manager.vector.search,
+                    query_vector,
+                    1,
+                    model_name=embedding_provider.model_name,
+                    dim=embedding_provider.dim,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Semantic search warmup failed; the first query may load state lazily",
+                    exc_info=True,
+                )
+                return
+
+            try:
+                warmed_epoch = await asyncio.to_thread(self._current_vector_epoch)
+            except (AttributeError, TypeError):
+                warmed_epoch = None
+            if current_epoch is not None and warmed_epoch != current_epoch:
+                self._semantic_search_warmed = False
+                self._semantic_search_warmed_epoch = None
+                logger.info(
+                    "Semantic search warmup observed vector epoch change (%s -> %s)",
+                    current_epoch,
+                    warmed_epoch,
+                )
+                return
+
+            self._semantic_search_warmed_epoch = warmed_epoch
+            self._semantic_search_warmed = True
+            self._semantic_warmup_retry_after = 0.0
+            logger.info(
+                "Semantic search state warmed for %s (%d dimensions)",
+                embedding_provider.model_name,
+                embedding_provider.dim,
+            )
+
+    def _current_vector_epoch(self) -> int:
+        kernel = getattr(self.index_manager, "kernel", None)
+        if kernel is not None:
+            backend = getattr(kernel, "backend", None)
+            vector_epoch = getattr(backend, "vector_epoch", None)
+            if not callable(vector_epoch):
+                raise AttributeError("local kernel lacks vector_epoch")
+            epoch = vector_epoch()
+            if isinstance(epoch, int):
+                return epoch
+            raise TypeError("vector epoch must be an integer")
+
+        vector = self.index_manager.vector
+        vector_epoch = getattr(vector, "vector_epoch", None)
+        if callable(vector_epoch):
+            epoch = vector_epoch()
+        else:
+            epoch = vector.epoch()
+        if isinstance(epoch, int):
+            return epoch
+        raise TypeError("vector epoch must be an integer")
+
+    def is_semantic_search_ready(self) -> bool:
+        if not getattr(self, "use_tasks", False):
+            return True
+        warmed_epoch = getattr(self, "_semantic_search_warmed_epoch", None)
         try:
-            embedding_provider = self.index_manager.embedding_provider
-            query_vector = await asyncio.to_thread(
-                embedding_provider.embed_query,
-                "__ragdocs_startup_warmup__",
+            if warmed_epoch is None:
+                return self._semantic_search_warmed
+            return (
+                self._semantic_search_warmed
+                and warmed_epoch is not None
+                and warmed_epoch == self._current_vector_epoch()
             )
-            await asyncio.to_thread(
-                self.index_manager.vector.search,
-                query_vector,
-                1,
-                model_name=embedding_provider.model_name,
-                dim=embedding_provider.dim,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning(
-                "Semantic search warmup failed; the first query may load state lazily",
-                exc_info=True,
-            )
-            return
-
-        logger.info(
-            "Semantic search state warmed for %s (%d dimensions)",
-            embedding_provider.model_name,
-            embedding_provider.dim,
-        )
-        self._semantic_search_warmed = True
+        except (AttributeError, TypeError):
+            return False
 
     async def _preload_existing_indices_for_background_bootstrap(
         self,
@@ -943,10 +1019,24 @@ class ApplicationContext:
             self._freshness_task = None
 
     def schedule_embedding_model_warmup(self) -> bool:
-        return False
+        if not getattr(self, "use_tasks", False) or self.is_semantic_search_ready():
+            return False
+        if time.monotonic() < getattr(self, "_semantic_warmup_retry_after", 0.0):
+            return False
+        task = getattr(self, "_embedding_warmup_task", None)
+        if task is not None and not task.done():
+            return False
+        task = asyncio.create_task(self._run_embedding_model_warmup())
+        self._embedding_warmup_task = task
+        task.add_done_callback(self._clear_embedding_warmup_task)
+        return True
 
     async def _run_embedding_model_warmup(self) -> None:
-        return None
+        await self.warmup_semantic_search()
+        if not self.is_semantic_search_ready():
+            self._semantic_warmup_retry_after = (
+                time.monotonic() + _SEMANTIC_WARMUP_RETRY_COOLDOWN_SECONDS
+            )
 
     def _clear_embedding_warmup_task(self, task: asyncio.Task) -> None:
         if getattr(self, "_embedding_warmup_task", None) is task:
