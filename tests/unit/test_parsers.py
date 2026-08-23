@@ -58,7 +58,7 @@ def test_document_parser_abstract_class():
     Enforces proper inheritance pattern for parser implementations.
     """
     with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-        DocumentParser()  # pyright: ignore[reportAbstractUsage]  # pyrefly: ignore[bad-instantiation]
+        DocumentParser()  # pyrefly: ignore[bad-instantiation]
 
 
 def test_concrete_parser_implements_parse():

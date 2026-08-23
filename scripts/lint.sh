@@ -11,8 +11,8 @@ echo "==> Running ruff format check..."
 uv run ruff format --check .
 
 echo ""
-echo "==> Running pyright..."
-uv run pyright
+echo "==> Running pyrefly..."
+uv run pyrefly check
 
 echo ""
 echo "All checks passed!"

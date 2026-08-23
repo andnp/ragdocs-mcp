@@ -38,13 +38,12 @@ mcp-markdown-ragdocs = "mcp_markdown_ragdocs.entrypoint:main"
 [dependency-groups]
 dev = [
     "filelock>=3.0.0",
-    "pyright>=1.1.407",
+    "pyrefly>=1.2.0,<1.3.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "pytest-xdist>=3.5.0",
     "ruff>=0.14.10",
-    "ty>=0.0.12",
     "import-linter>=2.0",
     "llama-index-embeddings-huggingface>=0.6.0",
 ]
@@ -115,8 +114,9 @@ markers = [
 # scripts/check_public_searchkernel_imports.py because import-linter does not
 # inspect the externally installed searchkernel distribution.
 
-[tool.pyright]
+[tool.pyrefly]
 # This cache-warming script depends on llama-index's optional HuggingFace
 # integration, which is intentionally absent from the standard development
 # environment. CI executes it in the model-enabled test job.
-exclude = [".venv", "scripts/download_test_models.py"]
+project-excludes = [".venv", "scripts/download_test_models.py"]
+infer-with-first-use = false

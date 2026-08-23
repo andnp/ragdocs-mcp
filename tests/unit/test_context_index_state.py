@@ -75,7 +75,7 @@ class TestIndexState:
     def test_index_state_status_values(self):
         """Verify all valid status values are accepted."""
         for status in ("uninitialized", "indexing", "partial", "ready", "failed"):
-            state = IndexState(status=status)  # pyright: ignore[reportArgumentType] -- Testing literal values
+            state = IndexState(status=status)  # pyrefly: ignore[bad-argument-type] -- Testing literal values
             assert state.status == status
 
 
