@@ -24,7 +24,7 @@ Prerequisites: Python 3.13+, uv package manager.
 uv sync
 ```
 
-Installs all runtime and development dependencies (pytest, pyright, ruff).
+Installs all runtime and development dependencies (pytest, Pyrefly, Ruff).
 
 ### Install as Editable Package
 
@@ -83,7 +83,7 @@ uv run ruff check --fix .
 ### Type Checking
 
 ```zsh
-uv run pyright
+uv run pyrefly check
 ```
 
 ### Formatting
@@ -133,7 +133,7 @@ Run all quality checks:
 ```zsh
 uv run ruff check .
 uv run ruff format --check .
-uv run pyright
+uv run pyrefly check
 uv run pytest
 ```
 
@@ -143,7 +143,7 @@ All must pass with zero errors.
 
 - [ ] Tests pass: `pytest`
 - [ ] Lint clean: `ruff check`
-- [ ] Type clean: `pyright`
+- [ ] Type clean: `pyrefly check`
 - [ ] Format clean: `ruff format --check`
 - [ ] Tests added for new features
 - [ ] Regression tests added for bug fixes

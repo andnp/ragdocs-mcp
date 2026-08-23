@@ -18,7 +18,7 @@ cd mcp-markdown-ragdocs
 uv sync
 ```
 
-This installs all dependencies including development tools (pytest, pyright, ruff).
+This installs all dependencies including development tools (pytest, Pyrefly, Ruff).
 
 ### Install as Editable Package
 
@@ -107,7 +107,7 @@ uv run ruff format .
 ### Type Checking
 
 ```zsh
-uv run pyright
+uv run pyrefly check
 ```
 
 ### Pre-Commit Checks
@@ -117,7 +117,7 @@ Run all checks before committing:
 ```zsh
 uv run ruff check .
 uv run ruff format --check .
-uv run pyright
+uv run pyrefly check
 uv run pytest
 ```
 
@@ -699,7 +699,7 @@ uv run pytest tests/performance/test_git_performance.py -v
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/new-parser`
 3. Make changes with tests
-4. Run quality checks: `ruff check`, `pyright`, `pytest`
+4. Run quality checks: `ruff check`, `pyrefly check`, `pytest`
 5. Commit with clear messages
 6. Push and open a pull request
 
@@ -718,7 +718,7 @@ test: add integration test for graph traversal
 
 - [ ] Tests pass: `pytest`
 - [ ] Lint clean: `ruff check`
-- [ ] Type clean: `pyright`
+- [ ] Type clean: `pyrefly check`
 - [ ] Format clean: `ruff format --check`
 - [ ] Documentation updated (if needed)
 - [ ] CHANGELOG updated (if user-facing change)

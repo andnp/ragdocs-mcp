@@ -13,7 +13,7 @@
 **Parsing**: tree-sitter (Markdown AST)
 **MCP**: stdio protocol via mcp SDK
 **Web**: FastAPI (optional HTTP interface)
-**Tools**: uv (package manager), pytest (testing), ruff (linting), pyright + ty (type checking)
+**Tools**: uv (package manager), pytest (testing), ruff (linting), Pyrefly (type checking)
 
 ## Architecture
 
@@ -52,7 +52,7 @@ src/
 
 ## Coding Philosophy
 
-**Type Discipline**: Modern Python 3.13+ typing (`list[T]`, `T | None`, no `typing.Optional`/`typing.List`) with strict pyright enforcement
+**Type Discipline**: Modern Python 3.13+ typing (`list[T]`, `T | None`, no `typing.Optional`/`typing.List`) with strict Pyrefly enforcement
 **Async Everything**: All I/O is `async def`, use `asyncio.gather()` for parallelism, `asyncio.to_thread()` for blocking calls
 **No Silent Failures**: Log with `exc_info=True`, raise specific exceptions (`ValueError`, `RuntimeError`), graceful degradation for optional features
 **Real Tests**: Use actual indices with realistic data, no mocks, ephemeral fixtures with `tmp_path`
@@ -61,12 +61,12 @@ src/
 
 ### Type Safety and Validation
 
-**Static typing** with pyright provides compile-time safety. For runtime validation at API boundaries:
+**Static typing** with Pyrefly provides compile-time safety. For runtime validation at API boundaries:
 
 - **MCP tools**: MCP SDK validates JSON schemas automatically
 - **REST endpoints**: Pydantic models provide runtime validation
 - **Config loading**: Manual validation in `__post_init__` methods
-- **Internal code**: Trust static type checker (pyright)
+- **Internal code**: Trust static type checker (Pyrefly)
 
 ```python
 from pydantic import BaseModel, Field
@@ -88,7 +88,7 @@ class SearchConfig:
 ```
 
 **Validation strategy**:
-- ✅ Static types everywhere (enforced by pyright)
+- ✅ Static types everywhere (enforced by Pyrefly)
 - ✅ Pydantic for REST API endpoints
 - ✅ Manual validation for dataclass configs
 - ✅ MCP schema validation handled by SDK
@@ -147,8 +147,7 @@ uv sync                                          # Install dependencies
 uv run mcp-markdown-ragdocs mcp                  # Run MCP server
 uv run pytest --cov=src --cov-report=html        # Test with coverage
 uv run ruff check --fix . && ruff format .       # Lint and format
-uv run pyright                                    # Type check (pyright)
-uv tool run ty check .                           # Type check (ty alternative)
+uv run pyrefly check                             # Type check (Pyrefly)
 ```
 
 **Additional Context**: See `AGENTS.md` for AI behavioral guidelines, `docs/architecture.md` for system design, `docs/specs/` for ADRs.

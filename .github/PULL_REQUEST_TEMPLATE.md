@@ -27,7 +27,7 @@ How was this tested?
 ```bash
 uv run pytest tests/
 uv run ruff check .
-uv run pyright
+uv run pyrefly check
 ```
 
 **Manual testing:**

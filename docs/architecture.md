@@ -329,7 +329,7 @@ Architecture quality is protected by:
 - tests for the shared query contract and transport routing;
 - real-fixture indexing and reindex tests;
 - worker, queue, lifecycle, and MCP seam coverage;
-- Ruff and Pyright checks in CI;
+- Ruff and Pyrefly checks in CI;
 - a coverage threshold enforced by the test workflow.
 
 When extending the system, add behavior to the appropriate application
@@ -348,7 +348,7 @@ An architecture change is considered complete when:
 3. Worker shutdown, lifecycle recovery, reindex status transitions, durable
    intent claims, and producer PID/start-time liveness have deterministic tests
    using `tmp_path`, real SQLite, and local fakes.
-4. The production package passes Pyright and Ruff, and the full non-performance
+4. The production package passes Pyrefly and Ruff, and the full non-performance
    suite clears the CI coverage floor with measured margin.
 5. Runtime acceptance tests cover daemon startup, readiness, restart
    idempotency, task-driven updates, and request diagnostics without external
