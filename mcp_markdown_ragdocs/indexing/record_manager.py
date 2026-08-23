@@ -45,6 +45,7 @@ from mcp_markdown_ragdocs.indexing.record_ports import (
     CommitHistoryPort,
     DocumentPlanner,
     DocumentWriter,
+    EmbeddingProvider,
     GDriveIntegrationFactory,
     GDriveIntegrationPort,
     GraphCapability,
@@ -120,7 +121,7 @@ class _DeterministicFakeEmbeddingModel:
         return vector
 
 
-def build_embedding_provider(config: Config, model_name: str):
+def build_embedding_provider(config: Config, model_name: str) -> EmbeddingProvider:
     """Build the one embedding provider shared by indexing and querying."""
 
     if os.getenv("MCP_RAGDOCS_TEST_FAKE_EMBEDDINGS") == "1":
@@ -163,7 +164,7 @@ class RecordIndexManager:
         self,
         config: Config,
         kernel: LocalRecordKernel,
-        embedding_provider: Any,
+        embedding_provider: EmbeddingProvider,
         *,
         documents_roots: list[Path] | None = None,
         content_sources: Iterable[ContentSource] = (),
