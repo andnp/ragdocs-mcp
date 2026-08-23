@@ -18,7 +18,7 @@ from mcp_markdown_ragdocs.gdrive.domain import (
     GDriveWatchState,
     STATE_SCHEMA_VERSION,
 )
-from mcp_markdown_ragdocs.gdrive.port import CheckpointUpdater, GDriveStatePort
+from mcp_markdown_ragdocs.gdrive.port import CheckpointUpdater
 
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 
@@ -780,16 +780,7 @@ def _integer(value: object, name: str) -> int:
 
 __all__ = [
     "DEFAULT_BUSY_TIMEOUT_MS",
-    "STATE_SCHEMA_VERSION",
-    "GDriveBackfillCursor",
-    "GDriveCheckpoint",
-    "GDriveMembership",
-    "GDriveScopeMembershipSnapshot",
-    "GDriveScopeIdentity",
     "GDriveStateError",
-    "GDriveStatePort",
     "GDriveStateRepository",
-    "GDriveSyncStatus",
-    "GDriveWatchState",
     "UnsupportedGDriveStateSchemaError",
 ]
