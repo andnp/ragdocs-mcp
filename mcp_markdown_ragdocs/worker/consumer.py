@@ -81,6 +81,27 @@ def _refresh_task_intent_claims(intent_store: WorkIntentStore, task: Any) -> Non
     kwargs["intent_claims"] = refreshed_claims
 
 
+def _promote_due_tasks(huey: SqliteHuey) -> None:
+    """Move due scheduled tasks into Huey's runnable queue."""
+    try:
+        tasks = huey.read_schedule()
+    except Exception:
+        logger.exception("Unable to read Huey scheduled tasks")
+        return
+
+    for task in tasks:
+        try:
+            huey.enqueue(task)
+        except Exception:
+            logger.exception("Unable to promote scheduled task %s", task.id)
+            try:
+                huey.storage.add_to_schedule(
+                    huey.serialize_task(task), huey._get_timestamp()
+                )
+            except Exception:
+                logger.exception("Unable to restore scheduled task %s", task.id)
+
+
 class HueyWorker:
     """Manages a Huey consumer thread for processing background tasks.
 
@@ -179,6 +200,7 @@ class _HueyConsumerThread(threading.Thread):
             while not self._stop_event.is_set():
                 now = time.monotonic()
                 if self._is_reclaimer and now >= next_reclaim_at:
+                    _promote_due_tasks(self._huey)
                     _requeue_expired_leases(self._huey, self._lease_store)
                     next_reclaim_at = now + LEASE_RECLAIM_INTERVAL_SECONDS
                 # Dequeue and execute one task at a time

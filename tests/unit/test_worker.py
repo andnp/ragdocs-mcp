@@ -10,6 +10,7 @@ import errno
 import sqlite3
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -21,7 +22,7 @@ from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
-from mcp_markdown_ragdocs.worker.consumer import HueyWorker
+from mcp_markdown_ragdocs.worker.consumer import HueyWorker, _promote_due_tasks
 
 
 @pytest.fixture()
@@ -41,6 +42,54 @@ def _register_tasks(huey: SqliteHuey, index_manager: object) -> Any:
 
 
 class TestHueyWorker:
+    def test_promotes_overdue_scheduled_task(self, huey_instance: SqliteHuey) -> None:
+        """
+        An overdue scheduled task becomes available to the worker queue.
+        """
+        results: list[int] = []
+
+        @huey_instance.task()
+        def append_value(value: int) -> None:
+            results.append(value)
+
+        huey_instance.add_schedule(append_value.s(1, eta=datetime.now(timezone.utc)))
+        _promote_due_tasks(huey_instance)
+
+        task = huey_instance.dequeue()
+        assert task is not None
+        huey_instance.execute(task)
+        assert results == [1]
+
+    def test_failed_promotion_restores_scheduled_task(
+        self,
+        huey_instance: SqliteHuey,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        A queue write failure leaves the scheduled task available for retry.
+        """
+        @huey_instance.task()
+        def scheduled_task() -> None:
+            return
+
+        huey_instance.add_schedule(
+            scheduled_task.s(eta=datetime.now(timezone.utc))
+        )
+        original_enqueue = huey_instance.enqueue
+        calls = 0
+
+        def fail_once(task: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("queue unavailable")
+            return original_enqueue(task)
+
+        monkeypatch.setattr(huey_instance, "enqueue", fail_once)
+        _promote_due_tasks(huey_instance)
+
+        assert huey_instance.storage.schedule_size() == 1
+
     def test_start_creates_consumer_thread(self, huey_instance: SqliteHuey) -> None:
         """start() creates and starts a consumer thread."""
         worker = HueyWorker(huey_instance)
