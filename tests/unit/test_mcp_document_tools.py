@@ -3,18 +3,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+
 import pytest
 
 from mcp_markdown_ragdocs.context import IndexState
 from mcp_markdown_ragdocs.lifecycle import LifecycleState
 from mcp_markdown_ragdocs.mcp.handlers import HandlerContext
-from mcp_markdown_ragdocs.mcp.tools.document_request import normalize_query_documents_request
+from mcp_markdown_ragdocs.mcp.tools.document_request import (
+    normalize_query_documents_request,
+)
 from mcp_markdown_ragdocs.mcp.tools.document_tools import (
     handle_query_documents,
-    handle_search_with_hypothesis,
     handle_search_git_history,
+    handle_search_with_hypothesis,
 )
 from mcp_markdown_ragdocs.models import (
+    ChunkResult,
     CompressionStats,
     SearchStrategyStats,
 )
@@ -553,6 +557,53 @@ async def test_hyde_handler_normalizes_exclusions_for_each_document_root() -> No
 
 
 @pytest.mark.asyncio
+async def test_hyde_handler_returns_retrieved_results_as_json() -> None:
+    """Return semantic hypothesis matches through the compact result contract.
+
+    HyDE retrieval is user-visible search behavior, including result identity,
+    content, and raw score representation.
+    """
+    result = ChunkResult(
+        chunk_id="hyde-chunk",
+        doc_id="hyde-doc",
+        score=0.37,
+        content="Authentication setup guidance.",
+        header_path="Setup",
+        file_path="docs/auth.md",
+        project_id="project-a",
+    )
+
+    class _FakeSearchUseCase:
+        async def execute(self, query):
+            assert query.query == "authentication setup"
+            assert query.retrieval_mode == "semantic_only"
+            return SimpleNamespace(results=[result])
+
+    ready_ctx = _ColdStartContext(IndexState(status="ready"), ready=True)
+    ready_ctx.orchestrator = SimpleNamespace(documents_path=Path("/docs"))
+    ready_ctx.search_use_case = _FakeSearchUseCase()
+    hctx = HandlerContext(lambda: ready_ctx, _FakeCoordinator())
+
+    contents = await handle_search_with_hypothesis(
+        hctx, {"hypothesis": "authentication setup"}
+    )
+
+    payload = json.loads(contents[0].text)
+    assert payload["status"] == "ok"
+    assert payload["results"] == [
+        {
+            "chunk_id": "hyde-chunk",
+            "doc_id": "hyde-doc",
+            "file_path": "docs/auth.md",
+            "header_path": "Setup",
+            "score": 0.37,
+            "content": "Authentication setup guidance.",
+            "project_id": "project-a",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_search_git_history_returns_initializing_text_on_true_cold_start() -> None:
     hctx = HandlerContext(
         lambda: _ColdStartContext(
@@ -648,3 +699,83 @@ async def test_search_git_history_compacts_results_and_opts_into_diff() -> None:
 
     assert "diff" not in default_payload["results"][0]
     assert debug_payload["results"][0]["diff"] == "@@ -1 +1 @@\n-old\n+new"
+
+
+@pytest.mark.asyncio
+async def test_search_git_history_filters_files_and_timestamps_before_top_n() -> None:
+    """Apply git-history filters before truncating the ranked result list.
+
+    File and timestamp bounds must select the matching commit even when an
+    earlier ranked result is outside the requested history window.
+    """
+    results = [
+        ChunkResult(
+            chunk_id="commit-one",
+            doc_id="git:one",
+            score=0.9,
+            content="",
+            header_path="",
+            file_path="",
+            metadata={
+                "title": "Old source change",
+                "author": "Andy",
+                "timestamp": 10,
+                "files_changed": ["src/old.py"],
+                "chunk_section": "body",
+            },
+        ),
+        ChunkResult(
+            chunk_id="commit-two",
+            doc_id="git:two",
+            score=0.8,
+            content="",
+            header_path="",
+            file_path="",
+            metadata={
+                "title": "Documentation change",
+                "author": "Andy",
+                "timestamp": 20,
+                "files_changed": ["docs/readme.md"],
+                "chunk_section": "body",
+            },
+        ),
+        ChunkResult(
+            chunk_id="commit-three",
+            doc_id="git:three",
+            score=0.7,
+            content="",
+            header_path="",
+            file_path="",
+            metadata={
+                "title": "New source change",
+                "author": "Andy",
+                "timestamp": 30,
+                "files_changed": ["src/new.py"],
+                "chunk_section": "body",
+            },
+        ),
+    ]
+
+    class _FakeOrchestrator:
+        async def query(self, *_args, **_kwargs):
+            return results, None, None
+
+    ctx = _ColdStartContext(IndexState(status="ready"), ready=True, commit_count=3)
+    ctx.git_indexing_enabled = True
+    ctx.orchestrator = _FakeOrchestrator()
+    hctx = HandlerContext(lambda: ctx, _FakeCoordinator())
+
+    contents = await handle_search_git_history(
+        hctx,
+        {
+            "query": "source change",
+            "top_n": 1,
+            "files_glob": "src/*.py",
+            "after_timestamp": 15,
+            "before_timestamp": 35,
+        },
+    )
+
+    payload = json.loads(contents[0].text)
+    assert [item["hash"] for item in payload["results"]] == ["three"]
+    assert payload["results"][0]["score"] == 0.7

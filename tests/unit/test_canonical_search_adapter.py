@@ -552,6 +552,48 @@ async def test_application_use_case_preserves_raw_rrf_order(adapter):
 
 
 @pytest.mark.asyncio
+async def test_application_use_case_preserves_raw_rrf_scores_and_order(adapter):
+    """Expose the pipeline's raw scores in its existing ranked order.
+
+    Search consumers use score magnitude and ordering as the observable
+    ranking contract, so the adapter must not normalize or reorder results.
+    """
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    records = [
+        Record(
+            source_kind="note",
+            source_id=doc_id,
+            title=doc_id,
+            body="Authentication guidance",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"doc_id": doc_id, "file_path": f"{doc_id}.md"},
+        )
+        for doc_id in ("first", "second")
+    ]
+
+    async def fake_search(*_args, **_kwargs):
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(record=records[0], score=0.42, provenance=None),
+                SimpleNamespace(record=records[1], score=0.17, provenance=None),
+            ],
+            failures=(),
+            degraded=False,
+        )
+
+    execution = await adapter.search_use_case.execute(
+        SearchQuery(query="authentication", top_n=2, max_chunks_per_doc=0),
+        search=fake_search,
+    )
+
+    assert [(result.doc_id, result.score) for result in execution.results] == [
+        ("first", 0.42),
+        ("second", 0.17),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_application_use_case_returns_empty_for_unmatched_query(adapter):
     execution = await adapter.search_use_case.execute(
         SearchQuery(query="authentication", top_n=10, min_score=1.0)
