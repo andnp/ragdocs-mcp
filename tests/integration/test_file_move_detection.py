@@ -7,10 +7,8 @@ from pathlib import Path
 
 import pytest
 from searchkernel.api import IndexManifest, build_indexed_files_map, save_manifest
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-
 from mcp_markdown_ragdocs.config import ChunkingConfig, Config, IndexingConfig
-from tests.integration._canonical import make_record_index_manager
+from tests.integration._canonical import make_record_index_manager, make_search_adapter
 
 
 @pytest.fixture
@@ -35,7 +33,7 @@ def manager(config):
 
 @pytest.fixture
 def orchestrator(config, manager):
-    return CanonicalSearchAdapter(manager)
+    return make_search_adapter(manager, config)
 
 
 @pytest.mark.asyncio

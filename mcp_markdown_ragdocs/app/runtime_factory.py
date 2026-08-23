@@ -165,6 +165,14 @@ def assemble_runtime(
     if not lazy_embeddings:
         logger.info("Embedding provider is daemon-backed; no in-process warmup needed")
 
+    orchestrator = CanonicalSearchAdapter(
+        local_kernel.pipeline,
+        documents_path=paths.documents_path,
+        documents_roots=paths.documents_roots,
+        abstention_threshold=config.search.abstention_threshold,
+        project_uplift_multiplier=config.search.project_uplift_multiplier,
+    )
+
     manager = RecordIndexManager(
         config,
         local_kernel,
@@ -172,10 +180,6 @@ def assemble_runtime(
         documents_roots=list(paths.documents_roots),
         content_sources=content_sources,
         storage=storage,
-    )
-    orchestrator = CanonicalSearchAdapter(
-        manager,
-        documents_path=paths.documents_path,
     )
     watcher_lifecycle = WatcherLifecycle.create(
         enabled=enable_watcher,

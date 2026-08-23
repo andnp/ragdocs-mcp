@@ -1,8 +1,6 @@
 from pathlib import Path
 
 import pytest
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
@@ -10,7 +8,7 @@ from mcp_markdown_ragdocs.config import (
     LLMConfig,
     SearchConfig,
 )
-from tests.integration._canonical import make_record, make_record_index_manager
+from tests.integration._canonical import make_record, make_record_index_manager, make_search_adapter
 
 
 @pytest.fixture
@@ -38,10 +36,7 @@ def manager(config):
 
 @pytest.fixture
 def orchestrator(config, manager):
-    return CanonicalSearchAdapter(
-        manager,
-        documents_path=Path(config.indexing.documents_path),
-    )
+    return make_search_adapter(manager, config)
 
 
 def _seed(manager, source_id: str, content: str, file_path: str):

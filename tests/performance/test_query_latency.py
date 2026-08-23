@@ -4,13 +4,12 @@ from pathlib import Path
 
 import pytest
 from searchkernel.api import build_local_record_kernel
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-
 from mcp_markdown_ragdocs.config import Config, IndexingConfig, LLMConfig, SearchConfig
 from mcp_markdown_ragdocs.indexing.record_manager import (
     RecordIndexManager,
     build_embedding_provider,
 )
+from tests.integration._canonical import make_search_adapter
 
 
 pytestmark = pytest.mark.performance
@@ -50,7 +49,7 @@ def manager(config):
 
 @pytest.fixture
 def orchestrator(manager):
-    return CanonicalSearchAdapter(manager)
+    return make_search_adapter(manager)
 
 
 def create_benchmark_corpus(docs_path: Path, num_docs: int = 50):

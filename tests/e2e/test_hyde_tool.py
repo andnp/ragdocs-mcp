@@ -16,8 +16,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from searchkernel.api import build_local_record_kernel
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
@@ -33,6 +31,7 @@ from mcp_markdown_ragdocs.indexing.record_manager import (
 from mcp_markdown_ragdocs.mcp import MCPServer
 from mcp_markdown_ragdocs.mcp.handlers import HandlerContext, get_handler
 from mcp_markdown_ragdocs.mcp.tools.document_tools import handle_search_with_hypothesis
+from tests.integration._canonical import make_search_adapter
 
 # ============================================================================
 # Test Fixtures
@@ -144,7 +143,7 @@ def _create_mcp_server(config: Config, docs_dir) -> tuple[MCPServer, HandlerCont
         Tuple of (MCPServer, HandlerContext) for testing
     """
     manager = _create_record_manager(config)
-    orchestrator = CanonicalSearchAdapter(manager)
+    orchestrator = make_search_adapter(manager, config)
 
     for doc_path in docs_dir.glob("*.md"):
         manager.index_document(str(doc_path))

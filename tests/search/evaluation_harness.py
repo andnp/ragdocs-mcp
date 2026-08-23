@@ -14,6 +14,7 @@ from searchkernel.embeddings import DeterministicFakeEmbeddingModel
 
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 from mcp_markdown_ragdocs.app.search import build_record_search_policy
+from tests.integration._canonical import make_search_adapter
 
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -271,7 +272,7 @@ def build_search_evaluation_harness(
         doc_id_to_path[doc_id] = relative_path
 
     manager.persist()
-    orchestrator = CanonicalSearchAdapter(manager)
+    orchestrator = make_search_adapter(manager, config, documents_path=corpus_root)
 
     return SearchEvaluationHarness(
         corpus_root=corpus_root,

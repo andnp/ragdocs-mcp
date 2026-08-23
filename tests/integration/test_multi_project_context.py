@@ -14,8 +14,6 @@ to potentially return results from a different project if Config was modified.
 from pathlib import Path
 
 import pytest
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
     Config,
@@ -25,7 +23,7 @@ from mcp_markdown_ragdocs.config import (
     SearchConfig,
 )
 from mcp_markdown_ragdocs.context import ApplicationContext
-from tests.integration._canonical import make_record, make_record_index_manager
+from tests.integration._canonical import make_record, make_record_index_manager, make_search_adapter
 
 
 # ============================================================================
@@ -109,11 +107,11 @@ def test_orchestrators_for_different_projects_have_different_paths(
     """
     # Create orchestrator for Project A
     manager_a = make_record_index_manager(config_for_project_a)
-    orchestrator_a = CanonicalSearchAdapter(manager_a)
+    orchestrator_a = make_search_adapter(manager_a, config_for_project_a)
 
     # Create orchestrator for Project B
     manager_b = make_record_index_manager(config_for_project_b)
-    orchestrator_b = CanonicalSearchAdapter(manager_b)
+    orchestrator_b = make_search_adapter(manager_b, config_for_project_b)
 
     # Verify paths are different
     assert orchestrator_a.documents_path != orchestrator_b.documents_path
@@ -138,14 +136,14 @@ async def test_queries_return_results_from_correct_project(
     """
     # Create and populate orchestrator for Project A
     manager_a = make_record_index_manager(config_for_project_a)
-    orchestrator_a = CanonicalSearchAdapter(manager_a)
+    orchestrator_a = make_search_adapter(manager_a, config_for_project_a)
 
     # Add Project A specific chunk
     assert manager_a.index_record(make_record("readme", "Project Alpha documentation", metadata={"file_path": str(two_projects["project_a_docs"] / "readme.md")}))
 
     # Create and populate orchestrator for Project B
     manager_b = make_record_index_manager(config_for_project_b)
-    orchestrator_b = CanonicalSearchAdapter(manager_b)
+    orchestrator_b = make_search_adapter(manager_b, config_for_project_b)
 
     # Add Project B specific chunk
     assert manager_b.index_record(make_record("readme", "Project Beta documentation", metadata={"file_path": str(two_projects["project_b_docs"] / "readme.md")}))
@@ -408,7 +406,7 @@ async def test_file_exclusions_resolve_against_orchestrator_path(
     """
     manager = make_record_index_manager(config_for_project_a)
 
-    orchestrator = CanonicalSearchAdapter(manager)
+    orchestrator = make_search_adapter(manager, config_for_project_a)
 
     # Add multiple chunks
     for name in ["readme", "api", "guide"]:

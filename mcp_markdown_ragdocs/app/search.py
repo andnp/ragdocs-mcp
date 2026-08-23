@@ -17,6 +17,7 @@ from searchkernel.api import (
     RecordSearchConfig,
     RecordSearchOutcome,
     RecordSearchPolicy,
+    RecordSearchPipeline,
     SearchStrategyStats,
 )
 try:
@@ -42,7 +43,7 @@ from mcp_markdown_ragdocs.app.searchkernel_adapter import (
 class PipelineSearchBoundary:
     """Adapt the canonical pipeline to the application-owned boundary."""
 
-    def __init__(self, pipeline: SearchExecutionPort) -> None:
+    def __init__(self, pipeline: RecordSearchPipeline) -> None:
         self._pipeline = pipeline
 
     async def search(

@@ -25,7 +25,7 @@ from mcp_markdown_ragdocs.daemon.request_router import (
 )
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
 from mcp_markdown_ragdocs.lifecycle import LifecycleState
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
+from tests.integration._canonical import make_search_adapter
 
 pytestmark = pytest.mark.e2e
 
@@ -81,7 +81,7 @@ def _runtime(
         provider,
         documents_roots=roots,
     )
-    adapter = CanonicalSearchAdapter(manager)
+    adapter = make_search_adapter(manager, config, documents_roots=roots)
     async def ensure_fresh_indices() -> None:
         return None
 

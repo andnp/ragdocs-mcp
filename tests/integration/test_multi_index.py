@@ -9,7 +9,7 @@ import pytest
 from searchkernel.api import GraphEdge, RecordSearchPolicy
 
 from mcp_markdown_ragdocs.config import Config, IndexingConfig
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
+from tests.integration._canonical import make_search_adapter
 from tests.integration._canonical import make_record, make_record_index_manager
 
 
@@ -78,7 +78,7 @@ async def test_natural_language_graph_query_resolves_target_scope_and_provenance
             GraphEdge(target_b.identity, neighbor_b.identity, "links_to", 1.0),
         ]
     )
-    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+    results, _, strategy = await make_search_adapter(manager).query(
         "What documents are neighbors of Hybrid Search Strategy?",
         top_k=20,
         top_n=5,
@@ -133,7 +133,7 @@ async def test_compound_graph_query_resolves_target_with_project_scope(
         ]
     )
 
-    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+    results, _, strategy = await make_search_adapter(manager).query(
         "Which documents are linked from the hybrid search strategy and what do "
         "their neighbors explain?",
         top_k=20,
@@ -194,7 +194,7 @@ async def test_neighbor_query_reads_incoming_chunk_parent_neighbors(
         [GraphEdge(source.identity, target_parent.identity, "links_to", 1.0)]
     )
 
-    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+    results, _, strategy = await make_search_adapter(manager).query(
         "What documents are neighbors of Hybrid Search Strategy?",
         top_k=20,
         top_n=5,
@@ -284,7 +284,7 @@ async def test_chunk_target_resolves_parent_for_document_graph_neighbors(
         ]
     )
 
-    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+    results, _, strategy = await make_search_adapter(manager).query(
         "What pages does Hybrid Search Strategy link to?",
         top_k=20,
         top_n=5,
@@ -339,7 +339,7 @@ async def test_outbound_query_uses_links_from_child_chunks(tmp_path: Path) -> No
     assert manager.index_records([target_parent, target_chunk, neighbor])
     manager.rebuild_graph()
 
-    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+    results, _, strategy = await make_search_adapter(manager).query(
         "What pages does Hybrid Search Strategy link to?",
         top_k=20,
         top_n=5,
@@ -379,7 +379,7 @@ async def test_natural_language_graph_query_has_empty_neighbor_lane(tmp_path: Pa
     )
     assert manager.index_records([isolated_parent, isolated_chunk])
 
-    results, _, strategy = await CanonicalSearchAdapter(manager).query(
+    results, _, strategy = await make_search_adapter(manager).query(
         "What pages does Isolated Target link to?",
         top_k=20,
         top_n=5,
@@ -525,7 +525,7 @@ def test_root_relative_markdown_links_retrieve_graph_neighbors(tmp_path):
     source_record = manager.prepare_document(str(source)).records[0]
     assert manager.graph.neighbors(source_record.identity)
     results, _, stats = asyncio.run(
-        CanonicalSearchAdapter(manager, documents_path=docs).query(
+        make_search_adapter(manager, documents_path=docs).query(
             "what links to target",
             top_k=20,
             top_n=5,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from collections.abc import Sequence
 from pathlib import Path
 
 from searchkernel.api import build_local_record_kernel
@@ -17,6 +18,27 @@ from mcp_markdown_ragdocs.indexing.record_manager import (
     build_embedding_provider,
     install_bidirectional_graph_store,
 )
+from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
+
+
+def make_search_adapter(
+    manager: RecordIndexManager,
+    config: Config | None = None,
+    *,
+    documents_path: Path | None = None,
+    documents_roots: Sequence[Path] | None = None,
+) -> CanonicalSearchAdapter:
+    """Build the adapter with the same explicit values as runtime composition."""
+    resolved_config = config or manager._config
+    resolved_path = documents_path or Path(resolved_config.indexing.documents_path)
+    resolved_roots = documents_roots or [resolved_path]
+    return CanonicalSearchAdapter(
+        manager.kernel.pipeline,
+        documents_path=resolved_path,
+        documents_roots=resolved_roots,
+        abstention_threshold=resolved_config.search.abstention_threshold,
+        project_uplift_multiplier=resolved_config.search.project_uplift_multiplier,
+    )
 
 
 def make_record_index_manager(

@@ -19,8 +19,7 @@ from mcp_markdown_ragdocs.config import (
     LLMConfig,
     SearchConfig,
 )
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-from tests.integration._canonical import make_record_index_manager
+from tests.integration._canonical import make_record_index_manager, make_search_adapter
 
 
 def _init_git_repo(path: Path) -> None:
@@ -87,7 +86,7 @@ def kernel(tmp_path):
     )
 
     manager = make_record_index_manager(config)
-    orchestrator = CanonicalSearchAdapter(manager)
+    orchestrator = make_search_adapter(manager, config)
     return manager, orchestrator
 
 
@@ -149,7 +148,7 @@ async def test_commit_project_filter_uses_workspace_identity(repo, tmp_path):
         projects=[],
     )
     manager = make_record_index_manager(config)
-    orchestrator = CanonicalSearchAdapter(manager)
+    orchestrator = make_search_adapter(manager, config)
     source = GitContentSource(repo_path / ".git", workspace_id="repo-project")
 
     assert manager.index_records(list(source.iter_records()))
@@ -186,7 +185,7 @@ async def test_commit_project_filter_excludes_other_repository(repo, tmp_path):
         ),
     )
     manager = make_record_index_manager(config)
-    orchestrator = CanonicalSearchAdapter(manager)
+    orchestrator = make_search_adapter(manager, config)
     assert manager.index_records(
         list(
             GitContentSource(

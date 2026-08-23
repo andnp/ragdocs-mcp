@@ -12,8 +12,6 @@ from typing import Any
 
 import pytest
 from searchkernel.api import build_local_record_kernel
-from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-
 from mcp_markdown_ragdocs.adapters.sources.git import GitContentSource
 from mcp_markdown_ragdocs.config import (
     ChunkingConfig,
@@ -30,6 +28,7 @@ from mcp_markdown_ragdocs.indexing.record_manager import (
 from mcp_markdown_ragdocs.lifecycle import LifecycleState
 from mcp_markdown_ragdocs.mcp.handlers import HandlerContext
 from mcp_markdown_ragdocs.mcp.tools.document_tools import handle_search_git_history
+from tests.integration._canonical import make_search_adapter
 
 
 def _init_git_repo(path: Path) -> None:
@@ -125,7 +124,7 @@ async def test_search_git_history_tool_routes_through_orchestrator(repo):
         ),
     )
     manager = _create_record_manager(config)
-    orchestrator = CanonicalSearchAdapter(manager)
+    orchestrator = make_search_adapter(manager, config)
 
     source = GitContentSource(repo / ".git")
     receipts = [
@@ -161,7 +160,7 @@ async def test_search_git_history_tool_reports_unavailable_when_disabled(tmp_pat
         llm=LLMConfig(embedding_model="local"),
     )
     manager = _create_record_manager(config)
-    orchestrator = CanonicalSearchAdapter(manager)
+    orchestrator = make_search_adapter(manager, config)
 
     ctx = _ReadyContext(orchestrator, git_indexing_enabled=False, total_commits=0)
     hctx = HandlerContext(lambda: ctx, _FakeCoordinator())

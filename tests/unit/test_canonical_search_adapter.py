@@ -7,6 +7,7 @@ from searchkernel.domain import Record, RecordIdentity
 
 from mcp_markdown_ragdocs.app.search import SearchQuery, build_record_search_policy
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
+from tests.integration._canonical import make_search_adapter
 
 
 @pytest.mark.asyncio
@@ -197,7 +198,7 @@ def adapter(record_manager) -> CanonicalSearchAdapter:
         ),
     ]
     assert record_manager.index_records(records) is True
-    return CanonicalSearchAdapter(record_manager)
+    return make_search_adapter(record_manager)
 
 
 @pytest.mark.asyncio

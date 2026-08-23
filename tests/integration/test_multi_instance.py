@@ -28,11 +28,10 @@ def run_server_file_lock_mode(index_path: str, ready_queue, error_queue):
         index_path=index_path,
     )
 
-    from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
-    from tests.integration._canonical import make_record_index_manager
+    from tests.integration._canonical import make_record_index_manager, make_search_adapter
 
     manager = make_record_index_manager(config)
-    orchestrator = CanonicalSearchAdapter(manager)
+    orchestrator = make_search_adapter(manager, config)
 
     ctx = ApplicationContext(
         config=config,

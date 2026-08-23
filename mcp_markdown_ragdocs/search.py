@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from searchkernel.api import (
     CompressionStats,
+    RecordSearchPipeline,
     SearchStrategyStats,
 )
 
@@ -40,31 +40,24 @@ def filter_by_score(
 class CanonicalSearchAdapter:
     """Preserve ragdocs' query tuple while using RecordSearchPipeline."""
 
-    def __init__(self, manager: Any, *, documents_path: Path | None = None) -> None:
-        config = getattr(manager, "_config", None)
-        indexing = getattr(config, "indexing", None)
-        self.documents_path = documents_path or Path(
-            getattr(indexing, "documents_path", ".")
-        )
-        self.documents_roots = tuple(
-            Path(root) for root in getattr(manager, "_documents_roots", (self.documents_path,))
-        )
-        self._pipeline = manager.kernel.pipeline
-        self._search_kernel: SearchExecutionPort = PipelineSearchBoundary(self._pipeline)
-        search_config = getattr(config, "search", None)
+    def __init__(
+        self,
+        pipeline: RecordSearchPipeline,
+        *,
+        documents_path: Path,
+        documents_roots: Sequence[Path],
+        abstention_threshold: float | None,
+        project_uplift_multiplier: float,
+    ) -> None:
+        self.documents_path = documents_path
+        self.documents_roots = tuple(documents_roots)
+        self._pipeline = pipeline
+        self._search_kernel: SearchExecutionPort = PipelineSearchBoundary(pipeline)
         self.search_use_case = ApplicationSearchUseCase(
             self._search_kernel,
             documents_roots=self.documents_roots,
-            default_min_score=getattr(
-                search_config,
-                "abstention_threshold",
-                None,
-            ),
-            project_uplift_multiplier=getattr(
-                search_config,
-                "project_uplift_multiplier",
-                1.2,
-            ),
+            default_min_score=abstention_threshold,
+            project_uplift_multiplier=project_uplift_multiplier,
         )
         self.last_query_execution_stats: dict[str, object] = {}
 

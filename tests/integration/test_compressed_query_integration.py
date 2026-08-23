@@ -29,7 +29,7 @@ from mcp_markdown_ragdocs.config import (
     SearchConfig,
 )
 from mcp_markdown_ragdocs.models import CompressionStats
-from tests.integration._canonical import make_record_index_manager
+from tests.integration._canonical import make_record_index_manager, make_search_adapter
 
 # ============================================================================
 # Fixtures
@@ -91,10 +91,7 @@ def integration_orchestrator(
 
     Provides query execution capabilities.
     """
-    return CanonicalSearchAdapter(
-        integration_manager,
-        documents_path=Path(integration_config.indexing.documents_path),
-    )
+    return make_search_adapter(integration_manager, integration_config)
 
 
 @pytest.fixture(scope="module")
