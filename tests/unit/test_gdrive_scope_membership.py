@@ -15,10 +15,8 @@ from mcp_markdown_ragdocs.gdrive.extraction import (
 )
 from mcp_markdown_ragdocs.gdrive.membership import DriveScopeMembershipStore
 from mcp_markdown_ragdocs.gdrive.models import DriveFile, DriveFilePage
-from mcp_markdown_ragdocs.gdrive.state import (
-    GDriveScopeIdentity,
-    GDriveStateRepository,
-)
+from mcp_markdown_ragdocs.gdrive.adapter import GDriveStateRepository
+from mcp_markdown_ragdocs.gdrive.domain import GDriveScopeIdentity
 
 
 class _Client:

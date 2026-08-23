@@ -18,10 +18,8 @@ from mcp_markdown_ragdocs.gdrive.replacement import (
     canonical_gdrive_source_key,
 )
 from mcp_markdown_ragdocs.gdrive.replacement_policy import GDriveReplacementPolicy
-from mcp_markdown_ragdocs.gdrive.state import (
-    GDriveScopeIdentity,
-    GDriveStateRepository,
-)
+from mcp_markdown_ragdocs.gdrive.adapter import GDriveStateRepository
+from mcp_markdown_ragdocs.gdrive.domain import GDriveScopeIdentity
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
 from mcp_markdown_ragdocs.indexing.record_ports import SqliteSourceMapStore
 

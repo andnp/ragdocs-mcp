@@ -21,7 +21,8 @@ from mcp_markdown_ragdocs.gdrive.extraction import (
 )
 from mcp_markdown_ragdocs.gdrive.models import DriveFile, DriveFilePage
 from mcp_markdown_ragdocs.gdrive.records import map_drive_file
-from mcp_markdown_ragdocs.gdrive.state import GDriveScopeIdentity, GDriveStateRepository
+from mcp_markdown_ragdocs.gdrive.adapter import GDriveStateRepository
+from mcp_markdown_ragdocs.gdrive.domain import GDriveScopeIdentity
 
 
 def _file(file_id: str) -> DriveFile:
