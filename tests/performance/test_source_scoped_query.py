@@ -5,14 +5,25 @@ from __future__ import annotations
 import statistics
 import time
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 from mcp_markdown_ragdocs.config import ChunkingConfig, Config, IndexingConfig, LLMConfig, SearchConfig
+from mcp_markdown_ragdocs.models import ChunkResult
 from tests.integration._canonical import make_record, make_record_index_manager, make_search_adapter
 from tests.performance.test_query_latency import create_benchmark_corpus
 
 
 pytestmark = pytest.mark.performance
+
+
+class BenchmarkMeasurement(TypedDict):
+    latency_ms: float
+    samples_ms: list[float]
+    candidate_counts: dict[str, object]
+    candidate_count: int
+    stage_timings_ms: dict[str, object]
+    results: list[ChunkResult]
 
 
 @pytest.fixture
@@ -57,7 +68,9 @@ def indexed_mixed_corpus(config: Config):
     return manager, make_search_adapter(manager, config)
 
 
-async def _measure(adapter, *, source_filter: list[str] | None) -> dict[str, object]:
+async def _measure(
+    adapter, *, source_filter: list[str] | None
+) -> BenchmarkMeasurement:
     query = "testing performance deployment"
     await adapter.query(query, top_k=8, top_n=8, source_filter=source_filter)
     samples: list[float] = []
@@ -71,9 +84,22 @@ async def _measure(adapter, *, source_filter: list[str] | None) -> dict[str, obj
         samples.append((time.perf_counter() - started) * 1000)
         diagnostics.append(dict(adapter.last_query_execution_stats))
         result_sets.append(results)
-    candidate_count = int(diagnostics[-1].get("candidate_count", 0))
-    candidate_counts = diagnostics[-1].get("candidate_counts", {})
-    stage_timings = diagnostics[-1].get("stage_timings_ms", {})
+    candidate_count_value = diagnostics[-1].get("candidate_count", 0)
+    candidate_count = (
+        candidate_count_value if isinstance(candidate_count_value, int) else 0
+    )
+    candidate_counts_value = diagnostics[-1].get("candidate_counts", {})
+    candidate_counts = (
+        {str(key): value for key, value in candidate_counts_value.items()}
+        if isinstance(candidate_counts_value, dict)
+        else {}
+    )
+    stage_timings_value = diagnostics[-1].get("stage_timings_ms", {})
+    stage_timings = (
+        {str(key): value for key, value in stage_timings_value.items()}
+        if isinstance(stage_timings_value, dict)
+        else {}
+    )
     return {
         "latency_ms": statistics.median(samples),
         "samples_ms": samples,

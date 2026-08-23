@@ -18,6 +18,7 @@ from typing import Any, cast
 
 import pytest
 from huey import SqliteHuey
+from huey.storage import SqliteStorage
 
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
@@ -78,7 +79,9 @@ class TestHueyWorker:
         huey_instance.add_schedule(
             scheduled_task.s(eta=datetime.now(timezone.utc))
         )
-        with huey_instance.storage.db(commit=True) as cursor:
+        storage = huey_instance.storage
+        assert isinstance(storage, SqliteStorage)
+        with storage.db(commit=True) as cursor:
             cursor.execute(
                 """
                 CREATE TRIGGER fail_task_insert
@@ -103,7 +106,9 @@ class TestHueyWorker:
         """
         An undecodable due row is retained instead of being discarded.
         """
-        with huey_instance.storage.db(commit=True) as cursor:
+        storage = huey_instance.storage
+        assert isinstance(storage, SqliteStorage)
+        with storage.db(commit=True) as cursor:
             cursor.execute(
                 "INSERT INTO schedule (queue, data, timestamp) VALUES (?, ?, ?)",
                 (huey_instance.storage.name, b"malformed", 0),
