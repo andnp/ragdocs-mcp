@@ -410,7 +410,7 @@ async def test_application_use_case_overfetches_without_explicit_top_k(
         captured["limit"] = limit
         return SimpleNamespace(results=(), failures=(), degraded=False)
 
-    monkeypatch.setattr(adapter.search_use_case._pipeline, "async_search", fake_search)
+    monkeypatch.setattr(adapter.search_use_case._pipeline, "search", fake_search)
 
     execution = await adapter.search_use_case.execute(
         SearchQuery(query="authentication", top_n=1, min_score=0.5)

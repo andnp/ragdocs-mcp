@@ -59,17 +59,6 @@ class PipelineSearchBoundary:
             filters=dict(filters),
         )
 
-    async def async_search(
-        self,
-        query: str,
-        *,
-        limit: int,
-        filters: Mapping[str, object],
-    ) -> RecordSearchOutcome:
-        """Retain the pipeline method name for in-repo compatibility tests."""
-        return await self.search(query, limit=limit, filters=filters)
-
-
 def _normalize_graph_query(query: str) -> str:
     query = re.sub(
         r"^what\s+links to\s+",
@@ -608,7 +597,7 @@ class ApplicationSearchUseCase:
             limit = max(limit, request.top_n * 4)
 
         if search is None:
-            outcome = await self._pipeline.async_search(
+            outcome = await self._pipeline.search(
                 request.query,
                 limit=limit,
                 filters=filters,

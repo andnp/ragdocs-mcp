@@ -32,7 +32,7 @@ class _CapturingSearchKernel:
     def __init__(self) -> None:
         self.filters: Mapping[str, object] | None = None
 
-    async def async_search(
+    async def search(
         self, query: str, *, limit: int, filters: Mapping[str, object]
     ) -> RecordSearchOutcome:
         self.filters = dict(filters)
@@ -69,7 +69,7 @@ async def test_use_case_accepts_injected_diagnostics_port() -> None:
         return RecordSearchOutcome()
 
     class SearchKernel:
-        async def async_search(
+        async def search(
             self, query: str, *, limit: int, filters: Mapping[str, object]
         ) -> RecordSearchOutcome:
             return await execute(query, limit=limit, filters=filters)
@@ -170,7 +170,7 @@ async def test_use_case_reports_lexical_classification_in_diagnostics(
         return RecordSearchOutcome()
 
     class SearchKernel:
-        async def async_search(
+        async def search(
             self, query: str, *, limit: int, filters: Mapping[str, object]
         ) -> RecordSearchOutcome:
             return await execute(query, limit=limit, filters=filters)
@@ -202,7 +202,7 @@ async def test_use_case_keeps_exact_single_token_matches() -> None:
     )
 
     class SearchKernel:
-        async def async_search(
+        async def search(
             self, query: str, *, limit: int, filters: Mapping[str, object]
         ) -> RecordSearchOutcome:
             return outcome
@@ -242,7 +242,7 @@ async def test_use_case_excludes_relationship_query_own_target() -> None:
     )
 
     class SearchKernel:
-        async def async_search(
+        async def search(
             self, query: str, *, limit: int, filters: Mapping[str, object]
         ) -> RecordSearchOutcome:
             return outcome
@@ -273,7 +273,7 @@ async def test_use_case_normalizes_trailing_punctuation_for_matches() -> None:
     )
 
     class SearchKernel:
-        async def async_search(
+        async def search(
             self, query: str, *, limit: int, filters: Mapping[str, object]
         ) -> RecordSearchOutcome:
             return outcome

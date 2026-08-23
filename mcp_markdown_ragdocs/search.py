@@ -68,7 +68,7 @@ class CanonicalSearchAdapter:
         limit: int = 10,
         filters: dict[str, object] | None = None,
     ):
-        return await self._search_kernel.async_search(
+        return await self._search_kernel.search(
             query,
             limit=limit,
             filters=dict(filters or {}),

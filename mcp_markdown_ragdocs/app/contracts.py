@@ -11,7 +11,7 @@ from searchkernel.api import RecordSearchOutcome
 class SearchExecutionPort(Protocol):
     """Execute a canonical search without exposing its implementation."""
 
-    async def async_search(
+    async def search(
         self,
         query: str,
         *,
