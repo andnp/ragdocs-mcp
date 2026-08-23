@@ -1,4 +1,4 @@
-"""Deterministic, explicitly refreshed snapshots for daemon status data."""
+"""Deterministic, lazily refreshed snapshots for daemon status data."""
 
 from __future__ import annotations
 
@@ -34,15 +34,20 @@ class StatusSnapshot(Generic[SnapshotValue]):
         self,
         *,
         stale_after_seconds: float = 30.0,
+        retry_after_seconds: float = 5.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if stale_after_seconds <= 0:
             raise ValueError("stale_after_seconds must be positive")
+        if retry_after_seconds <= 0:
+            raise ValueError("retry_after_seconds must be positive")
         self._stale_after_seconds = stale_after_seconds
+        self._retry_after_seconds = retry_after_seconds
         self._clock = clock
         self._lock = Lock()
         self._value: SnapshotValue | None = None
         self._captured_at: float | None = None
+        self._last_refresh_attempt_at: float | None = None
         self._error: str | None = None
 
     def read(
@@ -51,6 +56,8 @@ class StatusSnapshot(Generic[SnapshotValue]):
     ) -> tuple[SnapshotValue, SnapshotStatus]:
         with self._lock:
             if self._value is None:
+                self._refresh_locked(builder)
+            elif self._is_expired_locked() and self._retry_is_due_locked():
                 self._refresh_locked(builder)
             return self._value_and_status_locked()
 
@@ -63,6 +70,7 @@ class StatusSnapshot(Generic[SnapshotValue]):
             return self._value_and_status_locked()
 
     def _refresh_locked(self, builder: Callable[[], SnapshotValue]) -> None:
+        self._last_refresh_attempt_at = self._clock()
         try:
             value = builder()
         except Exception as exc:
@@ -74,6 +82,19 @@ class StatusSnapshot(Generic[SnapshotValue]):
         self._value = value
         self._captured_at = self._clock()
         self._error = None
+
+    def _is_expired_locked(self) -> bool:
+        if self._captured_at is None:
+            return True
+        return self._clock() - self._captured_at > self._stale_after_seconds
+
+    def _retry_is_due_locked(self) -> bool:
+        if self._last_refresh_attempt_at is None:
+            return True
+        return (
+            self._clock() - self._last_refresh_attempt_at
+            >= self._retry_after_seconds
+        )
 
     def _value_and_status_locked(self) -> tuple[SnapshotValue, SnapshotStatus]:
         if self._value is None:

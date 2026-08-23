@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from mcp_markdown_ragdocs.daemon import RuntimePaths
 from mcp_markdown_ragdocs.daemon import admin_payloads
 from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
+from mcp_markdown_ragdocs.daemon.status_snapshot import StatusSnapshot
 
 
 @dataclass
@@ -59,6 +60,10 @@ def test_admin_overview_reuses_expensive_snapshot_but_checks_producer_live(
         watcher=None,
     )
     runtime_paths = _runtime_paths(tmp_path / "runtime")
+    now = 0.0
+
+    def clock() -> float:
+        return now
 
     def build_index(_ctx) -> dict[str, object]:
         calls["index"] += 1
@@ -99,6 +104,12 @@ def test_admin_overview_reuses_expensive_snapshot_but_checks_producer_live(
     )
     monkeypatch.setattr(admin_payloads, "producer_diagnostics", producer_payload)
     monkeypatch.setattr(admin_payloads, "read_producer_metadata", lambda _path: None)
+    monkeypatch.setattr(
+        admin_payloads,
+        "_status_snapshot",
+        StatusSnapshot(stale_after_seconds=5.0, clock=clock),
+    )
+    monkeypatch.setattr(admin_payloads, "_status_snapshot_root", runtime_paths.root.resolve())
 
     queue_runtime = build_queue_runtime(runtime_paths.queue_db_path)
     first = admin_payloads._build_admin_overview_payload(
@@ -107,10 +118,15 @@ def test_admin_overview_reuses_expensive_snapshot_but_checks_producer_live(
     second = admin_payloads._build_admin_overview_payload(
         ctx, runtime_paths, queue_runtime, True, 456, "ready"
     )
+    now = 6.0
+    third = admin_payloads._build_admin_overview_payload(
+        ctx, runtime_paths, queue_runtime, True, 456, "ready"
+    )
 
     assert first["indexed_documents"] == second["indexed_documents"] == 4
-    assert calls == {"index": 1, "reindex": 1, "producer": 2}
-    snapshot_status = second["status_snapshot"]
+    assert third["indexed_documents"] == 4
+    assert calls == {"index": 2, "reindex": 2, "producer": 3}
+    snapshot_status = third["status_snapshot"]
     assert isinstance(snapshot_status, dict)
     assert snapshot_status["stale"] is False
     assert snapshot_status["error"] is None
