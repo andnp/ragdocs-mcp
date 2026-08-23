@@ -57,6 +57,7 @@ from mcp_markdown_ragdocs.app.services import ApplicationServices, compose_servi
 logger = logging.getLogger(__name__)
 
 _SEMANTIC_WARMUP_RETRY_COOLDOWN_SECONDS = 15.0
+_SEMANTIC_WARMUP_GATE_MIN_VECTORS = 10_000
 
 
 @runtime_checkable
@@ -477,10 +478,24 @@ class ApplicationContext:
             return (
                 self._semantic_search_warmed
                 and warmed_epoch is not None
-                and warmed_epoch == self._current_vector_epoch()
+                and (
+                    warmed_epoch == self._current_vector_epoch()
+                    or not self._semantic_search_state_is_large()
+                )
             )
         except (AttributeError, TypeError):
             return False
+
+    def _semantic_search_state_is_large(self) -> bool:
+        try:
+            provider = self.index_manager.embedding_provider
+            vector_count = self.index_manager.vector.vector_count(
+                provider.model_name,
+                provider.dim,
+            )
+        except (AttributeError, TypeError):
+            return False
+        return vector_count > _SEMANTIC_WARMUP_GATE_MIN_VECTORS
 
     async def _preload_existing_indices_for_background_bootstrap(
         self,
