@@ -760,6 +760,7 @@ class TestWorkerRuntimeStartup:
         tmp_path: Path,
     ) -> None:
         from mcp_markdown_ragdocs.cli import _run_worker_forever_async
+        from mcp_markdown_ragdocs.app.services import ManagerIndexingService
         from mcp_markdown_ragdocs.daemon.paths import RuntimePaths
 
         class _FakeIndexManager:
@@ -827,6 +828,9 @@ class TestWorkerRuntimeStartup:
                 self.is_running = False
 
         fake_ctx = _FakeContext()
+        fake_ctx.services = SimpleNamespace(
+            indexing=ManagerIndexingService(fake_ctx.index_manager)
+        )
         fake_worker = _FakeHueyWorker(object())
         runtime_paths = RuntimePaths(
             root=tmp_path,
@@ -846,12 +850,18 @@ class TestWorkerRuntimeStartup:
             "mcp_markdown_ragdocs.coordination.queue.build_queue_runtime",
             lambda path: fake_queue_runtime,
         )
-        monkeypatch.setattr(
-            "mcp_markdown_ragdocs.indexing.tasks.register_tasks",
-            lambda *args, **kwargs: SimpleNamespace(
+        registered_targets = []
+
+        def _register_tasks(_huey, index_manager, *args, **kwargs):
+            registered_targets.append(index_manager)
+            return SimpleNamespace(
                 queue_runtime=fake_queue_runtime,
                 submission=SimpleNamespace(submit_refresh_git_request=lambda git_dir: None),
-            ),
+            )
+
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.indexing.tasks.register_tasks",
+            _register_tasks,
         )
         monkeypatch.setattr("mcp_markdown_ragdocs.worker.consumer.HueyWorker", lambda _huey: fake_worker)
         monkeypatch.setattr(
@@ -873,3 +883,4 @@ class TestWorkerRuntimeStartup:
         assert fake_worker.start_calls == 1
         assert fake_worker.stop_calls >= 1
         assert resolve_calls == 0
+        assert registered_targets == [fake_ctx.index_manager]
