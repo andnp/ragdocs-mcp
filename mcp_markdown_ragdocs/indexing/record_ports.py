@@ -243,7 +243,10 @@ class RecordIndexStorage(RecordStorage, Protocol):
     """Additional local capabilities needed to construct the index writer."""
 
     @property
-    def database_manager(self) -> object: ...
+    def database_manager(self) -> SQLiteConnectionProvider: ...
+
+    @property
+    def graph(self) -> GraphCapability: ...
 
     @property
     def keyword_store(self) -> KeywordStore: ...
@@ -354,7 +357,7 @@ class LocalRecordStorage:
         return self._graph
 
     @property
-    def database_manager(self) -> object:
+    def database_manager(self) -> SQLiteConnectionProvider:
         return self._kernel.backend.db_manager
 
     @property

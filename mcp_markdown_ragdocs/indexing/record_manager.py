@@ -187,11 +187,7 @@ class RecordIndexManager:
         self._async_bridge = _AsyncLoopBridge()
         self._index_storage = storage or LocalRecordStorage(kernel)
         self.storage: RecordStorage = self._index_storage
-        self._graph: GraphCapability = graph or (
-            self.storage.graph
-            if isinstance(self.storage, LocalRecordStorage)
-            else install_bidirectional_graph_store(kernel, self.storage.iter_identities)
-        )
+        self._graph: GraphCapability = graph or self._index_storage.graph
         self.embedding_provider = embedding_provider
         self._documents_roots = [
             root.resolve()
@@ -208,7 +204,7 @@ class RecordIndexManager:
         self._source_map_dirty = True
         self._ready = True
         self._source_map_store = source_map_store or SqliteSourceMapStore(
-            kernel.backend.db_manager,
+            self._index_storage.database_manager,
             Path(config.indexing.index_path) / "record-sources.json",
         )
         self._source_records: dict[str, list[str]] = self._source_map_store.load()
