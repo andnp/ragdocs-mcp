@@ -126,7 +126,7 @@ dependencies = [
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b8/a8/e600ae3c80ac10a9c8782d430b64d8152b858dc91c5d9bbbf7e53aa42d81/andnp_searchkernel-1.8.1.tar.gz", hash = "sha256:aeaa819d7b876e4de1e9dfcfb9570adbe476e900a015c250c6f170f1f54e89cc", size = 612470, upload-time = "2026-08-21T04:19:28.886Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/30/49ddbe66161a8a50b27b8d8692131f50a5293b87c4513600aa62088056f2/andnp_searchkernel-1.8.1-py3-none-any.whl", hash = "sha256:cf3188a3029b7aa528c28df88e775aaf748edb7a850c11a84aff5eec815fe587", size = 289081, upload-time = "2026-08-21T04:19:27.294Z" }
+    { url = "https://files.pythonhosted.org/packages/d7/30/49ddbe66161a8a50b27b8d8692131f50a5293b87c4513600aa62088056f2/andnp_searchkernel-1.8.1-py3-none-any.whl", hash = "sha256:cf3188a3029b7aa528c28df88e775aaf748edb7a850c11a84aff5eec815fe587", size = 289081, upload-time = "2026-08-21T04:19:27.294Z" },
 ]
 
 [package.optional-dependencies]
@@ -1373,7 +1373,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "google-api-python-client", specifier = ">=2.198.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.4.0" },
-    { name = "huey", specifier = ">=2.5.0" },
+    { name = "huey", specifier = ">=2.5.0,<3.0.0" },
     { name = "mcp", specifier = ">=2.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "pyzmq", specifier = ">=26.2.0" },
