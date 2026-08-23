@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -441,6 +441,11 @@ class ApplicationContext:
         finally:
             if self._bootstrap_session is session:
                 self._bootstrap_session = None
+
+    def _create_background_index_task(
+        self, coroutine: Coroutine[object, object, None]
+    ) -> None:
+        self._background_index_task = asyncio.create_task(coroutine)
 
     async def start(self, background_index: bool = False) -> None:
         await self._get_bootstrap_coordinator().start(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -60,7 +61,6 @@ class BootstrapHost(Protocol):
     git_indexing_enabled: bool
     _watcher_lifecycle: WatcherLifecycle
     reconciliation_task: asyncio.Task | None
-    _background_index_task: asyncio.Task | None
     _ready_event: asyncio.Event
     _init_error: Exception | None
     _index_state: IndexState
@@ -72,6 +72,9 @@ class BootstrapHost(Protocol):
     _active_model_identity: tuple[str, int] | None
 
     def _check_and_rebuild_if_needed(self) -> bool: ...
+    def _create_background_index_task(
+        self, coroutine: Coroutine[object, object, None]
+    ) -> None: ...
     async def _preload_existing_indices_for_background_bootstrap(
         self,
         *,
@@ -133,11 +136,11 @@ class BootstrapCoordinator:
                         rebuild_pending=needs_rebuild,
                     )
                     startup_git_refresh_enqueued = host.git_indexing_enabled
-                    host._background_index_task = asyncio.create_task(
+                    host._create_background_index_task(
                         host._bootstrap_via_tasks()
                     )
                 else:
-                    host._background_index_task = asyncio.create_task(
+                    host._create_background_index_task(
                         host._background_index()
                     )
             else:
@@ -157,12 +160,12 @@ class BootstrapCoordinator:
                     host._publish_bootstrap_availability(_fully_available())
                     host._ready_event.set()
                     host.schedule_embedding_model_warmup()
-                    host._background_index_task = asyncio.create_task(
+                    host._create_background_index_task(
                         host._reconcile_existing_indices_background()
                     )
                 else:
                     host._index_state = IndexState(status="indexing")
-                    host._background_index_task = asyncio.create_task(
+                    host._create_background_index_task(
                         host._load_existing_indices_background()
                     )
             else:
