@@ -326,7 +326,11 @@ async def test_search_query_route_returns_initializing_payload_while_cold() -> N
 @pytest.mark.asyncio
 async def test_search_query_route_does_not_query_stale_semantic_state() -> None:
     """Stale semantic state returns initialization while warmup runs in background."""
-    ctx = _FakeContext(ready=True, semantic_ready=False)
+    ctx = _FakeContext(
+        ready=True,
+        semantic_ready=False,
+        index_state=_FakeIndexState(status="ready", indexed_count=1, total_count=1),
+    )
     coordinator = _FakeCoordinator()
     handler = build_daemon_request_handler(_build_dependencies(ctx, coordinator))
 

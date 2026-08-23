@@ -439,10 +439,23 @@ def _get_cold_start_search_response(
 ) -> dict[str, object] | None:
     search_ctx = cast(_RouterContext, ctx)
     if search_ctx.is_ready():
-        if search_ctx.is_semantic_search_ready():
+        index_state = search_ctx.get_index_state()
+        if getattr(index_state, "status", None) != "ready":
             return None
-        search_ctx.schedule_freshness_refresh()
-        search_ctx.schedule_embedding_model_warmup()
+        if (
+            getattr(index_state, "indexed_count", 0) == 0
+            and getattr(index_state, "total_count", 0) == 0
+        ):
+            return None
+        semantic_ready = getattr(search_ctx, "is_semantic_search_ready", None)
+        if not callable(semantic_ready) or semantic_ready():
+            return None
+        schedule_freshness = getattr(search_ctx, "schedule_freshness_refresh", None)
+        if callable(schedule_freshness):
+            schedule_freshness()
+        schedule_warmup = getattr(search_ctx, "schedule_embedding_model_warmup", None)
+        if callable(schedule_warmup):
+            schedule_warmup()
         return _build_initializing_search_payload(
             search_ctx,
             coordinator,
