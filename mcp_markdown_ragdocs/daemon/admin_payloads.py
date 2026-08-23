@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from threading import Lock
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from mcp_markdown_ragdocs.coordination.queue import QueueRuntime
 from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats
@@ -14,6 +16,7 @@ from mcp_markdown_ragdocs.daemon.producer import (
     read_producer_metadata,
 )
 from mcp_markdown_ragdocs.daemon.storage_diagnostics import sqlite_storage_diagnostics
+from mcp_markdown_ragdocs.daemon.status_snapshot import StatusSnapshot
 from mcp_markdown_ragdocs.indexing.git_refresh_state import list_progress
 from mcp_markdown_ragdocs.indexing.reindex import reindex_status_payload
 
@@ -21,7 +24,80 @@ if TYPE_CHECKING:
     from mcp_markdown_ragdocs.context import ApplicationContext
     from mcp_markdown_ragdocs.daemon import RuntimePaths
 
+    class _AdminIndexingConfig(Protocol):
+        @property
+        def task_backpressure_limit(self) -> int: ...
+
+    class _AdminConfig(Protocol):
+        @property
+        def indexing(self) -> _AdminIndexingConfig: ...
+
+    class _AdminIndexState(Protocol):
+        def to_dict(self) -> dict[str, object]: ...
+
+    class _AdminWatcher(Protocol):
+        def get_stats(self) -> _AdminIndexState: ...
+
+    class _AdminOverviewContext(Protocol):
+        @property
+        def config(self) -> _AdminConfig: ...
+
+        @property
+        def index_path(self) -> Path: ...
+
+        @property
+        def documents_roots(self) -> list[Path]: ...
+
+        @property
+        def watcher(self) -> _AdminWatcher | None: ...
+
+        def get_index_state(self) -> _AdminIndexState: ...
+else:
+    _AdminOverviewContext = Any
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _AdminOverviewSnapshot:
+    index: dict[str, object]
+    reindex: dict[str, object]
+
+
+_status_snapshot_lock = Lock()
+_status_snapshot_root: Path | None = None
+_status_snapshot: StatusSnapshot[_AdminOverviewSnapshot] | None = None
+
+
+def _get_admin_overview_snapshot(runtime_paths: RuntimePaths) -> StatusSnapshot[_AdminOverviewSnapshot]:
+    global _status_snapshot, _status_snapshot_root
+    root = runtime_paths.root.resolve()
+    with _status_snapshot_lock:
+        if _status_snapshot is None or _status_snapshot_root != root:
+            _status_snapshot = StatusSnapshot()
+            _status_snapshot_root = root
+        return _status_snapshot
+
+
+def _build_expensive_admin_overview_snapshot(
+    ctx: _AdminOverviewContext,
+    runtime_paths: RuntimePaths,
+) -> _AdminOverviewSnapshot:
+    return _AdminOverviewSnapshot(
+        index=_build_index_stats_payload(ctx),
+        reindex=reindex_status_payload(runtime_paths.root, ctx.index_path),
+    )
+
+
+def refresh_admin_overview_snapshot(
+    ctx: _AdminOverviewContext,
+    runtime_paths: RuntimePaths,
+) -> dict[str, object]:
+    """Explicitly refresh the process-local expensive admin status snapshot."""
+    _, status = _get_admin_overview_snapshot(runtime_paths).refresh(
+        lambda: _build_expensive_admin_overview_snapshot(ctx, runtime_paths)
+    )
+    return status.to_dict()
 
 
 def _as_int(value: object) -> int:
@@ -211,14 +287,17 @@ def _build_queue_status_payload(
 
 
 def _build_admin_overview_payload(
-    ctx: ApplicationContext,
+    ctx: _AdminOverviewContext,
     runtime_paths: RuntimePaths,
     queue_runtime: QueueRuntime,
     worker_running: bool,
     worker_pid: int | None,
     lifecycle: str,
 ) -> dict[str, object]:
-    index_payload = _build_index_stats_payload(ctx)
+    snapshot, snapshot_status = _get_admin_overview_snapshot(runtime_paths).read(
+        lambda: _build_expensive_admin_overview_snapshot(ctx, runtime_paths)
+    )
+    index_payload = snapshot.index
     task_payload = _build_queue_status_payload(
         queue_runtime=queue_runtime,
         worker_running=worker_running,
@@ -256,7 +335,8 @@ def _build_admin_overview_payload(
         "queue_stats": task_payload,
         "git_refresh_progress": task_payload.get("git_refresh_progress", []),
         "watcher_stats": watcher_stats,
+        "status_snapshot": snapshot_status.to_dict(),
         **producer_payload,
         "index_state": ctx.get_index_state().to_dict(),
-        "reindex": reindex_status_payload(runtime_paths.root, ctx.index_path),
+        "reindex": snapshot.reindex,
     }

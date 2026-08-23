@@ -101,6 +101,7 @@ def build_daemon_status_payload(
                     "producer_pid",
                     "producer_started_at",
                     "stop_reason",
+                    "status_snapshot",
                 )
                 if key in overview
             }

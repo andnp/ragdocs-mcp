@@ -115,6 +115,7 @@ def test_daemon_status_json_includes_runtime_paths(monkeypatch, tmp_path):
 
 
 def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_path):
+    """CLI JSON preserves overview fields and reports snapshot freshness metadata."""
     runner = CliRunner()
     metadata = DaemonMetadata(
         pid=4321,
@@ -159,6 +160,12 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
                     "discovered_count": 10,
                 }
             ],
+            "status_snapshot": {
+                "age_seconds": 2.0,
+                "stale": False,
+                "error": None,
+                "stale_after_seconds": 30.0,
+            },
         },
     )
     monkeypatch.setattr(
@@ -185,6 +192,8 @@ def test_daemon_status_json_includes_overview_when_available(monkeypatch, tmp_pa
     assert '"pending_count": 3' in result.output
     assert '"worker_health": "healthy"' in result.output
     assert '"git_refresh_progress": [' in result.output
+    assert '"status_snapshot": {' in result.output
+    assert '"stale_after_seconds": 30.0' in result.output
 
 
 def test_daemon_status_json_fetches_overview_even_if_probe_not_responsive(
