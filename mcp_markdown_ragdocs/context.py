@@ -815,9 +815,9 @@ class ApplicationContext:
             )
 
     async def _startup_reconciliation(self) -> None:
-        await self._request_reconciliation()
+        await self._request_reconciliation(startup=True)
 
-    async def _request_reconciliation(self) -> None:
+    async def _request_reconciliation(self, *, startup: bool = False) -> None:
         """Run one reconciliation at a time, coalescing overlapping requests."""
         if getattr(self, "_reconciliation_running", False):
             self._reconciliation_pending = True
@@ -827,16 +827,19 @@ class ApplicationContext:
         try:
             while True:
                 self._reconciliation_pending = False
-                await self._reconcile_once()
+                if startup:
+                    await self._reconcile_once(startup=True)
+                else:
+                    await self._reconcile_once()
                 if not self._reconciliation_pending:
                     return
         finally:
             self._reconciliation_running = False
             self._reconciliation_pending = False
 
-    async def _reconcile_once(self) -> None:
+    async def _reconcile_once(self, *, startup: bool = False) -> None:
         if self.use_tasks:
-            await self._enqueue_reconciliation_tasks()
+            await self._enqueue_reconciliation_tasks(defer_if_pending=startup)
             return
 
         logger.info("Running startup reconciliation")
@@ -881,7 +884,9 @@ class ApplicationContext:
             )
             save_manifest(self.index_path, self.current_manifest)
 
-    async def _enqueue_reconciliation_tasks(self) -> None:
+    async def _enqueue_reconciliation_tasks(
+        self, *, defer_if_pending: bool = False
+    ) -> None:
         """Reconcile through the worker process without blocking query serving.
 
         Move detection parses and chunks every added file against every removed
@@ -891,6 +896,18 @@ class ApplicationContext:
         CPU-heavy indexing and the daemon keeps serving the loaded snapshot.
         """
         logger.info("Running task-backed startup reconciliation")
+        if defer_if_pending and self.task_submission is not None:
+            get_pending_paths = getattr(
+                self.task_submission, "get_pending_index_document_paths", None
+            )
+            if callable(get_pending_paths):
+                pending_paths = await asyncio.to_thread(get_pending_paths)
+                if isinstance(pending_paths, set) and pending_paths:
+                    logger.info(
+                        "Deferring startup reconciliation while %d indexing task(s) remain pending",
+                        len(pending_paths),
+                    )
+                    return
         docs_path = Path(self.config.indexing.documents_path)
         discovered_files = await asyncio.to_thread(self.discover_files)
         saved_manifest = await asyncio.to_thread(load_manifest, self.index_path)

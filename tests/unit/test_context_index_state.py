@@ -1683,6 +1683,33 @@ async def test_task_backed_reconciliation_enqueues_changes_without_index_manager
     manager.persist.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_startup_reconciliation_defers_when_index_tasks_are_pending(
+    tmp_path: Path,
+):
+    """
+    Startup reconciliation avoids a redundant filesystem walk while work is queued.
+
+    A later watcher or periodic reconciliation remains responsible for changes
+    that occur after the startup queue snapshot.
+    """
+    ctx = object.__new__(ApplicationContext)
+    mock_config = MockConfig()
+    mock_config.indexing.documents_path = str(tmp_path)
+    _setattr(ctx, "config", mock_config)
+    _setattr(ctx, "use_tasks", True)
+    _setattr(ctx, "documents_roots", [tmp_path])
+    discover_files = MagicMock(side_effect=AssertionError("walked"))
+    _setattr(ctx, "discover_files", discover_files)
+    _setattr(ctx, "task_submission", SimpleNamespace(
+        get_pending_index_document_paths=lambda: {str(tmp_path / "queued.md")},
+    ))
+
+    await ctx._startup_reconciliation()
+
+    discover_files.assert_not_called()
+
+
 def test_attach_task_runtime_wires_submission_to_file_watcher() -> None:
     """
     Given a context with a file watcher and a composed task runtime.

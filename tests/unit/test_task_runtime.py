@@ -25,6 +25,9 @@ class _RegisteredHandle:
 
 
 class _Submission:
+    def get_pending_index_document_paths(self) -> set[str]:
+        return set()
+
     def submit_index_request(
         self, file_path: str, force: bool = False
     ) -> TaskSubmissionResult:

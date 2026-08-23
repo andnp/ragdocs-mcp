@@ -818,6 +818,23 @@ class TestTaskRegistration:
 
         assert pending == 1
 
+    def test_pending_index_count_includes_claimed_work_after_queue_dequeue(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Claimed durable work remains pending after Huey removes its message.
+
+        Reconciliation must not rediscover and resubmit that document while
+        the worker is still responsible for completing the intent.
+        """
+        _register_tasks(huey_instance, fake_manager)
+
+        assert enqueue_index("/some/file.md") is True
+        task = huey_instance.dequeue()
+        assert task is not None
+
+        assert get_pending_index_document_count(["/some/file.md"]) == 1
+
     def test_startup_batch_deduplicates_duplicate_paths_within_batch(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:

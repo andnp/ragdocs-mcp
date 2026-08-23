@@ -23,6 +23,8 @@ type BatchTaskSubmitter = Callable[..., object]
 class TaskSubmissionPort(Protocol):
     """Application-facing submission capabilities for one task runtime."""
 
+    def get_pending_index_document_paths(self) -> set[str]: ...
+
     def submit_index_request(
         self, file_path: str, force: bool = False
     ) -> TaskSubmissionResult: ...

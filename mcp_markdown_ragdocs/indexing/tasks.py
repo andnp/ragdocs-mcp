@@ -156,6 +156,9 @@ class _RuntimeTaskSubmission:
             raise RuntimeError("Task submission adapter is not bound to a runtime")
         return self._runtime
 
+    def get_pending_index_document_paths(self) -> set[str]:
+        return _get_pending_index_document_paths(runtime=self.runtime)
+
     def submit_index_request(
         self, file_path: str, force: bool = False
     ) -> TaskSubmissionResult:
@@ -1659,7 +1662,7 @@ def _get_pending_index_document_paths(
             return {item for item in first_arg if isinstance(item, str)}
         return set()
 
-    return get_pending_task_values(
+    pending_paths = get_pending_task_values(
         runtime.queue_runtime.huey,
         {"_index_document", "_index_documents_batch"},
         value_extractor=lambda task: {
@@ -1669,6 +1672,20 @@ def _get_pending_index_document_paths(
         inspection_failure_log_message="Failed to inspect pending Huey tasks; startup batch dedupe disabled",
         deserialize_failure_log_message="Failed to deserialize pending Huey task while inspecting startup queue",
     )
+    if runtime.work_intent_store is not None:
+        try:
+            for intent in runtime.work_intent_store.list_active(limit=1000):
+                if intent.operation != "index_document":
+                    continue
+                file_path = intent.payload.get("file_path")
+                if isinstance(file_path, str):
+                    pending_paths.add(_canonical_document_identity(file_path))
+        except Exception:
+            logger.warning(
+                "Failed to inspect active index work intents; startup batch dedupe may be incomplete",
+                exc_info=True,
+            )
+    return pending_paths
 
 
 def _get_pending_refresh_git_dirs(
