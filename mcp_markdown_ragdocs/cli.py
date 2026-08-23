@@ -237,14 +237,14 @@ async def _run_worker_forever_async(
         bootstrap_documents_roots=ctx.documents_roots,
         schedule_vocabulary_catch_up=_schedule_worker_vocabulary_catch_up,
         embedding_cache=TaskEmbeddingCacheAdapter(
-            indexing.ingestor.embedding_cache,
-            indexing.storage.iter_records,
-            indexing.ingestor.encoder_namespace or "",
+            task_target.ingestor.embedding_cache,
+            task_target.storage.iter_records,
+            task_target.ingestor.encoder_namespace or "",
             lambda: {
-                "embedding_cache_hits": indexing.ingestor.embedding_cache.metrics.hits,
-                "embedding_cache_misses": indexing.ingestor.embedding_cache.metrics.misses,
-                "embedding_writes": indexing.ingestor.embedding_cache.metrics.writes,
-                "embedding_invalidations": indexing.ingestor.embedding_cache.metrics.invalidations,
+                "embedding_cache_hits": task_target.ingestor.embedding_cache.metrics.hits,
+                "embedding_cache_misses": task_target.ingestor.embedding_cache.metrics.misses,
+                "embedding_writes": task_target.ingestor.embedding_cache.metrics.writes,
+                "embedding_invalidations": task_target.ingestor.embedding_cache.metrics.invalidations,
             },
         ),
     )
