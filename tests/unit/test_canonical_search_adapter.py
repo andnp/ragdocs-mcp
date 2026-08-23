@@ -5,7 +5,11 @@ import pytest
 from searchkernel.api import SearchResultProvenance
 from searchkernel.domain import Record, RecordIdentity
 
-from mcp_markdown_ragdocs.app.search import SearchQuery, build_record_search_policy
+from mcp_markdown_ragdocs.app.search import (
+    ApplicationSearchUseCase,
+    SearchQuery,
+    build_record_search_policy,
+)
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
 from tests.integration._canonical import make_search_adapter
 
@@ -199,6 +203,105 @@ def adapter(record_manager) -> CanonicalSearchAdapter:
     ]
     assert record_manager.index_records(records) is True
     return make_search_adapter(record_manager)
+
+
+def _direct_use_case(record_manager, adapter: CanonicalSearchAdapter) -> ApplicationSearchUseCase:
+    return ApplicationSearchUseCase(
+        record_manager.kernel.pipeline,
+        documents_roots=adapter.documents_roots,
+        default_min_score=None,
+        project_uplift_multiplier=1.2,
+    )
+
+
+def _result_signature(results) -> list[tuple[str, str, float]]:
+    return [(result.chunk_id, result.doc_id, result.score) for result in results]
+
+
+@pytest.mark.asyncio
+async def test_direct_use_case_matches_adapter_results_scores_and_diagnostics(
+    adapter, record_manager
+):
+    """Preserve ordinary search results, raw scores, order, and diagnostics.
+
+    The direct runtime boundary and compatibility adapter must expose one
+    observable search contract while transports are being migrated.
+    """
+    direct = _direct_use_case(record_manager, adapter)
+    request = SearchQuery(query="authentication", top_n=3, max_chunks_per_doc=0)
+
+    direct_execution = await direct.execute(request)
+    adapter_results, adapter_compression, adapter_strategy = await adapter.query(
+        "authentication",
+        top_k=3,
+        top_n=3,
+        max_chunks_per_doc=0,
+    )
+
+    assert _result_signature(direct_execution.results) == _result_signature(
+        adapter_results
+    )
+    assert direct_execution.query_execution_stats == adapter.last_query_execution_stats
+    assert direct_execution.compression_stats == adapter_compression
+    assert direct_execution.strategy_stats == adapter_strategy
+
+
+@pytest.mark.asyncio
+async def test_direct_use_case_matches_adapter_hypothesis_results(adapter, record_manager):
+    """Keep semantic-only hypothesis retrieval identical during migration.
+
+    HyDE callers must receive the same documents, order, and raw scores from
+    either composition path.
+    """
+    direct = _direct_use_case(record_manager, adapter)
+
+    direct_execution = await direct.execute(
+        SearchQuery(
+            query="authentication setup",
+            top_n=3,
+            retrieval_mode="semantic_only",
+        )
+    )
+    adapter_results, _, _ = await adapter.query_with_hypothesis(
+        "authentication setup",
+        top_k=12,
+        top_n=3,
+    )
+
+    assert _result_signature(direct_execution.results) == _result_signature(
+        adapter_results
+    )
+
+
+@pytest.mark.asyncio
+async def test_direct_use_case_matches_adapter_git_history_results(
+    adapter, record_manager
+):
+    """Keep Git-scoped retrieval and diagnostics identical during migration.
+
+    The dedicated history path must retain its source filter and aggregated
+    result contract when callers move to the direct application use case.
+    """
+    direct = _direct_use_case(record_manager, adapter)
+
+    direct_execution = await direct.execute(
+        SearchQuery(
+            query="authentication",
+            top_n=3,
+            source_filter=("git_commit",),
+        )
+    )
+    adapter_results, _, _ = await adapter.query(
+        "authentication",
+        top_k=12,
+        top_n=3,
+        source_filter=["git_commit"],
+    )
+
+    assert _result_signature(direct_execution.results) == _result_signature(
+        adapter_results
+    )
+    assert direct_execution.query_execution_stats == adapter.last_query_execution_stats
 
 
 @pytest.mark.asyncio
