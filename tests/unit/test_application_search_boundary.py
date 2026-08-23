@@ -28,6 +28,17 @@ def _record() -> Record:
     )
 
 
+class _CapturingSearchKernel:
+    def __init__(self) -> None:
+        self.filters: Mapping[str, object] | None = None
+
+    async def async_search(
+        self, query: str, *, limit: int, filters: Mapping[str, object]
+    ) -> RecordSearchOutcome:
+        self.filters = dict(filters)
+        return RecordSearchOutcome()
+
+
 def test_map_kernel_result_preserves_application_result_fields() -> None:
     """Map canonical record data without exposing the kernel result object.
 
@@ -76,6 +87,65 @@ async def test_use_case_accepts_injected_diagnostics_port() -> None:
         "lexical_query": False,
     }
     assert execution.results == []
+
+
+@pytest.mark.asyncio
+async def test_use_case_scopes_ordinary_queries_to_document_sources() -> None:
+    """Exclude Git history before the SearchKernel performs retrieval.
+
+    Ordinary document search includes Markdown and Drive records while keeping
+    pathless and path-addressable Git history out of the retrieval candidate set.
+    """
+    kernel = _CapturingSearchKernel()
+
+    await ApplicationSearchUseCase(kernel, documents_roots=()).execute(
+        SearchRequest(query="ordinary documents", top_n=1)
+    )
+
+    assert kernel.filters is not None
+    assert kernel.filters["source_kinds"] == ["note", "gdrive"]
+
+
+@pytest.mark.asyncio
+async def test_use_case_keeps_git_history_queries_git_scoped() -> None:
+    """Keep explicit Git-history requests restricted to commit records.
+
+    The performance routing default must not widen the dedicated history path.
+    """
+    kernel = _CapturingSearchKernel()
+
+    await ApplicationSearchUseCase(kernel, documents_roots=()).execute(
+        SearchRequest(
+            query="commit history",
+            top_n=1,
+            source_filter=("git_commit",),
+        )
+    )
+
+    assert kernel.filters is not None
+    assert kernel.filters["source_kinds"] == ["git_commit"]
+
+
+@pytest.mark.asyncio
+async def test_use_case_preserves_explicit_multi_source_filters() -> None:
+    """Pass caller-selected source combinations through unchanged.
+
+    Explicit filters remain caller policy, even when they include more than
+    the ordinary document sources.
+    """
+    kernel = _CapturingSearchKernel()
+    source_filter = ("note", "gdrive", "git_commit")
+
+    await ApplicationSearchUseCase(kernel, documents_roots=()).execute(
+        SearchRequest(
+            query="all sources",
+            top_n=1,
+            source_filter=source_filter,
+        )
+    )
+
+    assert kernel.filters is not None
+    assert kernel.filters["source_kinds"] == list(source_filter)
 
 
 @pytest.mark.asyncio

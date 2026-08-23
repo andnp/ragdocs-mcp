@@ -161,6 +161,7 @@ _DEFAULT_HYBRID_KEYWORD_SIGNAL = 0.01
 _DEFAULT_STRONG_KEYWORD_SIGNAL = 0.5
 _DEFAULT_HYBRID_MAX_KEYWORD_RANK = 5
 _DEFAULT_MIN_MEANINGFUL_TOKEN_OVERLAP = 2
+_DOCUMENT_SOURCE_KINDS = ("note", "gdrive")
 _SEARCH_TOKEN_PATTERN = re.compile(r"[a-z0-9_/\\-]+(?:\.[a-z0-9_/\\-]+)*")
 _QUERY_STOP_WORDS = frozenset(
     {
@@ -577,8 +578,9 @@ class ApplicationSearchUseCase:
             if request.min_score is not None
             else self._default_min_score
         )
-        if request.source_filter:
-            filters["source_kinds"] = list(request.source_filter)
+        filters["source_kinds"] = list(
+            request.source_filter or _DOCUMENT_SOURCE_KINDS
+        )
         if request.project_filter:
             if len(request.project_filter) == 1:
                 filters["workspace_id"] = request.project_filter[0]

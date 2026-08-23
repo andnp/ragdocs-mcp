@@ -215,7 +215,7 @@ async def test_query_preserves_chunk_result_semantics(adapter):
     assert results[0].metadata["source_kind"] == "note"
     assert results[0].metadata["source_id"] == "doc-a"
     assert results[0].metadata["workspace_id"] == "project-a"
-    assert stats.original_count == 3
+    assert stats.original_count == 2
     assert strategy.keyword_count == 1
 
 
@@ -459,7 +459,7 @@ async def test_query_applies_project_filter_without_legacy_orchestrator(adapter)
         project_filter=["project-b"],
     )
 
-    assert [result.chunk_id for result in results] == ["chunk-b"]
+    assert results == []
 
 
 def test_project_policy_uplifts_only_matching_workspace():
@@ -493,7 +493,7 @@ def test_project_policy_uplifts_only_matching_workspace():
 
 
 @pytest.mark.asyncio
-async def test_preferred_project_does_not_filter_other_workspaces(adapter):
+async def test_preferred_project_does_not_retrieve_git_history(adapter):
     results, _, _ = await adapter.query(
         "authentication",
         top_k=10,
@@ -502,7 +502,7 @@ async def test_preferred_project_does_not_filter_other_workspaces(adapter):
         max_chunks_per_doc=0,
     )
 
-    assert {result.project_id for result in results} >= {"project-a", "project-b"}
+    assert {result.project_id for result in results} == {"project-a", "project-c"}
 
 
 @pytest.mark.asyncio
