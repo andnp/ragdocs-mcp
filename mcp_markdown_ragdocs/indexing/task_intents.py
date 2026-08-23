@@ -54,12 +54,13 @@ def _intent_claim_batch(
     items: list[tuple[str, dict[str, object]]],
     *,
     force_reopen: bool = False,
-) -> tuple[list[tuple[str, tuple[str, str]]], int]:
+) -> tuple[list[tuple[str, tuple[str, str]]], int, int]:
     store = store_provider()
     if store is None:
-        return [], 0
+        return [], 0, 0
     claims: list[tuple[str, tuple[str, str]]] = []
     skipped = 0
+    terminal_failures = 0
     for canonical_key, payload in items:
         claim = _intent_claim(
             store_provider,
@@ -69,10 +70,14 @@ def _intent_claim_batch(
             force_reopen=force_reopen,
         )
         if claim is None:
-            skipped += 1
+            existing = store.find(operation, canonical_key)
+            if existing is not None and existing.state == "failed":
+                terminal_failures += 1
+            else:
+                skipped += 1
         else:
             claims.append((canonical_key, (claim[0].intent_id, claim[1])))
-    return claims, skipped
+    return claims, skipped, terminal_failures
 
 
 def _release_intent(

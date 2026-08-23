@@ -988,6 +988,97 @@ class TestTaskRegistration:
         assert submission.already_pending_count == 1
         assert submission.all_represented is True
 
+    def test_terminal_failed_index_is_not_reported_as_pending(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        A retry-ceiling failure is unrepresented until explicitly reopened.
+
+        Automatic reconciliation must not mistake a terminal intent for live
+        queue work or mutate its failure/attempt counters.
+        """
+        runtime = _register_tasks(huey_instance, fake_manager)
+        file_path = "/some/failed.md"
+        store = WorkIntentStore(
+            _queue_path(huey_instance),
+            retry_policy=tasks_mod.index_document_retry_policy,
+        )
+        runtime.work_intent_store = store
+        intent = store.submit(
+            "index_document",
+            file_path,
+            {"file_path": file_path, "force": False},
+        )
+        for failure_number in range(3):
+            claim = store.claim(intent.intent_id)
+            assert claim is not None
+            assert store.fail(intent.intent_id, claim[1], f"failure {failure_number}")
+            if failure_number < 2:
+                store.submit(
+                    "index_document",
+                    file_path,
+                    {"file_path": file_path, "force": False},
+                )
+
+        terminal_before = store.get(intent.intent_id)
+        assert terminal_before is not None
+
+        submission = submit_index_batch([file_path])
+
+        terminal_after = store.get(intent.intent_id)
+        assert terminal_after is not None
+        assert submission.enqueued_count == 0
+        assert submission.already_pending_count == 0
+        assert submission.all_represented is False
+        assert huey_instance.pending_count() == 0
+        assert terminal_after.attempt == terminal_before.attempt
+        assert terminal_after.failure_count == terminal_before.failure_count
+
+        forced = tasks_mod.submit_index_request(
+            file_path,
+            force=True,
+            runtime=runtime,
+        )
+        assert forced.status == "enqueued"
+        assert huey_instance.pending_count() == 1
+
+    def test_terminal_failed_single_index_is_not_already_pending(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Single-document submission reports terminal failure as unaccepted.
+
+        Explicit force remains the only automatic-retry override.
+        """
+        runtime = _register_tasks(huey_instance, fake_manager)
+        file_path = "/some/failed-single.md"
+        store = WorkIntentStore(
+            _queue_path(huey_instance),
+            retry_policy=tasks_mod.index_document_retry_policy,
+        )
+        runtime.work_intent_store = store
+        intent = store.submit(
+            "index_document",
+            file_path,
+            {"file_path": file_path, "force": False},
+        )
+        for failure_number in range(3):
+            claim = store.claim(intent.intent_id)
+            assert claim is not None
+            assert store.fail(intent.intent_id, claim[1], f"failure {failure_number}")
+            if failure_number < 2:
+                store.submit(
+                    "index_document",
+                    file_path,
+                    {"file_path": file_path, "force": False},
+                )
+
+        submission = tasks_mod.submit_index_request(file_path, runtime=runtime)
+
+        assert submission.status == "unavailable"
+        assert submission.accepted_by_queue is False
+        assert huey_instance.pending_count() == 0
+
     def test_pending_index_count_includes_batch_tasks(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:

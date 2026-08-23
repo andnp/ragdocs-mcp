@@ -289,7 +289,8 @@ def _intent_claim_batch(
     *,
     force_reopen: bool = False,
     runtime: TaskRuntime,
-) -> tuple[list[tuple[str, tuple[str, str]]], int]:
+) -> tuple[list[tuple[str, tuple[str, str]]], int, int]:
+    """Claim a batch and classify active duplicates separately from failures."""
     return task_intents._intent_claim_batch(
         lambda: _intent_store(runtime),
         operation,
@@ -1614,6 +1615,13 @@ def submit_index_request(
         runtime=runtime,
     )
     if claim is None:
+        existing = _intent_store(runtime)
+        if existing is not None:
+            intent = existing.find(
+                "index_document", _canonical_document_identity(file_path)
+            )
+            if intent is not None and intent.state == "failed":
+                return TaskSubmissionResult(status="unavailable")
         return TaskSubmissionResult(status="already_pending")
     intent, claim_token = claim
     try:
@@ -1846,7 +1854,7 @@ def submit_index_batch(
     )
 
     enqueued_count = 0
-    keyed_claims, skipped_count = _intent_claim_batch(
+    keyed_claims, skipped_count, terminal_failure_count = _intent_claim_batch(
         "index_document",
         [
             (
@@ -1859,6 +1867,11 @@ def submit_index_batch(
         runtime=runtime,
     )
     already_pending_count += skipped_count
+    if terminal_failure_count > 0:
+        logger.warning(
+            "Refusing to represent %d terminally failed index intent(s) as pending; explicit force is required",
+            terminal_failure_count,
+        )
     claim_by_key = {key: claim for key, claim in keyed_claims}
     claims = list(claim_by_key.values())
     claim_paths = [
@@ -2050,6 +2063,11 @@ def submit_remove_request(
         runtime=runtime,
     )
     if claim is None:
+        existing = _intent_store(runtime)
+        if existing is not None:
+            intent = existing.find("remove_document", _canonical_document_identity(doc_id))
+            if intent is not None and intent.state == "failed":
+                return TaskSubmissionResult(status="unavailable")
         return TaskSubmissionResult(status="already_pending")
     intent, claim_token = claim
     try:
@@ -2116,7 +2134,7 @@ def submit_remove_request_batch(
             already_pending_count=already_pending_count,
             backpressured_items=tuple(remaining_doc_ids),
         )
-    keyed_claims, skipped_count = _intent_claim_batch(
+    keyed_claims, skipped_count, terminal_failure_count = _intent_claim_batch(
         "remove_document",
         [
             (
@@ -2128,6 +2146,11 @@ def submit_remove_request_batch(
         runtime=runtime,
     )
     already_pending_count += skipped_count
+    if terminal_failure_count > 0:
+        logger.warning(
+            "Refusing to represent %d terminally failed removal intent(s) as pending; explicit force is required",
+            terminal_failure_count,
+        )
     claims = [claim for _, claim in keyed_claims]
     claim_keys = {key for key, _ in keyed_claims}
     task_doc_ids = [

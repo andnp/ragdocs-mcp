@@ -218,8 +218,13 @@ class BootstrapSession:
                     submission.already_pending_count,
                 )
             else:
+                error_message = (
+                    "Task queue unavailable during startup bootstrap"
+                    if not submission.queue_available
+                    else "Task queue did not represent all startup indexing work"
+                )
                 self.report_failure(
-                    RuntimeError("Task queue unavailable during startup bootstrap"),
+                    RuntimeError(error_message),
                     len(completed_paths),
                     len(files_to_index),
                 )
