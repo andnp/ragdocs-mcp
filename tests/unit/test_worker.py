@@ -54,19 +54,20 @@ class TestHueyWorker:
 
         huey_instance.add_schedule(append_value.s(1, eta=datetime.now(timezone.utc)))
         _promote_due_tasks(huey_instance)
+        _promote_due_tasks(huey_instance)
 
+        assert huey_instance.pending_count() == 1
         task = huey_instance.dequeue()
         assert task is not None
         huey_instance.execute(task)
         assert results == [1]
 
-    def test_failed_promotion_restores_scheduled_task(
+    def test_promotion_transaction_rolls_back_on_queue_failure(
         self,
         huey_instance: SqliteHuey,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """
-        A queue write failure leaves the scheduled task available for retry.
+        A failed queue insert keeps the due schedule row for recovery.
         """
         @huey_instance.task()
         def scheduled_task() -> None:
@@ -75,19 +76,64 @@ class TestHueyWorker:
         huey_instance.add_schedule(
             scheduled_task.s(eta=datetime.now(timezone.utc))
         )
-        original_enqueue = huey_instance.enqueue
-        calls = 0
+        with huey_instance.storage.db(commit=True) as cursor:
+            cursor.execute(
+                """
+                CREATE TRIGGER fail_task_insert
+                BEFORE INSERT ON task
+                BEGIN
+                    SELECT RAISE(ABORT, 'queue unavailable');
+                END
+                """
+            )
 
-        def fail_once(task: Any) -> Any:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                raise OSError("queue unavailable")
-            return original_enqueue(task)
+        with pytest.raises(sqlite3.IntegrityError, match="queue unavailable"):
+            _promote_due_tasks(huey_instance)
 
-        monkeypatch.setattr(huey_instance, "enqueue", fail_once)
+        assert huey_instance.storage.schedule_size() == 1
+        assert huey_instance.pending_count() == 0
+
+    def test_malformed_scheduled_task_remains_recoverable(
+        self,
+        huey_instance: SqliteHuey,
+    ) -> None:
+        """
+        An undecodable due row is retained instead of being discarded.
+        """
+        with huey_instance.storage.db(commit=True) as cursor:
+            cursor.execute(
+                "INSERT INTO schedule (queue, data, timestamp) VALUES (?, ?, ?)",
+                (huey_instance.storage.name, b"malformed", 0),
+            )
+
         _promote_due_tasks(huey_instance)
 
+        assert huey_instance.storage.schedule_size() == 1
+
+    def test_promotion_limits_one_batch(
+        self,
+        huey_instance: SqliteHuey,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Promotion leaves later due rows for a subsequent worker iteration.
+        """
+        @huey_instance.task()
+        def scheduled_task(value: int) -> None:
+            del value
+
+        for value in (1, 2):
+            huey_instance.add_schedule(
+                scheduled_task.s(value, eta=datetime.now(timezone.utc))
+            )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.SCHEDULE_PROMOTION_BATCH_SIZE",
+            1,
+        )
+
+        _promote_due_tasks(huey_instance)
+
+        assert huey_instance.pending_count() == 1
         assert huey_instance.storage.schedule_size() == 1
 
     def test_start_creates_consumer_thread(self, huey_instance: SqliteHuey) -> None:

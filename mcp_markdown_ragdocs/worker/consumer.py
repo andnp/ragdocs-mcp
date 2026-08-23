@@ -9,6 +9,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 from huey.constants import EmptyData
+from huey.storage import to_bytes, to_timestamp
 from huey.utils import Error
 
 from mcp_markdown_ragdocs.coordination.task_leases import (
@@ -26,6 +27,7 @@ LEASE_TIMEOUT_SECONDS = DEFAULT_LEASE_TIMEOUT_SECONDS
 LEASE_HEARTBEAT_INTERVAL_SECONDS = 5.0
 LEASE_RECLAIM_INTERVAL_SECONDS = 5.0
 NON_QUEUE_LEASE_TASK_NAMES = frozenset({"gdrive_scope_sync"})
+SCHEDULE_PROMOTION_BATCH_SIZE = 32
 
 
 def _requeue_expired_leases(
@@ -82,24 +84,44 @@ def _refresh_task_intent_claims(intent_store: WorkIntentStore, task: Any) -> Non
 
 
 def _promote_due_tasks(huey: SqliteHuey) -> None:
-    """Move due scheduled tasks into Huey's runnable queue."""
-    try:
-        tasks = huey.read_schedule()
-    except Exception:
-        logger.exception("Unable to read Huey scheduled tasks")
-        return
-
-    for task in tasks:
-        try:
-            huey.enqueue(task)
-        except Exception:
-            logger.exception("Unable to promote scheduled task %s", task.id)
+    """Atomically transfer a bounded batch of due tasks to the queue."""
+    storage = cast(Any, huey.storage)
+    timestamp = huey._get_timestamp()
+    promoted_ids: list[int] = []
+    with storage.db(commit=True) as cursor:
+        cursor.execute(
+            """
+            SELECT id, data
+            FROM schedule
+            WHERE queue = ? AND timestamp <= ?
+            ORDER BY timestamp, id
+            LIMIT ?
+            """,
+            (storage.name, to_timestamp(timestamp), SCHEDULE_PROMOTION_BATCH_SIZE),
+        )
+        rows = cursor.fetchall()
+        for schedule_id, raw_data in rows:
+            data = to_bytes(raw_data)
             try:
-                huey.storage.add_to_schedule(
-                    huey.serialize_task(task), huey._get_timestamp()
-                )
+                task = huey.deserialize_task(data)
             except Exception:
-                logger.exception("Unable to restore scheduled task %s", task.id)
+                logger.exception("Unable to deserialize scheduled task %s", schedule_id)
+                continue
+
+            cursor.execute(
+                "INSERT INTO task (queue, data, priority) VALUES (?, ?, ?)",
+                (storage.name, data, task.priority or 0),
+            )
+            promoted_ids.append(int(schedule_id))
+
+        if promoted_ids:
+            placeholders = ", ".join("?" for _ in promoted_ids)
+            cursor.execute(
+                f"DELETE FROM schedule WHERE queue = ? AND id IN ({placeholders})",
+                (storage.name, *promoted_ids),
+            )
+
+    logger.debug("Promoted %d due Huey task(s)", len(promoted_ids))
 
 
 class HueyWorker:
