@@ -7,6 +7,7 @@ Commit 3.2: Verifies the Huey consumer thread lifecycle.
 from __future__ import annotations
 
 import errno
+import logging
 import sqlite3
 import threading
 import time
@@ -65,6 +66,7 @@ class TestHueyWorker:
     def test_promotion_transaction_rolls_back_on_queue_failure(
         self,
         huey_instance: SqliteHuey,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """
         A failed queue insert keeps the due schedule row for recovery.
@@ -87,11 +89,12 @@ class TestHueyWorker:
                 """
             )
 
-        with pytest.raises(sqlite3.IntegrityError, match="queue unavailable"):
+        with caplog.at_level(logging.ERROR):
             _promote_due_tasks(huey_instance)
 
         assert huey_instance.storage.schedule_size() == 1
         assert huey_instance.pending_count() == 0
+        assert "Unable to promote due Huey tasks" in caplog.text
 
     def test_malformed_scheduled_task_remains_recoverable(
         self,

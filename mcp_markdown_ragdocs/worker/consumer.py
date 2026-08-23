@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
 
 from huey.constants import EmptyData
@@ -86,40 +87,50 @@ def _refresh_task_intent_claims(intent_store: WorkIntentStore, task: Any) -> Non
 def _promote_due_tasks(huey: SqliteHuey) -> None:
     """Atomically transfer a bounded batch of due tasks to the queue."""
     storage = cast(Any, huey.storage)
-    timestamp = huey._get_timestamp()
+    timestamp = (
+        datetime.now(timezone.utc).replace(tzinfo=None)
+        if huey.utc
+        else datetime.now()
+    )
     promoted_ids: list[int] = []
-    with storage.db(commit=True) as cursor:
-        cursor.execute(
-            """
-            SELECT id, data
-            FROM schedule
-            WHERE queue = ? AND timestamp <= ?
-            ORDER BY timestamp, id
-            LIMIT ?
-            """,
-            (storage.name, to_timestamp(timestamp), SCHEDULE_PROMOTION_BATCH_SIZE),
-        )
-        rows = cursor.fetchall()
-        for schedule_id, raw_data in rows:
-            data = to_bytes(raw_data)
-            try:
-                task = huey.deserialize_task(data)
-            except Exception:
-                logger.exception("Unable to deserialize scheduled task %s", schedule_id)
-                continue
-
+    try:
+        with storage.db(commit=True) as cursor:
             cursor.execute(
-                "INSERT INTO task (queue, data, priority) VALUES (?, ?, ?)",
-                (storage.name, data, task.priority or 0),
+                """
+                SELECT id, data
+                FROM schedule
+                WHERE queue = ? AND timestamp <= ?
+                ORDER BY timestamp, id
+                LIMIT ?
+                """,
+                (storage.name, to_timestamp(timestamp), SCHEDULE_PROMOTION_BATCH_SIZE),
             )
-            promoted_ids.append(int(schedule_id))
+            rows = cursor.fetchall()
+            for schedule_id, raw_data in rows:
+                data = to_bytes(raw_data)
+                try:
+                    task = huey.deserialize_task(data)
+                except Exception:
+                    logger.exception(
+                        "Unable to deserialize scheduled task %s", schedule_id
+                    )
+                    continue
 
-        if promoted_ids:
-            placeholders = ", ".join("?" for _ in promoted_ids)
-            cursor.execute(
-                f"DELETE FROM schedule WHERE queue = ? AND id IN ({placeholders})",
-                (storage.name, *promoted_ids),
-            )
+                cursor.execute(
+                    "INSERT INTO task (queue, data, priority) VALUES (?, ?, ?)",
+                    (storage.name, data, task.priority or 0),
+                )
+                promoted_ids.append(int(schedule_id))
+
+            if promoted_ids:
+                placeholders = ", ".join("?" for _ in promoted_ids)
+                cursor.execute(
+                    f"DELETE FROM schedule WHERE queue = ? AND id IN ({placeholders})",
+                    (storage.name, *promoted_ids),
+                )
+    except Exception:
+        logger.exception("Unable to promote due Huey tasks")
+        return
 
     logger.debug("Promoted %d due Huey task(s)", len(promoted_ids))
 
