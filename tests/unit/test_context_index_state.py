@@ -11,7 +11,7 @@ Tests cover:
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import FrozenInstanceError, dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -365,6 +365,9 @@ async def test_ensure_fresh_indices_reloads_when_store_version_advances(tmp_path
         def get_document_count(self) -> int:
             return 0
 
+        def is_ready(self) -> bool:
+            return True
+
     manager = _Manager()
     _setattr(ctx, "index_manager", manager)
     _setattr(ctx, "_compute_index_state_version", lambda: 2.0)
@@ -403,6 +406,9 @@ async def test_ensure_fresh_indices_keeps_serving_loaded_state_on_lock_timeout(
 
         def get_document_count(self) -> int:
             return 99
+
+        def is_ready(self) -> bool:
+            return True
 
     manager = _Manager()
     _setattr(ctx, "index_manager", manager)
@@ -446,6 +452,9 @@ async def test_schedule_freshness_refresh_runs_reload_in_background(tmp_path: Pa
         def get_document_count(self) -> int:
             return 0
 
+        def is_ready(self) -> bool:
+            return True
+
     manager = _Manager()
     _setattr(ctx, "index_manager", manager)
     _setattr(ctx, "_compute_index_state_version", lambda: 2.0)
@@ -479,6 +488,9 @@ async def test_schedule_freshness_refresh_deduplicates_in_flight_task(tmp_path: 
     class _Manager:
         def get_document_count(self) -> int:
             return 0
+
+        def is_ready(self) -> bool:
+            return True
 
     manager = _Manager()
     _setattr(ctx, "index_manager", manager)
@@ -1665,6 +1677,36 @@ class TestIsReadyMethods:
         mock_context._index_state = IndexState(status="ready")
 
         assert mock_context.is_ready() is True
+
+    def test_readiness_snapshot_is_immutable_and_reports_public_state(
+        self,
+        mock_context: Any,
+    ):
+        """Verify readiness consumers receive a stable snapshot of current state."""
+        mock_context._index_state = IndexState(status="partial", indexed_count=1, total_count=2)
+
+        snapshot = mock_context.get_readiness_snapshot()
+
+        assert snapshot.index_status == "partial"
+        assert snapshot.indexed_count == 1
+        assert snapshot.total_count == 2
+        with pytest.raises(FrozenInstanceError):
+            snapshot.index_status = "ready"
+
+    @pytest.mark.asyncio
+    async def test_wait_for_readiness_preserves_initialization_error_cause(
+        self,
+        mock_context: Any,
+    ):
+        """Verify readiness failures expose the original initialization error as cause."""
+        initialization_error = ValueError("index load failed")
+        mock_context._init_error = initialization_error
+        mock_context._ready_event.set()
+
+        with pytest.raises(RuntimeError) as raised:
+            await mock_context.wait_for_readiness(timeout=1.0)
+
+        assert raised.value.__cause__ is initialization_error
 
     def test_is_ready_returns_false_when_init_error(self, mock_context: Any):
         """Verify is_ready() returns False when there's an init error."""

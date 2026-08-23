@@ -21,6 +21,7 @@ from searchkernel.api import (
     load_manifest,
     save_manifest,
     reconcile_indices,
+    semantic_tier_from_progress,
 )
 
 from mcp_markdown_ragdocs.config import (
@@ -37,6 +38,7 @@ from mcp_markdown_ragdocs.app.composition import (
 from mcp_markdown_ragdocs.app.bootstrap import (
     BootstrapCoordinator,
     IndexState,
+    ReadinessSnapshot,
 )
 from mcp_markdown_ragdocs.app.bootstrap_manifest import ManifestCoordinator
 from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
@@ -508,6 +510,43 @@ class ApplicationContext:
 
     def mark_ready(self) -> None:
         self._ready_event.set()
+
+    def get_readiness_snapshot(self) -> ReadinessSnapshot:
+        index_state = self._index_state
+        indices_queryable = self.index_manager.is_ready()
+        semantic_tier = semantic_tier_from_progress(
+            index_state.indexed_count,
+            index_state.total_count,
+        )
+        availability = getattr(self, "_availability", None) or SearchAvailability(
+            lexical="available" if indices_queryable else "unavailable",
+            graph="available" if indices_queryable else "unavailable",
+            semantic_coarse=semantic_tier,
+            semantic_fine=semantic_tier,
+        )
+        return ReadinessSnapshot(
+            indexed_count=index_state.indexed_count,
+            total_count=index_state.total_count,
+            index_status=index_state.status,
+            availability=availability,
+            init_error=self._init_error,
+            ready_event_set=self._ready_event.is_set(),
+            is_virgin_startup=self._is_virgin_startup,
+            indices_queryable=indices_queryable,
+        )
+
+    async def wait_for_readiness(self, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
+        except TimeoutError:
+            raise RuntimeError(
+                f"Index initialization timed out after {timeout}s"
+            ) from None
+
+        if self._init_error is not None:
+            raise RuntimeError(
+                f"Index initialization failed: {self._init_error}"
+            ) from self._init_error
 
     def _publish_bootstrap_public_state(
         self,

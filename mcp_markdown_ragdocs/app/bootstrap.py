@@ -15,7 +15,6 @@ from searchkernel.api import (
     can_refresh_loaded_indices,
     can_serve_queries,
     is_fully_ready as runtime_is_fully_ready,
-    semantic_tier_from_progress,
 )
 
 from mcp_markdown_ragdocs.config import Config
@@ -50,6 +49,20 @@ class IndexState:
         return payload
 
 
+@dataclass(frozen=True)
+class ReadinessSnapshot:
+    """Immutable readiness inputs exposed by a bootstrap host."""
+
+    indexed_count: int
+    total_count: int
+    index_status: Literal["uninitialized", "indexing", "partial", "ready", "failed"]
+    availability: SearchAvailability
+    init_error: Exception | None
+    ready_event_set: bool
+    is_virgin_startup: bool
+    indices_queryable: bool
+
+
 class BootstrapHost(Protocol):
     """Context operations used by bootstrap coordination."""
 
@@ -61,16 +74,15 @@ class BootstrapHost(Protocol):
     git_indexing_enabled: bool
     _watcher_lifecycle: WatcherLifecycle
     reconciliation_task: asyncio.Task | None
-    _ready_event: asyncio.Event
-    _init_error: Exception | None
     _index_state: IndexState
-    _availability: SearchAvailability | None
     _freshness_lock: asyncio.Lock
     _freshness_task: asyncio.Task | None
     _loaded_index_state_version: float
     _is_virgin_startup: bool
     _active_model_identity: tuple[str, int] | None
 
+    def get_readiness_snapshot(self) -> ReadinessSnapshot: ...
+    async def wait_for_readiness(self, timeout: float) -> None: ...
     def mark_ready(self) -> None: ...
     def _check_and_rebuild_if_needed(self) -> bool: ...
     def _create_background_index_task(
@@ -204,64 +216,34 @@ class BootstrapCoordinator:
             )
 
     def is_ready(self) -> bool:
-        host = self.host
-        semantic_tier = semantic_tier_from_progress(
-            host._index_state.indexed_count,
-            host._index_state.total_count,
-        )
-        availability = getattr(host, "_availability", None) or SearchAvailability(
-            lexical="available" if host.index_manager.is_ready() else "unavailable",
-            graph="available" if host.index_manager.is_ready() else "unavailable",
-            semantic_coarse=semantic_tier,
-            semantic_fine=semantic_tier,
-        )
+        snapshot = self.host.get_readiness_snapshot()
         return can_serve_queries(
-            init_error=host._init_error,
-            ready_event_set=host._ready_event.is_set(),
-            is_virgin_startup=host._is_virgin_startup,
-            indices_queryable=host.index_manager.is_ready(),
-            availability=availability,
+            init_error=snapshot.init_error,
+            ready_event_set=snapshot.ready_event_set,
+            is_virgin_startup=snapshot.is_virgin_startup,
+            indices_queryable=snapshot.indices_queryable,
+            availability=snapshot.availability,
         )
 
     def is_fully_ready(self) -> bool:
-        host = self.host
-        semantic_tier = semantic_tier_from_progress(
-            host._index_state.indexed_count,
-            host._index_state.total_count,
-        )
-        availability = getattr(host, "_availability", None) or SearchAvailability(
-            lexical="available" if host.index_manager.is_ready() else "unavailable",
-            graph="available" if host.index_manager.is_ready() else "unavailable",
-            semantic_coarse=semantic_tier,
-            semantic_fine=semantic_tier,
-        )
+        snapshot = self.host.get_readiness_snapshot()
         return runtime_is_fully_ready(
-            init_error=host._init_error,
-            ready_event_set=host._ready_event.is_set(),
-            index_status=host._index_state.status,
-            indices_queryable=host.index_manager.is_ready(),
-            availability=availability,
+            init_error=snapshot.init_error,
+            ready_event_set=snapshot.ready_event_set,
+            index_status=snapshot.index_status,
+            indices_queryable=snapshot.indices_queryable,
+            availability=snapshot.availability,
         )
 
     async def ensure_ready(self, timeout: float = 60.0) -> None:
-        host = self.host
-        try:
-            await asyncio.wait_for(host._ready_event.wait(), timeout=timeout)
-        except TimeoutError:
-            raise RuntimeError(
-                f"Index initialization timed out after {timeout}s"
-            ) from None
-
-        if host._init_error is not None:
-            raise RuntimeError(
-                f"Index initialization failed: {host._init_error}"
-            ) from host._init_error
+        await self.host.wait_for_readiness(timeout)
 
     async def ensure_fresh_indices(self) -> None:
         host = self.host
+        snapshot = host.get_readiness_snapshot()
         if not can_refresh_loaded_indices(
-            ready_event_set=host._ready_event.is_set(),
-            init_error=host._init_error,
+            ready_event_set=snapshot.ready_event_set,
+            init_error=snapshot.init_error,
         ):
             return
 
@@ -319,9 +301,10 @@ class BootstrapCoordinator:
 
     def schedule_freshness_refresh(self) -> bool:
         host = self.host
+        snapshot = host.get_readiness_snapshot()
         if not can_refresh_loaded_indices(
-            ready_event_set=host._ready_event.is_set(),
-            init_error=host._init_error,
+            ready_event_set=snapshot.ready_event_set,
+            init_error=snapshot.init_error,
         ):
             return False
 
@@ -359,4 +342,9 @@ def _fully_available() -> SearchAvailability:
     )
 
 
-__all__ = ["BootstrapCoordinator", "BootstrapHost", "IndexState"]
+__all__ = [
+    "BootstrapCoordinator",
+    "BootstrapHost",
+    "IndexState",
+    "ReadinessSnapshot",
+]
