@@ -6,6 +6,7 @@ Commit 3.3: Verifies indexing operations work as Huey tasks.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from searchkernel.indexing.bootstrap_checkpoint import (
 )
 
 import mcp_markdown_ragdocs.indexing.tasks as tasks_mod
+import mcp_markdown_ragdocs.indexing.task_writer as task_writer_mod
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.config import Config, IndexingConfig
@@ -627,7 +629,6 @@ class TestTaskRegistration:
         assert store.release_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
         tasks_mod._run_as_writer(
             lambda: None,
-            owner_token="rebuild-finished",
             busy_result=False,
             runtime=_runtime(),
         )
@@ -636,6 +637,70 @@ class TestTaskRegistration:
         task = huey_instance.dequeue()
         assert task is not None
         assert task.args == ("/repo/.git",)
+
+    def test_writer_release_callback_runs_after_operation_failure(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Preserve an indexing operation failure while still flushing deferred work.
+        """
+        _register_tasks(huey_instance, fake_manager)
+        store = TaskLeaseStore(_queue_path(huey_instance))
+        assert store.acquire_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
+        assert submit_refresh_git_request("/repo/.git").status == "already_pending"
+        assert store.release_writer(INDEX_WRITER_RESOURCE, "rebuild-active")
+
+        def fail() -> None:
+            raise ValueError("operation failed")
+
+        with pytest.raises(ValueError, match="operation failed"):
+            task_writer_mod.run_as_writer(
+                lambda: store,
+                lambda: fail(),
+                busy_result=False,
+                on_released=lambda: tasks_mod._flush_deferred_git_refreshes(_runtime()),
+            )
+
+        assert huey_instance.pending_count() == 1
+
+    def test_writer_release_callback_preserves_cancellation(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Preserve cancellation while running the ordinary release callback.
+        """
+        _register_tasks(huey_instance, fake_manager)
+        store = TaskLeaseStore(_queue_path(huey_instance))
+
+        with pytest.raises(asyncio.CancelledError):
+            task_writer_mod.run_as_writer(
+                lambda: store,
+                lambda: (_ for _ in ()).throw(asyncio.CancelledError()),
+                busy_result=False,
+                on_released=lambda: None,
+            )
+
+    def test_deferred_git_refresh_is_retained_when_submission_raises(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Keep deferred refresh state when canonical submission fails.
+        """
+        runtime = _register_tasks(huey_instance, fake_manager)
+        repo_key = str(Path("/repo/.git").resolve())
+        runtime.git_refresh_pending.add(repo_key)
+        runtime.git_refresh_deferred.add(repo_key)
+
+        def fail_submission(git_dir: str) -> Any:
+            del git_dir
+            raise RuntimeError("queue unavailable")
+
+        runtime.submission.submit_refresh_git_request = fail_submission
+        with pytest.raises(RuntimeError, match="queue unavailable"):
+            tasks_mod._flush_deferred_git_refreshes(runtime)
+
+        assert runtime.git_refresh_pending == {repo_key}
+        assert runtime.git_refresh_deferred == {repo_key}
 
     def test_git_refresh_deferred_state_is_owned_by_each_runtime(
         self,

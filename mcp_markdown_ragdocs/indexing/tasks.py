@@ -591,7 +591,13 @@ def _flush_deferred_git_refreshes(runtime: TaskRuntime) -> None:
         pending.difference_update(deferred)
 
     for git_dir in deferred:
-        submission = submit_refresh(git_dir)
+        try:
+            submission = submit_refresh(git_dir)
+        except Exception:
+            with lock:
+                pending.add(git_dir)
+                deferred_state.add(git_dir)
+            raise
         if submission.should_retry_later or not submission.queue_available:
             with lock:
                 pending.add(git_dir)

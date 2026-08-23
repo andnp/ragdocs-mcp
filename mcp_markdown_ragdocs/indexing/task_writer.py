@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -80,8 +81,14 @@ def run_as_writer(
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=WRITER_HEARTBEAT_INTERVAL_SECONDS)
         released = store.release_writer(INDEX_WRITER_RESOURCE, token)
-        if released and owner_token is not None and on_released is not None:
-            on_released()
+        if released and on_released is not None:
+            operation_error = sys.exc_info()[1]
+            try:
+                on_released()
+            except Exception:
+                if operation_error is None:
+                    raise
+                logger.exception("Writer release callback failed after operation error")
 
 
 def writer_owned_task(
