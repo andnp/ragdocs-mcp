@@ -414,6 +414,30 @@ class ApplicationContext:
                     model_name=embedding_provider.model_name,
                     dim=embedding_provider.dim,
                 )
+                migrate_legacy_persistence = getattr(
+                    self.index_manager.vector,
+                    "migrate_legacy_persistence",
+                    None,
+                )
+                if callable(migrate_legacy_persistence):
+                    try:
+                        migrated = await asyncio.to_thread(
+                            migrate_legacy_persistence,
+                            embedding_provider.model_name,
+                            embedding_provider.dim,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "FAISS legacy persistence migration failed; "
+                            "legacy state remains available",
+                            exc_info=True,
+                        )
+                    else:
+                        if not migrated:
+                            logger.warning(
+                                "FAISS legacy persistence migration was not "
+                                "completed; legacy state remains available"
+                            )
             except asyncio.CancelledError:
                 raise
             except Exception:
