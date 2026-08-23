@@ -8,6 +8,7 @@ repository must still trigger reconciliation.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -28,6 +29,7 @@ class FakeIndexManager:
     """Minimal stub recording whether attribution reconciliation ran."""
 
     ingestor = object()
+    index_path = Path(".")
 
     def __init__(self) -> None:
         self.persist_calls = 0
@@ -53,8 +55,11 @@ class FakeIndexManager:
     def persist(self) -> None:
         self.persist_calls += 1
 
-    def index_record(self, record: Record) -> None:
-        return None
+    def index_record(self, record: Record) -> bool:
+        return True
+
+    def index_records(self, records: Sequence[Record]) -> bool:
+        return True
 
     def reconcile_git_project_attribution(
         self,

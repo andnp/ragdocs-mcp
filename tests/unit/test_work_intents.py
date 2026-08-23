@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
 from huey import SqliteHuey
+from searchkernel.api import Record
 
 from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
@@ -18,6 +20,8 @@ from mcp_markdown_ragdocs.indexing import tasks
 
 
 class _DeterministicIndexManager:
+    index_path = Path(".")
+
     def __init__(self, *, fail_once: bool = False) -> None:
         self.ingestor = object()
         self.fail_once = fail_once
@@ -52,8 +56,13 @@ class _DeterministicIndexManager:
     def persist(self) -> None:
         return
 
-    def index_record(self, record) -> None:
+    def index_record(self, record) -> bool:
         del record
+        return True
+
+    def index_records(self, records: Sequence[Record]) -> bool:
+        del records
+        return True
 
 
 def _register(

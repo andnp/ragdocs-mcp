@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from searchkernel.api import (
     TaskBatchSubmissionResult,
@@ -69,7 +69,7 @@ from mcp_markdown_ragdocs.indexing.reindex import (
 )
 from mcp_markdown_ragdocs.indexing import task_intents
 from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
-from mcp_markdown_ragdocs.indexing.task_runtime import TaskRuntime
+from mcp_markdown_ragdocs.indexing.task_runtime import TaskIndexManager, TaskRuntime
 from mcp_markdown_ragdocs.indexing.task_writer import (
     INDEX_WRITER_RESOURCE,
     WRITER_HEARTBEAT_INTERVAL_SECONDS,  # noqa: F401 - compatibility export
@@ -86,7 +86,6 @@ from mcp_markdown_ragdocs.gdrive.tasks import (
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
-    from searchkernel.api import Record
 
 logger = logging.getLogger(__name__)
 EMBEDDING_CACHE_PRUNE_STATE = "embedding-cache-prune.json"
@@ -103,28 +102,6 @@ __all__ = [
     "TaskBatchSubmissionResult",
     "TaskSubmissionResult",
 ]
-
-
-class IndexManagerLike(Protocol):
-    """Structural type for objects that can index/remove documents."""
-
-    ingestor: Any
-
-    def index_document(self, file_path: str, force: bool = False) -> bool: ...
-    def index_documents(
-        self,
-        file_paths: list[str],
-        force: bool = False,
-        persist: bool = False,
-    ) -> None: ...
-    def remove_document(self, doc_id: str) -> None: ...
-    def remove_documents(
-        self,
-        doc_ids: list[str],
-        persist: bool = False,
-    ) -> None: ...
-    def persist(self) -> None: ...
-    def index_record(self, record: Record) -> Any: ...
 
 
 class _RuntimeTaskSubmission:
@@ -302,7 +279,9 @@ def _batch_result(outcomes: list[bool], *, error: str) -> dict[str, object]:
     }
 
 
-def _failed_file_details(manager: Any, file_path: str) -> list[dict[str, str]]:
+def _failed_file_details(
+    manager: TaskIndexManager, file_path: str
+) -> list[dict[str, str]]:
     get_failed_files = getattr(manager, "get_failed_files", None)
     if not callable(get_failed_files):
         return []
@@ -504,7 +483,7 @@ def _git_refresh_key(git_dir: str | Path) -> str:
     return str(Path(git_dir).resolve())
 
 
-def _embedding_cache_metrics(manager: IndexManagerLike) -> dict[str, int]:
+def _embedding_cache_metrics(manager: TaskIndexManager) -> dict[str, int]:
     cache = getattr(manager, "_embedding_cache", None)
     metrics = getattr(cache, "metrics", None)
     if metrics is None:
@@ -1443,7 +1422,7 @@ def _reindex_model_core(
 
 def register_tasks(
     huey: SqliteHuey,
-    index_manager: IndexManagerLike,
+    index_manager: TaskIndexManager,
     task_lease_store: TaskLeasePort,
     work_intent_store: WorkIntentPort,
     task_backpressure_limit: int = 100,
