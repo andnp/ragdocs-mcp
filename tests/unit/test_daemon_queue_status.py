@@ -51,6 +51,7 @@ def test_get_queue_stats_includes_pending_and_scheduled_task_details(
 
     assert stats.pending_count == 1
     assert stats.scheduled_count == 1
+    assert stats.historical_failure_count == 0
     assert payload["task_counts"] == {
         "pending_task": 1,
         "scheduled_task": 1,
@@ -132,6 +133,7 @@ def test_purge_queue_state_clears_only_selected_state(
     assert payload["pending_count"] == 0
     assert payload["scheduled_count"] == 1
     assert payload["failed_count"] == 1
+    assert payload["historical_failure_count"] == 1
 
 
 def test_get_queue_stats_reports_active_lease_count(tmp_path: Path) -> None:
