@@ -766,6 +766,20 @@ class TestWorkerRuntimeStartup:
             def load(self) -> None:
                 return None
 
+            ingestor = SimpleNamespace(
+                embedding_cache=SimpleNamespace(
+                    metrics=SimpleNamespace(
+                        hits=0,
+                        misses=0,
+                        writes=0,
+                        invalidations=0,
+                    ),
+                    prune_to=lambda _content_hashes: 0,
+                ),
+                encoder_namespace="",
+            )
+            storage = SimpleNamespace(iter_records=lambda **_kwargs: ())
+
         class _FakeWatcher:
             def __init__(self) -> None:
                 self.stop_calls = 0
