@@ -7,10 +7,10 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from searchkernel.api import (
     TaskBatchSubmissionResult,
@@ -69,7 +69,11 @@ from mcp_markdown_ragdocs.indexing.reindex import (
 )
 from mcp_markdown_ragdocs.indexing import task_intents
 from mcp_markdown_ragdocs.indexing.task_registration import register_huey_tasks
-from mcp_markdown_ragdocs.indexing.task_runtime import TaskIndexManager, TaskRuntime
+from mcp_markdown_ragdocs.indexing.task_runtime import (
+    TaskEmbeddingCachePort,
+    TaskIndexManager,
+    TaskRuntime,
+)
 from mcp_markdown_ragdocs.indexing.task_writer import (
     INDEX_WRITER_RESOURCE,
     WRITER_HEARTBEAT_INTERVAL_SECONDS,  # noqa: F401 - compatibility export
@@ -86,6 +90,7 @@ from mcp_markdown_ragdocs.gdrive.tasks import (
 
 if TYPE_CHECKING:
     from huey import SqliteHuey
+    from searchkernel.api import Record
 
 logger = logging.getLogger(__name__)
 EMBEDDING_CACHE_PRUNE_STATE = "embedding-cache-prune.json"
@@ -99,9 +104,41 @@ GIT_REFRESH_BATCH_SIZE = 200
 DOCUMENT_TASK_BATCH_SIZE = 32
 
 __all__ = [
+    "TaskEmbeddingCacheAdapter",
     "TaskBatchSubmissionResult",
     "TaskSubmissionResult",
 ]
+
+
+class _EmbeddingCache(Protocol):
+    def prune_to(self, content_hashes: Iterable[str]) -> int: ...
+
+
+class TaskEmbeddingCacheAdapter(TaskEmbeddingCachePort):
+    """Adapt the concrete embedding cache and record store for task use."""
+
+    def __init__(
+        self,
+        cache: _EmbeddingCache,
+        iter_records: Callable[..., Iterable[Record]],
+        encoder_namespace: str,
+        metrics: Callable[[], Mapping[str, int]],
+    ) -> None:
+        self._cache = cache
+        self._iter_records = iter_records
+        self._encoder_namespace = encoder_namespace
+        self._metrics = metrics
+
+    def prune_to_active_records(self) -> int:
+        records = self._iter_records(status="active")
+        live_hashes = (
+            semantic_input_for_record(record, self._encoder_namespace).content_hash
+            for record in records
+        )
+        return self._cache.prune_to(live_hashes)
+
+    def metrics(self) -> Mapping[str, int]:
+        return self._metrics()
 
 
 class _RuntimeTaskSubmission:
@@ -337,8 +374,7 @@ def _prune_embedding_cache_after_bootstrap(
 ) -> None:
     """Prune cached vectors only after the bootstrap checkpoint is complete."""
     bootstrap_index_path = runtime.bootstrap_index_path
-    manager = runtime.index_manager
-    if bootstrap_index_path is None or manager is None:
+    if bootstrap_index_path is None or runtime.index_manager is None:
         return
     checkpoint = load_bootstrap_checkpoint(bootstrap_index_path)
     if checkpoint is None or not checkpoint.complete:
@@ -356,26 +392,13 @@ def _prune_embedding_cache_after_bootstrap(
     ):
         return
 
-    ingestor = getattr(manager, "ingestor", None)
-    storage = getattr(manager, "storage", None)
-    cache = getattr(ingestor, "embedding_cache", None)
-    prune_to = getattr(cache, "prune_to", None)
-    iter_records = getattr(storage, "iter_records", None)
-    if not callable(prune_to) or not callable(iter_records):
+    cache = runtime.embedding_cache
+    if cache is None:
         logger.debug("Embedding-cache pruning deferred: public cache API unavailable")
         return
 
-    namespace = getattr(ingestor, "encoder_namespace", "") or ""
     try:
-        active_records = iter_records(status="active")
-        if not isinstance(active_records, Iterable):
-            logger.debug("Embedding-cache pruning deferred: records unavailable")
-            return
-        live_hashes = (
-            semantic_input_for_record(record, namespace).content_hash
-            for record in active_records
-        )
-        pruned = prune_to(live_hashes)
+        pruned = cache.prune_to_active_records()
     except Exception:
         logger.warning("Embedding-cache pruning deferred after bootstrap", exc_info=True)
         return
@@ -483,23 +506,12 @@ def _git_refresh_key(git_dir: str | Path) -> str:
     return str(Path(git_dir).resolve())
 
 
-def _embedding_cache_metrics(manager: TaskIndexManager) -> dict[str, int]:
-    cache = getattr(manager, "_embedding_cache", None)
-    metrics = getattr(cache, "metrics", None)
-    if metrics is None:
+def _embedding_cache_metrics(
+    cache: TaskEmbeddingCachePort | None,
+) -> dict[str, int]:
+    if cache is None:
         return {}
-    names = {
-        "hits": "embedding_cache_hits",
-        "misses": "embedding_cache_misses",
-        "writes": "embedding_writes",
-        "invalidations": "embedding_invalidations",
-    }
-    return {
-        output_name: int(value)
-        for metric_name, output_name in names.items()
-        if isinstance(value := getattr(metrics, metric_name, None), int)
-        and not isinstance(value, bool)
-    }
+    return dict(cache.metrics())
 
 
 def _refresh_progress_rate(processed: int, started_at: datetime | None) -> float:
@@ -1122,7 +1134,7 @@ def _refresh_git_repository_core(
             )
 
         latest_cursor = cursor
-        initial_embedding_metrics = _embedding_cache_metrics(manager)
+        initial_embedding_metrics = _embedding_cache_metrics(runtime.embedding_cache)
 
         async def _ingest() -> None:
             nonlocal discovered, discovered_chunks, indexed, indexed_chunks, latest_cursor
@@ -1163,7 +1175,7 @@ def _refresh_git_repository_core(
                 discovered = len(discovered_commit_ids)
                 if receipt.checkpoint is not None:
                     latest_cursor = max(latest_cursor or 0, int(receipt.checkpoint))
-                current_embedding_metrics = _embedding_cache_metrics(manager)
+                current_embedding_metrics = _embedding_cache_metrics(runtime.embedding_cache)
                 metric_deltas = {
                     key: value - initial_embedding_metrics.get(key, 0)
                     for key, value in current_embedding_metrics.items()
@@ -1213,7 +1225,7 @@ def _refresh_git_repository_core(
             # Persist the head observed before ingestion. A commit created
             # during the task must remain visible to the next poll.
             save_head(bootstrap_index_path, git_dir_path, refresh_head)
-        final_embedding_metrics = _embedding_cache_metrics(manager)
+        final_embedding_metrics = _embedding_cache_metrics(runtime.embedding_cache)
         metric_deltas = {
             key: value - initial_embedding_metrics.get(key, 0)
             for key, value in final_embedding_metrics.items()
@@ -1240,7 +1252,7 @@ def _refresh_git_repository_core(
         )
         return True
     except Exception as error:
-        final_embedding_metrics = _embedding_cache_metrics(manager)
+        final_embedding_metrics = _embedding_cache_metrics(runtime.embedding_cache)
         metric_deltas = {
             key: value - initial_embedding_metrics.get(key, 0)
             for key, value in final_embedding_metrics.items()
@@ -1437,6 +1449,7 @@ def register_tasks(
     schedule_vocabulary_catch_up: Callable[[], bool] | None = None,
     embedding_cache_prune_cooldown_seconds: int = 86400,
     time_provider: Callable[[], float] = time.time,
+    embedding_cache: TaskEmbeddingCachePort | None = None,
     *,
     config: Config,
 ) -> TaskRuntime:
@@ -1452,6 +1465,7 @@ def register_tasks(
         submission=submission,
         config=config,
         index_manager=index_manager,
+        embedding_cache=embedding_cache,
         task_backpressure_limit=max(1, task_backpressure_limit),
         embedding_cache_prune_cooldown_seconds=embedding_cache_prune_cooldown_seconds,
         time_provider=time_provider,

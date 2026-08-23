@@ -192,6 +192,7 @@ async def _run_worker_forever_async(
     from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
     from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
     from mcp_markdown_ragdocs.indexing.tasks import (
+        TaskEmbeddingCacheAdapter,
         index_document_retry_policy,
         register_tasks,
     )
@@ -235,6 +236,17 @@ async def _run_worker_forever_async(
         bootstrap_index_path=ctx.index_path,
         bootstrap_documents_roots=ctx.documents_roots,
         schedule_vocabulary_catch_up=_schedule_worker_vocabulary_catch_up,
+        embedding_cache=TaskEmbeddingCacheAdapter(
+            indexing.ingestor.embedding_cache,
+            indexing.storage.iter_records,
+            indexing.ingestor.encoder_namespace or "",
+            lambda: {
+                "embedding_cache_hits": indexing.ingestor.embedding_cache.metrics.hits,
+                "embedding_cache_misses": indexing.ingestor.embedding_cache.metrics.misses,
+                "embedding_writes": indexing.ingestor.embedding_cache.metrics.writes,
+                "embedding_invalidations": indexing.ingestor.embedding_cache.metrics.invalidations,
+            },
+        ),
     )
     ctx.attach_task_runtime(task_runtime)
     worker = HueyWorker(huey)

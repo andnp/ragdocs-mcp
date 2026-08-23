@@ -48,6 +48,7 @@ from mcp_markdown_ragdocs.indexing.tasks import (
     GIT_REFRESH_TASK_PRIORITY,
     INDEX_WRITER_RESOURCE,
     RECORD_BATCH_TASK_PRIORITY,
+    TaskEmbeddingCacheAdapter,
     WRITER_BUSY_RESULT,
     enqueue_index as _enqueue_index,
     enqueue_index_batch as _enqueue_index_batch,
@@ -182,11 +183,29 @@ class FakeIndexManager:
         return self.record_batch_result
 
 
+class FailingEmbeddingCacheMetrics:
+    hits = 0
+    misses = 0
+    writes = 0
+    invalidations = 0
+
+
 class FailingEmbeddingCache:
     """Cache fake that exposes a failed public prune operation."""
 
+    metrics = FailingEmbeddingCacheMetrics()
+
     def prune_to(self, content_hashes: object) -> int:
         raise RuntimeError("cache unavailable")
+
+
+def _cache_metrics(cache: SQLiteEmbeddingCache) -> dict[str, int]:
+    return {
+        "embedding_cache_hits": cache.metrics.hits,
+        "embedding_cache_misses": cache.metrics.misses,
+        "embedding_writes": cache.metrics.writes,
+        "embedding_invalidations": cache.metrics.invalidations,
+    }
 
 
 @pytest.fixture()
@@ -1550,6 +1569,9 @@ class TestTaskExecution:
             fake_manager,
             bootstrap_index_path=tmp_path,
             bootstrap_documents_roots=[docs_root],
+            embedding_cache=TaskEmbeddingCacheAdapter(
+                cache, lambda **_: [record], "test-model", lambda: _cache_metrics(cache)
+            ),
         )
         assert enqueue_index_batch([str(file_path)]) == 1
         task = huey_instance.dequeue()
@@ -1624,6 +1646,9 @@ class TestTaskExecution:
             fake_manager,
             bootstrap_index_path=tmp_path,
             bootstrap_documents_roots=[docs_root],
+            embedding_cache=TaskEmbeddingCacheAdapter(
+                cache, lambda **_: [record], "", lambda: _cache_metrics(cache)
+            ),
         )
         assert enqueue_index(str(file_path)) is True
         task = huey_instance.dequeue()
@@ -1674,6 +1699,9 @@ class TestTaskExecution:
             fake_manager,
             bootstrap_index_path=tmp_path,
             bootstrap_documents_roots=[docs_root],
+            embedding_cache=TaskEmbeddingCacheAdapter(
+                FailingEmbeddingCache(), lambda **_: [], "test-model", lambda: {}
+            ),
         )
         assert enqueue_index(str(file_path)) is True
         task = huey_instance.dequeue()
@@ -1725,6 +1753,9 @@ class TestTaskExecution:
         runtime = SimpleNamespace(
             bootstrap_index_path=tmp_path,
             index_manager=fake_manager,
+            embedding_cache=TaskEmbeddingCacheAdapter(
+                cache, lambda **_: [record], "test-model", lambda: _cache_metrics(cache)
+            ),
             embedding_cache_prune_cooldown_seconds=86400,
             time_provider=lambda: clock[0],
         )
@@ -1787,6 +1818,9 @@ class TestTaskExecution:
         runtime = SimpleNamespace(
             bootstrap_index_path=tmp_path,
             index_manager=fake_manager,
+            embedding_cache=TaskEmbeddingCacheAdapter(
+                FailingEmbeddingCache(), lambda **_: [], "test-model", lambda: {}
+            ),
             embedding_cache_prune_cooldown_seconds=86400,
             time_provider=lambda: 100.0,
         )

@@ -59,6 +59,14 @@ class TaskIndexManager(Protocol):
     def persist(self) -> None: ...
 
 
+class TaskEmbeddingCachePort(Protocol):
+    """Embedding-cache maintenance exposed to indexing tasks."""
+
+    def prune_to_active_records(self) -> int: ...
+
+    def metrics(self) -> Mapping[str, int]: ...
+
+
 @dataclass
 class TaskRuntime:
     """Own one queue, its submission port, and registered task handles."""
@@ -69,6 +77,7 @@ class TaskRuntime:
     gdrive_task_handles: Mapping[str, object] = field(default_factory=dict)
     config: Config = field(kw_only=True)
     index_manager: TaskIndexManager | None = field(default=None, repr=False)
+    embedding_cache: TaskEmbeddingCachePort | None = field(default=None, repr=False)
     task_backpressure_limit: int = field(default=100, repr=False)
     embedding_cache_prune_cooldown_seconds: int = field(default=86400, repr=False)
     time_provider: Callable[[], float] = field(default=time.time, repr=False)
