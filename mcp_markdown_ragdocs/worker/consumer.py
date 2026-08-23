@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
 
 from huey.constants import EmptyData
-from huey.storage import to_bytes, to_timestamp
 from huey.utils import Error
 
 from mcp_markdown_ragdocs.coordination.task_leases import (
@@ -103,11 +102,11 @@ def _promote_due_tasks(huey: SqliteHuey) -> None:
                 ORDER BY timestamp, id
                 LIMIT ?
                 """,
-                (storage.name, to_timestamp(timestamp), SCHEDULE_PROMOTION_BATCH_SIZE),
+                (storage.name, timestamp.timestamp(), SCHEDULE_PROMOTION_BATCH_SIZE),
             )
             rows = cursor.fetchall()
             for schedule_id, raw_data in rows:
-                data = to_bytes(raw_data)
+                data = bytes(raw_data)
                 try:
                     task = huey.deserialize_task(data)
                 except Exception:
