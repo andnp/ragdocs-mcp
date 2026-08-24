@@ -23,12 +23,12 @@ The application has one search use case and several transport adapters:
 ```text
                          ┌──────────────────────────┐
                          │ ApplicationSearchUseCase  │
-                         │ app/search.py             │
+                         │ mcp_markdown_ragdocs/app/search.py │
                          └────────────┬─────────────┘
                                       │
                          ┌────────────▼─────────────┐
                          │ CanonicalSearchAdapter    │
-                         │ search.py                 │
+                         │ mcp_markdown_ragdocs/search.py     │
                          └────────────┬─────────────┘
                                       │ public searchkernel APIs
                          ┌────────────▼─────────────┐
@@ -70,8 +70,9 @@ for operating gates.
 
 ## Composition root
 
-`mcp_markdown_ragdocs/app/composition.py`, `context.py`, and
-`indexing/record_manager.py` compose the application:
+`mcp_markdown_ragdocs/app/composition.py`,
+`mcp_markdown_ragdocs/context.py`, and
+`mcp_markdown_ragdocs/indexing/record_manager.py` compose the application:
 
 1. Load and validate configuration.
 2. Resolve document roots and the active project context.
@@ -107,11 +108,11 @@ routes must not reimplement ranking, filtering, or result mapping.
 
 ### Search boundaries
 
-- `app/search.py`: application query request, policy, and result mapping.
-- `search.py`: compatibility adapter for the application-facing query tuple.
-- `mcp/tools/document_tools.py`: MCP request and response formatting.
-- `daemon/request_router.py`: daemon request routing and admin operations.
-- `server.py`: HTTP adapter for the legacy in-process HTTP surface.
+- `mcp_markdown_ragdocs/app/search.py`: application query request, policy, and result mapping.
+- `mcp_markdown_ragdocs/search.py`: compatibility adapter for the application-facing query tuple.
+- `mcp_markdown_ragdocs/mcp/tools/document_tools.py`: MCP request and response formatting.
+- `mcp_markdown_ragdocs/daemon/request_router.py`: daemon request routing and admin operations.
+- `mcp_markdown_ragdocs/server.py`: HTTP adapter for the legacy in-process HTTP surface.
 - `searchkernel.api`, `searchkernel.domain`, and `searchkernel.ports`:
   public integration boundary for the external search library.
 
@@ -120,9 +121,11 @@ guard in `scripts/check_public_searchkernel_imports.py` and its corresponding
 unit test enforce this boundary.
 
 The application-facing transport boundary is enforced separately by
-`import-linter` contracts in `pyproject.toml`. `app/search.py` may not import
+`import-linter` contracts in `pyproject.toml`.
+`mcp_markdown_ragdocs/app/search.py` may not import
 CLI, daemon, MCP, HTTP server, or worker packages directly or indirectly.
-`app/services.py` has the same direct-import restriction; its existing
+`mcp_markdown_ragdocs/app/services.py` has the same direct-import restriction;
+its existing
 `TYPE_CHECKING` annotation for `ApplicationContext` is intentionally not
 treated as a transitive runtime dependency because the context composes the
 daemon and task layers. These contracts do not restrict current domain,
@@ -134,11 +137,11 @@ The runtime-facing ports are deliberately small and structural:
 
 | Port | Owner | Responsibility |
 | --- | --- | --- |
-| `SearchKernelBoundary` | `app/search.py` | Execute canonical record search |
-| `IndexingService` | `app/services.py` | Submit or perform indexing work |
-| `LifecycleService` | `app/services.py` | Start, stop, and await readiness |
-| daemon transport protocols | `daemon/transport.py` | Move request payloads across local IPC |
-| router context protocols | `daemon/request_router.py` | Supply query, queue, and admin dependencies |
+| `SearchKernelBoundary` | `mcp_markdown_ragdocs/app/search.py` | Execute canonical record search |
+| `IndexingService` | `mcp_markdown_ragdocs/app/services.py` | Submit or perform indexing work |
+| `LifecycleService` | `mcp_markdown_ragdocs/app/services.py` | Start, stop, and await readiness |
+| daemon transport protocols | `mcp_markdown_ragdocs/daemon/transport.py` | Move request payloads across local IPC |
+| router context protocols | `mcp_markdown_ragdocs/daemon/request_router.py` | Supply query, queue, and admin dependencies |
 
 Lifecycle and task coordination ports are also enforced at their owned
 boundary: `ContextIndexingPort`, `LifecycleContextPort`,
@@ -150,7 +153,8 @@ consume those ports and must not import or construct the concrete SQLite
 application roots.
 
 `PipelineSearchBoundary` is the compatibility adapter from the installed
-searchkernel pipeline to `SearchKernelBoundary`. `CanonicalSearchAdapter`
+searchkernel pipeline to `SearchKernelBoundary`. The
+`mcp_markdown_ragdocs/search.py` `CanonicalSearchAdapter`
 retains the historical `query()` tuple for in-repo callers, but delegates to
 `ApplicationSearchUseCase`; it is not a second search implementation.
 `IndexManagerLike` and the task protocols are similarly structural seams for
@@ -258,30 +262,34 @@ second indexing path.
 
 ### MCP
 
-`mcp/server.py` is a daemon-backed stdio client in the normal mode.
-`mcp/handlers.py` owns readiness and structured cold-start responses, while
-`mcp/tools/` maps tool arguments to the shared query use case.
+`mcp_markdown_ragdocs/mcp/server.py` is a daemon-backed stdio client in the
+normal mode. `mcp_markdown_ragdocs/mcp/handlers.py` owns readiness and
+structured cold-start responses, while `mcp_markdown_ragdocs/mcp/tools/`
+maps tool arguments to the shared query use case.
 
 ### CLI
 
-`cli.py` provides thin commands for queries, git history, daemon management,
-queue inspection, indexing, and reindex administration. Daemon-backed
+`mcp_markdown_ragdocs/cli.py` provides thin commands for queries, git history,
+daemon management, queue inspection, indexing, and reindex administration.
+Daemon-backed
 commands use the local transport and receive the same payloads as other
 administrative clients.
 
 ### HTTP
 
-`server.py` exposes the optional FastAPI adapter. It composes an
+`mcp_markdown_ragdocs/server.py` exposes the optional FastAPI adapter. It composes an
 `ApplicationContext` directly and delegates query behavior to the same
 canonical adapter and use case used by daemon-backed paths.
 
 ## Lifecycle and control plane
 
-`lifecycle.py` coordinates startup readiness, shutdown, and failure state.
-`context.py` owns application resources and index state. The daemon modules
+`mcp_markdown_ragdocs/lifecycle.py` coordinates startup readiness, shutdown,
+and failure state. `mcp_markdown_ragdocs/context.py` owns application resources
+and index state. The daemon modules
 own local IPC, metadata, locking, health, and request routing.
 
-The worker lifecycle in `worker/process.py` is intentionally narrow:
+The worker lifecycle in `mcp_markdown_ragdocs/worker/process.py` is intentionally
+narrow:
 
 - identify the expected daemon parent;
 - start and stop the worker subprocess;
@@ -289,7 +297,8 @@ The worker lifecycle in `worker/process.py` is intentionally narrow:
 - terminate stale workers for the same runtime;
 - remove stale status after shutdown.
 
-Administrative endpoints are routed by `daemon/request_router.py`. They may
+Administrative endpoints are routed by
+`mcp_markdown_ragdocs/daemon/request_router.py`. They may
 inspect queue, rebuild, index, or reindex state, but they do not bypass the
 application services for normal indexing or search.
 
@@ -309,9 +318,9 @@ collapsed into one ambiguous health flag.
 ## Reindexing and persistence
 
 Durable embedding-model migration is an application orchestration concern.
-`indexing/reindex.py` coordinates model namespaces, checkpoints, validation,
-activation, contract, and rollback through the public searchkernel reindex
-contracts. The manifest and runtime status file expose progress to admin
+`mcp_markdown_ragdocs/indexing/reindex.py` coordinates model namespaces,
+checkpoints, validation, activation, contract, and rollback through the public
+searchkernel reindex contracts. The manifest and runtime status file expose progress to admin
 clients.
 
 This is distinct from the normal local record kernel startup path. A model
