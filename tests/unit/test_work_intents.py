@@ -191,6 +191,57 @@ def test_claim_release_reopens_intent_but_active_claim_is_exclusive(
     assert reopened[0].attempt == 2
 
 
+def test_work_intent_payload_survives_store_restart(tmp_path: Path) -> None:
+    """
+    Preserve the durable payload and identity when a new store opens SQLite.
+    """
+    database = tmp_path / "queue.db"
+    payload = {
+        "file_path": "docs/guide.md",
+        "metadata": {"source": "filesystem", "version": 2},
+    }
+
+    submitted = WorkIntentStore(database).submit(
+        "index_document",
+        "docs/guide.md",
+        payload,
+        now=10,
+    )
+
+    reopened = WorkIntentStore(database).find("index_document", "docs/guide.md")
+
+    assert reopened is not None
+    assert reopened.intent_id == submitted.intent_id
+    assert reopened.payload == payload
+    assert reopened.state == PENDING
+
+
+def test_reclaimed_intent_rejects_every_stale_claim_mutation(
+    tmp_path: Path,
+) -> None:
+    """
+    Prevent an old claimant from starting, completing, failing, or releasing.
+    """
+    store = WorkIntentStore(tmp_path / "queue.db", claim_timeout_seconds=10)
+    intent = store.submit("index_document", "doc.md", {"file_path": "doc.md"}, now=1)
+    original = store.claim(intent.intent_id, now=2)
+    assert original is not None
+
+    reclaimed = store.reclaim_stale_claim(intent.intent_id, original[1], now=20)
+    assert reclaimed is not None
+    fresh_token = reclaimed[1]
+
+    assert store.start(intent.intent_id, original[1]) is False
+    assert store.succeed(intent.intent_id, original[1], now=21) is False
+    assert store.fail(intent.intent_id, original[1], "stale", now=21) is False
+    assert store.release(intent.intent_id, original[1], now=21) is False
+
+    current = store.get(intent.intent_id)
+    assert current is not None
+    assert current.state == "claimed"
+    assert current.claim_token == fresh_token
+
+
 def test_release_accepts_running_claim_without_incrementing_failures(
     tmp_path: Path,
 ) -> None:

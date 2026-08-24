@@ -140,6 +140,92 @@ class TestTaskLeases:
         assert lease is not None
         assert lease.state == "completed"
 
+    def test_reclaimed_task_rejects_stale_owner_mutations(self, tmp_path: Path) -> None:
+        """
+        Prevent an expired worker from mutating a task after takeover.
+        """
+        store = TaskLeaseStore(tmp_path / "queue.db", timeout_seconds=10)
+        assert store.claim(
+            "task-1",
+            task_name="index_document",
+            owner_token="owner-a",
+            payload=b"payload",
+            now=100.0,
+        )
+
+        reclaimed = store.reclaim_expired(now=111.0)
+        assert [lease.task_id for lease in reclaimed] == ["task-1"]
+        assert store.claim(
+            "task-1",
+            task_name="index_document",
+            owner_token="owner-b",
+            payload=b"payload",
+            now=112.0,
+        )
+
+        assert not store.heartbeat("task-1", owner_token="owner-a", now=113.0)
+        assert not store.complete("task-1", owner_token="owner-a", now=113.0)
+        assert not store.fail("task-1", owner_token="owner-a", error="stale", now=113.0)
+
+        current = store.get("task-1")
+        assert current is not None
+        assert current.state == "active"
+        assert current.owner_token == "owner-b"
+
+    def test_failed_task_lease_preserves_error_and_payload(self, tmp_path: Path) -> None:
+        """
+        Record a terminal failure without losing the task replay payload.
+        """
+        store = TaskLeaseStore(tmp_path / "queue.db")
+        assert store.claim(
+            "task-1",
+            task_name="remove_document",
+            owner_token="owner-a",
+            payload=b"serialized-task",
+            now=100.0,
+        )
+
+        assert not store.fail(
+            "task-1",
+            owner_token="owner-b",
+            error="wrong owner",
+            now=101.0,
+        )
+        assert store.fail(
+            "task-1",
+            owner_token="owner-a",
+            error="handler failed",
+            now=102.0,
+        )
+
+        failed = store.get("task-1")
+        assert failed is not None
+        assert failed.state == "failed"
+        assert failed.error == "handler failed"
+        assert failed.payload == b"serialized-task"
+        assert failed.task_name == "remove_document"
+
+    def test_task_and_writer_leases_are_independent(self, tmp_path: Path) -> None:
+        """
+        Keep task execution ownership separate from the shared writer lease.
+        """
+        store = TaskLeaseStore(tmp_path / "queue.db", timeout_seconds=10)
+        assert store.claim(
+            "task-1",
+            task_name="index_document",
+            owner_token="worker-a",
+            payload=b"payload",
+            now=100.0,
+        )
+        assert store.acquire_writer("index", "writer-a", now=100.0)
+
+        assert store.complete("task-1", owner_token="worker-a", now=101.0)
+        assert store.writer_owner("index", now=101.0) == "writer-a"
+        assert store.release_writer("index", "writer-a")
+        completed = store.get("task-1")
+        assert completed is not None
+        assert completed.state == "completed"
+
     def test_writer_lease_is_exclusive_and_expires(self, tmp_path: Path) -> None:
         store = TaskLeaseStore(tmp_path / "queue.db", timeout_seconds=10)
         resource = "rebuild-writer"
