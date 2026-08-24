@@ -6,6 +6,16 @@ public record, port, and factory APIs. Older snapshot-based and
 `VectorIndex`-based designs are historical and are not implementation
 guidance.
 
+## Documentation authority
+
+This document is the current architecture source of truth. `README.md` is
+authoritative for user-facing behavior, `AGENTS.md` for repository navigation
+and agent guidance, and `pyproject.toml` for package and import contracts.
+Active specifications and plans are authoritative only within their stated
+scope and status. Completed, superseded, or historical records are retained
+for context; they describe the design at the time of writing and must not be
+used as current implementation guidance.
+
 ## Runtime composition
 
 The application has one search use case and several transport adapters:
