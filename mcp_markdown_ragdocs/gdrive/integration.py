@@ -7,13 +7,13 @@ from pathlib import Path
 
 from searchkernel.api import ContentSource, Record, SemanticRecordIngestor
 
-from mcp_markdown_ragdocs.gdrive.adapter import GDriveStateRepository
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
 from mcp_markdown_ragdocs.gdrive.replacement import (
-    GDriveReplacementJournal,
     REPLACEMENT_JOURNAL_FILENAME,
+    GDriveReplacementJournal,
 )
 from mcp_markdown_ragdocs.gdrive.replacement_policy import GDriveReplacementPolicy
+from mcp_markdown_ragdocs.gdrive.sqlite_adapter import GDriveStateRepository
 from mcp_markdown_ragdocs.indexing.record_ports import RecordStorage, SourceMapStore
 
 

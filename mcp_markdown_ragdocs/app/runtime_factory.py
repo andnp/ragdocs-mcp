@@ -74,7 +74,7 @@ def build_gdrive_source(
     from mcp_markdown_ragdocs.gdrive.extraction import ExtractionLimits
     from mcp_markdown_ragdocs.gdrive.gate import DriveRequestGate
     from mcp_markdown_ragdocs.gdrive.session import AuthorizedUserSession
-    from mcp_markdown_ragdocs.gdrive.adapter import GDriveStateRepository
+    from mcp_markdown_ragdocs.gdrive.sqlite_adapter import GDriveStateRepository
 
     drive_config = config.gdrive
     session = AuthorizedUserSession(
