@@ -7,8 +7,9 @@ import logging
 from pathlib import Path
 
 from mcp.types import TextContent, Tool
+from searchkernel.api import normalize_path
 
-from mcp_markdown_ragdocs.app.search import SearchQuery
+from mcp_markdown_ragdocs.app.search_request import build_search_query
 from mcp_markdown_ragdocs.mcp.handlers import (
     MAX_TOP_N,
     MIN_TOP_N,
@@ -20,24 +21,23 @@ from mcp_markdown_ragdocs.mcp.tools.document_request import (
     normalize_query_documents_request,
 )
 from mcp_markdown_ragdocs.mcp.tools.document_response import (
+    build_compact_document_results_response,
+    build_compact_error_response,
     build_query_documents_diagnostics,
     build_query_documents_response_envelope,
     build_query_documents_status_envelope,
     build_query_documents_validation_error,
-    build_compact_document_results_response,
-    build_compact_error_response,
 )
 from mcp_markdown_ragdocs.mcp.validation import (
     ValidationError,
-    validate_integer_range,
     validate_boolean,
+    validate_integer_range,
     validate_optional_string,
     validate_query,
     validate_string_list,
     validate_timestamp,
 )
 from mcp_markdown_ragdocs.models import ChunkResult
-from searchkernel.api import normalize_path
 
 logger = logging.getLogger(__name__)
 
@@ -256,43 +256,22 @@ async def _query_documents_impl(
             None,
         )
 
-    search_use_case = getattr(ctx, "search_use_case", None)
-    if search_use_case is None:
-        search_use_case = getattr(ctx.orchestrator, "search_use_case", None)
-    if search_use_case is not None:
-        execution = await search_use_case.execute(
-            SearchQuery(
-                query=request.query,
-                top_n=request.top_n,
-                project_filter=tuple(request.project_filter),
-                project_context=project_context,
-                excluded_files=frozenset(excluded_files or ()),
-                min_score=request.min_score,
-                similarity_threshold=request.similarity_threshold,
-                max_chunks_per_doc=request.max_chunks_per_doc,
-            )
-        )
-        results = execution.results
-        compression_stats = execution.compression_stats
-        strategy_stats = execution.strategy_stats
-        query_execution_stats = execution.query_execution_stats
-    else:
-        top_k = max(20, request.top_n * 4)
-        if request.project_filter:
-            top_k = max(top_k, request.top_n * 10)
-        results, compression_stats, strategy_stats = await ctx.orchestrator.query(
+    execution = await ctx.search_use_case.execute(
+        build_search_query(
             request.query,
-            top_k=top_k,
-            top_n=request.top_n,
-            pipeline_config=None,
-            excluded_files=excluded_files,
+            request.top_n,
             project_filter=request.project_filter,
             project_context=project_context,
+            excluded_files=excluded_files or (),
             min_score=request.min_score,
             similarity_threshold=request.similarity_threshold,
             max_chunks_per_doc=request.max_chunks_per_doc,
         )
-        query_execution_stats = getattr(ctx.orchestrator, "last_query_execution_stats", {})
+    )
+    results = execution.results
+    compression_stats = execution.compression_stats
+    strategy_stats = execution.strategy_stats
+    query_execution_stats = execution.query_execution_stats
     results = [
         result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
         for result in results
@@ -372,37 +351,17 @@ async def handle_search_with_hypothesis(
             for docs_root in docs_roots
         }
 
-    search_use_case = getattr(ctx, "search_use_case", None)
-    if search_use_case is None:
-        search_use_case = getattr(ctx.orchestrator, "search_use_case", None)
-    if search_use_case is not None:
-        execution = await search_use_case.execute(
-            SearchQuery(
-                query=hypothesis,
-                top_n=top_n,
-                project_filter=tuple(project_filter),
-                project_context=project_context,
-                excluded_files=frozenset(excluded_files or ()),
-                retrieval_mode="semantic_only",
-            )
-        )
-        results = execution.results
-    else:
-        top_k = max(20, top_n * 4)
-        if project_filter:
-            top_k = max(top_k, top_n * 10)
-        results, _, _ = await ctx.orchestrator.query_with_hypothesis(
+    execution = await ctx.search_use_case.execute(
+        build_search_query(
             hypothesis,
-            top_k=top_k,
-            top_n=top_n,
-            excluded_files=excluded_files,
+            top_n,
             project_filter=project_filter,
             project_context=project_context,
+            excluded_files=excluded_files or (),
+            retrieval_mode="semantic_only",
         )
-        results = [
-            result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
-            for result in results
-        ]
+    )
+    results = execution.results
 
     return [
         TextContent(type="text", text=build_compact_document_results_response(results))
@@ -457,18 +416,17 @@ async def handle_search_git_history(
     # Over-fetch: a downstream files_glob/timestamp filter narrows the pool,
     # and each commit may span multiple chunks under source_filter=["git_commit"].
     overfetch_multiplier = 10 if (files_glob or after_timestamp or before_timestamp) else 4
-    results, _, _ = await ctx.orchestrator.query(
-        query,
-        top_k=max(20, top_n * overfetch_multiplier),
-        top_n=top_n * overfetch_multiplier,
-        project_filter=project_filter,
-        project_context=project_context,
-        source_filter=["git_commit"],
+    execution = await ctx.search_use_case.execute(
+        build_search_query(
+            query,
+            top_n * overfetch_multiplier,
+            top_k=max(20, top_n * overfetch_multiplier),
+            project_filter=project_filter,
+            project_context=project_context,
+            source_filter=("git_commit",),
+        )
     )
-    results = [
-        result if isinstance(result, ChunkResult) else ChunkResult.from_domain(result)
-        for result in results
-    ]
+    results = execution.results
 
     commits = _filter_commit_results(results, files_glob, after_timestamp, before_timestamp)[
         :top_n

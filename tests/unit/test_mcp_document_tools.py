@@ -106,32 +106,19 @@ async def test_query_documents_preserves_validation_errors_during_cold_start() -
 async def test_query_documents_runs_immediately_when_indices_are_queryable() -> None:
     captured: dict[str, object] = {}
 
-    class _FakeOrchestrator:
+    class _FakeSearchUseCase:
         documents_path = Path("/docs")
 
-        async def query(
-            self,
-            query: str,
-            *,
-            top_k: int,
-            top_n: int,
-            pipeline_config,
-            excluded_files,
-            project_filter,
-            project_context,
-            min_score,
-            similarity_threshold,
-            max_chunks_per_doc,
-        ):
-            assert query == "daemon startup"
-            assert top_n == 5
-            captured["project_filter"] = project_filter
-            captured["project_context"] = project_context
-            captured["min_score"] = min_score
-            captured["similarity_threshold"] = similarity_threshold
-            captured["max_chunks_per_doc"] = max_chunks_per_doc
-            return (
-                [
+        async def execute(self, request):
+            assert request.query == "daemon startup"
+            assert request.top_n == 5
+            captured["project_filter"] = request.project_filter
+            captured["project_context"] = request.project_context
+            captured["min_score"] = request.min_score
+            captured["similarity_threshold"] = request.similarity_threshold
+            captured["max_chunks_per_doc"] = request.max_chunks_per_doc
+            return SimpleNamespace(
+                results=[
                     SimpleNamespace(
                         chunk_id="plan_chunk_1",
                         record_id="plan",
@@ -147,7 +134,7 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
                         },
                     )
                 ],
-                CompressionStats(
+                compression_stats=CompressionStats(
                     original_count=1,
                     after_threshold=1,
                     after_content_dedup=1,
@@ -156,16 +143,18 @@ async def test_query_documents_runs_immediately_when_indices_are_queryable() -> 
                     after_doc_limit=1,
                     clusters_merged=0,
                 ),
-                SearchStrategyStats(
+                strategy_stats=SearchStrategyStats(
                     vector_count=1,
                     keyword_count=1,
                     graph_count=0,
                     tag_expansion_count=0,
                 ),
+                query_execution_stats={},
             )
 
     ready_ctx = _ColdStartContext(IndexState(status="ready"), ready=True)
-    ready_ctx.orchestrator = _FakeOrchestrator()
+    ready_ctx.orchestrator = SimpleNamespace(documents_path=Path("/docs"))
+    ready_ctx.search_use_case = _FakeSearchUseCase()
     ready_ctx.config = SimpleNamespace(detected_project="ambient-project")
 
     hctx = HandlerContext(lambda: ready_ctx, _FakeCoordinator())
@@ -656,18 +645,18 @@ async def test_search_git_history_validates_timestamp_filters(arguments, message
 
 @pytest.mark.asyncio
 async def test_search_git_history_compacts_results_and_opts_into_diff() -> None:
-    class _FakeOrchestrator:
-        async def query(self, *args, **kwargs):
-            return (
-                [
-                    SimpleNamespace(
+    class _FakeSearchUseCase:
+        async def execute(self, request):
+            assert request.source_filter == ("git_commit",)
+            return SimpleNamespace(
+                results=[
+                    ChunkResult(
                         chunk_id="git-chunk",
-                        record_id="git:abc123",
+                        doc_id="git:abc123",
                         score=0.7,
                         content="@@ -1 +1 @@\n-old\n+new",
-                        parent_chunk_id=None,
-                        parent_content=None,
-                        provenance=None,
+                        header_path="",
+                        file_path="",
                         metadata={
                             "title": "Update docs",
                             "author": "Andy",
@@ -676,14 +665,13 @@ async def test_search_git_history_compacts_results_and_opts_into_diff() -> None:
                             "chunk_section": "diff",
                         },
                     )
-                ],
-                None,
-                None,
+                ]
             )
 
     ctx = _ColdStartContext(IndexState(status="ready"), ready=True, commit_count=1)
     ctx.git_indexing_enabled = True
-    ctx.orchestrator = _FakeOrchestrator()
+    ctx.orchestrator = SimpleNamespace(documents_path=Path("/docs"))
+    ctx.search_use_case = _FakeSearchUseCase()
     hctx = HandlerContext(lambda: ctx, _FakeCoordinator())
 
     default_payload = json.loads(
@@ -756,13 +744,15 @@ async def test_search_git_history_filters_files_and_timestamps_before_top_n() ->
         ),
     ]
 
-    class _FakeOrchestrator:
-        async def query(self, *_args, **_kwargs):
-            return results, None, None
+    class _FakeSearchUseCase:
+        async def execute(self, request):
+            assert request.source_filter == ("git_commit",)
+            return SimpleNamespace(results=results)
 
     ctx = _ColdStartContext(IndexState(status="ready"), ready=True, commit_count=3)
     ctx.git_indexing_enabled = True
-    ctx.orchestrator = _FakeOrchestrator()
+    ctx.orchestrator = SimpleNamespace(documents_path=Path("/docs"))
+    ctx.search_use_case = _FakeSearchUseCase()
     hctx = HandlerContext(lambda: ctx, _FakeCoordinator())
 
     contents = await handle_search_git_history(
