@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from searchkernel.api import (
     CoordinatorReceipt,
@@ -16,6 +16,24 @@ from searchkernel.api import (
     mark_bootstrap_files_completed,
     publish_bootstrap_availability,
 )
+
+
+@runtime_checkable
+class StagedBootstrapPort(Protocol):
+    """Index capabilities required by staged bootstrap execution."""
+
+    index_path: Path
+
+    def index_document(
+        self,
+        file_path: str,
+        *,
+        update_graph: bool = True,
+    ) -> bool: ...
+
+    def rebuild_graph(self) -> None: ...
+
+    def persist(self) -> None: ...
 
 
 class ProgressiveIndexManager(Protocol):

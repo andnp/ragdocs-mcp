@@ -12,7 +12,10 @@ from searchkernel.api import (
     save_bootstrap_checkpoint,
 )
 
-from mcp_markdown_ragdocs.indexing.progressive import run_progressive_bootstrap
+from mcp_markdown_ragdocs.indexing.progressive import (
+    StagedBootstrapPort,
+    run_progressive_bootstrap,
+)
 
 
 class _CanonicalManager:
@@ -64,6 +67,13 @@ def _save_pending_checkpoint(index_path: Path, paths: list[Path]) -> None:
             completed={},
         ),
     )
+
+
+def test_canonical_manager_satisfies_staged_bootstrap_port(tmp_path: Path) -> None:
+    """Require the existing manager capabilities for staged bootstrap."""
+    manager = _CanonicalManager(tmp_path)
+
+    assert isinstance(manager, StagedBootstrapPort)
 
 
 def test_canonical_bootstrap_marks_checkpoint_complete(
