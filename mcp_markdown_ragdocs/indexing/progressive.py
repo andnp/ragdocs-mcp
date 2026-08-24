@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from searchkernel.api import (
     CoordinatorReceipt,
@@ -43,7 +43,7 @@ class ProgressiveIndexManager(Protocol):
 
 
 def run_progressive_bootstrap(
-    manager: ProgressiveIndexManager,
+    manager: StagedBootstrapPort,
     file_paths: Sequence[str],
     *,
     documents_roots: Sequence[Path],
@@ -101,7 +101,7 @@ def _pending_canonical_paths(
 
 
 def _run_canonical_bootstrap(
-    manager: Any,
+    manager: StagedBootstrapPort,
     file_paths: Sequence[str],
 ) -> CoordinatorReceipt:
     async def run() -> CoordinatorReceipt:

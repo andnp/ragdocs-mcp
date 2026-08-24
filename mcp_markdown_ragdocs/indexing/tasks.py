@@ -56,7 +56,7 @@ from mcp_markdown_ragdocs.indexing.git_refresh_state import (
     save_progress,
 )
 from mcp_markdown_ragdocs.indexing.progressive import (
-    ProgressiveIndexManager,
+    StagedBootstrapPort,
     run_progressive_bootstrap,
 )
 from mcp_markdown_ragdocs.indexing.rebuild_service import (
@@ -720,7 +720,7 @@ def _index_documents_batch(
         def _progressive_operation() -> bool | dict[str, object]:
             try:
                 receipt = run_progressive_bootstrap(
-                    cast(ProgressiveIndexManager, manager),
+                    cast(StagedBootstrapPort, manager),
                     unique_file_paths,
                     documents_roots=bootstrap_documents_roots,
                 )
