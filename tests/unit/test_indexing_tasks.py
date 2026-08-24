@@ -435,6 +435,120 @@ class TestTaskRegistration:
             "_reindex_model",
         }
 
+    def test_registered_tasks_preserve_payload_shapes_and_priorities(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Preserve representative serialized Huey payloads at registration.
+
+        Each task family must retain its positional payload, durable claim
+        metadata, and externally meaningful priority for worker dispatch.
+        """
+        runtime = _register_tasks(huey_instance, fake_manager)
+
+        index_submission = runtime.submission.submit_index_request(
+            "/docs/guide.md", force=True
+        )
+        batch_submission = runtime.submission.submit_index_batch(
+            ["/docs/a.md", "/docs/b.md"], force=True
+        )
+        record_payload = {"source_id": "note:1", "body": "body"}
+        record_result = runtime.submission.submit_record_batch([record_payload])
+        git_submission = runtime.submission.submit_refresh_git_request("/repo/.git")
+        reindex_submission = runtime.submission.submit_reindex_request(
+            "start",
+            model="model-v2",
+            truncate_dim=384,
+            old_model=None,
+            request_id="reindex-1",
+        )
+        rebuild_submission = runtime.submission.submit_rebuild_request(
+            None, request_id="rebuild-1"
+        )
+
+        assert index_submission.status == "enqueued"
+        assert batch_submission.enqueued_count == 2
+        assert record_result is not None
+        assert git_submission.status == "enqueued"
+        assert reindex_submission.status == "enqueued"
+        assert rebuild_submission.status == "enqueued"
+
+        tasks = {}
+        while huey_instance.pending_count():
+            task = huey_instance.dequeue()
+            assert task is not None
+            tasks[task.func.__name__] = task
+
+        index_task = tasks["_index_document"]
+        assert index_task.args == ("/docs/guide.md",)
+        assert index_task.kwargs["force"] is True
+        assert set(index_task.kwargs) == {"force", "intent_id", "claim_token"}
+
+        batch_task = tasks["_index_documents_batch"]
+        assert batch_task.args == (["/docs/a.md", "/docs/b.md"],)
+        assert batch_task.kwargs["force"] is True
+        assert len(batch_task.kwargs["intent_claims"]) == 2
+
+        record_task = tasks["_index_records_batch"]
+        assert record_task.args == ([record_payload],)
+        assert record_task.priority == RECORD_BATCH_TASK_PRIORITY
+
+        git_task = tasks["_refresh_git_repository"]
+        assert git_task.args == ("/repo/.git",)
+        assert git_task.priority == GIT_REFRESH_TASK_PRIORITY
+
+        reindex_task = tasks["_reindex_model"]
+        assert reindex_task.args == ("start", "model-v2", 384, None)
+        assert reindex_task.priority == tasks_mod.REINDEX_TASK_PRIORITY
+
+        rebuild_task = tasks["_rebuild_index"]
+        assert rebuild_task.args == (None,)
+        assert rebuild_task.kwargs["request_id"] == "rebuild-1"
+
+    def test_submission_results_report_public_queue_outcomes(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Report stable public outcomes for accepted and represented work.
+
+        Duplicate single and batch submissions must be represented as already
+        pending while new items remain enqueued in the same request.
+        """
+        runtime = _register_tasks(huey_instance, fake_manager)
+
+        first_index = runtime.submission.submit_index_request("/docs/a.md")
+        duplicate_index = runtime.submission.submit_index_request("/docs/a.md")
+        mixed_index = runtime.submission.submit_index_request_batch(
+            ["/docs/a.md", "/docs/b.md"]
+        )
+
+        first_remove = runtime.submission.submit_remove_request("docs/old")
+        mixed_remove = runtime.submission.submit_remove_request_batch(
+            ["docs/old", "docs/new"]
+        )
+        first_git = runtime.submission.submit_refresh_git_request("/repo/.git")
+        duplicate_git = runtime.submission.submit_refresh_git_request("/repo/.git")
+
+        assert first_index.status == "enqueued"
+        assert first_index.accepted_by_queue is True
+        assert duplicate_index.status == "already_pending"
+        assert duplicate_index.enqueued is False
+
+        assert mixed_index.requested_unique_count == 2
+        assert mixed_index.enqueued_count == 1
+        assert mixed_index.already_pending_count == 1
+        assert mixed_index.all_represented is True
+
+        assert first_remove.status == "enqueued"
+        assert mixed_remove.requested_unique_count == 2
+        assert mixed_remove.enqueued_count == 1
+        assert mixed_remove.already_pending_count == 1
+        assert mixed_remove.all_represented is True
+
+        assert first_git.status == "enqueued"
+        assert duplicate_git.status == "already_pending"
+        assert huey_instance.pending_count() == 5
+
     def test_registered_runtimes_isolate_queue_and_manager(
         self,
         huey_instance: SqliteHuey,
