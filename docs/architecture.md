@@ -18,43 +18,43 @@ used as current implementation guidance.
 
 ## Runtime composition
 
-The application has one search use case and several transport adapters:
+The application has one search use case, several transport adapters, and one
+record-ingestion boundary:
 
 ```text
-                         ┌──────────────────────────┐
-                         │ ApplicationSearchUseCase  │
-                         │ mcp_markdown_ragdocs/app/search.py │
-                         └────────────┬─────────────┘
-                                      │
-                         ┌────────────▼─────────────┐
-                         │ CanonicalSearchAdapter    │
-                         │ mcp_markdown_ragdocs/search.py     │
-                         └────────────┬─────────────┘
-                                      │ public searchkernel APIs
-                         ┌────────────▼─────────────┐
-                         │ Local record kernel       │
-                         │ records + retrieval       │
-                         └──────────────────────────┘
-
-  MCP stdio ───────┐
-  CLI ─────────────┼── daemon transport ──┐
-  HTTP ────────────┘                       │
-                                           ▼
-                                  ApplicationContext
-                                  lifecycle + composition
-
+  MCP stdio ──► daemon transport ──┐
+  CLI ────────► daemon transport ──┼──► ApplicationContext
+  HTTP ───────► in-process context ─┘       │
+                                            ├──► ApplicationSearchUseCase
+                                            │          │
+                                            │          ▼
+                                            │   CanonicalSearchAdapter
+                                            │          │ public APIs
+                                            │          ▼
+                                            │   searchkernel records
+                                            │   and retrieval
+                                            │
   Markdown/files ──► parsers/chunker ──► RecordIndexManager
-                                           │
-                                           ▼
-                                  indexing ports and stores
-
-  Durable tasks ───► Huey queue ───► worker process
+                                            │
+                                            ▼
+                                     indexing ports
+                                            │
+  Huey queue ──► worker process ──────────┘
 ```
 
-The daemon is the normal runtime authority for CLI and MCP. The HTTP server
-can compose an in-process context for deployments that do not use the daemon.
-Both paths use the same application search use case rather than maintaining
-separate ranking or filtering implementations.
+The daemon is the normal runtime authority for MCP and CLI. Their local
+transports terminate at the daemon's `ApplicationContext`, which owns
+lifecycle, query composition, and indexing-service wiring. The HTTP adapter
+may compose that context in-process, but it still delegates queries to the
+same `ApplicationSearchUseCase` and canonical adapter. No transport owns a
+second ranking, filtering, or result-mapping path.
+
+Document and git ingestion enters through `RecordIndexManager`, which owns
+parsing, chunk planning, source membership, and application metadata. Direct
+and task-backed execution use the same indexing services; the worker changes
+execution placement, not the indexing or search contract. Searchkernel owns
+canonical record persistence, embeddings, and retrieval behind its public
+ports.
 
 ### Google Drive ownership
 
