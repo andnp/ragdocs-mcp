@@ -1,9 +1,9 @@
 """Behavioral tests for the durable Google Drive state repository."""
 
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-import sqlite3
 
 import pytest
 
@@ -24,6 +24,66 @@ from mcp_markdown_ragdocs.gdrive.port import GDriveStatePort
 
 def _identity(scope: str = "shared-with-me") -> GDriveScopeIdentity:
     return GDriveScopeIdentity("google-drive", "workspace-a", scope)
+
+
+def test_checkpoint_capability_persists_ordered_inventory_and_changes(tmp_path: Path) -> None:
+    """
+    Advance one scope's cursors without requiring membership or status state.
+    """
+    repository = GDriveStateRepository(tmp_path / "state.db")
+    identity = _identity()
+
+    repository.begin_inventory(identity, "start-token")
+    repository.persist_inventory_batch(identity, page_token="page-2", batch=1)
+    repository.persist_changes(identity, "changes-token")
+
+    assert repository.load_checkpoint(identity) == GDriveCheckpoint(
+        identity,
+        inventory_start_token="start-token",
+        inventory_page_token="page-2",
+        inventory_batch=1,
+        changes_token="changes-token",
+    )
+    assert repository.load_sync_status(identity) is None
+    assert repository.load_scope_memberships(identity).source_ids == ()
+
+
+def test_membership_capability_reconciles_one_scope_without_status_state(tmp_path: Path) -> None:
+    """
+    Replace one scope snapshot while leaving cursors and operational status empty.
+    """
+    repository = GDriveStateRepository(tmp_path / "state.db")
+    identity = _identity()
+
+    assert repository.replace_scope_memberships(identity, ("file-1", "file-2")) == ()
+    assert repository.replace_scope_memberships(identity, ("file-2", "file-3")) == (
+        "file-1",
+    )
+
+    assert repository.load_scope_memberships(identity).source_ids == ("file-2", "file-3")
+    assert repository.load_checkpoint(identity) is None
+    assert repository.load_sync_status(identity) is None
+
+
+def test_operational_status_capability_records_latest_scope_outcome(tmp_path: Path) -> None:
+    """
+    Update one scope's evaluated status without changing checkpoint or membership state.
+    """
+    repository = GDriveStateRepository(tmp_path / "state.db")
+    identity = _identity()
+
+    repository.save_sync_status(GDriveSyncStatus(identity, "replacement-pending"))
+    repository.save_sync_status(
+        GDriveSyncStatus(identity, "healthy", last_success_at=12.5)
+    )
+
+    assert repository.load_sync_status(identity) == GDriveSyncStatus(
+        identity,
+        "healthy",
+        last_success_at=12.5,
+    )
+    assert repository.load_checkpoint(identity) is None
+    assert repository.load_scope_memberships(identity).source_ids == ()
 
 
 def test_sqlite_adapter_satisfies_the_drive_state_port(tmp_path: Path) -> None:
