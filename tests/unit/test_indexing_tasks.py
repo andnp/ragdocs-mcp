@@ -557,6 +557,62 @@ class TestTaskRegistration:
         assert rebuild_task.args == (None,)
         assert rebuild_task.kwargs["request_id"] == "rebuild-1"
 
+    def test_representative_task_payloads_round_trip_through_huey(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Preserve task contracts when queued messages cross serialization.
+
+        Every representative task family must arrive at the worker with its
+        registered name, payload, and priority unchanged.
+        """
+        runtime = _register_tasks(huey_instance, fake_manager)
+        record_payload = {"source_id": "note:round-trip", "body": "body"}
+
+        runtime.submission.submit_index_request("/docs/guide.md", force=True)
+        runtime.submission.submit_index_batch(
+            ["/docs/a.md", "/docs/b.md"], force=True
+        )
+        runtime.submission.submit_record_batch([record_payload])
+        runtime.submission.submit_remove_request("docs/old")
+        runtime.submission.submit_remove_request_batch(["docs/a", "docs/b"])
+        runtime.submission.submit_refresh_git_request("/repo/.git")
+        runtime.submission.submit_reindex_request(
+            "start",
+            model="model-v2",
+            truncate_dim=384,
+            old_model=None,
+            request_id="reindex-round-trip",
+        )
+        runtime.submission.submit_rebuild_request(
+            None, request_id="rebuild-round-trip"
+        )
+
+        round_tripped = []
+        while huey_instance.pending_count():
+            queued = huey_instance.dequeue()
+            assert queued is not None
+            restored = huey_instance.deserialize_task(
+                huey_instance.serialize_task(queued)
+            )
+            round_tripped.append((queued, restored))
+
+        assert {restored.name for _, restored in round_tripped} == {
+            "_index_document",
+            "_index_documents_batch",
+            "_index_records_batch",
+            "_remove_document",
+            "_remove_documents_batch",
+            "_refresh_git_repository",
+            "_rebuild_index",
+            "_reindex_model",
+        }
+        for queued, restored in round_tripped:
+            assert restored.name == queued.name
+            assert restored.args == queued.args
+            assert restored.kwargs == queued.kwargs
+            assert restored.priority == queued.priority
+
     def test_submission_results_report_public_queue_outcomes(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
