@@ -435,6 +435,58 @@ class TestTaskRegistration:
             "_reindex_model",
         }
 
+    def test_registered_task_handle_lookup_survives_huey_round_trip(
+        self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
+    ) -> None:
+        """
+        Resolve a public task handle by string and preserve its Huey name.
+
+        Worker deserialization must still find the registered task after the
+        queued payload crosses the storage boundary.
+        """
+        runtime = _register_tasks(huey_instance, fake_manager)
+
+        runtime.task_handles["index_document"]("/docs/reachable.md")
+        queued = huey_instance.dequeue()
+        assert queued is not None
+
+        restored = huey_instance.deserialize_task(
+            huey_instance.serialize_task(queued)
+        )
+        assert queued.name == "_index_document"
+        assert restored.name == queued.name
+        assert restored.args == ("/docs/reachable.md",)
+
+    def test_dynamic_registration_binds_string_handles_to_each_queue(
+        self,
+        huey_instance: SqliteHuey,
+        fake_manager: FakeIndexManager,
+        tmp_path: Path,
+    ) -> None:
+        """
+        Registering two runtimes keeps string-selected handles queue-local.
+
+        A producer must enqueue into the runtime whose handle it resolved,
+        even when another runtime is registered in the same process.
+        """
+        second_huey = SqliteHuey(
+            name="test-tasks-dynamic",
+            filename=str(tmp_path / "dynamic.db"),
+            immediate=False,
+        )
+        first_runtime = _register_tasks(huey_instance, fake_manager)
+        second_runtime = _register_tasks(second_huey, FakeIndexManager())
+
+        first_runtime.task_handles["index_document"]("first.md")
+        second_runtime.task_handles["index_document"]("second.md")
+
+        first_task = huey_instance.dequeue()
+        second_task = second_huey.dequeue()
+        assert first_task is not None
+        assert second_task is not None
+        assert first_task.args == ("first.md",)
+        assert second_task.args == ("second.md",)
+
     def test_registered_tasks_preserve_payload_shapes_and_priorities(
         self, huey_instance: SqliteHuey, fake_manager: FakeIndexManager
     ) -> None:
