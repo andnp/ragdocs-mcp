@@ -9,6 +9,7 @@ from searchkernel.api import (
     SearchAvailability,
     get_bootstrap_availability,
     load_bootstrap_checkpoint,
+    publish_bootstrap_availability,
     save_bootstrap_checkpoint,
 )
 
@@ -27,10 +28,13 @@ class _CanonicalManager:
         self.graph_rebuild_calls = 0
         self.update_graph_flags: list[bool] = []
         self.events: list[tuple[str, str | None]] = []
+        self.checkpoint_at_persist: BootstrapCheckpoint | None = None
+        self.failed_paths: set[str] = set()
 
     def persist(self) -> None:
         self.persist_calls += 1
         self.events.append(("persist", None))
+        self.checkpoint_at_persist = load_bootstrap_checkpoint(self.index_path)
 
     def index_document(
         self,
@@ -41,7 +45,7 @@ class _CanonicalManager:
         self.indexed.append(file_path)
         self.update_graph_flags.append(update_graph)
         self.events.append(("index", file_path))
-        return True
+        return file_path not in self.failed_paths
 
     def rebuild_graph(self) -> None:
         self.graph_rebuild_calls += 1
@@ -129,6 +133,8 @@ def test_canonical_bootstrap_marks_checkpoint_complete(
         ("persist", None),
     ]
     assert checkpoint is not None
+    assert manager.checkpoint_at_persist is not None
+    assert manager.checkpoint_at_persist.complete is False
     assert checkpoint.complete is True
     assert set(checkpoint.completed) == {"first.md", "second.md"}
     assert get_bootstrap_availability(index_path) == SearchAvailability(
@@ -186,3 +192,90 @@ def test_progressive_bootstrap_rebuilds_graph_once_before_persisting(
         ("graph", None),
         ("persist", None),
     ]
+
+
+def test_progressive_bootstrap_defers_graph_until_successful_records_finish(
+    tmp_path: Path,
+) -> None:
+    """Build the graph once after indexing both successful and failed records."""
+    first = tmp_path / "first.md"
+    second = tmp_path / "second.md"
+    first.write_text("# First")
+    second.write_text("# Second")
+    index_path = tmp_path / "index"
+    index_path.mkdir()
+    _save_pending_checkpoint(index_path, [first, second])
+
+    manager = _CanonicalManager(index_path)
+    manager.failed_paths = {str(second)}
+    receipt = run_progressive_bootstrap(
+        manager,
+        [str(first), str(second)],
+        documents_roots=[tmp_path],
+    )
+
+    assert receipt.successful == 1
+    assert manager.update_graph_flags == [False, False]
+    assert manager.events == [
+        ("index", str(first)),
+        ("index", str(second)),
+        ("graph", None),
+        ("persist", None),
+    ]
+
+
+def test_progressive_bootstrap_checkpoints_only_successful_records(
+    tmp_path: Path,
+) -> None:
+    """Retain failed records for a later bootstrap attempt."""
+    first = tmp_path / "first.md"
+    second = tmp_path / "second.md"
+    first.write_text("# First")
+    second.write_text("# Second")
+    index_path = tmp_path / "index"
+    index_path.mkdir()
+    _save_pending_checkpoint(index_path, [first, second])
+
+    manager = _CanonicalManager(index_path)
+    manager.failed_paths = {str(second)}
+    receipt = run_progressive_bootstrap(
+        manager,
+        [str(first), str(second)],
+        documents_roots=[tmp_path],
+    )
+
+    checkpoint = load_bootstrap_checkpoint(index_path)
+    assert receipt.successful == 1
+    assert receipt.ingestion.records[1].status == "failed"
+    assert checkpoint is not None
+    assert set(checkpoint.completed) == {"first.md"}
+    assert checkpoint.complete is False
+
+
+def test_progressive_bootstrap_preserves_queryable_partial_readiness(
+    tmp_path: Path,
+) -> None:
+    """Keep partial search available while unfinished files remain."""
+    first = tmp_path / "first.md"
+    second = tmp_path / "second.md"
+    first.write_text("# First")
+    second.write_text("# Second")
+    index_path = tmp_path / "index"
+    index_path.mkdir()
+    _save_pending_checkpoint(index_path, [first, second])
+    partial = SearchAvailability(
+        lexical="available",
+        graph="available",
+        semantic_coarse="available",
+        semantic_fine="backfilling",
+    )
+    publish_bootstrap_availability(index_path, partial)
+
+    manager = _CanonicalManager(index_path)
+    run_progressive_bootstrap(
+        manager,
+        [str(first)],
+        documents_roots=[tmp_path],
+    )
+
+    assert get_bootstrap_availability(index_path) == partial
