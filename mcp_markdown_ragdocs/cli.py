@@ -33,6 +33,9 @@ def _should_reexec_into_repo_venv() -> bool:
     if os.environ.get(_CLI_REEXEC_GUARD) == "1":
         return False
 
+    if sys.prefix != sys.base_prefix:
+        return False
+
     repo_python = _repo_venv_python()
     if not repo_python.exists():
         return False

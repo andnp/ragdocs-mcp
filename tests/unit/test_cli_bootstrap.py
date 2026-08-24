@@ -18,6 +18,8 @@ def test_should_reexec_into_repo_venv_when_required_dependency_missing(
     monkeypatch.delenv(cli._CLI_REEXEC_GUARD, raising=False)
     monkeypatch.setattr(cli, "_repo_venv_python", lambda: repo_python)
     monkeypatch.setattr(cli.sys, "executable", "/usr/bin/python")
+    monkeypatch.setattr(cli.sys, "prefix", "/usr")
+    monkeypatch.setattr(cli.sys, "base_prefix", "/usr")
 
     assert cli._should_reexec_into_repo_venv() is True
 
@@ -34,6 +36,25 @@ def test_should_not_reexec_when_current_interpreter_is_repo_venv(
     monkeypatch.delenv(cli._CLI_REEXEC_GUARD, raising=False)
     monkeypatch.setattr(cli, "_repo_venv_python", lambda: repo_python)
     monkeypatch.setattr(cli.sys, "executable", str(repo_python.resolve()))
+
+    assert cli._should_reexec_into_repo_venv() is False
+
+
+def test_should_not_reexec_from_another_virtualenv(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """Managed tool environments should keep their own dependency context."""
+    repo_python = tmp_path / ".venv" / "bin" / "python"
+    repo_python.parent.mkdir(parents=True)
+    repo_python.write_text("", encoding="utf-8")
+    repo_python.chmod(0o755)
+
+    monkeypatch.delenv(cli._CLI_REEXEC_GUARD, raising=False)
+    monkeypatch.setattr(cli, "_repo_venv_python", lambda: repo_python)
+    monkeypatch.setattr(cli.sys, "executable", "/tool-env/bin/python")
+    monkeypatch.setattr(cli.sys, "prefix", "/tool-env")
+    monkeypatch.setattr(cli.sys, "base_prefix", "/usr")
 
     assert cli._should_reexec_into_repo_venv() is False
 
