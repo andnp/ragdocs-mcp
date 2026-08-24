@@ -160,8 +160,14 @@ def create_app():
 
     @app.post("/query_documents")
     async def query_documents(request: QueryRequest):
+        search_use_case = app.state._state.get("search_use_case")
+        if search_use_case is None:
+            return JSONResponse(
+                {"error": "search_unavailable"},
+                status_code=503,
+            )
         results_dict = await _execute_query(
-            _search_use_case(app),
+            search_use_case,
             request.query,
             request.top_n,
             max_chunks_per_doc=(
@@ -389,13 +395,6 @@ def _federation_auth_error(
 def _config(app: FastAPI) -> Config | None:
     value = app.state._state.get("config")
     return value if isinstance(value, Config) else None
-
-
-def _search_use_case(app: FastAPI) -> ApplicationSearchUseCase:
-    value = app.state._state.get("search_use_case")
-    if value is None:
-        raise RuntimeError("document search is unavailable")
-    return value
 
 
 def _federation_orchestrator(app: FastAPI) -> FederationSearchOrchestrator | None:

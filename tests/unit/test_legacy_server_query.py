@@ -32,6 +32,11 @@ def _query_endpoint(app):
 
 @pytest.mark.asyncio
 async def test_legacy_query_documents_passes_source_and_project_filters():
+    """Return the existing successful query result shape.
+
+    The configured use case should retain the legacy response contract.
+    """
+
     app = create_app()
     search_use_case = FakeSearchUseCase()
     app.state.search_use_case = search_use_case
@@ -57,6 +62,21 @@ async def test_legacy_query_documents_passes_source_and_project_filters():
     ]
     assert search_use_case.request.project_filter == ("docs",)
     assert search_use_case.request.source_filter == ("git_commit",)
+
+
+@pytest.mark.asyncio
+async def test_legacy_query_documents_returns_service_unavailable_without_use_case():
+    """Return a stable 503 error when search is unavailable.
+
+    The missing use case should be represented as an explicit HTTP response.
+    """
+
+    app = create_app()
+
+    response = await _query_endpoint(app)(QueryRequest(query="find docs"))
+
+    assert response.status_code == 503
+    assert response.body == b'{"error":"search_unavailable"}'
 
 
 @pytest.mark.asyncio
