@@ -7,25 +7,22 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
 from searchkernel.api import (
     FEDERATION_CONTRACT_VERSION,
     SearchRequest,
-    ChunkResult as DomainChunkResult,
-    CompressionStats,
-    SearchStrategyStats,
     classify_query_type,
     load_manifest,
     truncate_content,
 )
 from starlette.responses import JSONResponse
 
-from mcp_markdown_ragdocs.app.search import ApplicationSearchUseCase
-from mcp_markdown_ragdocs.app.search_request import build_search_query, search_top_k
 from mcp_markdown_ragdocs.app.runtime import configure_runtime_threads
+from mcp_markdown_ragdocs.app.search import ApplicationSearchUseCase
+from mcp_markdown_ragdocs.app.search_request import build_search_query
 from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.context import ApplicationContext
 from mcp_markdown_ragdocs.federation import (
@@ -44,30 +41,6 @@ logger = logging.getLogger(__name__)
 MAX_FEDERATION_REQUEST_BYTES = 256 * 1024
 DEFAULT_FEDERATION_TIMEOUT_SECONDS = 30.0
 MAX_CORRELATION_ID_LENGTH = 256
-
-
-@runtime_checkable
-class _DocumentOrchestrator(Protocol):
-    async def query(
-        self,
-        query: str,
-        *,
-        top_k: int,
-        top_n: int,
-        pipeline_config: object | None = None,
-        project_filter: list[str] | None = None,
-        source_filter: list[str] | None = None,
-        project_context: str | None = None,
-        excluded_files: set[str] | None = None,
-        min_score: float | None = None,
-        similarity_threshold: float | None = None,
-        max_chunks_per_doc: int = 1,
-    ) -> tuple[list[ChunkResult | DomainChunkResult], CompressionStats, SearchStrategyStats]: ...
-
-
-@runtime_checkable
-class _SearchUseCaseProvider(Protocol):
-    search_use_case: ApplicationSearchUseCase | None
 
 
 class QueryRequest(BaseModel):
@@ -143,7 +116,7 @@ def create_app():
     app = FastAPI(lifespan=lifespan)
 
     async def _execute_query(
-        orchestrator: _DocumentOrchestrator,
+        search_use_case: ApplicationSearchUseCase,
         query: str,
         top_n: int,
         max_chunks_per_doc: int = 0,
@@ -154,41 +127,20 @@ def create_app():
         min_score: float | None = None,
         similarity_threshold: float | None = None,
     ):
-        search_use_case = (
-            orchestrator.search_use_case
-            if isinstance(orchestrator, _SearchUseCaseProvider)
-            else None
-        )
-        if search_use_case is not None:
-            execution = await search_use_case.execute(
-                build_search_query(
-                    query,
-                    top_n,
-                    project_filter=project_filter or (),
-                    source_filter=source_filter or (),
-                    project_context=project_context,
-                    excluded_files=excluded_files or (),
-                    min_score=min_score,
-                    similarity_threshold=similarity_threshold,
-                    max_chunks_per_doc=max_chunks_per_doc,
-                )
-            )
-            results = execution.results
-        else:
-            top_k = search_top_k(top_n, project_filter or ())
-            results, _, _ = await orchestrator.query(
+        execution = await search_use_case.execute(
+            build_search_query(
                 query,
-                top_k=top_k,
-                top_n=top_n,
-                pipeline_config=None,
-                project_filter=project_filter,
-                source_filter=source_filter,
+                top_n,
+                project_filter=project_filter or (),
+                source_filter=source_filter or (),
                 project_context=project_context,
-                excluded_files=excluded_files,
+                excluded_files=excluded_files or (),
                 min_score=min_score,
                 similarity_threshold=similarity_threshold,
                 max_chunks_per_doc=max_chunks_per_doc,
             )
+        )
+        results = execution.results
 
         query_type = classify_query_type(query)
 
@@ -209,7 +161,7 @@ def create_app():
     @app.post("/query_documents")
     async def query_documents(request: QueryRequest):
         results_dict = await _execute_query(
-            _document_orchestrator(app),
+            _search_use_case(app),
             request.query,
             request.top_n,
             max_chunks_per_doc=(
@@ -439,9 +391,9 @@ def _config(app: FastAPI) -> Config | None:
     return value if isinstance(value, Config) else None
 
 
-def _document_orchestrator(app: FastAPI) -> _DocumentOrchestrator:
-    value = app.state._state.get("orchestrator")
-    if not isinstance(value, _DocumentOrchestrator):
+def _search_use_case(app: FastAPI) -> ApplicationSearchUseCase:
+    value = app.state._state.get("search_use_case")
+    if value is None:
         raise RuntimeError("document search is unavailable")
     return value
 

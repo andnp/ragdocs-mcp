@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from searchkernel.domain import ChunkResult
 
@@ -5,14 +7,14 @@ from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.server import QueryRequest, create_app
 
 
-class FakeOrchestrator:
+class FakeSearchUseCase:
     def __init__(self):
-        self.query_kwargs: dict[str, object] = {}
+        self.request = None
 
-    async def query(self, query, **kwargs):
-        self.query_kwargs = {"query": query, **kwargs}
-        return (
-            [
+    async def execute(self, request):
+        self.request = request
+        return SimpleNamespace(
+            results=[
                 ChunkResult(
                     chunk_id="chunk_1",
                     record_id="doc_1",
@@ -20,9 +22,7 @@ class FakeOrchestrator:
                     content="result",
                     metadata={"header_path": "", "file_path": ""},
                 )
-            ],
-            None,
-            None,
+            ]
         )
 
 
@@ -33,8 +33,8 @@ def _query_endpoint(app):
 @pytest.mark.asyncio
 async def test_legacy_query_documents_passes_source_and_project_filters():
     app = create_app()
-    orchestrator = FakeOrchestrator()
-    app.state.orchestrator = orchestrator
+    search_use_case = FakeSearchUseCase()
+    app.state.search_use_case = search_use_case
     app.state.config = Config()
 
     response = await _query_endpoint(app)(
@@ -55,21 +55,21 @@ async def test_legacy_query_documents_passes_source_and_project_filters():
             "content": "result",
         }
     ]
-    assert orchestrator.query_kwargs["project_filter"] == ["docs"]
-    assert orchestrator.query_kwargs["source_filter"] == ["git_commit"]
+    assert search_use_case.request.project_filter == ("docs",)
+    assert search_use_case.request.source_filter == ("git_commit",)
 
 
 @pytest.mark.asyncio
 async def test_legacy_query_documents_keeps_project_filter_default():
     app = create_app()
-    orchestrator = FakeOrchestrator()
-    app.state.orchestrator = orchestrator
+    search_use_case = FakeSearchUseCase()
+    app.state.search_use_case = search_use_case
     app.state.config = Config()
 
     await _query_endpoint(app)(QueryRequest(query="find docs"))
 
-    assert orchestrator.query_kwargs["project_filter"] == []
-    assert orchestrator.query_kwargs["source_filter"] is None
+    assert search_use_case.request.project_filter == ()
+    assert search_use_case.request.source_filter == ()
 
 
 def test_query_request_preserves_min_score_omission() -> None:
@@ -80,8 +80,8 @@ def test_query_request_preserves_min_score_omission() -> None:
 @pytest.mark.asyncio
 async def test_legacy_query_documents_forwards_search_controls():
     app = create_app()
-    orchestrator = FakeOrchestrator()
-    app.state.orchestrator = orchestrator
+    search_use_case = FakeSearchUseCase()
+    app.state.search_use_case = search_use_case
     app.state.config = Config()
 
     await _query_endpoint(app)(
@@ -96,7 +96,7 @@ async def test_legacy_query_documents_forwards_search_controls():
         )
     )
 
-    assert orchestrator.query_kwargs["min_score"] == 0.6
-    assert orchestrator.query_kwargs["similarity_threshold"] == 0.9
-    assert orchestrator.query_kwargs["max_chunks_per_doc"] == 1
-    assert orchestrator.query_kwargs["excluded_files"] == {"private.md"}
+    assert search_use_case.request.min_score == 0.6
+    assert search_use_case.request.similarity_threshold == 0.9
+    assert search_use_case.request.max_chunks_per_doc == 1
+    assert search_use_case.request.excluded_files == {"private.md"}
