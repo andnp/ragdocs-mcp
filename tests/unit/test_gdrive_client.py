@@ -156,6 +156,46 @@ async def test_client_uses_session_once_and_caps_provider_page_size() -> None:
 
 
 @pytest.mark.asyncio
+async def test_client_builds_factory_service_per_request_thread() -> None:
+    """
+    Keep Google transports isolated when concurrent requests use executor threads.
+    """
+    services: list[object] = []
+
+    class _ConcurrentRequest(_Request):
+        def __init__(self) -> None:
+            super().__init__({"files": []})
+
+        def execute(self) -> dict[str, object]:
+            time.sleep(0.02)
+            return {"files": []}
+
+    class _ConcurrentFiles(_Files):
+        def list(self, **kwargs: object) -> _ConcurrentRequest:
+            del kwargs
+            return _ConcurrentRequest()
+
+    class _ConcurrentService(_Service):
+        def __init__(self) -> None:
+            super().__init__()
+            self.file_resource = _ConcurrentFiles()
+
+    def factory(_credentials: object) -> _ConcurrentService:
+        service = _ConcurrentService()
+        services.append(service)
+        return service
+
+    client = GoogleDriveClient(cast(Any, _Session()), service_factory=factory)
+
+    await asyncio.gather(
+        client.list_files_page(DriveScope("workspace")),
+        client.list_files_page(DriveScope("workspace")),
+    )
+
+    assert len(services) == 2
+
+
+@pytest.mark.asyncio
 async def test_client_rejects_media_over_configured_bound() -> None:
     """
     Refuse oversized provider media before returning it to extraction code.

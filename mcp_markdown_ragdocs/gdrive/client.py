@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import threading
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, cast, runtime_checkable
 
@@ -90,6 +91,13 @@ class DriveService(Protocol):
 ServiceFactory = Callable[[Credentials], DriveService]
 
 
+class _ThreadLocalService(threading.local):
+    service: DriveService | None
+
+    def __init__(self) -> None:
+        self.service = None
+
+
 class GoogleDriveClient:
     """Injectable Drive transport with bounded list and media requests."""
 
@@ -109,6 +117,7 @@ class GoogleDriveClient:
             raise ValueError("max_download_bytes must be positive")
         self._session = session
         self._service = service
+        self._thread_local_service = _ThreadLocalService()
         self._service_factory = service_factory or self._build_service
         self._max_page_size = max_page_size
         self._max_download_bytes = max_download_bytes
@@ -123,9 +132,13 @@ class GoogleDriveClient:
         return cast(DriveService, build("drive", "v3", http=http))
 
     def _get_service(self) -> DriveService:
-        if self._service is None:
-            self._service = self._service_factory(self._session.get_credentials())
-        return self._service
+        if self._service is not None:
+            return self._service
+        if self._thread_local_service.service is None:
+            self._thread_local_service.service = self._service_factory(
+                self._session.get_credentials()
+            )
+        return self._thread_local_service.service
 
     def _page_size(self, requested: int) -> int:
         if requested < 1:
