@@ -6,8 +6,10 @@ import json
 import logging
 import secrets
 import sqlite3
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -119,6 +121,8 @@ class WorkIntentStore(WorkIntentPort):
         self._claim_timeout_seconds = claim_timeout_seconds
         self._retry_policy = retry_policy or (lambda operation, failure_count: True)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._connection = self._open_connection()
         self._initialize()
 
     def submit(
@@ -512,12 +516,29 @@ class WorkIntentStore(WorkIntentPort):
                 """
             )
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._db_path, timeout=30.0)
+    def _open_connection(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(
+            self._db_path, timeout=30.0, check_same_thread=False
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 30000")
         connection.execute("PRAGMA synchronous = NORMAL")
         return connection
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        # See TaskLeaseStore._connect: one connection reused for the store's
+        # lifetime instead of one per call, guarded by a lock because a
+        # sqlite3.Connection is not safe for concurrent cross-thread use even
+        # with check_same_thread=False. Same shape huey uses for this file's
+        # other connection (huey/storage.py BaseSqlStorage.db()).
+        with self._lock, self._connection as connection:
+            yield connection
+
+    def close(self) -> None:
+        """Close the underlying connection. Call once, on store disposal."""
+        with self._lock:
+            self._connection.close()
 
 
 def _row_to_intent(row: sqlite3.Row) -> WorkIntent:
