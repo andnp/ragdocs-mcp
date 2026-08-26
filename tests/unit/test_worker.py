@@ -25,7 +25,13 @@ from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.work_intents import WorkIntentStore
 from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.indexing import tasks as indexing_tasks
-from mcp_markdown_ragdocs.worker.consumer import HueyWorker, _promote_due_tasks
+from huey.constants import EmptyData
+
+from mcp_markdown_ragdocs.worker.consumer import (
+    HueyWorker,
+    _promote_due_tasks,
+    _prune_terminal_state,
+)
 
 
 @pytest.fixture()
@@ -574,6 +580,71 @@ class TestHueyWorker:
             release.set()
             worker.stop()
 
+    def test_prune_terminal_state_deletes_lease_and_huey_result(
+        self,
+        huey_instance: SqliteHuey,
+    ) -> None:
+        """Pruning a terminal lease also frees its Huey kv result row."""
+
+        @huey_instance.task()
+        def append_value(x: int) -> int:
+            return x
+
+        append_value(1)
+        task = huey_instance.dequeue()
+        assert task is not None
+        huey_instance.execute(task)  # writes the kv result row for task.id
+        assert huey_instance.storage.peek_data(task.id) is not EmptyData
+
+        lease_store = TaskLeaseStore(
+            Path(str(cast(Any, huey_instance.storage).filename))
+        )
+        assert lease_store.claim(
+            task.id,
+            task_name=task.name,
+            owner_token="worker-1",
+            payload=huey_instance.serialize_task(task),
+            now=0.0,
+        )
+        assert lease_store.complete(task.id, owner_token="worker-1", now=0.0)
+
+        _prune_terminal_state(huey_instance, lease_store)
+
+        assert lease_store.get(task.id) is None
+        assert huey_instance.storage.peek_data(task.id) is EmptyData
+
+    def test_prune_terminal_state_keeps_recent_lease_and_result(
+        self,
+        huey_instance: SqliteHuey,
+    ) -> None:
+        """A lease completed within the retention window is left alone."""
+
+        @huey_instance.task()
+        def append_value(x: int) -> int:
+            return x
+
+        append_value(2)
+        task = huey_instance.dequeue()
+        assert task is not None
+        huey_instance.execute(task)
+
+        lease_store = TaskLeaseStore(
+            Path(str(cast(Any, huey_instance.storage).filename))
+        )
+        assert lease_store.claim(
+            task.id,
+            task_name=task.name,
+            owner_token="worker-1",
+            payload=huey_instance.serialize_task(task),
+            now=time.time(),
+        )
+        assert lease_store.complete(task.id, owner_token="worker-1", now=time.time())
+
+        _prune_terminal_state(huey_instance, lease_store)
+
+        assert lease_store.get(task.id) is not None
+        assert huey_instance.storage.peek_data(task.id) is not EmptyData
+
     def test_only_one_pool_thread_reclaims_expired_leases(
         self,
         huey_instance: SqliteHuey,
@@ -607,6 +678,103 @@ class TestHueyWorker:
 
         non_main_idents = thread_idents - {main_ident}
         assert len(non_main_idents) == 1
+
+    def test_reclaim_loop_also_prunes_terminal_state(
+        self,
+        huey_instance: SqliteHuey,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Pruning is hooked onto the existing reclaimer loop, not a new timer."""
+        reclaim_calls: list[int] = []
+        prune_calls: list[int] = []
+
+        def fake_requeue(huey: object, lease_store: object) -> None:
+            del huey, lease_store
+            reclaim_calls.append(threading.get_ident())
+
+        def fake_prune(huey: object, lease_store: object) -> None:
+            del huey, lease_store
+            prune_calls.append(threading.get_ident())
+
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer._requeue_expired_leases",
+            fake_requeue,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer._prune_terminal_state",
+            fake_prune,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_RECLAIM_INTERVAL_SECONDS",
+            0.01,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.PRUNE_INTERVAL_SECONDS",
+            0.01,
+        )
+        main_ident = threading.get_ident()
+
+        worker = HueyWorker(huey_instance, workers=2)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while (not reclaim_calls or not prune_calls) and time.monotonic() < deadline:
+                time.sleep(0.02)
+        finally:
+            worker.stop()
+
+        assert reclaim_calls
+        assert prune_calls
+        # Only the designated reclaimer thread ever runs either hook (the
+        # main thread also reclaims once synchronously on start()).
+        assert (set(reclaim_calls) - {main_ident}) == set(prune_calls)
+
+    def test_prune_runs_on_its_own_coarser_cadence_than_reclaim(
+        self,
+        huey_instance: SqliteHuey,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Pruning must not run on every 5s-scale reclaim tick."""
+        reclaim_calls: list[float] = []
+        prune_calls: list[float] = []
+
+        def fake_requeue(huey: object, lease_store: object) -> None:
+            del huey, lease_store
+            reclaim_calls.append(time.monotonic())
+
+        def fake_prune(huey: object, lease_store: object) -> None:
+            del huey, lease_store
+            prune_calls.append(time.monotonic())
+
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer._requeue_expired_leases",
+            fake_requeue,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer._prune_terminal_state",
+            fake_prune,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.LEASE_RECLAIM_INTERVAL_SECONDS",
+            0.01,
+        )
+        monkeypatch.setattr(
+            "mcp_markdown_ragdocs.worker.consumer.PRUNE_INTERVAL_SECONDS",
+            10.0,
+        )
+
+        worker = HueyWorker(huey_instance, workers=2)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while len(reclaim_calls) < 5 and time.monotonic() < deadline:
+                time.sleep(0.02)
+        finally:
+            worker.stop()
+
+        assert len(reclaim_calls) >= 5
+        # A 10s prune cadence means only the initial loop tick has fired.
+        assert len(prune_calls) == 1
 
     def test_stop_joins_pool_and_clears_running_state(
         self,
