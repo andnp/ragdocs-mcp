@@ -58,3 +58,5 @@ def configure_file_logging(log_path: Path, config: LoggingConfig) -> None:
     root_logger.setLevel(logging.INFO)
     # One line per embedding request otherwise dominates the indexing log.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Logs a fixed oauth2client cache warning on every Drive API call.
+    logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.WARNING)
