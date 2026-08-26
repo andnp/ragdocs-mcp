@@ -47,7 +47,7 @@ from mcp_markdown_ragdocs.indexing.bootstrap_session import BootstrapSession
 from mcp_markdown_ragdocs.indexing.task_runtime import TaskRuntime
 from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
 from mcp_markdown_ragdocs.indexing.record_manager import build_embedding_provider
-from mcp_markdown_ragdocs.indexing.record_ports import RecordStorage
+from mcp_markdown_ragdocs.indexing.record_ports import LocalRecordStorage, RecordStorage
 from mcp_markdown_ragdocs.indexing.watcher import FileWatcher
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
 from mcp_markdown_ragdocs.search import CanonicalSearchAdapter
@@ -1009,6 +1009,20 @@ class ApplicationContext:
                     )
                     if freed > 0:
                         logger.info("Periodic reconciliation: reclaimed %d page(s)", freed)
+
+                    # Only LocalRecordStorage tracks an embedding cache path to reclaim;
+                    # other RecordStorage implementations (e.g. test fakes) have none.
+                    storage = self.index_manager.storage
+                    if isinstance(storage, LocalRecordStorage):
+                        freed_cache = await asyncio.to_thread(
+                            storage.run_incremental_vacuum_embedding_cache,
+                            vacuum_page_limit,
+                        )
+                        if freed_cache > 0:
+                            logger.info(
+                                "Periodic reconciliation: reclaimed %d embedding cache page(s)",
+                                freed_cache,
+                            )
 
                 await self._request_reconciliation()
 
