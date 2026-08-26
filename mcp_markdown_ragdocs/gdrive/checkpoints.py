@@ -37,6 +37,7 @@ class GDriveSyncCheckpoint:
     inventory_page_token: str | None = None
     inventory_batch: int = 0
     inventory_complete: bool = False
+    inventory_failure_count: int = 0
     changes_token: str | None = None
     schema_version: int = CHECKPOINT_SCHEMA_VERSION
 
@@ -49,6 +50,12 @@ class GDriveSyncCheckpoint:
             raise ValueError("inventory_batch must be a non-negative integer")
         if self.inventory_batch < 0:
             raise ValueError("inventory_batch must be a non-negative integer")
+        if (
+            not isinstance(self.inventory_failure_count, int)
+            or isinstance(self.inventory_failure_count, bool)
+            or self.inventory_failure_count < 0
+        ):
+            raise ValueError("inventory_failure_count must be a non-negative integer")
         for field_name, value in (
             ("inventory_start_token", self.inventory_start_token),
             ("inventory_page_token", self.inventory_page_token),
@@ -66,6 +73,7 @@ class GDriveSyncCheckpoint:
             "inventory_page_token": self.inventory_page_token,
             "inventory_batch": self.inventory_batch,
             "inventory_complete": self.inventory_complete,
+            "inventory_failure_count": self.inventory_failure_count,
             "changes_token": self.changes_token,
         }
 
@@ -80,6 +88,7 @@ class GDriveSyncCheckpoint:
         inventory_page_token = payload.get("inventory_page_token")
         inventory_batch = payload.get("inventory_batch")
         inventory_complete = payload.get("inventory_complete", False)
+        inventory_failure_count = payload.get("inventory_failure_count", 0)
         changes_token = payload.get("changes_token")
         if not isinstance(schema_version, int):
             raise ValueError("schema_version must be an integer")
@@ -87,6 +96,12 @@ class GDriveSyncCheckpoint:
             raise ValueError("inventory_batch must be a non-negative integer")
         if not isinstance(inventory_complete, bool):
             raise ValueError("inventory_complete must be a boolean")
+        if (
+            not isinstance(inventory_failure_count, int)
+            or isinstance(inventory_failure_count, bool)
+            or inventory_failure_count < 0
+        ):
+            raise ValueError("inventory_failure_count must be a non-negative integer")
         for field_name, value in (
             ("inventory_start_token", inventory_start_token),
             ("inventory_page_token", inventory_page_token),
@@ -100,6 +115,7 @@ class GDriveSyncCheckpoint:
             inventory_page_token=inventory_page_token,
             inventory_batch=inventory_batch,
             inventory_complete=inventory_complete,
+            inventory_failure_count=inventory_failure_count,
             changes_token=changes_token,
         )
 
@@ -112,6 +128,7 @@ class GDriveSyncCheckpoint:
             inventory_page_token=None,
             inventory_batch=0,
             inventory_complete=False,
+            inventory_failure_count=0,
             changes_token=None,
         )
 
