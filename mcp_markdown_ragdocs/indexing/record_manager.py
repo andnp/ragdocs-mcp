@@ -35,6 +35,7 @@ from searchkernel.api import (
 )
 
 from mcp_markdown_ragdocs.config import Config
+from mcp_markdown_ragdocs.gdrive.replacement import canonical_gdrive_source_key
 from mcp_markdown_ragdocs.indexing.graph_rebuild import DebouncedGraphRebuilder
 from mcp_markdown_ragdocs.indexing.local_graph import install_bidirectional_graph_store
 from mcp_markdown_ragdocs.indexing.markdown_documents import (
@@ -521,8 +522,14 @@ class RecordIndexManager:
     async def _async_index_gdrive_records(self, records: Sequence[Record]) -> bool:
         try:
             await self._gdrive_integration.replace(records)
-            with self._graph_lock:
-                self._graph_full_rebuild_pending = True
+            # Mark only the doc_ids this batch touched dirty, instead of forcing
+            # a full graph rebuild per ~100-record batch (gdrive/sync.py persists
+            # after every batch, and persist() blocks on a full rebuild). The
+            # scoped rebuild already widens to any document whose links resolve
+            # at a dirty doc_id (see _graph_rebuild_scope), which is the same
+            # mechanism local Markdown edits rely on for correctness today.
+            for doc_id in {canonical_gdrive_source_key(record) for record in records}:
+                self._mark_graph_dirty(doc_id)
             self._rebuild_graph()
             self._state_version += 1
             return True
