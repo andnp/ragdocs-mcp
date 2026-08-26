@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class _HueyStorage(Protocol):
     filename: str
+    conn: sqlite3.Connection
 
 
 @dataclass(frozen=True)
@@ -42,5 +44,13 @@ def build_queue_runtime(db_path: Path) -> QueueRuntime:
         filename=str(normalized_path),
         immediate=False,  # Tasks go to queue, not executed inline
     )
+    # huey only pragmas `synchronous` when fsync= is passed, and that kwarg
+    # only expresses FULL (fsync=True) or OFF (fsync=False) -- neither
+    # matches NORMAL, which TaskLeaseStore and WorkIntentStore already force
+    # on this same physical file. Set it directly on huey's connection
+    # (already open: SqliteHuey.__init__ ran initialize_schema(), which
+    # accessed storage.conn) so the whole file has one coherent durability
+    # policy instead of huey silently staying at SQLite's compiled-in FULL.
+    cast(_HueyStorage, huey.storage).conn.execute("PRAGMA synchronous = NORMAL")
     logger.info("Task queue initialized: %s", normalized_path)
     return QueueRuntime(huey=huey, db_path=normalized_path)
