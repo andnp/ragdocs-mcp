@@ -68,6 +68,15 @@ _status_snapshot_lock = Lock()
 _status_snapshot_root: Path | None = None
 _status_snapshot: StatusSnapshot[_AdminOverviewSnapshot] | None = None
 
+# Queue state is far more volatile than the index stats behind
+# _status_snapshot (30s TTL), so it gets its own short-TTL snapshot rather
+# than sharing that cache or going uncached and re-running huey's N+1-prone
+# queries on every admin request.
+_QUEUE_STATUS_STALE_AFTER_SECONDS = 5.0
+_queue_status_snapshot_lock = Lock()
+_queue_status_snapshot_root: Path | None = None
+_queue_status_snapshot: StatusSnapshot[dict[str, object]] | None = None
+
 
 def _get_admin_overview_snapshot(runtime_paths: RuntimePaths) -> StatusSnapshot[_AdminOverviewSnapshot]:
     global _status_snapshot, _status_snapshot_root
@@ -269,20 +278,52 @@ def _build_index_stats_payload(ctx: Any) -> dict[str, object]:
     }
 
 
+def _get_queue_status_snapshot(db_path: Path) -> StatusSnapshot[dict[str, object]]:
+    global _queue_status_snapshot, _queue_status_snapshot_root
+    root = db_path.resolve()
+    with _queue_status_snapshot_lock:
+        if _queue_status_snapshot is None or _queue_status_snapshot_root != root:
+            _queue_status_snapshot = StatusSnapshot(
+                stale_after_seconds=_QUEUE_STATUS_STALE_AFTER_SECONDS
+            )
+            _queue_status_snapshot_root = root
+        return _queue_status_snapshot
+
+
+def _build_uncached_queue_status_payload(
+    *,
+    queue_runtime: QueueRuntime,
+    backpressure_limit: int | None,
+) -> dict[str, object]:
+    # worker_running is cheap (read from the live worker process, not the
+    # queue db) and callers rely on it being current, so it is deliberately
+    # left out of the cached payload here and overlaid fresh in
+    # _build_queue_status_payload below.
+    stats = get_queue_stats(
+        queue_runtime.huey,
+        worker_running=False,
+        backpressure_limit=backpressure_limit,
+    )
+    payload = stats.to_dict()
+    payload["queue_db_path"] = str(queue_runtime.db_path)
+    payload["git_refresh_progress"] = list_progress(queue_runtime.db_path.parent)
+    return payload
+
+
 def _build_queue_status_payload(
     *,
     queue_runtime: QueueRuntime,
     worker_running: bool,
     backpressure_limit: int | None = None,
 ) -> dict[str, object]:
-    stats = get_queue_stats(
-        queue_runtime.huey,
-        worker_running=worker_running,
-        backpressure_limit=backpressure_limit,
+    cached_payload, _ = _get_queue_status_snapshot(queue_runtime.db_path).read(
+        lambda: _build_uncached_queue_status_payload(
+            queue_runtime=queue_runtime,
+            backpressure_limit=backpressure_limit,
+        )
     )
-    payload = stats.to_dict()
-    payload["queue_db_path"] = str(queue_runtime.db_path)
-    payload["git_refresh_progress"] = list_progress(queue_runtime.db_path.parent)
+    payload = dict(cached_payload)
+    payload["worker_running"] = worker_running
     return payload
 
 
