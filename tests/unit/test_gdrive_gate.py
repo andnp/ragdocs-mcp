@@ -36,6 +36,31 @@ class FakeClock:
         self.now += seconds
 
 
+def test_gate_creates_database_in_wal_mode_with_relaxed_synchronous(
+    tmp_path: Path,
+) -> None:
+    """A freshly created gate database uses WAL, not the rollback journal.
+
+    WAL avoids per-transaction journal-file create/fsync/delete churn on the
+    claim/release path. synchronous=NORMAL is safe with WAL and matches the
+    coordination databases' durability trade-off for this equally ephemeral,
+    expiry-reclaimed data. journal_mode persists in the database header, so a
+    plain connection reflects it; synchronous is per-connection, so it must be
+    read from a connection the gate itself opened.
+    """
+    path = tmp_path / "gate.db"
+    gate = DriveRequestGate(path, min_interval_seconds=0)
+
+    with sqlite3.connect(path) as connection:
+        (journal_mode,) = connection.execute("PRAGMA journal_mode").fetchone()
+
+    with gate._connect() as connection:
+        (synchronous,) = connection.execute("PRAGMA synchronous").fetchone()
+
+    assert journal_mode == "wal"
+    assert synchronous == 1  # NORMAL
+
+
 def test_gate_allows_up_to_max_concurrent_claims_in_flight(tmp_path: Path) -> None:
     """max_concurrent operations may run at once; the next one waits."""
     gate = DriveRequestGate(tmp_path / "gate.db", min_interval_seconds=0, max_concurrent=2)

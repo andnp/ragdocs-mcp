@@ -217,6 +217,15 @@ class DriveRequestGate:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30.0)
         connection.execute("PRAGMA busy_timeout = 30000")
+        # WAL mode persists in the database header, but this data is ephemeral
+        # rate-limiter bookkeeping that may be rebuilt at any path, so setting
+        # it on every connect (before any transaction starts) is the more
+        # robust choice rather than relying on a one-time initializer. Slot
+        # rows are expiry-reclaimed by design, so relaxing durability to
+        # NORMAL trades a crash losing the last commit for far less fsync
+        # churn on the write-heavy claim/release path.
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = NORMAL")
         return connection
 
 
