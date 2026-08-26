@@ -47,6 +47,7 @@ DRIVE_CONTINUE_DELAY_SECONDS = 1.0
 DRIVE_RETRY_DELAY_SECONDS = 30.0
 DRIVE_RETRY_DELAY_CEILING_SECONDS = 1800.0
 DRIVE_RETRY_BACKOFF_MULTIPLIER = 2.0
+DRIVE_INVENTORY_FAILURE_ATTEMPT_CAP = 10
 DRIVE_BACKFILL_DELAY_SECONDS = 3600.0
 DRIVE_HEALTH_DELAY_SECONDS = 60.0
 
@@ -294,12 +295,20 @@ def register_gdrive_tasks(
             )
             checkpoint = runtime.sync.checkpoint_store.record_inventory_failure(namespace)
             assert scheduler is not None
-            delay = min(
-                DRIVE_RETRY_DELAY_SECONDS
-                * DRIVE_RETRY_BACKOFF_MULTIPLIER ** (checkpoint.inventory_failure_count - 1),
-                DRIVE_RETRY_DELAY_CEILING_SECONDS,
-            )
-            scheduler.inventory(scope_identity, delay=delay)
+            if checkpoint.inventory_failure_count >= DRIVE_INVENTORY_FAILURE_ATTEMPT_CAP:
+                logger.error(
+                    "Google Drive inventory for scope %s failed %d times in a row; giving "
+                    "up until the next startup instead of rescheduling",
+                    scope_identity,
+                    checkpoint.inventory_failure_count,
+                )
+            else:
+                delay = min(
+                    DRIVE_RETRY_DELAY_SECONDS
+                    * DRIVE_RETRY_BACKOFF_MULTIPLIER ** (checkpoint.inventory_failure_count - 1),
+                    DRIVE_RETRY_DELAY_CEILING_SECONDS,
+                )
+                scheduler.inventory(scope_identity, delay=delay)
             scheduler.health()
             raise
         runtime.sync.checkpoint_store.record_inventory_success(namespace)
