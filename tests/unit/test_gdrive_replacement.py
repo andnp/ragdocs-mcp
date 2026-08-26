@@ -14,6 +14,7 @@ from searchkernel.api import (
 )
 
 from mcp_markdown_ragdocs.gdrive.replacement import (
+    GDriveReplacementEntry,
     GDriveReplacementJournal,
     canonical_gdrive_source_key,
 )
@@ -495,3 +496,75 @@ def test_drive_replace_hydrates_existing_keys_once_per_call_regardless_of_source
     assert saved[canonical_gdrive_source_key(updated_third)] == [
         updated_third.storage_key
     ]
+
+
+def test_journal_entries_survive_a_simulated_process_restart(tmp_path: Path) -> None:
+    """
+    A fresh journal instance over the same path sees every durable write.
+    """
+    path = tmp_path / "gdrive-replacements.json"
+    journal = GDriveReplacementJournal(path)
+    first = journal.prepare("source-a", ("old-a",), ("new-a",))
+    journal.mark_indexed(first)
+    journal.prepare("source-b", (), ("new-b",))
+
+    restarted = GDriveReplacementJournal(path)
+
+    assert restarted.load() == (
+        replace(first, phase="indexed"),
+        GDriveReplacementEntry("source-b", (), ("new-b",)),
+    )
+
+
+def test_journal_interleaves_prepare_mark_indexed_complete_across_sources(
+    tmp_path: Path,
+) -> None:
+    """
+    Independent source keys progress through their phases without clobbering
+    each other's state.
+    """
+    path = tmp_path / "gdrive-replacements.json"
+    journal = GDriveReplacementJournal(path)
+
+    entry_a = journal.prepare("source-a", ("old-a",), ("new-a",))
+    entry_b = journal.prepare("source-b", ("old-b",), ("new-b",))
+    journal.mark_indexed(entry_a)
+    journal.complete("source-a")
+    entry_c = journal.prepare("source-c", (), ("new-c",))
+    journal.mark_indexed(entry_b)
+    journal.mark_indexed(entry_c)
+    journal.complete("source-b")
+    journal.complete("source-c")
+
+    assert journal.load() == ()
+    assert GDriveReplacementJournal(path).load() == ()
+
+
+def test_journal_writes_do_not_reread_the_journal_file_per_entry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Recording many replacement entries in one process lifetime must not cost
+    one full journal read+parse per entry: that turns a resync touching K
+    Drive sources into O(K^2) journal I/O. At most one read should occur, to
+    hydrate the in-process cache the first time it is needed.
+    """
+    from mcp_markdown_ragdocs.gdrive.json_record_store import JsonEnvelopeStore
+
+    read_calls = 0
+    original_read = JsonEnvelopeStore.read
+
+    def counting_read(self, expected_type):
+        nonlocal read_calls
+        read_calls += 1
+        return original_read(self, expected_type)
+
+    monkeypatch.setattr(JsonEnvelopeStore, "read", counting_read)
+
+    journal = GDriveReplacementJournal(tmp_path / "gdrive-replacements.json")
+    for index in range(50):
+        entry = journal.prepare(f"source-{index}", (), (f"key-{index}",))
+        journal.mark_indexed(entry)
+        journal.complete(f"source-{index}")
+
+    assert read_calls <= 1
