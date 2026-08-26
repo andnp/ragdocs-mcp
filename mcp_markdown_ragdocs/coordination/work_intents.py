@@ -22,6 +22,16 @@ RUNNING = "running"
 SUCCEEDED = "succeeded"
 FAILED = "failed"
 MAX_AUTOMATIC_FAILURES = 3
+# Terminal intents are re-read after termination: task_intents.py and
+# indexing/tasks.py call find() when a claim is refused, to tell a permanent
+# failure from "already pending", and a permanently-failed intent's
+# failure_count backs the retry ceiling. Keep this longer than
+# TASK_LEASE_RETENTION_SECONDS so a pruned row does not casually reopen a
+# retry ceiling that was reached only a few days ago. submit() already
+# unconditionally reopens a succeeded row to PENDING on resubmission, so
+# pruning succeeded rows changes nothing about whether work gets redone.
+WORK_INTENT_RETENTION_SECONDS = 7 * 24 * 3600.0
+PRUNE_BATCH_LIMIT = 500
 
 logger = logging.getLogger(__name__)
 
@@ -372,6 +382,44 @@ class WorkIntentStore(WorkIntentPort):
             ).fetchone()
             assert row is not None
             return _row_to_intent(row), token
+
+    def prune_terminal(
+        self,
+        *,
+        now: float | None = None,
+        retention_seconds: float = WORK_INTENT_RETENTION_SECONDS,
+        limit: int = PRUNE_BATCH_LIMIT,
+    ) -> list[str]:
+        """Delete succeeded/failed intents past retention, bounded to `limit` rows.
+
+        PENDING/CLAIMED/RUNNING rows are never touched. A pruned row cannot
+        be re-claimed, since claim() only accepts PENDING/CLAIMED states;
+        find()/submit() simply see no prior row and behave as for a
+        brand-new canonical_key.
+        """
+        timestamp = time.time() if now is None else now
+        cutoff = timestamp - retention_seconds
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                SELECT intent_id
+                FROM work_intents
+                WHERE state IN (?, ?) AND observed_at <= ?
+                LIMIT ?
+                """,
+                (SUCCEEDED, FAILED, cutoff, limit),
+            ).fetchall()
+            if not rows:
+                return []
+
+            intent_ids = [str(row["intent_id"]) for row in rows]
+            placeholders = ",".join("?" for _ in intent_ids)
+            connection.execute(
+                f"DELETE FROM work_intents WHERE intent_id IN ({placeholders})",
+                intent_ids,
+            )
+            return intent_ids
 
     def get(self, intent_id: str) -> WorkIntent | None:
         with self._connect() as connection:
