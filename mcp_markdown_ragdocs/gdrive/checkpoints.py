@@ -232,6 +232,30 @@ class GDriveSyncCheckpointStore:
         self.save(namespace, checkpoint)
         return checkpoint
 
+    def record_inventory_failure(self, namespace: str) -> GDriveSyncCheckpoint:
+        """Persist a failed inventory attempt, growing the consecutive-failure count."""
+
+        checkpoint = (self.load(namespace) or GDriveSyncCheckpoint()).inventory_failed()
+        self.save(namespace, checkpoint)
+        return checkpoint
+
+    def record_inventory_success(self, namespace: str) -> GDriveSyncCheckpoint | None:
+        """Clear any consecutive-failure history after inventory ran without error."""
+
+        checkpoint = self.load(namespace)
+        if checkpoint is None or checkpoint.inventory_failure_count == 0:
+            return checkpoint
+        cleared = checkpoint.inventory_succeeded()
+        self.save(namespace, cleared)
+        return cleared
+
+    def poison_inventory_token(self, namespace: str) -> GDriveSyncCheckpoint:
+        """Clear a page token that has failed too many times in a row."""
+
+        poisoned = self._require(namespace).inventory_token_poisoned()
+        self.save(namespace, poisoned)
+        return poisoned
+
     def persist_inventory_batch_after_index(
         self,
         namespace: str,
