@@ -70,6 +70,78 @@ class _SingleConnectionProvider:
         return self._connection
 
 
+class _DeleteSpyStorage:
+    """Fake RecordStorage that only records delete() calls.
+
+    _delete_stale_keys only ever calls storage.delete(); every other method
+    raises so a test fails loudly if the method under test starts depending
+    on more than that.
+    """
+
+    def __init__(self) -> None:
+        self.deleted: list[tuple[str, ...]] = []
+
+    def register_content_source(self, source) -> None:
+        raise NotImplementedError
+
+    def hydrate_record(self, identity):
+        raise NotImplementedError
+
+    def hydrate_records(self, identities):
+        raise NotImplementedError
+
+    def iter_records(self, *, source_kind=None, status=None):
+        raise NotImplementedError
+
+    def iter_identities(self, *, source_kind=None, status=None):
+        raise NotImplementedError
+
+    def count_distinct_git_commits(self, *, status=None) -> int:
+        raise NotImplementedError
+
+    def run_incremental_vacuum(self, page_limit: int) -> int:
+        raise NotImplementedError
+
+    def delete(self, storage_keys) -> None:
+        self.deleted.append(tuple(storage_keys))
+
+
+class _SourceMapWriteSpy(SqliteSourceMapStore):
+    """Wrap a real SqliteSourceMapStore, recording which write path is used."""
+
+    def __init__(self, connection_provider) -> None:
+        super().__init__(connection_provider)
+        self.save_calls: list[dict[str, list[str]]] = []
+        self.apply_delta_calls: list[tuple[dict[str, list[str]], list[str]]] = []
+
+    def save(self, records) -> None:
+        self.save_calls.append({doc_id: list(keys) for doc_id, keys in records.items()})
+        super().save(records)
+
+    def apply_delta(self, upserts, removals) -> None:
+        self.apply_delta_calls.append(
+            ({doc_id: list(keys) for doc_id, keys in upserts.items()}, list(removals))
+        )
+        super().apply_delta(upserts, removals)
+
+
+def _policy_for_delete_stale_keys(
+    tmp_path: Path,
+    record_manager,
+    source_records: dict[str, list[str]],
+    storage=None,
+) -> GDriveReplacementPolicy:
+    """Build a policy whose only exercised collaborator is storage.delete()."""
+    source_map = SqliteSourceMapStore(_SingleConnectionProvider(tmp_path / "index.db"))
+    return GDriveReplacementPolicy(
+        record_manager.ingestor,
+        storage if storage is not None else _DeleteSpyStorage(),
+        source_records,
+        source_map,
+        GDriveReplacementJournal(tmp_path / "gdrive-replacements.json"),
+    )
+
+
 def _record(
     source_id: str,
     body: str,
@@ -403,6 +475,111 @@ def test_drive_policy_applies_tombstone_membership_update(
     )
 
 
+def test_delete_stale_keys_removes_stale_keys_from_storage_and_source_map(
+    tmp_path: Path, record_manager
+) -> None:
+    """
+    Drop a key no longer present in the new batch from storage and from the
+    source's own retained-key list.
+    """
+    storage = _DeleteSpyStorage()
+    source_records = {"source-a": ["key-1", "key-2", "key-3"]}
+    policy = _policy_for_delete_stale_keys(tmp_path, record_manager, source_records, storage)
+
+    reverse_index = policy._build_reverse_index()
+    delta: dict[str, list[str] | None] = {}
+    policy._delete_stale_keys(
+        "source-a", ("key-1", "key-2", "key-3"), ("key-1", "key-3"), reverse_index, delta
+    )
+
+    assert storage.deleted == [("key-2",)]
+    assert source_records["source-a"] == ["key-1", "key-3"]
+
+
+def test_delete_stale_keys_strips_a_key_claimed_by_another_source(
+    tmp_path: Path, record_manager
+) -> None:
+    """
+    A key that a new batch now claims for source_key must be released from
+    any other doc_id that was still carrying it (the same-source vs
+    other-source asymmetry).
+    """
+    storage = _DeleteSpyStorage()
+    source_records = {
+        "source-a": ["key-1"],
+        "other-doc": ["key-2", "shared-key"],
+    }
+    policy = _policy_for_delete_stale_keys(tmp_path, record_manager, source_records, storage)
+
+    reverse_index = policy._build_reverse_index()
+    delta: dict[str, list[str] | None] = {}
+    policy._delete_stale_keys(
+        "source-a", ("key-1",), ("key-1", "shared-key"), reverse_index, delta
+    )
+
+    assert source_records["other-doc"] == ["key-2"]
+    assert source_records["source-a"] == ["key-1"]
+
+
+def test_delete_stale_keys_strips_own_stale_key_even_when_old_keys_omits_it(
+    tmp_path: Path, record_manager
+) -> None:
+    """
+    For the entry belonging to source_key itself, any key absent from
+    new_keys is dropped even if the caller-supplied old_keys did not
+    report it as stale -- but it is not sent to storage.delete(), since
+    only keys in stale_keys (old_keys - new_keys) are deleted there.
+    """
+    storage = _DeleteSpyStorage()
+    source_records = {"source-a": ["key-1", "ghost-key"]}
+    policy = _policy_for_delete_stale_keys(tmp_path, record_manager, source_records, storage)
+
+    reverse_index = policy._build_reverse_index()
+    delta: dict[str, list[str] | None] = {}
+    policy._delete_stale_keys("source-a", ("key-1",), ("key-1",), reverse_index, delta)
+
+    assert source_records["source-a"] == ["key-1"]
+    assert storage.deleted == []
+
+
+def test_delete_stale_keys_deduplicates_preserving_first_occurrence_order(
+    tmp_path: Path, record_manager
+) -> None:
+    """
+    Retained keys are de-duplicated, keeping each key's first-seen position.
+    """
+    storage = _DeleteSpyStorage()
+    source_records = {"source-a": ["key-2", "key-1", "key-2", "key-1"]}
+    policy = _policy_for_delete_stale_keys(tmp_path, record_manager, source_records, storage)
+
+    reverse_index = policy._build_reverse_index()
+    delta: dict[str, list[str] | None] = {}
+    policy._delete_stale_keys(
+        "source-a", ("key-1", "key-2"), ("key-1", "key-2"), reverse_index, delta
+    )
+
+    assert source_records["source-a"] == ["key-2", "key-1"]
+
+
+def test_delete_stale_keys_pops_doc_id_when_nothing_is_retained(
+    tmp_path: Path, record_manager
+) -> None:
+    """
+    Remove a doc_id from the source map entirely once every one of its keys
+    is stale.
+    """
+    storage = _DeleteSpyStorage()
+    source_records = {"source-a": ["key-1", "key-2"]}
+    policy = _policy_for_delete_stale_keys(tmp_path, record_manager, source_records, storage)
+
+    reverse_index = policy._build_reverse_index()
+    delta: dict[str, list[str] | None] = {}
+    policy._delete_stale_keys("source-a", ("key-1", "key-2"), (), reverse_index, delta)
+
+    assert "source-a" not in source_records
+    assert storage.deleted == [("key-1", "key-2")]
+
+
 def test_drive_policy_recovers_indexed_journal_entry(tmp_path: Path, record_manager) -> None:
     """
     Complete stale cleanup and source-map repair from an indexed journal entry.
@@ -499,6 +676,95 @@ def test_drive_replace_hydrates_no_existing_keys_when_every_key_is_already_track
     assert saved[canonical_gdrive_source_key(updated_third)] == [
         updated_third.storage_key
     ]
+
+
+def test_record_keys_by_source_matches_hydrated_mapping_with_and_without_drift(
+    record_manager,
+    tmp_path: Path,
+) -> None:
+    """
+    _record_keys_by_source must return the same source_key -> keys mapping a
+    full hydrate-and-group pass would produce, whether or not every Drive key
+    is already tracked in _source_records. It should need zero hydrations
+    when everything is already tracked, and hydrate only the untracked
+    (drifted) keys otherwise.
+    """
+    journal = GDriveReplacementJournal(tmp_path / "gdrive-replacements.json")
+    source_map = SqliteSourceMapStore(_SingleConnectionProvider(tmp_path / "index.db"))
+    policy = GDriveReplacementPolicy(
+        record_manager.ingestor, record_manager.storage, source_map.load(), source_map, journal
+    )
+    first = _record("file-1:chunk-a", "first body")
+    second = _record("file-2:chunk-a", "second body")
+    second = replace(second, metadata={**second.metadata, "gdrive_source_id": "file-2"})
+    asyncio.run(policy.replace((first, second)))
+
+    counting_storage = _CountingRecordStorage(record_manager.storage)
+    tracked_policy = GDriveReplacementPolicy(
+        record_manager.ingestor,
+        counting_storage,
+        policy._source_records,
+        source_map,
+        journal,
+    )
+
+    baseline = tracked_policy._record_keys_by_source()
+
+    assert counting_storage.hydrate_records_calls == 0
+    assert baseline == {
+        canonical_gdrive_source_key(first): (first.storage_key,),
+        canonical_gdrive_source_key(second): (second.storage_key,),
+    }
+
+    # Simulate drift: a Drive record indexed directly, bypassing the policy,
+    # so _source_records has no idea what source key it belongs to.
+    third = _record("file-3:chunk-a", "third body")
+    third = replace(third, metadata={**third.metadata, "gdrive_source_id": "file-3"})
+    asyncio.run(record_manager.ingestor.index_records((third,)))
+    counting_storage.hydrate_records_calls = 0
+
+    with_drift = tracked_policy._record_keys_by_source()
+
+    assert counting_storage.hydrate_records_calls == 1
+    assert with_drift == {
+        **baseline,
+        canonical_gdrive_source_key(third): (third.storage_key,),
+    }
+
+
+def test_drive_replace_applies_incremental_source_map_delta_not_full_rewrite(
+    record_manager,
+    tmp_path: Path,
+) -> None:
+    """
+    A replace() touching one source must write only that source's row to the
+    source map, not rewrite every row in the table.
+    """
+    connection_provider = _SingleConnectionProvider(tmp_path / "index.db")
+    spy_store = _SourceMapWriteSpy(connection_provider)
+    journal = GDriveReplacementJournal(tmp_path / "gdrive-replacements.json")
+    policy = GDriveReplacementPolicy(
+        record_manager.ingestor, record_manager.storage, spy_store.load(), spy_store, journal
+    )
+    first = _record("file-1:chunk-a", "first body")
+    second = _record("file-2:chunk-a", "second body")
+    second = replace(second, metadata={**second.metadata, "gdrive_source_id": "file-2"})
+    asyncio.run(policy.replace((first, second)))
+    spy_store.save_calls.clear()
+    spy_store.apply_delta_calls.clear()
+
+    updated_first = _record("file-1:chunk-a", "updated first body")
+    asyncio.run(policy.replace((updated_first,)))
+
+    assert spy_store.save_calls == []
+    assert len(spy_store.apply_delta_calls) == 1
+    upserts, removals = spy_store.apply_delta_calls[0]
+    assert set(upserts) == {canonical_gdrive_source_key(updated_first)}
+    assert removals == []
+    assert spy_store.load() == {
+        canonical_gdrive_source_key(updated_first): [updated_first.storage_key],
+        canonical_gdrive_source_key(second): [second.storage_key],
+    }
 
 
 def test_journal_entries_survive_a_simulated_process_restart(tmp_path: Path) -> None:
