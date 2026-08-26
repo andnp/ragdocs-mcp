@@ -47,6 +47,7 @@ DRIVE_CONTINUE_DELAY_SECONDS = 1.0
 DRIVE_RETRY_DELAY_SECONDS = 30.0
 DRIVE_RETRY_DELAY_CEILING_SECONDS = 1800.0
 DRIVE_RETRY_BACKOFF_MULTIPLIER = 2.0
+DRIVE_INVENTORY_TOKEN_POISON_THRESHOLD = 3
 DRIVE_INVENTORY_FAILURE_ATTEMPT_CAP = 10
 DRIVE_BACKFILL_DELAY_SECONDS = 3600.0
 DRIVE_HEALTH_DELAY_SECONDS = 60.0
@@ -294,6 +295,17 @@ def register_gdrive_tasks(
                 str(error),
             )
             checkpoint = runtime.sync.checkpoint_store.record_inventory_failure(namespace)
+            if (
+                checkpoint.inventory_failure_count >= DRIVE_INVENTORY_TOKEN_POISON_THRESHOLD
+                and checkpoint.inventory_page_token is not None
+            ):
+                logger.warning(
+                    "Google Drive inventory page token for scope %s failed %d times in a "
+                    "row; clearing it so pagination restarts from the beginning",
+                    scope_identity,
+                    checkpoint.inventory_failure_count,
+                )
+                checkpoint = runtime.sync.checkpoint_store.poison_inventory_token(namespace)
             assert scheduler is not None
             if checkpoint.inventory_failure_count >= DRIVE_INVENTORY_FAILURE_ATTEMPT_CAP:
                 logger.error(
