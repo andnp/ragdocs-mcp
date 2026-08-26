@@ -18,7 +18,13 @@ from mcp_markdown_ragdocs.gdrive.replacement import (
 )
 from mcp_markdown_ragdocs.gdrive.domain import GDriveScopeIdentity
 from mcp_markdown_ragdocs.gdrive.port import GDriveStatePort
-from mcp_markdown_ragdocs.indexing.record_ports import RecordStorage, SourceMapStore
+from mcp_markdown_ragdocs.indexing.record_ports import (
+    RecordStorage,
+    SourceMapStore,
+    SqliteSourceMapStore,
+)
+
+_SourceMapDelta = dict[str, "list[str] | None"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,11 +68,13 @@ class GDriveReplacementPolicy:
             )
             for source_key, grouped in grouped_by_source.items()
         )
-        await self._index_plans(plans)
-        self._save_source_map()
+        delta = await self._index_plans(plans)
+        self._apply_source_map_delta(delta)
 
     def recover(self) -> bool:
         recovered = False
+        reverse_index: dict[str, set[str]] | None = None
+        delta: _SourceMapDelta = {}
         for entry in self._journal.load():
             if entry.phase == "prepared":
                 partial_keys = tuple(
@@ -80,20 +88,24 @@ class GDriveReplacementPolicy:
                 self._journal.complete(entry.source_key)
                 recovered = True
                 continue
+            if reverse_index is None:
+                reverse_index = self._build_reverse_index()
             new_keys = tuple(
                 key
                 for key in entry.new_keys
                 if self._storage.hydrate_record(key) is not None
             )
-            self._delete_stale_keys(entry.source_key, entry.old_keys, new_keys)
+            self._delete_stale_keys(
+                entry.source_key, entry.old_keys, new_keys, reverse_index, delta
+            )
             if new_keys:
-                self._source_records[entry.source_key] = list(new_keys)
+                self._set_source_keys(entry.source_key, list(new_keys), reverse_index, delta)
             else:
-                self._source_records.pop(entry.source_key, None)
+                self._pop_source_keys(entry.source_key, reverse_index, delta)
             self._journal.complete(entry.source_key)
             recovered = True
         if recovered:
-            self._save_source_map()
+            self._apply_source_map_delta(delta)
         return recovered
 
     def _prepare_replacement(
@@ -176,7 +188,7 @@ class GDriveReplacementPolicy:
     async def _index_plans(
         self,
         plans: Sequence[_GDriveReplacementPlan],
-    ) -> None:
+    ) -> _SourceMapDelta:
         records_to_index = tuple(
             record for plan in plans for record in plan.records_to_index
         )
@@ -189,17 +201,22 @@ class GDriveReplacementPolicy:
 
         for plan in plans:
             self._journal.mark_indexed(plan.entry, plan.identities)
+        reverse_index = self._build_reverse_index()
+        delta: _SourceMapDelta = {}
         for plan in plans:
-            self._delete_stale_keys(plan.source_key, plan.old_keys, plan.new_keys)
+            self._delete_stale_keys(
+                plan.source_key, plan.old_keys, plan.new_keys, reverse_index, delta
+            )
             if plan.new_keys:
-                self._source_records[plan.source_key] = list(plan.new_keys)
+                self._set_source_keys(plan.source_key, list(plan.new_keys), reverse_index, delta)
             else:
-                self._source_records.pop(plan.source_key, None)
+                self._pop_source_keys(plan.source_key, reverse_index, delta)
             if plan.membership_records:
                 self._record_memberships(plan.membership_records)
             if plan.tombstones:
                 self._remove_memberships(plan.tombstones, plan.removed_scopes)
             self._journal.complete(plan.source_key, plan.identities)
+        return delta
 
     _RECORD_KEYS_BATCH_SIZE = 500
 
@@ -243,17 +260,83 @@ class GDriveReplacementPolicy:
                 grouped.setdefault(canonical_gdrive_source_key(record), []).append(key)
         return {source_key: tuple(sorted(keys)) for source_key, keys in grouped.items()}
 
+    def _build_reverse_index(self) -> dict[str, set[str]]:
+        """Map each tracked storage key to the doc_id(s) currently holding it.
+
+        Built once per `replace()`/`recover()` call so `_delete_stale_keys`
+        can find the handful of doc_ids a batch might affect without walking
+        the entire `_source_records` map (which holds every Drive source and
+        every note doc_id) for every source key in the batch.
+        """
+        reverse_index: dict[str, set[str]] = {}
+        for doc_id, keys in self._source_records.items():
+            for key in keys:
+                reverse_index.setdefault(key, set()).add(doc_id)
+        return reverse_index
+
+    def _unindex_source_keys(self, doc_id: str, reverse_index: dict[str, set[str]]) -> None:
+        for key in self._source_records.get(doc_id, ()):
+            doc_ids = reverse_index.get(key)
+            if doc_ids is None:
+                continue
+            doc_ids.discard(doc_id)
+            if not doc_ids:
+                del reverse_index[key]
+
+    def _set_source_keys(
+        self,
+        doc_id: str,
+        keys: list[str],
+        reverse_index: dict[str, set[str]],
+        delta: _SourceMapDelta,
+    ) -> None:
+        self._unindex_source_keys(doc_id, reverse_index)
+        self._source_records[doc_id] = keys
+        for key in keys:
+            reverse_index.setdefault(key, set()).add(doc_id)
+        delta[doc_id] = keys
+
+    def _pop_source_keys(
+        self,
+        doc_id: str,
+        reverse_index: dict[str, set[str]],
+        delta: _SourceMapDelta,
+    ) -> None:
+        if doc_id not in self._source_records:
+            return
+        self._unindex_source_keys(doc_id, reverse_index)
+        self._source_records.pop(doc_id, None)
+        delta[doc_id] = None
+
     def _delete_stale_keys(
         self,
         source_key: str,
         old_keys: Sequence[str],
         new_keys: Sequence[str],
+        reverse_index: dict[str, set[str]],
+        delta: _SourceMapDelta,
     ) -> None:
-        stale_keys = sorted(set(old_keys) - set(new_keys))
+        """Drop keys `source_key` no longer owns, from storage and bookkeeping.
+
+        Only doc_ids whose keys intersect the stale or newly-claimed keys can
+        possibly change, so `reverse_index` (kept consistent with
+        `_source_records` across the whole batch by the caller) narrows the
+        doc_ids visited to that set plus `source_key` itself, instead of
+        every doc_id ever tracked.
+        """
+        stale_keys = set(old_keys) - set(new_keys)
         if stale_keys:
-            self._storage.delete(stale_keys)
+            self._storage.delete(sorted(stale_keys))
         new_key_set = set(new_keys)
-        for doc_id, keys in tuple(self._source_records.items()):
+        affected_doc_ids = {source_key}
+        for key in stale_keys:
+            affected_doc_ids.update(reverse_index.get(key, ()))
+        for key in new_key_set:
+            affected_doc_ids.update(reverse_index.get(key, ()))
+        for doc_id in affected_doc_ids:
+            keys = self._source_records.get(doc_id)
+            if keys is None:
+                continue
             retained = [
                 key
                 for key in dict.fromkeys(keys)
@@ -262,9 +345,9 @@ class GDriveReplacementPolicy:
                 and not (doc_id == source_key and key not in new_key_set)
             ]
             if retained:
-                self._source_records[doc_id] = retained
+                self._set_source_keys(doc_id, retained, reverse_index, delta)
             else:
-                self._source_records.pop(doc_id, None)
+                self._pop_source_keys(doc_id, reverse_index, delta)
 
     def _with_memberships(self, records: Sequence[Record]) -> tuple[Record, ...]:
         scopes = set(self._scopes_from_records(records))
@@ -346,7 +429,24 @@ class GDriveReplacementPolicy:
                     source_id,
                 )
 
-    def _save_source_map(self) -> None:
+    def _apply_source_map_delta(self, delta: _SourceMapDelta) -> None:
+        """Persist only the doc_ids this call actually touched.
+
+        `_source_map_store` is declared as the narrower `SourceMapStore`
+        Protocol (no `apply_delta`), but the object bound to it in production
+        (`SqliteSourceMapStore`, via `build_gdrive_integration`) does expose
+        it. Dispatch on that concrete type the same way
+        `RecordIndexManager._save_source_map_delta` already does
+        (record_manager.py:409), and fall back to a full rewrite only for a
+        store that genuinely lacks the incremental API.
+        """
+        if not delta:
+            return
+        if isinstance(self._source_map_store, SqliteSourceMapStore):
+            upserts = {doc_id: keys for doc_id, keys in delta.items() if keys is not None}
+            removals = [doc_id for doc_id, keys in delta.items() if keys is None]
+            self._source_map_store.apply_delta(upserts, removals)
+            return
         self._source_map_store.save(self._source_records)
 
 
