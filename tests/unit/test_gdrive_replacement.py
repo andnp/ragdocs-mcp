@@ -21,7 +21,42 @@ from mcp_markdown_ragdocs.gdrive.replacement_policy import GDriveReplacementPoli
 from mcp_markdown_ragdocs.gdrive.adapter import GDriveStateRepository
 from mcp_markdown_ragdocs.gdrive.domain import GDriveScopeIdentity
 from mcp_markdown_ragdocs.indexing.record_manager import RecordIndexManager
-from mcp_markdown_ragdocs.indexing.record_ports import SqliteSourceMapStore
+from mcp_markdown_ragdocs.indexing.record_ports import RecordStorage, SqliteSourceMapStore
+
+
+class _CountingRecordStorage:
+    """Spy that delegates to a real RecordStorage while counting hydration calls."""
+
+    def __init__(self, storage: RecordStorage) -> None:
+        self._storage = storage
+        self.hydrate_record_calls = 0
+        self.hydrate_records_calls = 0
+
+    def register_content_source(self, source):
+        self._storage.register_content_source(source)
+
+    def hydrate_record(self, identity):
+        self.hydrate_record_calls += 1
+        return self._storage.hydrate_record(identity)
+
+    def hydrate_records(self, identities):
+        self.hydrate_records_calls += 1
+        return self._storage.hydrate_records(identities)
+
+    def iter_records(self, *, source_kind=None, status=None):
+        return self._storage.iter_records(source_kind=source_kind, status=status)
+
+    def iter_identities(self, *, source_kind=None, status=None):
+        return self._storage.iter_identities(source_kind=source_kind, status=status)
+
+    def count_distinct_git_commits(self, *, status=None):
+        return self._storage.count_distinct_git_commits(status=status)
+
+    def run_incremental_vacuum(self, page_limit):
+        return self._storage.run_incremental_vacuum(page_limit)
+
+    def delete(self, storage_keys):
+        self._storage.delete(storage_keys)
 
 
 class _SingleConnectionProvider:
@@ -399,3 +434,64 @@ def test_drive_policy_recovers_indexed_journal_entry(tmp_path: Path, record_mana
         canonical_gdrive_source_key(new): [new.storage_key]
     }
     assert journal.load() == ()
+
+
+def test_drive_replace_hydrates_existing_keys_once_per_call_regardless_of_source_count(
+    record_manager,
+    tmp_path: Path,
+) -> None:
+    """
+    Look up existing keys for every source in one batched pass, not once per source.
+    """
+    setup_journal = GDriveReplacementJournal(tmp_path / "setup-gdrive-replacements.json")
+    setup_source_map = SqliteSourceMapStore(_SingleConnectionProvider(tmp_path / "index.db"))
+    setup_policy = GDriveReplacementPolicy(
+        record_manager.ingestor,
+        record_manager.storage,
+        setup_source_map.load(),
+        setup_source_map,
+        setup_journal,
+    )
+    first = _record("file-1:chunk-a", "first body")
+    second = _record("file-2:chunk-a", "second body")
+    second = replace(
+        second, metadata={**second.metadata, "gdrive_source_id": "file-2"}
+    )
+    third = _record("file-3:chunk-a", "third body")
+    third = replace(third, metadata={**third.metadata, "gdrive_source_id": "file-3"})
+    asyncio.run(setup_policy.replace((first, second, third)))
+
+    counting_storage = _CountingRecordStorage(record_manager.storage)
+    journal = GDriveReplacementJournal(tmp_path / "gdrive-replacements.json")
+    policy = GDriveReplacementPolicy(
+        record_manager.ingestor,
+        counting_storage,
+        setup_source_map.load(),
+        setup_source_map,
+        journal,
+    )
+    updated_first = _record("file-1:chunk-a", "updated first body")
+    updated_second = replace(
+        _record("file-2:chunk-a", "updated second body"),
+        metadata={**second.metadata, "gdrive_source_id": "file-2"},
+    )
+    updated_third = replace(
+        _record("file-3:chunk-a", "updated third body"),
+        metadata={**third.metadata, "gdrive_source_id": "file-3"},
+    )
+
+    asyncio.run(policy.replace((updated_first, updated_second, updated_third)))
+
+    assert counting_storage.hydrate_records_calls == 1
+    assert counting_storage.hydrate_record_calls == 0
+
+    saved = setup_source_map.load()
+    assert saved[canonical_gdrive_source_key(updated_first)] == [
+        updated_first.storage_key
+    ]
+    assert saved[canonical_gdrive_source_key(updated_second)] == [
+        updated_second.storage_key
+    ]
+    assert saved[canonical_gdrive_source_key(updated_third)] == [
+        updated_third.storage_key
+    ]
