@@ -96,6 +96,11 @@ class GDriveReplacementJournal:
         self.path = Path(path)
         self.state_repository = state_repository
         self._envelope = JsonEnvelopeStore(self.path, REPLACEMENT_SCHEMA_VERSION, "entries")
+        # Authoritative in-process state, lazily hydrated from disk on first
+        # use. Avoids re-reading and re-parsing the whole journal file on
+        # every write; only the initial load (or a fresh process) pays that
+        # cost. `None` means "not loaded yet", distinct from an empty journal.
+        self._entries: dict[str, GDriveReplacementEntry] | None = None
 
     def prepare(
         self,
@@ -139,13 +144,32 @@ class GDriveReplacementJournal:
     ) -> None:
         """Remove the intent only after index and source-map cleanup finish."""
 
-        entries = [entry for entry in self.load() if entry.source_key != source_key]
-        self._write_all(entries)
+        entries = self._entries_by_key()
+        entries.pop(source_key, None)
+        self._flush()
         self._save_status(state_identities, "healthy")
 
     def load(self) -> tuple[GDriveReplacementEntry, ...]:
-        """Load valid journal entries in stable source-key order."""
+        """Load valid journal entries in stable source-key order.
 
+        Always re-reads the file rather than the in-process cache: callers
+        use this to observe state a *different* journal instance recovered
+        or wrote (e.g. a fresh instance built after a simulated crash), and
+        it is not on the per-entry write hot path, so refreshing here is
+        cheap relative to the savings in `_write`/`_flush`.
+        """
+
+        self._entries = {entry.source_key: entry for entry in self._read_from_disk()}
+        return tuple(sorted(self._entries.values(), key=lambda entry: entry.source_key))
+
+    def _entries_by_key(self) -> dict[str, GDriveReplacementEntry]:
+        """Return the in-process entry cache, hydrating it from disk once."""
+
+        if self._entries is None:
+            self._entries = {entry.source_key: entry for entry in self._read_from_disk()}
+        return self._entries
+
+    def _read_from_disk(self) -> tuple[GDriveReplacementEntry, ...]:
         raw_entries = self._envelope.read(list)
         if raw_entries is None:
             return ()
@@ -176,13 +200,23 @@ class GDriveReplacementJournal:
                 )
             except (KeyError, TypeError):
                 continue
-        return tuple(sorted(entries, key=lambda entry: entry.source_key))
+        return tuple(entries)
 
     def _write(self, entry: GDriveReplacementEntry) -> None:
-        entries = [item for item in self.load() if item.source_key != entry.source_key]
-        self._write_all((*entries, entry))
+        entries = self._entries_by_key()
+        entries[entry.source_key] = entry
+        self._flush()
 
-    def _write_all(self, entries: Sequence[GDriveReplacementEntry]) -> None:
+    def _flush(self) -> None:
+        """Atomically persist the cached entries; still one fsync per call.
+
+        This keeps the durability contract prepare()/mark_indexed()/complete()
+        rely on (each phase transition is on disk before the next step
+        proceeds) but serializes straight from the in-memory cache instead of
+        re-reading and re-parsing the whole file first.
+        """
+
+        entries = self._entries_by_key()
         self._envelope.write(
             [
                 {
@@ -191,7 +225,7 @@ class GDriveReplacementJournal:
                     "new_keys": list(entry.new_keys),
                     "phase": entry.phase,
                 }
-                for entry in sorted(entries, key=lambda item: item.source_key)
+                for entry in sorted(entries.values(), key=lambda item: item.source_key)
             ]
         )
 
