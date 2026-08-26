@@ -12,6 +12,17 @@ from mcp_markdown_ragdocs.gdrive.errors import classify_provider_error
 
 T = TypeVar("T")
 
+# When the rate window is open but every concurrency slot is taken, there is
+# no exact wake time (unlike the rate-limit wait, where next_allowed_at gives
+# one). Poll with exponential backoff instead of a fixed short sleep, capped
+# by GATE_SATURATION_POLL_CEILING_SECONDS so a long-lived saturation still
+# notices a release promptly, and also capped by the soonest slot expiry
+# (a slot cannot outlive it) so a claim never waits past its own guaranteed
+# upper bound.
+GATE_SATURATION_POLL_INITIAL_SECONDS = 0.01
+GATE_SATURATION_POLL_CEILING_SECONDS = 0.5
+GATE_SATURATION_POLL_BACKOFF_MULTIPLIER = 2.0
+
 
 class DriveRequestGate:
     """Bound concurrent Drive requests using a private, file-backed SQLite state.
@@ -64,39 +75,70 @@ class DriveRequestGate:
             self._release(slot_id)
 
     def _claim(self) -> int:
-        while True:
-            now = self._time()
-            with self._connect() as connection:
-                connection.execute("BEGIN IMMEDIATE")
-                connection.execute(
-                    "DELETE FROM drive_request_gate_slots WHERE expires_at <= ?",
-                    (now,),
-                )
-                row = connection.execute(
-                    "SELECT next_allowed_at FROM drive_request_gate WHERE id = 1"
-                ).fetchone()
-                next_allowed_at = float(row[0]) if row is not None else 0.0
-                (slot_count,) = connection.execute(
-                    "SELECT COUNT(*) FROM drive_request_gate_slots"
-                ).fetchone()
-                wait_for = max(next_allowed_at - now, 0.0)
-                if wait_for == 0.0 and slot_count < self._max_concurrent:
-                    cursor = connection.execute(
-                        "INSERT INTO drive_request_gate_slots (expires_at) VALUES (?)",
-                        (now + self._request_timeout_seconds,),
-                    )
+        # Reused across retries within one claim so a saturated gate does not
+        # open a fresh connection (and take a fresh write lock) every poll.
+        connection = self._connect()
+        try:
+            saturation_poll_seconds = GATE_SATURATION_POLL_INITIAL_SECONDS
+            while True:
+                now = self._time()
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
                     connection.execute(
-                        """
-                        INSERT INTO drive_request_gate (id, next_allowed_at)
-                        VALUES (1, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            next_allowed_at = excluded.next_allowed_at
-                        """,
-                        (now + self._min_interval_seconds,),
+                        "DELETE FROM drive_request_gate_slots WHERE expires_at <= ?",
+                        (now,),
                     )
-                    assert cursor.lastrowid is not None
-                    return cursor.lastrowid
-            self._sleep(max(wait_for, 0.01) if wait_for > 0 else 0.01)
+                    row = connection.execute(
+                        "SELECT next_allowed_at FROM drive_request_gate WHERE id = 1"
+                    ).fetchone()
+                    next_allowed_at = float(row[0]) if row is not None else 0.0
+                    (slot_count,) = connection.execute(
+                        "SELECT COUNT(*) FROM drive_request_gate_slots"
+                    ).fetchone()
+                    wait_for = max(next_allowed_at - now, 0.0)
+                    if wait_for == 0.0 and slot_count < self._max_concurrent:
+                        cursor = connection.execute(
+                            "INSERT INTO drive_request_gate_slots (expires_at) VALUES (?)",
+                            (now + self._request_timeout_seconds,),
+                        )
+                        connection.execute(
+                            """
+                            INSERT INTO drive_request_gate (id, next_allowed_at)
+                            VALUES (1, ?)
+                            ON CONFLICT(id) DO UPDATE SET
+                                next_allowed_at = excluded.next_allowed_at
+                            """,
+                            (now + self._min_interval_seconds,),
+                        )
+                        assert cursor.lastrowid is not None
+                        return cursor.lastrowid
+                    if wait_for > 0.0:
+                        # Rate-limited: next_allowed_at is an exact wake time.
+                        sleep_for = wait_for
+                        saturation_poll_seconds = GATE_SATURATION_POLL_INITIAL_SECONDS
+                    else:
+                        # Slots are saturated with no exact wake time. Back off,
+                        # but never sleep past the soonest slot expiry -- a slot
+                        # cannot outlive it, so it is a genuine upper bound.
+                        (soonest_expiry,) = connection.execute(
+                            "SELECT MIN(expires_at) FROM drive_request_gate_slots"
+                        ).fetchone()
+                        sleep_for = saturation_poll_seconds
+                        if soonest_expiry is not None:
+                            sleep_for = min(
+                                sleep_for,
+                                max(
+                                    float(soonest_expiry) - now,
+                                    GATE_SATURATION_POLL_INITIAL_SECONDS,
+                                ),
+                            )
+                        saturation_poll_seconds = min(
+                            saturation_poll_seconds * GATE_SATURATION_POLL_BACKOFF_MULTIPLIER,
+                            GATE_SATURATION_POLL_CEILING_SECONDS,
+                        )
+                self._sleep(sleep_for)
+        finally:
+            connection.close()
 
     def _release(self, slot_id: int) -> None:
         with self._connect() as connection:
