@@ -28,6 +28,10 @@ LEASE_HEARTBEAT_INTERVAL_SECONDS = 5.0
 LEASE_RECLAIM_INTERVAL_SECONDS = 5.0
 NON_QUEUE_LEASE_TASK_NAMES = frozenset({"gdrive_scope_sync"})
 SCHEDULE_PROMOTION_BATCH_SIZE = 32
+# Retention pruning is bounded work (see prune_terminal()) but there is no
+# reason to run it on every 5s reclaim tick; a coarser cadence on the same
+# loop keeps this from becoming its own periodic-scan performance bug.
+PRUNE_INTERVAL_SECONDS = 300.0
 
 
 def _requeue_expired_leases(
@@ -81,6 +85,28 @@ def _refresh_task_intent_claims(intent_store: WorkIntentStore, task: Any) -> Non
             (item[0], refreshed if refreshed is not None else item[1])
         )
     kwargs["intent_claims"] = refreshed_claims
+
+
+def _prune_terminal_state(
+    huey: SqliteHuey,
+    lease_store: TaskLeaseStore,
+) -> None:
+    """Reap terminal coordination rows and their Huey result data.
+
+    Only rows that claim()/reclaim_expired()/claim() (work_intents) never
+    read again are eligible for deletion — see prune_terminal() on each
+    store for the recovery-safety argument. The Huey kv result for a task
+    is only ever peeked (never popped) anywhere in this codebase, so
+    deleting it once its lease is terminal and past retention cannot drop a
+    result a caller still needs to consume.
+    """
+    intent_store = WorkIntentStore(
+        cast(Any, huey.storage).filename,
+        claim_timeout_seconds=LEASE_TIMEOUT_SECONDS,
+    )
+    for task_id in lease_store.prune_terminal():
+        huey.storage.delete_data(task_id)
+    intent_store.prune_terminal()
 
 
 def _promote_due_tasks(huey: SqliteHuey) -> None:
@@ -229,12 +255,16 @@ class _HueyConsumerThread(threading.Thread):
         logger.info("Huey consumer thread started")
         try:
             next_reclaim_at = 0.0
+            next_prune_at = 0.0
             while not self._stop_event.is_set():
                 now = time.monotonic()
                 if self._is_reclaimer and now >= next_reclaim_at:
                     _promote_due_tasks(self._huey)
                     _requeue_expired_leases(self._huey, self._lease_store)
                     next_reclaim_at = now + LEASE_RECLAIM_INTERVAL_SECONDS
+                if self._is_reclaimer and now >= next_prune_at:
+                    _prune_terminal_state(self._huey, self._lease_store)
+                    next_prune_at = now + PRUNE_INTERVAL_SECONDS
                 # Dequeue and execute one task at a time
                 task = self._huey.dequeue()
                 if task is not None:
