@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -139,6 +140,7 @@ def start_daemon(
         _terminate_extra_runtime_daemon_processes(runtime_paths)
 
     process = _spawn_daemon_process(runtime_paths)
+    _reap_spawned_process_in_background(process)
     return _wait_for_ready_daemon(
         deadline=deadline,
         paths=runtime_paths,
@@ -284,6 +286,28 @@ def _spawn_daemon_process(
         env=env,
         start_new_session=True,
     )
+
+
+def _reap_spawned_process_in_background(process: subprocess.Popen[bytes]) -> None:
+    """Reap the spawned daemon once it exits, without blocking the caller.
+
+    The daemon is deliberately detached (start_new_session) and normally
+    outlives this process, so we can't just .wait() here -- that would hang
+    whichever long-lived caller (e.g. an MCP server handling a request)
+    invoked start_daemon. But if that caller never calls .wait()/.poll()
+    again, a daemon that later dies becomes a zombie under it. A background
+    thread blocked on .wait() reaps it whenever that happens. This is safe
+    to run alongside _wait_for_ready_daemon's use of .poll() on the same
+    Popen: CPython serializes concurrent wait()/poll() on one Popen with an
+    internal per-instance lock, and poll() keeps returning the cached
+    returncode once wait() has set it, so the died-during-startup diagnosis
+    is unaffected.
+    """
+    threading.Thread(
+        target=process.wait,
+        name=f"daemon-reap-{process.pid}",
+        daemon=True,
+    ).start()
 
 
 def _resolve_daemon_python() -> Path:

@@ -27,6 +27,9 @@ class _FakeProcess:
             self.returncode = self._polls.pop(0)
         return self.returncode
 
+    def wait(self, timeout: float | None = None) -> int | None:
+        return self.returncode
+
 
 def _paths(tmp_path: Path) -> RuntimePaths:
     return RuntimePaths(
