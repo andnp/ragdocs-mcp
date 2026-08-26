@@ -264,6 +264,73 @@ def test_run_incremental_vacuum_reclaims_freed_pages_after_migration(
     assert freed > 0
 
 
+def test_create_ingestor_enables_incremental_vacuum_for_new_embedding_cache(
+    record_manager, tmp_path
+) -> None:
+    """A newly created embedding cache starts on auto_vacuum=INCREMENTAL.
+
+    auto_vacuum can only be enabled before a database's first table is
+    created, so a fresh install must never accumulate the unreclaimable
+    freelist bloat that motivated this fix.
+    """
+    cache_path = tmp_path / "index" / "embedding-cache.db"
+    assert cache_path.exists()
+
+    connection = sqlite3.connect(str(cache_path))
+    try:
+        assert connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
+    finally:
+        connection.close()
+
+
+def _bloat_and_shrink_embedding_cache(cache_path, n: int = 300) -> None:
+    connection = sqlite3.connect(str(cache_path))
+    try:
+        connection.executemany(
+            "INSERT INTO embeddings (namespace, content_hash, dimension, vector) "
+            "VALUES (?, ?, ?, ?)",
+            [("ns", f"hash-{i}", 1, b"x" * 5000) for i in range(n)],
+        )
+        connection.commit()
+        connection.execute("DELETE FROM embeddings WHERE rowid % 2 = 0")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_run_incremental_vacuum_embedding_cache_reclaims_freed_pages(
+    record_manager, tmp_path
+) -> None:
+    cache_path = tmp_path / "index" / "embedding-cache.db"
+    _bloat_and_shrink_embedding_cache(cache_path)
+
+    freed = record_manager.storage.run_incremental_vacuum_embedding_cache(100_000)
+
+    assert freed > 0
+
+
+def test_run_incremental_vacuum_embedding_cache_respects_page_limit(
+    record_manager, tmp_path
+) -> None:
+    cache_path = tmp_path / "index" / "embedding-cache.db"
+    _bloat_and_shrink_embedding_cache(cache_path)
+
+    freed_capped = record_manager.storage.run_incremental_vacuum_embedding_cache(1)
+    freed_rest = record_manager.storage.run_incremental_vacuum_embedding_cache(100_000)
+
+    assert freed_capped == 1
+    assert freed_rest > 0
+
+
+def test_run_incremental_vacuum_embedding_cache_noop_without_ingestor(
+    local_record_kernel,
+) -> None:
+    """No embedding cache has been created yet, so there is nothing to reclaim."""
+    storage = LocalRecordStorage(local_record_kernel)
+
+    assert storage.run_incremental_vacuum_embedding_cache(100) == 0
+
+
 def test_storage_delegates_identity_enumeration_to_catalog(local_record_kernel) -> None:
     """Storage delegates identity enumeration to the injected application port.
 

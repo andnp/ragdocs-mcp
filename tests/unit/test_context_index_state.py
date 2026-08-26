@@ -36,6 +36,7 @@ from searchkernel.indexing.manifest import (
 from mcp_markdown_ragdocs.context import ApplicationContext, IndexState
 from mcp_markdown_ragdocs.config import Config
 from mcp_markdown_ragdocs.coordination.task_submission import TaskSubmissionPort
+from mcp_markdown_ragdocs.indexing.record_ports import LocalRecordStorage
 from mcp_markdown_ragdocs.indexing.task_runtime import TaskRuntime
 from mcp_markdown_ragdocs.indexing.tasks import TaskBatchSubmissionResult
 from mcp_markdown_ragdocs.indexing.watcher_lifecycle import WatcherLifecycle
@@ -2051,6 +2052,56 @@ async def test_periodic_reconciliation_runs_bounded_incremental_vacuum() -> None
 
     assert vacuum_calls
     assert vacuum_calls[0] == 500
+
+
+@pytest.mark.asyncio
+async def test_periodic_reconciliation_reclaims_embedding_cache_pages(
+    local_record_kernel,
+) -> None:
+    """Periodic reconciliation also reclaims freed pages from the embedding cache.
+
+    Regression guard for the embedding-cache disk-bloat bug: LocalRecordStorage
+    is the only RecordStorage implementation that tracks an embedding cache
+    path, so the periodic loop must dispatch to its dedicated reclaim method
+    (bounded by the same vacuum_page_limit) rather than leaving cache pages
+    on the freelist forever.
+    """
+    storage = LocalRecordStorage(local_record_kernel)
+    cache_calls: list[int] = []
+    storage.run_incremental_vacuum_embedding_cache = lambda page_limit: (
+        cache_calls.append(page_limit) or 0
+    )
+
+    ctx = object.__new__(ApplicationContext)
+    ctx.use_tasks = False
+    ctx.documents_roots = []
+    ctx.current_manifest = None
+    ctx._watcher_lifecycle = WatcherLifecycle()
+    cast(Any, ctx).config = SimpleNamespace(
+        indexing=SimpleNamespace(
+            reconciliation_interval_seconds=0.01,
+            vacuum_page_limit=500,
+            documents_path="/docs",
+        )
+    )
+    cast(Any, ctx).discover_files = lambda: []
+    cast(Any, ctx).index_manager = SimpleNamespace(
+        reconcile_indices=lambda *a, **k: SimpleNamespace(
+            added_count=0, removed_count=0, moved_count=0, failed_count=0
+        ),
+        storage=storage,
+    )
+
+    task = asyncio.create_task(ctx._periodic_reconciliation())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert cache_calls
+    assert cache_calls[0] == 500
 
 
 @pytest.mark.asyncio
