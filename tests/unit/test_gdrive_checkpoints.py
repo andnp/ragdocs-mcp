@@ -97,3 +97,63 @@ def test_checkpoint_namespace_preserves_scoped_drive_identity(tmp_path: Path) ->
     store.begin_inventory(namespace, "start-token")
 
     assert store.load(namespace) is not None
+
+
+def test_inventory_failure_count_grows_and_is_cleared_on_success(tmp_path: Path) -> None:
+    """
+    Track consecutive inventory failures durably, and forget them once a run
+    succeeds so a scope that recovers is not still treated as unhealthy.
+    """
+    store = GDriveSyncCheckpointStore(tmp_path)
+    namespace = checkpoint_namespace("scope-generation")
+    store.begin_inventory(namespace, "start-token")
+
+    store.record_inventory_failure(namespace)
+    second = store.record_inventory_failure(namespace)
+
+    assert second.inventory_failure_count == 2
+    reloaded = store.load(namespace)
+    assert reloaded is not None
+    assert reloaded.inventory_failure_count == 2
+
+    cleared = store.record_inventory_success(namespace)
+
+    assert cleared is not None
+    assert cleared.inventory_failure_count == 0
+    reloaded_after_success = store.load(namespace)
+    assert reloaded_after_success is not None
+    assert reloaded_after_success.inventory_failure_count == 0
+
+
+def test_inventory_failure_before_any_checkpoint_exists(tmp_path: Path) -> None:
+    """
+    Record a failure even when the first inventory call fails before a
+    checkpoint (e.g. fetching the start token) has ever been persisted.
+    """
+    store = GDriveSyncCheckpointStore(tmp_path)
+    namespace = checkpoint_namespace("scope-generation")
+
+    checkpoint = store.record_inventory_failure(namespace)
+
+    assert checkpoint.inventory_failure_count == 1
+    assert checkpoint.inventory_start_token is None
+
+
+def test_poisoning_the_inventory_token_clears_it_but_keeps_the_start_token(tmp_path: Path) -> None:
+    """
+    Clear only the page token so pagination restarts from the beginning of
+    the current inventory epoch rather than starting an entirely new one.
+    """
+    store = GDriveSyncCheckpointStore(tmp_path)
+    namespace = checkpoint_namespace("scope-generation")
+    store.begin_inventory(namespace, "start-token")
+    store.persist_inventory_batch_after_index(namespace, page_token="bad-token", batch=1)
+    store.record_inventory_failure(namespace)
+    store.record_inventory_failure(namespace)
+    store.record_inventory_failure(namespace)
+
+    poisoned = store.poison_inventory_token(namespace)
+
+    assert poisoned.inventory_page_token is None
+    assert poisoned.inventory_start_token == "start-token"
+    assert poisoned.inventory_failure_count == 3
