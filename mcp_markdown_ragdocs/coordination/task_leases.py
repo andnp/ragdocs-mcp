@@ -20,6 +20,12 @@ COMPLETED_LEASE = "completed"
 FAILED_LEASE = "failed"
 RECLAIMED_LEASE = "reclaimed"
 DEFAULT_LEASE_TIMEOUT_SECONDS = 30.0
+# Terminal leases are only ever read for diagnostics (gdrive/leases.py.get(),
+# daemon/queue_status.py) — claim()/reclaim_expired() never look past the
+# active state, so a pruned row cannot affect crash recovery. 3 days covers a
+# normal troubleshooting window while keeping the table from growing forever.
+TASK_LEASE_RETENTION_SECONDS = 3 * 24 * 3600.0
+PRUNE_BATCH_LIMIT = 500
 
 
 @dataclass(frozen=True)
@@ -269,6 +275,48 @@ class TaskLeaseStore(TaskLeasePort):
                 )
                 for row in rows
             ]
+
+    def prune_terminal(
+        self,
+        *,
+        now: float | None = None,
+        retention_seconds: float = TASK_LEASE_RETENTION_SECONDS,
+        limit: int = PRUNE_BATCH_LIMIT,
+    ) -> list[str]:
+        """Delete terminal leases past retention, bounded to `limit` rows.
+
+        Only completed/failed/reclaimed rows older than retention are
+        eligible. claim() and reclaim_expired() never read a lease once it
+        has left the active state, so removing a terminal row here cannot
+        affect crash recovery: a subsequent claim() for the same task_id
+        simply sees no prior row and starts at attempt=1, which is correct
+        once the old row has aged out.
+        """
+        timestamp = time.time() if now is None else now
+        cutoff = timestamp - retention_seconds
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                SELECT task_id
+                FROM task_leases
+                WHERE state IN (?, ?, ?)
+                  AND completed_at IS NOT NULL
+                  AND completed_at <= ?
+                LIMIT ?
+                """,
+                (COMPLETED_LEASE, FAILED_LEASE, RECLAIMED_LEASE, cutoff, limit),
+            ).fetchall()
+            if not rows:
+                return []
+
+            task_ids = [str(row["task_id"]) for row in rows]
+            placeholders = ",".join("?" for _ in task_ids)
+            connection.execute(
+                f"DELETE FROM task_leases WHERE task_id IN ({placeholders})",
+                task_ids,
+            )
+            return task_ids
 
     def active_count(self, *, now: float | None = None) -> int:
         timestamp = time.time() if now is None else now
