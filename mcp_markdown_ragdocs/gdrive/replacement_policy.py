@@ -204,23 +204,35 @@ class GDriveReplacementPolicy:
     _RECORD_KEYS_BATCH_SIZE = 500
 
     def _record_keys_by_source(self) -> Mapping[str, tuple[str, ...]]:
-        """Build the full source_key -> existing storage keys mapping in one pass.
+        """Build the full source_key -> existing storage keys mapping.
 
-        Hydrates every candidate exactly once via the batched storage port,
-        instead of one hydrate per candidate per distinct source_key in the
-        current replace() batch.
+        `_source_records` already associates every tracked Drive doc_id with
+        its own keys (see `_set_source_keys`/`_index_plans`), so for any key
+        still tracked there the source key is known for free. Only keys that
+        the index reports as Drive records (`iter_identities`, which needs no
+        hydration) but that are absent from that tracking -- genuine drift,
+        e.g. after an interrupted run -- require hydrating a record to learn
+        its canonical source key.
         """
-        candidates: set[str] = set()
-        for keys in self._source_records.values():
-            candidates.update(keys)
-        candidates.update(
+        drive_keys = {
             identity.storage_key
             for identity in self._storage.iter_identities(source_kind=SOURCE_KIND)
-        )
-        sorted_candidates = sorted(candidates)
+        }
+        known_source_of: dict[str, str] = {}
+        for doc_id, keys in self._source_records.items():
+            for key in keys:
+                if key in drive_keys:
+                    known_source_of[key] = doc_id
+
         grouped: dict[str, list[str]] = {}
-        for start in range(0, len(sorted_candidates), self._RECORD_KEYS_BATCH_SIZE):
-            batch = sorted_candidates[start : start + self._RECORD_KEYS_BATCH_SIZE]
+        for key in drive_keys:
+            source_key = known_source_of.get(key)
+            if source_key is not None:
+                grouped.setdefault(source_key, []).append(key)
+
+        drift_keys = sorted(drive_keys.difference(known_source_of))
+        for start in range(0, len(drift_keys), self._RECORD_KEYS_BATCH_SIZE):
+            batch = drift_keys[start : start + self._RECORD_KEYS_BATCH_SIZE]
             hydrated = self._storage.hydrate_records(
                 tuple(RecordIdentity.from_storage_key(key) for key in batch)
             )
@@ -229,7 +241,7 @@ class GDriveReplacementPolicy:
                 if record is None or record.source_kind != SOURCE_KIND:
                     continue
                 grouped.setdefault(canonical_gdrive_source_key(record), []).append(key)
-        return {source_key: tuple(keys) for source_key, keys in grouped.items()}
+        return {source_key: tuple(sorted(keys)) for source_key, keys in grouped.items()}
 
     def _delete_stale_keys(
         self,

@@ -437,12 +437,15 @@ def test_drive_policy_recovers_indexed_journal_entry(tmp_path: Path, record_mana
     assert journal.load() == ()
 
 
-def test_drive_replace_hydrates_existing_keys_once_per_call_regardless_of_source_count(
+def test_drive_replace_hydrates_no_existing_keys_when_every_key_is_already_tracked(
     record_manager,
     tmp_path: Path,
 ) -> None:
     """
-    Look up existing keys for every source in one batched pass, not once per source.
+    Look up existing keys for every source without hydrating any record when
+    every candidate key is already tracked in the source map (the common
+    case): `_record_keys_by_source` recovers each key's source key from
+    `_source_records` itself, only hydrating on genuine drift.
     """
     setup_journal = GDriveReplacementJournal(tmp_path / "setup-gdrive-replacements.json")
     setup_source_map = SqliteSourceMapStore(_SingleConnectionProvider(tmp_path / "index.db"))
@@ -483,7 +486,7 @@ def test_drive_replace_hydrates_existing_keys_once_per_call_regardless_of_source
 
     asyncio.run(policy.replace((updated_first, updated_second, updated_third)))
 
-    assert counting_storage.hydrate_records_calls == 1
+    assert counting_storage.hydrate_records_calls == 0
     assert counting_storage.hydrate_record_calls == 0
 
     saved = setup_source_map.load()
