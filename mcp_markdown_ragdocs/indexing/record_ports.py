@@ -27,6 +27,38 @@ from searchkernel.api import (
 from mcp_markdown_ragdocs.models import Document
 
 
+def _enable_incremental_vacuum_for_new_database(path: Path) -> None:
+    """Set auto_vacuum=INCREMENTAL before a SQLite file's first table exists.
+
+    SQLite only honors an auto_vacuum change made while the database has no
+    tables yet; a later `VACUUM` is required to change it on an existing
+    file. Callers that lazily create their own schema (e.g. SQLiteEmbeddingCache)
+    give us no hook into that first CREATE TABLE, so this must run first,
+    on a brand-new file, before that schema creation happens.
+    """
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(path))
+    try:
+        connection.execute("PRAGMA auto_vacuum = INCREMENTAL")
+    finally:
+        connection.close()
+
+
+def _reclaim_freed_pages(connection: sqlite3.Connection, page_limit: int) -> int:
+    """Run a bounded incremental_vacuum, returning the pages actually reclaimed.
+
+    A no-op (returns 0) unless the database has been migrated to
+    auto_vacuum=INCREMENTAL; incremental_vacuum otherwise has no freed
+    pages to reclaim regardless of the requested limit.
+    """
+    before = connection.execute("PRAGMA freelist_count").fetchone()[0]
+    connection.execute(f"PRAGMA incremental_vacuum({int(page_limit)})")
+    after = connection.execute("PRAGMA freelist_count").fetchone()[0]
+    return max(0, before - after)
+
+
 @dataclass(frozen=True)
 class PreparedRecordDocument:
     """A parsed Markdown document plus its canonical chunk records."""
@@ -340,6 +372,7 @@ class LocalRecordStorage:
         )
 
         self._graph = install_bidirectional_graph_store(kernel, self.iter_identities)
+        self._embedding_cache_path: Path | None = None
 
     @property
     def graph(self) -> GraphCapability:
@@ -364,11 +397,13 @@ class LocalRecordStorage:
         cache_path: Path,
         batch_size: int,
     ) -> SemanticRecordIngestor:
+        _enable_incremental_vacuum_for_new_database(cache_path)
         embedding_cache = SQLiteEmbeddingCache(
             cache_path,
             encoder_namespace=embedding_provider.model_name,
             dimension=embedding_provider.dim,
         )
+        self._embedding_cache_path = cache_path
         return SemanticRecordIngestor(
             embedding_provider=embedding_provider,
             keyword_store=self.keyword_store,
@@ -456,10 +491,23 @@ class LocalRecordStorage:
         pages to reclaim regardless of the requested limit.
         """
         connection = self._kernel.backend.db_manager.get_connection()
-        before = connection.execute("PRAGMA freelist_count").fetchone()[0]
-        connection.execute(f"PRAGMA incremental_vacuum({int(page_limit)})")
-        after = connection.execute("PRAGMA freelist_count").fetchone()[0]
-        return max(0, before - after)
+        return _reclaim_freed_pages(connection, page_limit)
+
+    def run_incremental_vacuum_embedding_cache(self, page_limit: int) -> int:
+        """Reclaim up to page_limit freed pages from the embedding cache.
+
+        A no-op (returns 0) when no ingestor has been created yet, or the
+        cache file does not exist. SQLiteEmbeddingCache exposes no public
+        connection or vacuum hook, so this opens its own short-lived
+        connection to `self._embedding_cache_path` to issue the PRAGMA.
+        """
+        if self._embedding_cache_path is None or not self._embedding_cache_path.exists():
+            return 0
+        connection = sqlite3.connect(str(self._embedding_cache_path))
+        try:
+            return _reclaim_freed_pages(connection, page_limit)
+        finally:
+            connection.close()
 
     def delete(self, storage_keys: Sequence[str]) -> None:
         self._deletion.delete(storage_keys)
