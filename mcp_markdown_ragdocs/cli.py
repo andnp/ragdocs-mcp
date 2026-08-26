@@ -1079,9 +1079,9 @@ def records_purge(
 def records_vacuum_enable(yes: bool):
     """One-time migration: enable auto_vacuum=INCREMENTAL and reclaim space now.
 
-    Rewrites the whole database file via VACUUM, so the daemon must be
-    stopped first. Only after this has run does the periodic incremental
-    vacuum have anything to reclaim.
+    Rewrites each database file via VACUUM, so the daemon must be stopped
+    first. Only after this has run does the periodic incremental vacuum
+    have anything to reclaim.
     """
     if not yes:
         raise click.UsageError("Refusing to vacuum without --yes.")
@@ -1099,18 +1099,31 @@ def records_vacuum_enable(yes: bool):
         click.echo(f"Error: index database not found at {index_db_path}", err=True)
         sys.exit(1)
 
-    before_size = index_db_path.stat().st_size
-    connection = sqlite3.connect(str(index_db_path))
+    _vacuum_enable_database("index.db", index_db_path)
+
+    # A fresh install may not have indexed anything yet, so an absent
+    # embedding cache is expected rather than an error.
+    embedding_cache_path = runtime_paths.root / "embedding-cache.db"
+    if embedding_cache_path.exists():
+        _vacuum_enable_database("embedding-cache.db", embedding_cache_path)
+    else:
+        click.echo(f"embedding-cache.db: not found at {embedding_cache_path}, skipping")
+
+
+def _vacuum_enable_database(label: str, path: Path) -> None:
+    """Migrate one SQLite file to auto_vacuum=INCREMENTAL and reclaim space now."""
+    before_size = path.stat().st_size
+    connection = sqlite3.connect(str(path))
     try:
         current_mode = connection.execute("PRAGMA auto_vacuum").fetchone()[0]
         connection.execute("PRAGMA auto_vacuum = INCREMENTAL")
         connection.execute("VACUUM")
     finally:
         connection.close()
-    after_size = index_db_path.stat().st_size
+    after_size = path.stat().st_size
 
-    click.echo(f"auto_vacuum: {current_mode} -> 2 (incremental)")
-    click.echo(f"Database size: {before_size:,} -> {after_size:,} bytes")
+    click.echo(f"{label}: auto_vacuum {current_mode} -> 2 (incremental)")
+    click.echo(f"{label}: size {before_size:,} -> {after_size:,} bytes")
 
 
 @records_group.command("prune-old-git-diffs")

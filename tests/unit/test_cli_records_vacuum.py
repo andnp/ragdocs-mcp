@@ -86,12 +86,59 @@ def test_vacuum_enable_migrates_auto_vacuum_and_shrinks_file(
     result = runner.invoke(cli_module.cli, ["records", "vacuum-enable", "--yes"])
 
     assert result.exit_code == 0
-    assert "auto_vacuum: 0 -> 2 (incremental)" in result.output
+    assert "index.db: auto_vacuum 0 -> 2 (incremental)" in result.output
 
     after_size = runtime_paths.index_db_path.stat().st_size
     assert after_size < before_size
 
     connection = sqlite3.connect(str(runtime_paths.index_db_path))
+    try:
+        assert connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
+    finally:
+        connection.close()
+
+
+def test_vacuum_enable_skips_missing_embedding_cache(monkeypatch, tmp_path) -> None:
+    """A fresh install without an embedding cache yet must not error out."""
+    runtime_paths = _fake_runtime_paths(tmp_path)
+    _write_bloated_db(runtime_paths.index_db_path)
+
+    monkeypatch.setattr(cli_module.RuntimePaths, "resolve", lambda: runtime_paths)
+    monkeypatch.setattr(
+        cli_module, "inspect_daemon", lambda paths=None: SimpleNamespace(running=False)
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli_module.cli, ["records", "vacuum-enable", "--yes"])
+
+    assert result.exit_code == 0
+    assert "embedding-cache.db: not found" in result.output
+
+
+def test_vacuum_enable_migrates_embedding_cache_and_shrinks_file(
+    monkeypatch, tmp_path
+) -> None:
+    runtime_paths = _fake_runtime_paths(tmp_path)
+    _write_bloated_db(runtime_paths.index_db_path)
+    cache_path = runtime_paths.root / "embedding-cache.db"
+    _write_bloated_db(cache_path)
+    before_cache_size = cache_path.stat().st_size
+
+    monkeypatch.setattr(cli_module.RuntimePaths, "resolve", lambda: runtime_paths)
+    monkeypatch.setattr(
+        cli_module, "inspect_daemon", lambda paths=None: SimpleNamespace(running=False)
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli_module.cli, ["records", "vacuum-enable", "--yes"])
+
+    assert result.exit_code == 0
+    assert "embedding-cache.db: auto_vacuum 0 -> 2 (incremental)" in result.output
+
+    after_cache_size = cache_path.stat().st_size
+    assert after_cache_size < before_cache_size
+
+    connection = sqlite3.connect(str(cache_path))
     try:
         assert connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
     finally:
