@@ -9,7 +9,11 @@ from huey.utils import Error
 from mcp_markdown_ragdocs.coordination.task_leases import TaskLeaseStore
 from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
 from mcp_markdown_ragdocs.daemon.admin_payloads import _build_queue_status_payload
-from mcp_markdown_ragdocs.daemon.queue_status import get_queue_stats, purge_queue_state
+from mcp_markdown_ragdocs.daemon.queue_status import (
+    QueueFailure,
+    get_queue_stats,
+    purge_queue_state,
+)
 from mcp_markdown_ragdocs.indexing.git_refresh_state import save_progress
 
 
@@ -179,3 +183,118 @@ def test_queue_status_payload_includes_git_refresh_progress(tmp_path: Path) -> N
         }
     ]
     huey.storage.close()
+
+
+def _put_failure(
+    huey: SqliteHuey,
+    *,
+    task_id: str,
+    task_name: str = "mcp_markdown_ragdocs.indexing.tasks.index_document",
+    error: str = "boom",
+    retries: int = 1,
+) -> None:
+    huey.storage.put_data(
+        task_id,
+        huey.serializer.serialize(
+            Error(
+                {
+                    "task_id": task_id,
+                    "task_name": task_name,
+                    "error": error,
+                    "retries": retries,
+                }
+            )
+        ),
+        is_result=True,
+    )
+
+
+def test_get_queue_stats_reports_no_failures_for_empty_result_store(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "queue.db"
+    huey = SqliteHuey(name="queue-no-failures", filename=str(db_path), immediate=False)
+
+    stats = get_queue_stats(huey)
+
+    assert stats.recent_failures == []
+    assert stats.historical_failure_count == 0
+    assert stats.failed_count == 0
+
+
+def test_get_queue_stats_decodes_several_failures(tmp_path: Path) -> None:
+    db_path = tmp_path / "queue.db"
+    huey = SqliteHuey(name="queue-several-failures", filename=str(db_path), immediate=False)
+
+    _put_failure(huey, task_id="failure-1", error="boom-1", retries=1)
+    _put_failure(huey, task_id="failure-2", error="boom-2", retries=2)
+    _put_failure(huey, task_id="failure-3", error="boom-3", retries=0)
+
+    stats = get_queue_stats(huey)
+
+    assert stats.historical_failure_count == 3
+    assert sorted(stats.recent_failures, key=lambda f: f.task_id) == [
+        QueueFailure(
+            task_id="failure-1",
+            task_name="index_document",
+            error="boom-1",
+            retries=1,
+        ),
+        QueueFailure(
+            task_id="failure-2",
+            task_name="index_document",
+            error="boom-2",
+            retries=2,
+        ),
+        QueueFailure(
+            task_id="failure-3",
+            task_name="index_document",
+            error="boom-3",
+            retries=0,
+        ),
+    ]
+
+
+def test_get_queue_stats_skips_undecodable_result_row(tmp_path: Path) -> None:
+    """A row whose value cannot be deserialized as an Error is dropped, not raised."""
+    db_path = tmp_path / "queue.db"
+    huey = SqliteHuey(name="queue-bad-row", filename=str(db_path), immediate=False)
+
+    _put_failure(huey, task_id="failure-good", error="boom")
+    huey.storage.put_data("garbage-key", b"not a valid serialized payload", is_result=True)
+
+    stats = get_queue_stats(huey)
+
+    assert stats.historical_failure_count == 1
+    assert [f.task_id for f in stats.recent_failures] == ["failure-good"]
+
+
+def test_collect_failures_does_not_requery_storage_per_row(tmp_path: Path) -> None:
+    """Regression guard: failure decoding must not issue one storage query per row.
+
+    Before the fix, decoding failures called huey.storage.peek_data(task_id) once for
+    every row returned by result_items(), even though result_items() already performed
+    a single bulk query that returned every row's value. Against the pre-fix
+    implementation this assertion fails because peek_data is called once per row
+    (verified separately against the old code: 25 rows -> 25 peek_data calls).
+    """
+    db_path = tmp_path / "queue.db"
+    huey = SqliteHuey(name="queue-n-plus-one", filename=str(db_path), immediate=False)
+
+    failure_count = 25
+    for index in range(failure_count):
+        _put_failure(huey, task_id=f"failure-{index}")
+
+    peek_calls = {"count": 0}
+    original_peek_data = huey.storage.peek_data
+
+    def counting_peek_data(key: object) -> object:
+        peek_calls["count"] += 1
+        return original_peek_data(key)
+
+    huey.storage.peek_data = counting_peek_data  # type: ignore[method-assign]
+
+    stats = get_queue_stats(huey)
+
+    assert stats.historical_failure_count == failure_count
+    assert peek_calls["count"] == 0
