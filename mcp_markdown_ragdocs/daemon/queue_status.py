@@ -142,9 +142,12 @@ def _collect_task_counts(huey: SqliteHuey) -> dict[str, int]:
 
 
 def _collect_failures(huey: SqliteHuey) -> list[QueueFailure]:
+    # result_items() already performs one bulk read of every kv row; reuse
+    # the values it returns instead of re-querying each key individually
+    # with peek_data (an N+1 that dominated queue-status latency).
     failures: list[QueueFailure] = []
-    for task_id in huey.storage.result_items():
-        failure = _decode_failure(huey, str(task_id))
+    for task_id, raw_item in huey.storage.result_items().items():
+        failure = _decode_failure(huey, str(task_id), raw_item)
         if failure is not None:
             failures.append(failure)
     return failures
@@ -208,11 +211,9 @@ def _decode_task_summary(
     )
 
 
-def _decode_failure(huey: SqliteHuey, task_id: str) -> QueueFailure | None:
-    try:
-        raw_item = huey.storage.peek_data(task_id)
-    except Exception:  # noqa: BLE001 -- storage backend errors vary
-        return None
+def _decode_failure(
+    huey: SqliteHuey, task_id: str, raw_item: Any
+) -> QueueFailure | None:
     if raw_item is None:
         return None
 
