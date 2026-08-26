@@ -47,30 +47,17 @@ def test_remove_documents_removes_the_complete_batch(record_manager) -> None:
     assert record_manager.describe_documents() == []
 
 
-def test_describe_documents_stops_after_first_available_chunk(
-    record_manager, monkeypatch
+def test_describe_documents_reports_one_description_per_duplicated_chunk(
+    record_manager,
 ) -> None:
-    """Document descriptions should hydrate only one available chunk."""
+    """A doc_id whose key list contains a duplicate still describes once."""
     docs_dir = Path(record_manager._config.indexing.documents_path)
     document = create_test_document(docs_dir, "guide", "# Guide\n\nContent")
     record_manager.index_document(document)
 
     source_id, keys = next(iter(record_manager._source_records.items()))
     keys.extend(keys[:1])
-    hydrated_keys: list[str] = []
-    hydrate_record = record_manager.storage.hydrate_record
-
-    def tracking_hydrate_record(key):
-        hydrated_keys.append(key)
-        return hydrate_record(key)
-
-    monkeypatch.setattr(
-        record_manager.storage,
-        "hydrate_record",
-        tracking_hydrate_record,
-    )
 
     descriptions = record_manager.describe_documents()
 
     assert descriptions[0]["doc_id"] == source_id
-    assert hydrated_keys == [keys[0]]

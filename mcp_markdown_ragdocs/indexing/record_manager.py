@@ -66,6 +66,7 @@ _GRAPH_REBUILD_DOCUMENT_BATCH_SIZE = 200
 _LINKS_TO_EDGE_TYPE = "links_to"
 _GRAPH_REBUILD_DEBOUNCE_SECONDS = 1.0
 _DOC_ID_CACHE_SIZE = 200_000
+_DESCRIBE_DOCUMENTS_BATCH_SIZE = 500
 _ASYNC_BRIDGE_THREAD_NAME = "mcp-ragdocs-record-manager"
 
 
@@ -310,11 +311,21 @@ class RecordIndexManager:
         return count
 
     def describe_documents(self) -> list[dict[str, object]]:
+        sorted_items = sorted(self._source_records.items())
+        candidate_keys = sorted({key for _, keys in sorted_items for key in keys})
+        hydrated: dict[str, Record | None] = {}
+        for start in range(0, len(candidate_keys), _DESCRIBE_DOCUMENTS_BATCH_SIZE):
+            batch = candidate_keys[start : start + _DESCRIBE_DOCUMENTS_BATCH_SIZE]
+            hydrated.update(
+                self.storage.hydrate_records(
+                    [RecordIdentity.from_storage_key(key) for key in batch]
+                )
+            )
         descriptions: list[dict[str, object]] = []
-        for doc_id, keys in sorted(self._source_records.items()):
+        for doc_id, keys in sorted_items:
             record = None
             for key in keys:
-                record = self.storage.hydrate_record(key)
+                record = hydrated.get(key)
                 if record is not None:
                     break
             if record is None:
