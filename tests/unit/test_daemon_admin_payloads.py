@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from mcp_markdown_ragdocs.daemon import RuntimePaths
 from mcp_markdown_ragdocs.daemon import admin_payloads
 from mcp_markdown_ragdocs.coordination.queue import build_queue_runtime
+from mcp_markdown_ragdocs.daemon.queue_status import QueueStats
 from mcp_markdown_ragdocs.daemon.status_snapshot import StatusSnapshot
 
 
@@ -196,3 +197,95 @@ def test_admin_overview_surfaces_explicit_refresh_failure(
     assert isinstance(overview_status, dict)
     assert overview_status["stale"] is True
     assert overview_status["error"] == "RuntimeError: index load failed"
+
+
+def test_queue_status_payload_served_from_cache_within_ttl_then_refreshed(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """The expensive queue query is reused within the TTL and re-run once it expires.
+
+    worker_running is intentionally excluded from the cached value and must stay
+    live on every call, since callers (e.g. worker_health reporting) depend on it
+    reflecting the current process rather than a stale cached snapshot.
+    """
+    calls = {"n": 0}
+    now = 0.0
+
+    def clock() -> float:
+        return now
+
+    def fake_get_queue_stats(_huey, *, worker_running: bool, backpressure_limit):
+        calls["n"] += 1
+        return QueueStats(
+            pending_count=calls["n"],
+            scheduled_count=0,
+            worker_running=worker_running,
+        )
+
+    db_path = tmp_path / "queue.db"
+    queue_runtime = build_queue_runtime(db_path)
+
+    monkeypatch.setattr(admin_payloads, "get_queue_stats", fake_get_queue_stats)
+    monkeypatch.setattr(admin_payloads, "list_progress", lambda _parent: [])
+    monkeypatch.setattr(
+        admin_payloads,
+        "_queue_status_snapshot",
+        StatusSnapshot(stale_after_seconds=5.0, clock=clock),
+    )
+    monkeypatch.setattr(admin_payloads, "_queue_status_snapshot_root", db_path.resolve())
+
+    first = admin_payloads._build_queue_status_payload(
+        queue_runtime=queue_runtime, worker_running=True
+    )
+    second = admin_payloads._build_queue_status_payload(
+        queue_runtime=queue_runtime, worker_running=False
+    )
+
+    assert calls["n"] == 1
+    assert first["pending_count"] == second["pending_count"] == 1
+    assert first["worker_running"] is True
+    assert second["worker_running"] is False
+
+    now = 6.0
+    third = admin_payloads._build_queue_status_payload(
+        queue_runtime=queue_runtime, worker_running=True
+    )
+
+    assert calls["n"] == 2
+    assert third["pending_count"] == 2
+    assert third["worker_running"] is True
+    queue_runtime.huey.storage.close()
+
+
+def test_queue_status_payload_shape_is_unchanged(tmp_path: Path) -> None:
+    """Callers (CLI, admin overview) key off this exact payload shape; keys must not shift."""
+    db_path = tmp_path / "queue.db"
+    queue_runtime = build_queue_runtime(db_path)
+
+    payload = admin_payloads._build_queue_status_payload(
+        queue_runtime=queue_runtime,
+        worker_running=True,
+        backpressure_limit=10,
+    )
+
+    assert set(payload) == {
+        "pending_count",
+        "scheduled_count",
+        "running_count",
+        "failed_count",
+        "historical_failure_count",
+        "worker_running",
+        "backpressure_limit",
+        "backpressure_utilization",
+        "task_counts",
+        "recent_failures",
+        "pending_tasks",
+        "scheduled_tasks",
+        "queue_db_path",
+        "git_refresh_progress",
+    }
+    assert payload["worker_running"] is True
+    assert payload["pending_count"] == 0
+    assert payload["recent_failures"] == []
+    queue_runtime.huey.storage.close()
