@@ -26,11 +26,13 @@ class FakeClock:
 
     def __init__(self, start: float = 0.0) -> None:
         self.now = start
+        self.sleep_calls = 0
 
     def time(self) -> float:
         return self.now
 
     def sleep(self, seconds: float) -> None:
+        self.sleep_calls += 1
         self.now += seconds
 
 
@@ -64,6 +66,49 @@ def test_gate_allows_up_to_max_concurrent_claims_in_flight(tmp_path: Path) -> No
     extra_thread.join(timeout=2)
 
     assert extra_entered.is_set()
+
+
+def test_gate_claims_immediately_when_uncontended(tmp_path: Path) -> None:
+    """An open rate window and a free slot require no sleep at all."""
+    clock = FakeClock()
+    gate = DriveRequestGate(
+        tmp_path / "gate.db",
+        min_interval_seconds=0,
+        max_concurrent=1,
+        time_source=clock.time,
+        sleep=clock.sleep,
+    )
+
+    gate._claim()
+
+    assert clock.sleep_calls == 0
+
+
+def test_gate_bounds_poll_iterations_under_slot_saturation(tmp_path: Path) -> None:
+    """A saturated gate backs off instead of hot-polling every 0.01s.
+
+    Regression guard for the busy-poll: the fixed-floor retry (sleep 0.01s,
+    reopen a connection, re-check) needed ~500 iterations to cover a 5s
+    saturation window. The fix must need only a small, bounded number.
+    """
+    clock = FakeClock()
+    gate = DriveRequestGate(
+        tmp_path / "gate.db",
+        min_interval_seconds=0,
+        max_concurrent=1,
+        request_timeout_seconds=5,
+        time_source=clock.time,
+        sleep=clock.sleep,
+    )
+    gate._claim()  # occupy the only slot; simulate a holder still in flight
+
+    second_slot_id = gate._claim()  # must block until the slot expires at t=5
+
+    assert clock.now == pytest.approx(5.0)
+    assert second_slot_id is not None
+    assert clock.sleep_calls < 30, (
+        f"expected a small, bounded number of poll iterations, got {clock.sleep_calls}"
+    )
 
 
 def test_gate_spaces_successive_claims_by_min_interval(tmp_path: Path) -> None:
