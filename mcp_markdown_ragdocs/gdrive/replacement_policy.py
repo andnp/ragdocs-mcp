@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from searchkernel.api import Record, RecordIngestor
+from searchkernel.api import Record, RecordIdentity, RecordIngestor
 
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
 from mcp_markdown_ragdocs.gdrive.replacement import (
@@ -54,9 +54,13 @@ class GDriveReplacementPolicy:
         self._state_repository = state_repository
 
     async def replace(self, records: Sequence[Record]) -> None:
+        grouped_by_source = group_gdrive_records(records)
+        existing_keys = self._record_keys_by_source()
         plans = tuple(
-            self._prepare_replacement(source_key, grouped)
-            for source_key, grouped in group_gdrive_records(records).items()
+            self._prepare_replacement(
+                source_key, grouped, existing_keys.get(source_key, ())
+            )
+            for source_key, grouped in grouped_by_source.items()
         )
         await self._index_plans(plans)
         self._save_source_map()
@@ -96,9 +100,9 @@ class GDriveReplacementPolicy:
         self,
         source_key: str,
         records: Sequence[Record],
+        old_keys: tuple[str, ...],
     ) -> _GDriveReplacementPlan:
         representative = records[0]
-        old_keys = self._record_keys(source_key)
         tombstones = tuple(record for record in records if is_gdrive_tombstone(record))
         if not tombstones:
             indexed_records = self._with_memberships(records)
@@ -197,7 +201,15 @@ class GDriveReplacementPolicy:
                 self._remove_memberships(plan.tombstones, plan.removed_scopes)
             self._journal.complete(plan.source_key, plan.identities)
 
-    def _record_keys(self, source_key: str) -> tuple[str, ...]:
+    _RECORD_KEYS_BATCH_SIZE = 500
+
+    def _record_keys_by_source(self) -> Mapping[str, tuple[str, ...]]:
+        """Build the full source_key -> existing storage keys mapping in one pass.
+
+        Hydrates every candidate exactly once via the batched storage port,
+        instead of one hydrate per candidate per distinct source_key in the
+        current replace() batch.
+        """
         candidates: set[str] = set()
         for keys in self._source_records.values():
             candidates.update(keys)
@@ -205,14 +217,19 @@ class GDriveReplacementPolicy:
             identity.storage_key
             for identity in self._storage.iter_identities(source_kind=SOURCE_KIND)
         )
-        matching: list[str] = []
-        for key in sorted(candidates):
-            record = self._storage.hydrate_record(key)
-            if record is None or record.source_kind != SOURCE_KIND:
-                continue
-            if canonical_gdrive_source_key(record) == source_key:
-                matching.append(key)
-        return tuple(matching)
+        sorted_candidates = sorted(candidates)
+        grouped: dict[str, list[str]] = {}
+        for start in range(0, len(sorted_candidates), self._RECORD_KEYS_BATCH_SIZE):
+            batch = sorted_candidates[start : start + self._RECORD_KEYS_BATCH_SIZE]
+            hydrated = self._storage.hydrate_records(
+                tuple(RecordIdentity.from_storage_key(key) for key in batch)
+            )
+            for key in batch:
+                record = hydrated.get(key)
+                if record is None or record.source_kind != SOURCE_KIND:
+                    continue
+                grouped.setdefault(canonical_gdrive_source_key(record), []).append(key)
+        return {source_key: tuple(keys) for source_key, keys in grouped.items()}
 
     def _delete_stale_keys(
         self,
