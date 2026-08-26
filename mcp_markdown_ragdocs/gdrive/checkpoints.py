@@ -167,6 +167,29 @@ class GDriveSyncCheckpoint:
             raise ValueError("inventory must start before changes are indexed")
         return replace(self, changes_token=changes_token)
 
+    def inventory_failed(self) -> "GDriveSyncCheckpoint":
+        """Return progress after one failed inventory attempt."""
+
+        return replace(self, inventory_failure_count=self.inventory_failure_count + 1)
+
+    def inventory_succeeded(self) -> "GDriveSyncCheckpoint":
+        """Return progress after inventory ran without error, clearing failure history."""
+
+        if self.inventory_failure_count == 0:
+            return self
+        return replace(self, inventory_failure_count=0)
+
+    def inventory_token_poisoned(self) -> "GDriveSyncCheckpoint":
+        """Return progress after the current page token is treated as poisoned.
+
+        Clears the token so pagination restarts from the beginning of the
+        scope. The failure count is preserved (not reset) so a scope that
+        keeps failing across repeated token resets still trips the caller's
+        overall attempt cap instead of looping forever.
+        """
+
+        return replace(self, inventory_page_token=None)
+
 
 class GDriveSyncCheckpointStore:
     """Atomically persist Drive checkpoints in the configured index root."""
