@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -8,6 +10,7 @@ import pytest
 from mcp_markdown_ragdocs.daemon.management import (
     DaemonInspection,
     DaemonManagementError,
+    _reap_spawned_process_in_background,
     start_daemon,
     stop_daemon,
     wait_for_daemon_ready,
@@ -28,6 +31,8 @@ class _FakeProcess:
         return self.returncode
 
     def wait(self, timeout: float | None = None) -> int | None:
+        # Fakes never block: the reaper thread must not spin waiting for an
+        # exit these tests never simulate.
         return self.returncode
 
 
@@ -86,6 +91,80 @@ def test_start_daemon_returns_spawned_starting_metadata_before_socket_ready(
     result = start_daemon(timeout_seconds=0.5, paths=_paths(tmp_path))
 
     assert result == metadata
+
+
+def test_start_daemon_reaps_spawned_process_in_background(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    metadata = DaemonMetadata(pid=101, started_at=1.0, status="starting")
+    inspections = iter(
+        [
+            DaemonInspection(
+                metadata=None,
+                running=False,
+                stale=False,
+                responsive=False,
+                ready=False,
+            ),
+            DaemonInspection(
+                metadata=metadata,
+                running=True,
+                stale=False,
+                responsive=False,
+                ready=False,
+            ),
+        ]
+    )
+    fallback = DaemonInspection(
+        metadata=metadata,
+        running=True,
+        stale=False,
+        responsive=False,
+        ready=False,
+    )
+    spawned = _FakeProcess(101, [None, None, None])
+
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.management.inspect_daemon",
+        lambda paths=None: next(inspections, fallback),
+    )
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.management._spawn_daemon_process",
+        lambda runtime_paths: spawned,
+    )
+    monkeypatch.setattr("mcp_markdown_ragdocs.daemon.management.time.sleep", lambda _: None)
+
+    reaped: list[int] = []
+    monkeypatch.setattr(
+        "mcp_markdown_ragdocs.daemon.management._reap_spawned_process_in_background",
+        lambda process: reaped.append(process.pid),
+    )
+
+    start_daemon(timeout_seconds=0.5, paths=_paths(tmp_path))
+
+    assert reaped == [101]
+
+
+def test_reap_spawned_process_in_background_reaps_without_blocking_caller() -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(0.3)"],
+    )
+
+    call_start = time.monotonic()
+    _reap_spawned_process_in_background(process)
+    call_elapsed = time.monotonic() - call_start
+
+    # The call must return immediately; it must not itself wait on the child.
+    assert call_elapsed < 0.1
+
+    deadline = time.monotonic() + 5.0
+    while process.returncode is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    # The background thread reaped the child once it exited, with nothing
+    # else ever calling .wait()/.poll() on it -- so it never became a zombie.
+    assert process.returncode == 0
 
 
 def test_wait_for_daemon_ready_still_requires_ready_status(
