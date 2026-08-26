@@ -30,7 +30,10 @@ from mcp_markdown_ragdocs.gdrive.models import DriveScope
 from mcp_markdown_ragdocs.gdrive.records import SOURCE_KIND
 from mcp_markdown_ragdocs.gdrive.retry import DriveRetryWorkStore
 from mcp_markdown_ragdocs.gdrive.retry import DRIVE_RETRY_OPERATION
-from mcp_markdown_ragdocs.gdrive.checkpoints import GDriveSyncCheckpointStore
+from mcp_markdown_ragdocs.gdrive.checkpoints import (
+    GDriveSyncCheckpointStore,
+    checkpoint_namespace,
+)
 from mcp_markdown_ragdocs.gdrive.sync import GoogleDriveSync
 from mcp_markdown_ragdocs.gdrive.watch import GDriveWatchStateStore, GoogleDriveWatch
 from mcp_markdown_ragdocs.adapters.sources.gdrive import GoogleDriveContentSource
@@ -42,6 +45,8 @@ DRIVE_HEARTBEAT_INTERVAL_SECONDS = 5.0
 GDRIVE_BACKGROUND_TASK_PRIORITY = -20
 DRIVE_CONTINUE_DELAY_SECONDS = 1.0
 DRIVE_RETRY_DELAY_SECONDS = 30.0
+DRIVE_RETRY_DELAY_CEILING_SECONDS = 1800.0
+DRIVE_RETRY_BACKOFF_MULTIPLIER = 2.0
 DRIVE_BACKFILL_DELAY_SECONDS = 3600.0
 DRIVE_HEALTH_DELAY_SECONDS = 60.0
 
@@ -272,6 +277,9 @@ def register_gdrive_tasks(
     scheduler: GDriveLifecycleScheduler | None = None
 
     def inventory(scope_identity: str) -> dict[str, object]:
+        namespace = checkpoint_namespace(
+            f"{runtime.sync.scope_generation}-{scope_identity}"
+        )
         try:
             result = _leased(
                 runtime,
@@ -284,10 +292,17 @@ def register_gdrive_tasks(
                 scope_identity,
                 str(error),
             )
+            checkpoint = runtime.sync.checkpoint_store.record_inventory_failure(namespace)
             assert scheduler is not None
-            scheduler.inventory(scope_identity, delay=DRIVE_RETRY_DELAY_SECONDS)
+            delay = min(
+                DRIVE_RETRY_DELAY_SECONDS
+                * DRIVE_RETRY_BACKOFF_MULTIPLIER ** (checkpoint.inventory_failure_count - 1),
+                DRIVE_RETRY_DELAY_CEILING_SECONDS,
+            )
+            scheduler.inventory(scope_identity, delay=delay)
             scheduler.health()
             raise
+        runtime.sync.checkpoint_store.record_inventory_success(namespace)
         assert scheduler is not None
         progress = result.get("result")
         if isinstance(progress, dict) and progress.get("complete") is True:
