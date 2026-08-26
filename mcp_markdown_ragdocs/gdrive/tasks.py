@@ -334,7 +334,13 @@ def register_gdrive_tasks(
                 indexed_records=runtime.manager.count_records(SOURCE_KIND),
             )
         else:
-            scheduler.inventory(scope_identity, delay=DRIVE_CONTINUE_DELAY_SECONDS)
+            made_progress = isinstance(progress, dict) and (
+                progress.get("pages_indexed", 0) or progress.get("items_indexed", 0)
+            )
+            scheduler.inventory(
+                scope_identity,
+                delay=DRIVE_CONTINUE_DELAY_SECONDS if made_progress else DRIVE_RETRY_DELAY_SECONDS,
+            )
         scheduler.health()
         return result
 
