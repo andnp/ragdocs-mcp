@@ -12,6 +12,7 @@ from typing import Protocol
 from searchkernel.api import Record
 
 from mcp_markdown_ragdocs.adapters.sources.gdrive import (
+    DETERMINISTIC_MATERIALIZATION_STATUSES,
     UNCHANGED_STATUS,
     GoogleDriveContentSource,
 )
@@ -149,7 +150,8 @@ class GoogleDriveSync:
                     record.metadata["processing_fingerprint"],
                 )
                 for record in records
-                if record.metadata.get("extraction_status") == "indexed"
+                if record.metadata.get("extraction_status")
+                in DETERMINISTIC_MATERIALIZATION_STATUSES
             }
             complete_inventory = not truncated and page.next_page_token is None
             if complete_inventory:

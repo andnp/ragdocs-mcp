@@ -8,7 +8,10 @@ from typing import Protocol
 
 from searchkernel.domain import ChangeSignal, Cursor, Record, RecordStatus
 
-from mcp_markdown_ragdocs.gdrive.errors import classify_provider_error
+from mcp_markdown_ragdocs.gdrive.errors import (
+    ProviderErrorClassification,
+    classify_provider_error,
+)
 from mcp_markdown_ragdocs.gdrive.extraction import (
     DEFAULT_EXTRACTION_LIMITS,
     ExtractionLimits,
@@ -40,6 +43,20 @@ from mcp_markdown_ragdocs.gdrive.port import GDriveStatePort
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
 UNCHANGED_STATUS = "unchanged"
+DEFINITIVE_PROVIDER_STATUS = f"provider-{ProviderErrorClassification.DEFINITIVE.value}"
+# Outcomes that stay the same until the file or the processing versions change,
+# so the change key that produced them is safe to remember. Both fingerprints
+# are part of that key, so a new extractor or chunker version retries on its
+# own. Retryable failures are absent on purpose: they say nothing durable.
+DETERMINISTIC_MATERIALIZATION_STATUSES = frozenset(
+    {
+        ExtractionStatus.INDEXED.value,
+        ExtractionStatus.UNSUPPORTED.value,
+        ExtractionStatus.TOO_LARGE.value,
+        ExtractionStatus.TRUNCATED.value,
+        DEFINITIVE_PROVIDER_STATUS,
+    }
+)
 
 
 class DriveExtractor(Protocol):
@@ -444,4 +461,9 @@ class GoogleDriveContentSource:
         return self.scope_identity(scope) in record.metadata.get("scope_memberships", ())
 
 
-__all__ = ["DriveContentClient", "GoogleDriveContentSource", "UNCHANGED_STATUS"]
+__all__ = [
+    "DETERMINISTIC_MATERIALIZATION_STATUSES",
+    "DriveContentClient",
+    "GoogleDriveContentSource",
+    "UNCHANGED_STATUS",
+]
