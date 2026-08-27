@@ -119,14 +119,14 @@ wheels = [
 
 [[package]]
 name = "andnp-searchkernel"
-version = "1.15.2"
+version = "1.15.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e4/5c/7e7b3376a911c8da7f4a05d9c214604220e8deb70da51bd5859fe1f91eb1/andnp_searchkernel-1.15.2.tar.gz", hash = "sha256:e7bdb486b6814baa8259d82a93d140e495547f56e84628f3b1ea0d8a575ccfb2", size = 685800, upload-time = "2026-08-27T00:50:11.407Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/2a/a164e19ec7ade6f6ac652edba1985a3cc7443323161b5afda99fb6ed07ee/andnp_searchkernel-1.15.3.tar.gz", hash = "sha256:ac34c34867be06bd66e61c0a65771fc6f7e87472e7aa8035e77be4097f139dd8", size = 688658, upload-time = "2026-08-27T03:19:39.182Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/79/e8/508a546f2d616c50c214a7a02fab5f387faf52b5ac613963fe742acc67b0/andnp_searchkernel-1.15.2-py3-none-any.whl", hash = "sha256:3f17ee06d1847069a43129f6ccbf91a0a2a00c1e1accd702ac08bf667cf98fba", size = 309349, upload-time = "2026-08-27T00:50:10.005Z" },
+    { url = "https://files.pythonhosted.org/packages/36/9d/bfc0803f6f65f89bd367ed469d0de6e3364e6fb273bf61e920881f874729/andnp_searchkernel-1.15.3-py3-none-any.whl", hash = "sha256:d021b06fab061145ecbd3ea47518820f40d54ec031100c1f02431229bc8b74fb", size = 310906, upload-time = "2026-08-27T03:19:37.7Z" },
 ]
 
 [package.optional-dependencies]
