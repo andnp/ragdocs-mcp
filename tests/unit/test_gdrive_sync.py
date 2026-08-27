@@ -680,3 +680,68 @@ async def test_mid_page_deadline_eventually_indexes_every_file(tmp_path: Path) -
     assert runs > 1, "test setup should force at least one mid-page truncation"
     assert set(all_indexed) == {f"f{i}" for i in range(10)}
     assert sorted(client.downloads) == sorted(f"f{i}" for i in range(10))
+
+
+@pytest.mark.asyncio
+async def test_permanently_unfetchable_files_are_downloaded_once(
+    tmp_path: Path,
+) -> None:
+    """
+    A file Drive will never hand over must not be retried on every pass.
+
+    Files that fail definitively (403 cannotExportFile) are excluded from the
+    change-key cache unless their outcome is remembered, so each run re-attempts
+    the whole page, the deadline fires again, the page token never advances and
+    inventory never completes. Asserting one attempt per file pins the skip.
+    """
+
+    class _ForbiddenError(Exception):
+        status_code = 403
+        reason = "cannotExportFile"
+
+    class _ForbiddenClient:
+        def __init__(self) -> None:
+            self.attempts: list[str] = []
+
+        async def get_start_page_token(self, scope: object) -> DriveStartPageToken:
+            del scope
+            return DriveStartPageToken("start-token")
+
+        async def list_files_page(
+            self, scope: object, *, page_token: str | None = None, page_size: int = 1000
+        ) -> DriveFilePage:
+            del scope, page_token, page_size
+            return DriveFilePage(tuple(_file(f"denied{i}") for i in range(10)))
+
+        async def download_file(self, file_id: str) -> bytes:
+            self.attempts.append(file_id)
+            raise _ForbiddenError("cannot export file")
+
+    client = _ForbiddenClient()
+    source = GoogleDriveContentSource(
+        cast(Any, client), workspace_id="workspace", extractor=cast(Any, _extractor)
+    )
+    store = GDriveSyncCheckpointStore(tmp_path)
+
+    def clock() -> float:
+        return float(len(client.attempts))
+
+    complete = False
+    runs = 0
+    while not complete and runs < 10:
+        sync = GoogleDriveSync(
+            source,
+            store,
+            cast(Any, _Writer([])),
+            scope_generation="generation",
+            max_seconds=3.0,
+            max_concurrent_materializations=4,
+            clock=clock,
+        )
+        progress = await sync.sync_inventory(source.scopes[0])
+        complete = progress.complete
+        runs += 1
+
+    assert complete is True
+    assert runs > 1, "test setup should force at least one mid-page truncation"
+    assert sorted(client.attempts) == sorted(f"denied{i}" for i in range(10))
